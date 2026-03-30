@@ -64,10 +64,7 @@ export async function initFirebase() {
     const { initializeApp, getApps, deleteApp } = await import(
       'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js'
     );
-    const {
-      getFirestore,
-      enableIndexedDbPersistence,
-    } = await import(
+    const { getFirestore } = await import(
       'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
     );
 
@@ -76,13 +73,6 @@ export async function initFirebase() {
 
     const app = initializeApp(config);
     db = getFirestore(app);
-
-    // Activer la persistance offline (best-effort)
-    try {
-      await enableIndexedDbPersistence(db);
-    } catch (e) {
-      // Ignoré si multi-onglets ou déjà activé
-    }
 
     setFirebaseStatus('connected', `Connecté · ${config.projectId}`);
     return true;

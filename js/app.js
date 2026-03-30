@@ -213,8 +213,8 @@ export function statusBadge(status) {
   const map = {
     DNS:      { cls: 'badge-dns', label: 'DNS' },
     DNF:      { cls: 'badge-dnf', label: 'DNF' },
-    DSQ:      { cls: 'badge-dsq', label: 'DSQ' },
-    DSQ_RACE: { cls: 'badge-dsq', label: 'DSQ' },
+    DSQ:      { cls: 'badge-dsq', label: 'DSQ HC' },
+    DSQ_RACE: { cls: 'badge-dsq', label: 'DSQ EC' },
   };
   const b = map[status?.toUpperCase()];
   if (!b) return '';
@@ -303,7 +303,13 @@ async function loadApp() {
   initEngagements();
 
   const { initSessions } = await import('./sessions.js');
+  const { initTiming }     = await import('./timing.js');
+  const { initStandings }      = await import('./standings.js');
+  const { initChampionship }   = await import('./championship.js');
   initSessions();
+  initTiming();
+  initStandings();
+  initChampionship();
 
   // Les prochains modules seront ajoutés ici au fil du développement :
   // const { initTiming } = await import('./timing.js');
