@@ -178,12 +178,13 @@ export function categoryBadge(category) {
     .replace(/[̀-ͯ]/g, '')
     .replace(/[^a-z0-9]/g, '');
   const map = {
-    supercar:  'badge-supercar',
-    super1600: 'badge-super1600',
-    juniors:   'badge-juniors',
-    feminines: 'badge-feminines',
-    d3:        'badge-d3',
-    d4:        'badge-d4',
+    supercar:   'badge-supercar',
+    super1600:  'badge-super1600',
+    division5:  'badge-d5',
+    d5:         'badge-d5',
+    feminines:  'badge-feminines',
+    d3:         'badge-d3',
+    d4:         'badge-d4',
   };
   const cls = map[key] || 'badge-d4';
   return `<span class="badge ${cls}">${category}</span>`;
@@ -301,8 +302,11 @@ async function loadApp() {
   initMeetings();
   initEngagements();
 
+  const { initSessions } = await import('./sessions.js');
+  initSessions();
+
   // Les prochains modules seront ajoutés ici au fil du développement :
-  // const { initSessions } = await import('./sessions.js');
+  // const { initTiming } = await import('./timing.js');
   // ...
 }
 

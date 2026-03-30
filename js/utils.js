@@ -94,7 +94,7 @@ export function msToFields(ms) {
 export const CATEGORIES = [
   'Supercar',
   'Super1600',
-  'Juniors',
+  'Division 5',
   'Féminines',
   'D3',
   'D4',

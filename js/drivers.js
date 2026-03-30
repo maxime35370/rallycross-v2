@@ -12,12 +12,12 @@ import { escHtml, sanitize, CATEGORIES } from './utils.js';
 // ─────────────────────────────────────────────────────────
 
 const CAR_NUMBER_RANGES = [
-  { min: 1,   max: 100, category: 'Supercar',  code: 'SC'    },
-  { min: 101, max: 200, category: 'Super1600', code: 'S1600' },
-  { min: 201, max: 250, category: 'Juniors',   code: 'J'     },
-  { min: 251, max: 300, category: 'Féminines', code: 'F'     },
-  { min: 301, max: 400, category: 'D3',        code: 'D3'    },
-  { min: 401, max: 500, category: 'D4',        code: 'D4'    },
+  { min: 1,   max: 99,  category: 'Supercar',  code: 'SC'    },
+  { min: 101, max: 199, category: 'Super1600', code: 'S1600' },
+  { min: 201, max: 249, category: 'Division 5', code: 'D5'   },
+  { min: 251, max: 299, category: 'Féminines', code: 'F'     },
+  { min: 301, max: 399, category: 'D3',        code: 'D3'    },
+  { min: 401, max: 499, category: 'D4',        code: 'D4'    },
 ];
 
 /**
@@ -540,7 +540,7 @@ function injectStyles() {
     }
     .drv-range-sc    { background: rgba(255,85,0,0.12);   color: var(--clr-cat-supercar);  border-color: rgba(255,85,0,0.3); }
     .drv-range-s1600 { background: rgba(59,158,255,0.12); color: var(--clr-cat-super1600); border-color: rgba(59,158,255,0.3); }
-    .drv-range-j     { background: rgba(30,215,96,0.12);  color: var(--clr-cat-juniors);   border-color: rgba(30,215,96,0.3); }
+    .drv-range-d5    { background: rgba(30,215,96,0.12);  color: var(--clr-cat-d5);        border-color: rgba(30,215,96,0.3); }
     .drv-range-f     { background: rgba(224,64,251,0.12); color: var(--clr-cat-feminines); border-color: rgba(224,64,251,0.3); }
     .drv-range-d3    { background: rgba(255,210,63,0.12); color: var(--clr-cat-d3);        border-color: rgba(255,210,63,0.3); }
     .drv-range-d4    { background: rgba(154,160,180,0.12);color: var(--clr-cat-d4);        border-color: rgba(154,160,180,0.3); }

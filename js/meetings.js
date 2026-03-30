@@ -433,12 +433,12 @@ function setNbMQ(n) {
 
 function categoryBadgeSmall(cat) {
   const map = {
-    'Supercar':  'badge-supercar',
-    'Super1600': 'badge-super1600',
-    'Juniors':   'badge-juniors',
-    'Féminines': 'badge-feminines',
-    'D3':        'badge-d3',
-    'D4':        'badge-d4',
+    'Supercar':   'badge-supercar',
+    'Super1600':  'badge-super1600',
+    'Division 5': 'badge-d5',
+    'Féminines':  'badge-feminines',
+    'D3':         'badge-d3',
+    'D4':         'badge-d4',
   };
   const cls = map[cat] || 'badge-d4';
   return `<span class="badge ${cls}">${escHtml(cat)}</span>`;

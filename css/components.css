@@ -194,7 +194,7 @@ tbody tr:hover { background: var(--clr-surface-2); }
 
 .badge-supercar   { background: rgba(255,85,0,0.2);    color: var(--clr-cat-supercar);   border: 1px solid rgba(255,85,0,0.4); }
 .badge-super1600  { background: rgba(59,158,255,0.2);  color: var(--clr-cat-super1600);  border: 1px solid rgba(59,158,255,0.4); }
-.badge-juniors    { background: rgba(30,215,96,0.2);   color: var(--clr-cat-juniors);    border: 1px solid rgba(30,215,96,0.4); }
+.badge-d5         { background: rgba(30,215,96,0.2);   color: var(--clr-cat-d5);         border: 1px solid rgba(30,215,96,0.4); }
 .badge-feminines  { background: rgba(224,64,251,0.2);  color: var(--clr-cat-feminines);  border: 1px solid rgba(224,64,251,0.4); }
 .badge-d3         { background: rgba(255,210,63,0.2);  color: var(--clr-cat-d3);         border: 1px solid rgba(255,210,63,0.4); }
 .badge-d4         { background: rgba(154,160,180,0.2); color: var(--clr-cat-d4);         border: 1px solid rgba(154,160,180,0.4); }
