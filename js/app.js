@@ -288,11 +288,12 @@ async function loadApp() {
   await initFirebase();
 
   // Modules des vues — chargés une seule fois au démarrage
-  const { initConfig } = await import('./config.js');
+  const { initConfig }  = await import('./config.js');
+  const { initDrivers } = await import('./drivers.js');
   initConfig();
+  initDrivers();
 
   // Les prochains modules seront ajoutés ici au fil du développement :
-  // const { initDrivers }      = await import('./drivers.js');
   // const { initMeetings }     = await import('./meetings.js');
   // const { initEngagements }  = await import('./engagements.js');
   // ...
