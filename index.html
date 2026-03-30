@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RX Chrono</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Exo+2:wght@300;400;500;600&family=Barlow+Condensed:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/theme.css">
+  <link rel="stylesheet" href="css/main.css">
+  <link rel="stylesheet" href="css/components.css">
+</head>
+<body>
+
+  <!-- ═══════════════════════════════════════
+       HEADER
+  ═══════════════════════════════════════ -->
+  <header class="app-header">
+    <div class="header-inner">
+      <div class="header-brand">
+        <span class="brand-flag">🏁</span>
+        <span class="brand-title">RX<span class="brand-accent">Chrono</span></span>
+        <span class="brand-sub">Rallycross Timing</span>
+      </div>
+
+      <!-- Titre de la vue active -->
+      <div class="header-view-title" id="header-view-title">Accueil</div>
+
+      <!-- Bouton burger -->
+      <button class="burger-btn" id="burger-btn" aria-label="Menu" aria-expanded="false">
+        <span></span><span></span><span></span>
+      </button>
+    </div>
+  </header>
+
+  <!-- ═══════════════════════════════════════
+       MENU BURGER (drawer)
+  ═══════════════════════════════════════ -->
+  <div class="menu-overlay" id="menu-overlay"></div>
+  <nav class="menu-drawer" id="menu-drawer" aria-hidden="true">
+    <div class="menu-header">
+      <span class="menu-title">Navigation</span>
+      <button class="menu-close-btn" id="menu-close-btn" aria-label="Fermer">✕</button>
+    </div>
+    <ul class="menu-list">
+      <li><a class="menu-item" data-view="home"       href="#">🏠 Accueil</a></li>
+      <li class="menu-separator"></li>
+      <li class="menu-section">Gestion</li>
+      <li><a class="menu-item" data-view="drivers"    href="#">👥 Pilotes</a></li>
+      <li><a class="menu-item" data-view="meetings"   href="#">📅 Meetings</a></li>
+      <li><a class="menu-item" data-view="engagements" href="#">📋 Engagements</a></li>
+      <li><a class="menu-item" data-view="sessions"   href="#">🏁 Sessions</a></li>
+      <li class="menu-separator"></li>
+      <li class="menu-section">Compétition</li>
+      <li><a class="menu-item" data-view="timing"     href="#">⏱️ Chronométrage</a></li>
+      <li><a class="menu-item" data-view="standings"  href="#">🏆 Classements</a></li>
+      <li><a class="menu-item" data-view="championship" href="#">🥇 Championnat</a></li>
+      <li class="menu-separator"></li>
+      <li><a class="menu-item menu-item--config" data-view="config" href="#">⚙️ Configuration</a></li>
+    </ul>
+    <div class="menu-footer">
+      <div class="menu-firebase-status" id="menu-firebase-status">
+        <span class="status-dot" id="status-dot"></span>
+        <span id="status-label">Firebase non configuré</span>
+      </div>
+    </div>
+  </nav>
+
+  <!-- ═══════════════════════════════════════
+       CONTENU DES VUES
+  ═══════════════════════════════════════ -->
+  <main class="app-main" id="app-main">
+
+    <!-- VUE : Accueil -->
+    <div class="view" id="view-home">
+      <div class="home-hero">
+        <div class="home-logo">🏁</div>
+        <h1 class="home-title">RX<span>Chrono</span></h1>
+        <p class="home-subtitle">Système de chronométrage et gestion de championnat rallycross</p>
+      </div>
+      <div class="home-grid" id="home-grid">
+        <div class="home-card" data-view="drivers">
+          <div class="home-card-icon">👥</div>
+          <div class="home-card-label">Pilotes</div>
+        </div>
+        <div class="home-card" data-view="meetings">
+          <div class="home-card-icon">📅</div>
+          <div class="home-card-label">Meetings</div>
+        </div>
+        <div class="home-card" data-view="engagements">
+          <div class="home-card-icon">📋</div>
+          <div class="home-card-label">Engagements</div>
+        </div>
+        <div class="home-card" data-view="sessions">
+          <div class="home-card-icon">🏁</div>
+          <div class="home-card-label">Sessions</div>
+        </div>
+        <div class="home-card" data-view="timing">
+          <div class="home-card-icon">⏱️</div>
+          <div class="home-card-label">Chronométrage</div>
+        </div>
+        <div class="home-card" data-view="standings">
+          <div class="home-card-icon">🏆</div>
+          <div class="home-card-label">Classements</div>
+        </div>
+        <div class="home-card" data-view="championship">
+          <div class="home-card-icon">🥇</div>
+          <div class="home-card-label">Championnat</div>
+        </div>
+        <div class="home-card home-card--config" data-view="config">
+          <div class="home-card-icon">⚙️</div>
+          <div class="home-card-label">Configuration</div>
+        </div>
+      </div>
+      <div class="home-alert" id="home-alert" style="display:none">
+        <span>⚠️</span>
+        <span>Firebase non configuré — <a href="#" data-view="config">Aller à la configuration</a></span>
+      </div>
+    </div>
+
+    <!-- VUE : Pilotes -->
+    <div class="view" id="view-drivers" style="display:none">
+      <div class="view-placeholder">
+        <div class="placeholder-icon">👥</div>
+        <div class="placeholder-title">Pilotes</div>
+        <div class="placeholder-desc">Cette vue sera construite à l'étape suivante.</div>
+      </div>
+    </div>
+
+    <!-- VUE : Meetings -->
+    <div class="view" id="view-meetings" style="display:none">
+      <div class="view-placeholder">
+        <div class="placeholder-icon">📅</div>
+        <div class="placeholder-title">Meetings</div>
+        <div class="placeholder-desc">Cette vue sera construite à l'étape suivante.</div>
+      </div>
+    </div>
+
+    <!-- VUE : Engagements -->
+    <div class="view" id="view-engagements" style="display:none">
+      <div class="view-placeholder">
+        <div class="placeholder-icon">📋</div>
+        <div class="placeholder-title">Engagements</div>
+        <div class="placeholder-desc">Cette vue sera construite à l'étape suivante.</div>
+      </div>
+    </div>
+
+    <!-- VUE : Sessions -->
+    <div class="view" id="view-sessions" style="display:none">
+      <div class="view-placeholder">
+        <div class="placeholder-icon">🏁</div>
+        <div class="placeholder-title">Sessions</div>
+        <div class="placeholder-desc">Cette vue sera construite à l'étape suivante.</div>
+      </div>
+    </div>
+
+    <!-- VUE : Chronométrage -->
+    <div class="view" id="view-timing" style="display:none">
+      <div class="view-placeholder">
+        <div class="placeholder-icon">⏱️</div>
+        <div class="placeholder-title">Chronométrage</div>
+        <div class="placeholder-desc">Cette vue sera construite à l'étape suivante.</div>
+      </div>
+    </div>
+
+    <!-- VUE : Classements -->
+    <div class="view" id="view-standings" style="display:none">
+      <div class="view-placeholder">
+        <div class="placeholder-icon">🏆</div>
+        <div class="placeholder-title">Classements</div>
+        <div class="placeholder-desc">Cette vue sera construite à l'étape suivante.</div>
+      </div>
+    </div>
+
+    <!-- VUE : Championnat -->
+    <div class="view" id="view-championship" style="display:none">
+      <div class="view-placeholder">
+        <div class="placeholder-icon">🥇</div>
+        <div class="placeholder-title">Championnat</div>
+        <div class="placeholder-desc">Cette vue sera construite à l'étape suivante.</div>
+      </div>
+    </div>
+
+    <!-- VUE : Configuration -->
+    <div class="view" id="view-config" style="display:none">
+      <div class="view-placeholder">
+        <div class="placeholder-icon">⚙️</div>
+        <div class="placeholder-title">Configuration Firebase</div>
+        <div class="placeholder-desc">Cette vue sera construite à l'étape suivante.</div>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- ═══════════════════════════════════════
+       SCRIPTS
+  ═══════════════════════════════════════ -->
+  <script type="module" src="js/app.js"></script>
+
+</body>
+</html>
