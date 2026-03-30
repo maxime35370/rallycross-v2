@@ -287,9 +287,15 @@ async function loadApp() {
   const { initFirebase } = await import('./firebase.js');
   await initFirebase();
 
-  // Charger les autres modules au fur et à mesure
-  // (ils s'enregistreront sur l'événement 'viewchange')
-  // Les modules seront importés ici au fil du développement
+  // Modules des vues — chargés une seule fois au démarrage
+  const { initConfig } = await import('./config.js');
+  initConfig();
+
+  // Les prochains modules seront ajoutés ici au fil du développement :
+  // const { initDrivers }      = await import('./drivers.js');
+  // const { initMeetings }     = await import('./meetings.js');
+  // const { initEngagements }  = await import('./engagements.js');
+  // ...
 }
 
 // Démarrage après chargement du DOM
