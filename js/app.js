@@ -172,7 +172,11 @@ export function setFirebaseStatus(status, label) {
  * @param {string} category
  */
 export function categoryBadge(category) {
-  const key = category?.toLowerCase().replace(/[^a-z0-9]/g, '') || '';
+  const key = (category || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9]/g, '');
   const map = {
     supercar:  'badge-supercar',
     super1600: 'badge-super1600',
@@ -293,10 +297,12 @@ async function loadApp() {
   const { initMeetings } = await import('./meetings.js');
   initConfig();
   initDrivers();
+  const { initEngagements } = await import('./engagements.js');
   initMeetings();
+  initEngagements();
 
   // Les prochains modules seront ajoutés ici au fil du développement :
-  // const { initEngagements }  = await import('./engagements.js');
+  // const { initSessions } = await import('./sessions.js');
   // ...
 }
 
