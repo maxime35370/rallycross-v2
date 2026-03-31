@@ -88,6 +88,29 @@ function render() {
       <div class="card-title">Test de connexion</div>
       <div id="config-test-result"></div>
     </div>
+
+    <!-- Clé API Anthropic -->
+    <div class="card mt-md">
+      <div class="card-title">🤖 Reconnaissance photo (optionnel)</div>
+      <div class="form-group">
+        <label class="form-label" for="cfg-anthropic-key">Clé API Anthropic</label>
+        <input
+          class="form-input"
+          type="password"
+          id="cfg-anthropic-key"
+          value="${escHtml(localStorage.getItem('rx_anthropic_key') || '')}"
+          placeholder="sk-ant-..."
+          autocomplete="off"
+          spellcheck="false"
+        >
+        <div style="font-size:0.78rem;color:var(--clr-text-3);margin-top:6px">
+          Permet d'importer automatiquement les temps depuis une photo de feuille de chronométrage.<br>
+          Clé disponible sur <a href="https://console.anthropic.com" target="_blank" rel="noopener">console.anthropic.com</a> → API Keys
+        </div>
+      </div>
+      <button class="btn btn-secondary btn-sm" id="cfg-anthropic-save">💾 Enregistrer la clé</button>
+      <span id="cfg-anthropic-status" style="font-size:0.82rem;margin-left:var(--sp-sm)"></span>
+    </div>
   `;
 
   // ── Events ────────────────────────────────────────
@@ -96,6 +119,24 @@ function render() {
 
   document.getElementById('cfg-clear-btn')
     ?.addEventListener('click', onClear);
+
+  // Sauvegarder clé Anthropic
+  document.getElementById('cfg-anthropic-save')?.addEventListener('click', () => {
+    const key = document.getElementById('cfg-anthropic-key')?.value?.trim();
+    const status = document.getElementById('cfg-anthropic-status');
+    if (!key) {
+      localStorage.removeItem('rx_anthropic_key');
+      if (status) { status.textContent = 'Clé supprimée'; status.style.color = 'var(--clr-warning)'; }
+      return;
+    }
+    if (!key.startsWith('sk-ant-')) {
+      if (status) { status.textContent = '⚠️ Format invalide (doit commencer par sk-ant-)'; status.style.color = 'var(--clr-danger)'; }
+      return;
+    }
+    localStorage.setItem('rx_anthropic_key', key);
+    if (status) { status.textContent = '✅ Clé sauvegardée'; status.style.color = 'var(--clr-success)'; }
+    setTimeout(() => { if (status) status.textContent = ''; }, 3000);
+  });
 }
 
 // ─────────────────────────────────────────────────────────

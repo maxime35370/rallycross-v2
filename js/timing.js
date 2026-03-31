@@ -420,6 +420,19 @@ function renderTimingTable() {
     if (gridBtn) {
       gridBtn.onclick = () => showStartingGrid(session);
     }
+
+    // Bouton 📸 Photo (toujours visible sauf EC)
+    if (session.type !== 'EC') {
+      let photoBtn = document.getElementById('tim-photo-btn');
+      if (!photoBtn) {
+        photoBtn = document.createElement('button');
+        photoBtn.id = 'tim-photo-btn';
+        photoBtn.className = 'btn btn-primary btn-sm';
+        photoBtn.textContent = '📸 Photo';
+        banner.appendChild(photoBtn);
+      }
+      photoBtn.onclick = () => triggerPhotoImport(session);
+    }
   }
 
   // Séparer chronométrés / non chronométrés
@@ -897,6 +910,16 @@ function injectStyles() {
       color: var(--clr-text-3);
     }
 
+    /* Reconnaissance photo */
+    .photo-confidence {
+      padding: var(--sp-sm) var(--sp-md);
+      background: var(--clr-surface);
+      border-radius: var(--r-md);
+      font-size: 0.88rem;
+      font-weight: 500;
+    }
+    .photo-row-notfound td { opacity: 0.4; }
+
     /* Toggle mobile */
     .tim-mobile-toggle {
       display: none;
@@ -1040,6 +1063,308 @@ function injectStyles() {
 // ─────────────────────────────────────────────────────────
 // INIT
 // ─────────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────
+// RECONNAISSANCE PHOTO
+// ─────────────────────────────────────────────────────────
+
+function triggerPhotoImport(session) {
+  const apiKey = localStorage.getItem('rx_anthropic_key');
+  if (!apiKey) {
+    toast('Clé API Anthropic non configurée — allez dans ⚙️ Configuration', 'error', 5000);
+    return;
+  }
+
+  // Créer un input file invisible et déclencher le sélecteur
+  let fileInput = document.getElementById('tim-photo-input');
+  if (!fileInput) {
+    fileInput = document.createElement('input');
+    fileInput.type = 'file';
+    fileInput.id = 'tim-photo-input';
+    fileInput.accept = 'image/*,application/pdf';
+    fileInput.capture = 'environment'; // caméra arrière sur mobile
+    fileInput.style.display = 'none';
+    document.body.appendChild(fileInput);
+  }
+
+  fileInput.onchange = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    fileInput.value = ''; // reset pour permettre re-sélection
+    await processPhotoImport(file, session, apiKey);
+  };
+
+  fileInput.click();
+}
+
+async function processPhotoImport(file, session, apiKey) {
+  // Afficher modale de chargement
+  showPhotoModal(`
+    <div class="loading-state">
+      <div class="spinner"></div>
+      <span>Analyse de la photo en cours…</span>
+    </div>
+  `, 'Reconnaissance en cours…', false);
+
+  try {
+    // Convertir en base64 (PDF → image automatiquement)
+    const isPdf = file.type === 'application/pdf' || file.name?.endsWith('.pdf');
+    if (isPdf) {
+      showPhotoModal(`<div class="loading-state"><div class="spinner"></div><span>Conversion du PDF en cours…</span></div>`, 'Préparation…', false);
+    }
+    const base64 = await fileToBase64(file);
+    // Détecter le bon mediaType : PDF converti → jpeg, sinon type réel du fichier
+    const mediaType = isPdf ? 'image/jpeg'
+      : (file.type && file.type.startsWith('image/') ? file.type : 'image/jpeg');
+
+    // Construire la liste des pilotes engagés pour aider Claude
+    const pilotsList = participants.map(p =>
+      `N°${p.carNumber} - ${p.firstName} ${p.lastName}`
+    ).join(', ');
+
+    const sessionLabel = session.type === 'MQ' ? `Manche qualificative ${session.num}`
+      : session.type === 'DF' ? `Demi-finale ${session.num}`
+      : 'Finale';
+
+    const prompt = `Tu es un assistant de chronométrage pour une compétition de rallycross.
+
+Analyse cette feuille de chronométrage officielle pour la session : ${sessionLabel}
+
+Pilotes engagés dans cette session :
+${pilotsList}
+
+Extrais pour chaque pilote visible sur la feuille :
+- Le numéro de voiture (N°)
+- Le temps total au format mm:ss.mmm (ex: 1:23.456) ou ss.mmm (ex: 45.123)
+- Le statut si applicable : DNS (non partant), DNF (abandon), DSQ (disqualifié)
+
+Réponds UNIQUEMENT en JSON valide, sans texte avant ou après, avec ce format exact :
+{
+  "results": [
+    {"carNumber": 12, "time": "1:23.456", "status": null},
+    {"carNumber": 8, "time": null, "status": "DNF"},
+    {"carNumber": 15, "time": null, "status": "DNS"}
+  ],
+  "confidence": "high|medium|low",
+  "notes": "remarques éventuelles"
+}
+
+Si tu ne peux pas lire un temps clairement, mets null pour ce pilote.
+Ne fabrique pas de temps — s'il n'est pas lisible, laisse null.`;
+
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true',
+      },
+      body: JSON.stringify({
+        model: 'claude-opus-4-6',
+        max_tokens: 1024,
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'image', source: { type: 'base64', media_type: mediaType, data: base64 } },
+            { type: 'text', text: prompt }
+          ]
+        }]
+      })
+    });
+
+    if (!response.ok) {
+      const err = await response.json();
+      throw new Error(err.error?.message || `HTTP ${response.status}`);
+    }
+
+    const data = await response.json();
+    const text = data.content?.[0]?.text || '';
+
+    // Parser le JSON
+    const clean = text.replace(/```json|```/g, '').trim();
+    const parsed = JSON.parse(clean);
+
+    showValidationModal(parsed.results || [], session, parsed.confidence, parsed.notes);
+
+  } catch (err) {
+    console.error('Photo import error:', err);
+    showPhotoModal(`
+      <div class="config-test-error">
+        <span>❌</span>
+        <span>Erreur : ${escHtml(err.message)}</span>
+      </div>
+    `, 'Erreur de reconnaissance', true);
+  }
+}
+
+async function fileToBase64(file) {
+  // PDF : convertir la 1ère page en image via PDF.js
+  if (file.type === 'application/pdf' || file.name?.endsWith('.pdf')) {
+    return await pdfPageToBase64(file);
+  }
+  // Image classique
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload  = () => resolve(reader.result.split(',')[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+async function pdfPageToBase64(file) {
+  // Charger PDF.js depuis CDN
+  if (!window.pdfjsLib) {
+    await new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+      script.onload = resolve;
+      script.onerror = reject;
+      document.head.appendChild(script);
+    });
+    window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+      'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  }
+
+  // Lire le fichier PDF
+  const arrayBuffer = await file.arrayBuffer();
+  const pdf = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+
+  // Rendre la 1ère page sur un canvas haute résolution
+  const page = await pdf.getPage(1);
+  const scale = 2.5; // haute résolution pour meilleure OCR
+  const viewport = page.getViewport({ scale });
+
+  const canvas = document.createElement('canvas');
+  canvas.width  = viewport.width;
+  canvas.height = viewport.height;
+  const ctx = canvas.getContext('2d');
+
+  await page.render({ canvasContext: ctx, viewport }).promise;
+
+  // Convertir canvas en base64 JPEG
+  const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
+  return dataUrl.split(',')[1];
+}
+
+function showPhotoModal(bodyHtml, title, showClose) {
+  let modal = document.getElementById('tim-photo-modal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'tim-photo-modal';
+    modal.className = 'modal-backdrop';
+    modal.innerHTML = `
+      <div class="modal" style="max-width:560px">
+        <div class="modal-header">
+          <span class="modal-title" id="tim-photo-modal-title"></span>
+          <button class="modal-close" id="tim-photo-modal-close" style="display:none">✕</button>
+        </div>
+        <div class="modal-body" id="tim-photo-modal-body"></div>
+        <div class="modal-footer" id="tim-photo-modal-footer"></div>
+      </div>`;
+    document.body.appendChild(modal);
+    document.getElementById('tim-photo-modal-close')?.addEventListener('click', () => {
+      modal.classList.remove('is-open');
+    });
+    modal.addEventListener('click', e => {
+      if (e.target === modal) modal.classList.remove('is-open');
+    });
+  }
+  document.getElementById('tim-photo-modal-title').textContent = title;
+  document.getElementById('tim-photo-modal-body').innerHTML = bodyHtml;
+  document.getElementById('tim-photo-modal-footer').innerHTML = '';
+  const closeBtn = document.getElementById('tim-photo-modal-close');
+  if (closeBtn) closeBtn.style.display = showClose ? '' : 'none';
+  modal.classList.add('is-open');
+}
+
+function showValidationModal(results, session, confidence, notes) {
+  const confidenceLabel = { high: '🟢 Haute', medium: '🟡 Moyenne', low: '🔴 Faible' }[confidence] || '?';
+
+  // Croiser avec les participants pour afficher les noms
+  const rows = results.map(r => {
+    const p = participants.find(p => p.carNumber == r.carNumber);
+    const name = p ? `${p.firstName} ${p.lastName}` : '⚠️ Non trouvé';
+    const timeDisplay = r.time || (r.status ? `<span class="badge badge-${r.status === 'DNF' ? 'dnf' : 'dns'}">${r.status}</span>` : '—');
+    return { ...r, name, timeDisplay, found: !!p };
+  });
+
+  const bodyHtml = `
+    <div class="photo-confidence">
+      Confiance : ${confidenceLabel}
+      ${notes ? `<span class="text-muted" style="font-size:0.78rem"> — ${escHtml(notes)}</span>` : ''}
+    </div>
+    <div class="table-wrap" style="margin-top:var(--sp-md)">
+      <table>
+        <thead><tr>
+          <th class="center">N°</th>
+          <th>Pilote</th>
+          <th class="right">Temps extrait</th>
+          <th class="center">Importer</th>
+        </tr></thead>
+        <tbody>
+          ${rows.map((r, i) => `
+            <tr class="${!r.found ? 'photo-row-notfound' : ''}">
+              <td class="center"><span class="tim-num">${escHtml(r.carNumber)}</span></td>
+              <td>${escHtml(r.name)}</td>
+              <td class="right">${r.timeDisplay}</td>
+              <td class="center">
+                ${r.found && (r.time || r.status)
+                  ? `<input type="checkbox" class="photo-check" data-idx="${i}" checked style="width:18px;height:18px;accent-color:var(--clr-accent)">`
+                  : '<span class="text-muted">—</span>'}
+              </td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+    <div style="font-size:0.8rem;color:var(--clr-text-3);margin-top:var(--sp-sm)">
+      Décochez les lignes à ne pas importer. Les temps existants seront écrasés.
+    </div>
+  `;
+
+  showPhotoModal(bodyHtml, `📸 Résultats reconnus — ${rows.length} pilote(s)`, true);
+
+  // Ajouter boutons dans le footer
+  const footer = document.getElementById('tim-photo-modal-footer');
+  footer.innerHTML = `
+    <button class="btn btn-secondary" id="tim-photo-cancel">Annuler</button>
+    <button class="btn btn-primary" id="tim-photo-confirm">✅ Importer les résultats cochés</button>
+  `;
+
+  document.getElementById('tim-photo-cancel')?.addEventListener('click', () => {
+    document.getElementById('tim-photo-modal').classList.remove('is-open');
+  });
+
+  document.getElementById('tim-photo-confirm')?.addEventListener('click', async () => {
+    const checked = [...document.querySelectorAll('.photo-check:checked')]
+      .map(cb => rows[parseInt(cb.dataset.idx)])
+      .filter(r => r.found);
+
+    const btn = document.getElementById('tim-photo-confirm');
+    btn.disabled = true;
+    btn.textContent = '⏳ Import…';
+
+    let count = 0;
+    for (const r of checked) {
+      const p = participants.find(p => p.carNumber == r.carNumber);
+      if (!p) continue;
+
+      if (r.status) {
+        await saveResult(p.driverId, null, r.status);
+      } else if (r.time) {
+        const { msToDisplay: _, inputToMs, parseTimeString } = await import('./utils.js');
+        const ms = parseTimeString(r.time);
+        if (ms && ms > 0) {
+          await saveResult(p.driverId, ms, null);
+          count++;
+        }
+      }
+    }
+
+    document.getElementById('tim-photo-modal').classList.remove('is-open');
+    toast(`${count} temps importé(s) depuis la photo ✓`, 'success', 4000);
+  });
+}
 
 // ─────────────────────────────────────────────────────────
 // GRILLES DE DÉPART
