@@ -404,6 +404,22 @@ function renderTimingTable() {
     if (badgeEl) badgeEl.innerHTML = `<span class="badge badge-${session.type.toLowerCase()}">${typeLabel}</span>`;
     if (nameEl)  nameEl.textContent = session.label;
     if (toursEl) toursEl.textContent = `· ${session.tours} tour${session.tours > 1 ? 's' : ''}`;
+
+    // Bouton Grille pour MQ, DF, FIN
+    const showGrid = ['MQ','DF','FIN'].includes(session.type);
+    let gridBtn = document.getElementById('tim-grid-btn');
+    if (!gridBtn && showGrid) {
+      gridBtn = document.createElement('button');
+      gridBtn.id = 'tim-grid-btn';
+      gridBtn.className = 'btn btn-secondary btn-sm';
+      gridBtn.textContent = '📋 Grille';
+      banner.appendChild(gridBtn);
+    } else if (gridBtn && !showGrid) {
+      gridBtn.remove();
+    }
+    if (gridBtn) {
+      gridBtn.onclick = () => showStartingGrid(session);
+    }
   }
 
   // Séparer chronométrés / non chronométrés
@@ -920,6 +936,103 @@ function injectStyles() {
     @media (max-width: 800px) {
       .tim-mobile-toggle { display: flex; }
     }
+
+    /* Grille de départ */
+    .grid-serie {
+      margin-bottom: var(--sp-lg);
+    }
+    .grid-serie-title {
+      font-family: var(--font-condensed);
+      font-size: 0.75rem;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--clr-text-3);
+      margin-bottom: var(--sp-sm);
+      padding-bottom: var(--sp-xs);
+      border-bottom: 1px solid var(--clr-border);
+    }
+    .grid-row {
+      display: flex;
+      align-items: center;
+      gap: var(--sp-sm);
+      padding: 8px var(--sp-sm);
+      border-radius: var(--r-sm);
+      transition: background var(--tr-fast);
+    }
+    .grid-row:hover { background: var(--clr-surface); }
+    .grid-pos {
+      min-width: 24px;
+      font-family: var(--font-display);
+      font-size: 0.8rem;
+      font-weight: 700;
+      color: var(--clr-text-3);
+      text-align: center;
+    }
+    .grid-num {
+      min-width: 42px;
+      text-align: center;
+      font-family: var(--font-display);
+      font-size: 0.85rem;
+      font-weight: 700;
+      color: var(--clr-accent-2);
+      background: var(--clr-bg-3);
+      border: 1px solid var(--clr-border-2);
+      border-radius: var(--r-sm);
+      padding: 3px 6px;
+    }
+    .grid-name { flex: 1; font-size: 0.92rem; }
+    .grid-name strong { font-weight: 600; }
+    .grid-name-sm { font-size: 0.78rem; color: var(--clr-text-2); font-weight: 600; margin-top: 2px; }
+    .grid-pole {
+      background: var(--clr-accent-dim);
+      border: 1px solid var(--clr-accent);
+      color: var(--clr-accent);
+      font-family: var(--font-condensed);
+      font-size: 0.65rem;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      padding: 2px 6px;
+      border-radius: 20px;
+    }
+
+    /* Grille DF/Finale : layout visuel */
+    .grid-line-row {
+      display: flex;
+      justify-content: center;
+      gap: var(--sp-md);
+      padding: var(--sp-sm) 0;
+    }
+    .grid-line-slot {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 4px;
+      padding: var(--sp-sm);
+      background: var(--clr-surface);
+      border: 1px solid var(--clr-border);
+      border-radius: var(--r-md);
+      min-width: 80px;
+      text-align: center;
+    }
+    .grid-line-slot--pole {
+      border-color: var(--clr-accent);
+      background: var(--clr-accent-dim);
+    }
+    .grid-line-slot .grid-num {
+      font-size: 1rem;
+      min-width: unset;
+      width: 44px;
+    }
+    .grid-note {
+      font-size: 0.82rem;
+      color: var(--clr-warning);
+      background: var(--clr-warning-dim);
+      border: 1px solid var(--clr-warning);
+      border-radius: var(--r-md);
+      padding: var(--sp-sm) var(--sp-md);
+      margin-bottom: var(--sp-md);
+    }
   `;
   document.head.appendChild(style);
 }
@@ -927,6 +1040,164 @@ function injectStyles() {
 // ─────────────────────────────────────────────────────────
 // INIT
 // ─────────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────
+// GRILLES DE DÉPART
+// ─────────────────────────────────────────────────────────
+
+async function showStartingGrid(session) {
+  const { collection, query, where, getDocs } = await import(
+    'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
+  );
+
+  let gridHtml = '';
+  const label = session.type === 'MQ' ? `Manche qualificative ${session.num}`
+    : session.type === 'DF' ? `Demi-finale ${session.num}`
+    : 'Finale';
+
+  // ── MQ : séries de 5, meilleurs en dernière série ──────
+  if (session.type === 'MQ') {
+    const total = participants.length;
+
+    /**
+     * Calcule la taille de chaque série selon le règlement FFSA :
+     * - Min 3 pilotes par série, max 5
+     * - Les meilleurs toujours en dernière série
+     * - Récursif : dernière série = 5, puis on récurse sur n-5
+     */
+    function computeSeries(n) {
+      if (n <= 5) return [n];
+      if (n <= 10) {
+        const first = Math.floor(n / 2);
+        return [first, n - first];
+      }
+      return [...computeSeries(n - 5), 5];
+    }
+
+    const seriesSizes = computeSeries(total);
+
+    // Construire les séries à partir de participants (déjà triés du moins bon au meilleur)
+    const series = [];
+    let cursor = 0;
+    for (const size of seriesSizes) {
+      series.push(participants.slice(cursor, cursor + size));
+      cursor += size;
+    }
+
+    gridHtml = series.map((serie, si) => {
+      // Dans chaque série, le mieux classé (dernier dans le tableau trié
+      // du moins bon au meilleur) obtient la pole → on inverse l'affichage
+      const serieDisplayed = [...serie].reverse();
+      return `
+        <div class="grid-serie">
+          <div class="grid-serie-title">
+            Série ${si + 1}${si === series.length - 1 ? ' — <span class="text-accent">Meilleurs qualifiés</span>' : ''}
+          </div>
+          ${serieDisplayed.map((p, pi) => `
+            <div class="grid-row">
+              <span class="grid-pos">${pi + 1}</span>
+              <span class="grid-num">${escHtml(p.carNumber)}</span>
+              <span class="grid-name">${escHtml(p.firstName)} <strong>${escHtml(p.lastName)}</strong></span>
+              ${pi === 0 ? '<span class="grid-pole">POLE</span>' : ''}
+            </div>
+          `).join('')}
+        </div>
+      `;
+    }).join('');
+  }
+
+  // ── DF et Finale : grille 3 lignes (3-2-3) ────────────
+  if (session.type === 'DF' || session.type === 'FIN') {
+    // Récupérer l'ordre depuis le classement intermédiaire (DF) ou résultats DF (Finale)
+    let orderedPilots = [...participants];
+
+    if (session.type === 'DF') {
+      // Trier par classement intermédiaire
+      const intSnap = await getDocs(query(
+        collection(db, 'interimStandings'),
+        where('meetingId', '==', selectedMeetingId),
+        where('category',  '==', selectedCategory)
+      ));
+      const intMap = {};
+      intSnap.docs.forEach(d => { intMap[d.data().driverId] = d.data().position ?? 99; });
+      orderedPilots.sort((a, b) => (intMap[a.driverId] ?? 99) - (intMap[b.driverId] ?? 99));
+    }
+
+    if (session.type === 'FIN') {
+      // Trier par résultats DF (points décroissants)
+      const df1 = allSessions.find(s => s.type === 'DF' && s.num === 1);
+      const df2 = allSessions.find(s => s.type === 'DF' && s.num === 2);
+      const dfPtsMap = {};
+      for (const df of [df1, df2].filter(Boolean)) {
+        const snap = await getDocs(query(collection(db,'results'), where('sessionId','==',df.id)));
+        snap.docs.forEach(d => {
+          const r = d.data();
+          dfPtsMap[r.driverId] = (dfPtsMap[r.driverId] ?? 0) + (r.points ?? 0);
+        });
+      }
+      orderedPilots.sort((a, b) => (dfPtsMap[b.driverId] ?? 0) - (dfPtsMap[a.driverId] ?? 0));
+    }
+
+    // Grille 3 lignes : 3-2-3 (8 pilotes max)
+    // Ligne 1 : pos 1, 2, 3 → places 1, 3, 5
+    // Ligne 2 : pos 4, 5   → places 2, 4
+    // Ligne 3 : pos 6, 7, 8 → places 6, 7, 8
+    const lines = [
+      { label: '1ère ligne', pilots: [orderedPilots[0], orderedPilots[2], orderedPilots[4]].filter(Boolean) },
+      { label: '2ème ligne', pilots: [orderedPilots[1], orderedPilots[3]].filter(Boolean) },
+      { label: '3ème ligne', pilots: [orderedPilots[5], orderedPilots[6], orderedPilots[7]].filter(Boolean) },
+    ];
+
+    gridHtml = `
+      <div class="grid-note">
+        ⭐ Le pilote en pole position choisit librement sa place sur la 1ère ligne
+      </div>
+      ${lines.map(line => `
+        <div class="grid-serie">
+          <div class="grid-serie-title">${line.label}</div>
+          <div class="grid-line-row">
+            ${line.pilots.map((p, pi) => `
+              <div class="grid-line-slot ${pi === 0 && line.label === '1ère ligne' ? 'grid-line-slot--pole' : ''}">
+                <div class="grid-num">${escHtml(p.carNumber)}</div>
+                <div class="grid-name-sm">${escHtml(p.lastName)}</div>
+                ${pi === 0 && line.label === '1ère ligne' ? '<div class="grid-pole">POLE</div>' : ''}
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      `).join('')}
+    `;
+  }
+
+  // Afficher dans une modale
+  let modal = document.getElementById('tim-grid-modal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'tim-grid-modal';
+    modal.className = 'modal-backdrop';
+    modal.innerHTML = `
+      <div class="modal" style="max-width:500px">
+        <div class="modal-header">
+          <span class="modal-title" id="tim-grid-title"></span>
+          <button class="modal-close" id="tim-grid-close">✕</button>
+        </div>
+        <div class="modal-body" id="tim-grid-body"></div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" id="tim-grid-print">🖨️ Imprimer</button>
+          <button class="btn btn-primary" id="tim-grid-close2">Fermer</button>
+        </div>
+      </div>`;
+    document.body.appendChild(modal);
+    document.getElementById('tim-grid-close')?.addEventListener('click',  () => modal.classList.remove('is-open'));
+    document.getElementById('tim-grid-close2')?.addEventListener('click', () => modal.classList.remove('is-open'));
+    modal.addEventListener('click', e => { if (e.target === modal) modal.classList.remove('is-open'); });
+    document.getElementById('tim-grid-print')?.addEventListener('click', () => window.print());
+  }
+
+  document.getElementById('tim-grid-title').textContent = `Grille de départ — ${label}`;
+  document.getElementById('tim-grid-body').innerHTML = gridHtml || '<p class="text-muted">Aucun pilote assigné à cette session.</p>';
+  modal.classList.add('is-open');
+}
 
 export function initTiming() {
   injectStyles();

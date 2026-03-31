@@ -159,13 +159,31 @@ async function removeParticipant(sessionId, driverId) {
   const { collection, query, where, getDocs, deleteDoc } = await import(
     'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
   );
-  const q = query(
+
+  // Supprimer le participant
+  const qPart = query(
     collection(db, 'sessionParticipants'),
     where('sessionId', '==', sessionId),
     where('driverId',  '==', driverId)
   );
-  const snap = await getDocs(q);
-  snap.docs.forEach(d => deleteDoc(d.ref));
+  const snapPart = await getDocs(qPart);
+  for (const d of snapPart.docs) await deleteDoc(d.ref);
+
+  // Supprimer aussi le résultat (temps) associé pour ne pas fausser les classements
+  const qRes = query(
+    collection(db, 'results'),
+    where('sessionId', '==', sessionId),
+    where('driverId',  '==', driverId)
+  );
+  const snapRes = await getDocs(qRes);
+  if (!snapRes.empty) {
+    for (const d of snapRes.docs) await deleteDoc(d.ref);
+    // Informer que le temps a aussi été supprimé
+    const session = allSessions.find(s => s.id === sessionId);
+    if (session?.type === 'DF' || session?.type === 'FIN') {
+      toast('Pilote retiré — son temps a aussi été supprimé', 'warning', 4000);
+    }
+  }
 }
 
 async function getParticipantsData(sessionId) {
@@ -243,6 +261,28 @@ async function autoAssignDemis() {
     toast(`Classement intermédiaire chargé — ${ranked.length} pilotes`, 'info', 2000);
   }
 
+  // Vérifier si des temps ont déjà été saisis en DF
+  const { getDocs: gd0, query: q0, where: w0, collection: c0 } = await import(
+    'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
+  );
+  const df1ResultsSnap = await gd0(q0(c0(db, 'results'), w0('sessionId', '==', df1.id)));
+  const df2ResultsSnap = await gd0(q0(c0(db, 'results'), w0('sessionId', '==', df2.id)));
+  const hasTimedResults = !df1ResultsSnap.empty || !df2ResultsSnap.empty;
+  const df1Count = sessionParticipants[df1.id]?.size || 0;
+  const df2Count = sessionParticipants[df2.id]?.size || 0;
+  const hasExisting = df1Count > 0 || df2Count > 0;
+
+  if (hasTimedResults) {
+    // Cas critique : des temps ont déjà été saisis
+    const totalTimes = df1ResultsSnap.size + df2ResultsSnap.size;
+    const msg = `⚠️ ATTENTION — Des temps ont déjà été saisis en demi-finale !\n\n• DF1 : ${df1ResultsSnap.size} temps saisi(s)\n• DF2 : ${df2ResultsSnap.size} temps saisi(s)\n\nAuto DF va supprimer TOUS ces temps et réassigner les pilotes.\n\nCette action est irréversible. Continuer quand même ?`;
+    if (!window.confirm(msg)) return;
+  } else if (hasExisting) {
+    // Cas normal : pilotes assignés mais pas encore chronométrés
+    const msg = `⚡ Auto DF va réassigner toutes les demi-finales.\n\nActuellement :\n• DF1 : ${df1Count} pilote(s)\n• DF2 : ${df2Count} pilote(s)\n\nContinuer ?`;
+    if (!window.confirm(msg)) return;
+  }
+
   // Prendre les 16 premiers
   const top16 = ranked.slice(0, 16);
 
@@ -256,11 +296,20 @@ async function autoAssignDemis() {
     'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
   );
   const clearDf = async (sessionId) => {
-    const snap = await fgd(fq(fc(db, 'sessionParticipants'), fw('sessionId', '==', sessionId)));
-    if (snap.empty) return;
-    const batch = fwb(db);
-    snap.docs.forEach(d => batch.delete(d.ref));
-    await batch.commit();
+    // Supprimer les participants
+    const snapPart = await fgd(fq(fc(db, 'sessionParticipants'), fw('sessionId', '==', sessionId)));
+    if (!snapPart.empty) {
+      const batchPart = fwb(db);
+      snapPart.docs.forEach(d => batchPart.delete(d.ref));
+      await batchPart.commit();
+    }
+    // Supprimer aussi les résultats (temps) pour ne pas polluer les classements
+    const snapRes = await fgd(fq(fc(db, 'results'), fw('sessionId', '==', sessionId)));
+    if (!snapRes.empty) {
+      const batchRes = fwb(db);
+      snapRes.docs.forEach(d => batchRes.delete(d.ref));
+      await batchRes.commit();
+    }
   };
   await clearDf(df1.id);
   await clearDf(df2.id);
@@ -356,16 +405,42 @@ async function autoAssignFinale() {
 
   const finalistes = [...top4df1, ...top4df2];
 
-  // Vider la finale depuis Firestore (pas le cache)
-  const finSnap = await getDocs(query(
+  // Vérifier si des temps ont déjà été saisis en Finale
+  const finResultsSnap = await getDocs(query(
+    collection(db, 'results'),
+    where('sessionId', '==', fin.id)
+  ));
+  const finPartSnap = await getDocs(query(
     collection(db, 'sessionParticipants'),
     where('sessionId', '==', fin.id)
   ));
-  if (!finSnap.empty) {
-    const batch = writeBatch(db);
-    finSnap.docs.forEach(d => batch.delete(d.ref));
-    await batch.commit();
+  const names = finalistes.map(d => `#${d.carNumber} ${d.lastName}`).join(', ');
+
+  if (!finResultsSnap.empty) {
+    // Cas critique : des temps de finale ont déjà été saisis
+    const msg = `⚠️ ATTENTION — Des temps ont déjà été saisis en Finale !\n\n${finResultsSnap.size} résultat(s) seront supprimés.\n\nAuto Finale va remplacer par :\n${names}\n\nCette action est irréversible. Continuer quand même ?`;
+    if (!window.confirm(msg)) return;
+  } else if (!finPartSnap.empty) {
+    // Cas normal : pilotes assignés mais pas encore chronométrés
+    const msg = `⚡ Auto Finale va assigner ${finalistes.length} pilote(s) :\n${names}\n\nLa finale actuelle (${finPartSnap.size} pilote(s)) sera remplacée.\n\nContinuer ?`;
+    if (!window.confirm(msg)) return;
   }
+
+  // Vider la finale depuis Firestore — participants ET résultats
+  const clearSession = async (sessionId) => {
+    for (const col of ['sessionParticipants', 'results']) {
+      const snap = await getDocs(query(
+        collection(db, col),
+        where('sessionId', '==', sessionId)
+      ));
+      if (!snap.empty) {
+        const batch = writeBatch(db);
+        snap.docs.forEach(d => batch.delete(d.ref));
+        await batch.commit();
+      }
+    }
+  };
+  await clearSession(fin.id);
 
   // Ajouter les finalistes
   for (const d of finalistes) {
@@ -962,12 +1037,25 @@ async function renderFinaleStandings(panel, session, assignedParticipants) {
     pairs.push({ rank: i + 1, first, second });
   }
 
-  // Remplaçants : fusionner DF1 et DF2, trier par points puis intermédiaire
+  // Remplaçants : fusionner DF1 et DF2
+  // Tri : points TOTAUX du meeting (points intermédiaires + points DF) décroissants
+  // Puis classement intermédiaire en cas d'égalité
+  const getInterimPoints = (driverId) => {
+    const doc = interimSnap.docs.find(d => d.data().driverId === driverId);
+    return doc?.data()?.interimPoints ?? 0;
+  };
+
   const allReplacements = [
     ...df1Replacements.map(r => ({ ...r, dfNum: 1 })),
     ...df2Replacements.map(r => ({ ...r, dfNum: 2 })),
-  ].sort((a, b) => {
-    if ((b.points ?? 0) !== (a.points ?? 0)) return (b.points ?? 0) - (a.points ?? 0);
+  ].map(r => ({
+    ...r,
+    totalMeetingPoints: (r.points ?? 0) + getInterimPoints(r.driverId),
+  })).sort((a, b) => {
+    // 1. Total meeting décroissant
+    if (b.totalMeetingPoints !== a.totalMeetingPoints)
+      return b.totalMeetingPoints - a.totalMeetingPoints;
+    // 2. Classement intermédiaire croissant (meilleur = plus petit numéro)
     return (interimMap[a.driverId] ?? 999) - (interimMap[b.driverId] ?? 999);
   });
 
@@ -1041,6 +1129,9 @@ async function renderFinaleStandings(panel, session, assignedParticipants) {
           <div class="ses-fin-pair-pilots">
             ${pilotCard(d, d.dfNum)}
           </div>
+          <span class="ses-fin-total-pts">
+            ${d.totalMeetingPoints} <span style="font-size:0.68rem;color:var(--clr-text-3)">pts total</span>
+          </span>
         </div>
       `).join('')}
     ` : ''}
@@ -1307,6 +1398,14 @@ function injectStyles() {
       border-color: rgba(30,215,96,0.2);
     }
     .ses-fin-empty { color: var(--clr-text-3); font-size: 0.82rem; padding: 6px; }
+    .ses-fin-total-pts {
+      font-family: var(--font-display);
+      font-size: 0.85rem;
+      font-weight: 700;
+      color: var(--clr-accent-2);
+      flex-shrink: 0;
+      align-self: center;
+    }
     .ses-fin-interim {
       font-size: 0.72rem;
       color: var(--clr-text-3);
