@@ -14,6 +14,8 @@ import { msToDisplay, inputToMs, msToFields, escHtml } from './utils.js';
 // ÉTAT LOCAL
 // ─────────────────────────────────────────────────────────
 
+let _autoSaveInterimTimer = null; // debounce recalcul intermédiaire
+
 let allMeetings    = [];
 let allSessions    = [];
 let participants   = [];   // pilotes assignés à la session sélectionnée
@@ -275,9 +277,160 @@ async function saveResult(driverId, ms, status, manualPosition = null) {
     } else {
       await addDoc(collection(db, 'results'), { ...data, createdAt: new Date() });
     }
+    // Recalcul automatique en arrière-plan (debounce 3s)
+    // Uniquement pour les sessions EC et MQ qui impactent le classement intermédiaire
+    if (['EC','MQ'].includes(data.sessionType)) {
+      scheduleInterimAutoSave();
+    }
   } catch (err) {
     console.error(err);
     toast('Erreur lors de la sauvegarde', 'error');
+  }
+}
+
+/**
+ * Lance un recalcul + sauvegarde du classement intermédiaire en arrière-plan.
+ * Debounce 3s : si plusieurs temps saisis rapidement, ne recalcule qu'une fois.
+ * Fire and forget — ne bloque pas la saisie.
+ */
+function scheduleInterimAutoSave() {
+  if (_autoSaveInterimTimer) clearTimeout(_autoSaveInterimTimer);
+  _autoSaveInterimTimer = setTimeout(() => {
+    autoSaveInterimStandings(); // fire and forget
+  }, 3000);
+}
+
+async function autoSaveInterimStandings() {
+  if (!db || !selectedMeetingId || !selectedCategory) return;
+
+  const { collection, query, where, getDocs, addDoc, writeBatch } = await import(
+    'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
+  );
+
+  try {
+    const mqSessions = allSessions.filter(s => s.type === 'MQ').sort((a,b) => a.num - b.num);
+    const ecSession  = allSessions.find(s => s.type === 'EC');
+    if (mqSessions.length === 0) return;
+
+    // ── Points MQ par pilote ───────────────────────────
+    function mqPts(pos, total) {
+      if (pos === 1) return 50;
+      if (pos === 2) return 45;
+      if (pos === 3) return 42;
+      if (pos >= 4)  return Math.max(0, 44 - pos);
+      return 0;
+    }
+
+    const driverMap = {}; // driverId → { info, mqPoints:{}, mqPos:{}, mqCount, ecBonus }
+
+    for (const mq of mqSessions) {
+      const [resSnap, partSnap] = await Promise.all([
+        getDocs(query(collection(db,'results'),            where('sessionId','==',mq.id))),
+        getDocs(query(collection(db,'sessionParticipants'),where('sessionId','==',mq.id))),
+      ]);
+      const participants = partSnap.docs.map(d => d.data());
+      const resultMap    = {};
+      resSnap.docs.forEach(d => { resultMap[d.data().driverId] = d.data(); });
+
+      const totalEngaged = participants.length;
+      const finished = participants
+        .map(p => ({ ...p, ...resultMap[p.driverId] }))
+        .filter(r => r.ms && !r.status)
+        .sort((a,b) => a.ms - b.ms);
+      const lastPos = mqPts(totalEngaged, totalEngaged);
+
+      let pos = 1;
+      participants.forEach(p => {
+        const r = resultMap[p.driverId] || {};
+        if (!driverMap[p.driverId]) driverMap[p.driverId] = {
+          driverId: p.driverId, carNumber: p.carNumber,
+          firstName: p.firstName, lastName: p.lastName,
+          mqPoints: {}, mqPos: {}, mqCount: 0, ecBonus: 0,
+        };
+        const d = driverMap[p.driverId];
+        let pts = 0;
+        if (r.ms && !r.status) {
+          const p2 = finished.findIndex(f => f.driverId === p.driverId) + 1;
+          pts = mqPts(p2, totalEngaged);
+          d.mqCount++;
+        } else if (r.status === 'DNF')      { pts = Math.max(0, lastPos - 1); }
+        else if (r.status === 'DSQ_RACE')   { pts = Math.max(0, lastPos - 3); }
+        else if (r.status === 'DNS' || r.status === 'DSQ') { pts = 0; }
+        else { return; } // pas encore saisi
+        d.mqPoints[mq.num] = pts;
+      });
+    }
+
+    // ── Bonus EC ───────────────────────────────────────
+    if (ecSession) {
+      const ecRes = await getDocs(query(collection(db,'results'), where('sessionId','==',ecSession.id)));
+      const ecSorted = ecRes.docs.map(d => d.data()).filter(r => r.ms).sort((a,b) => a.ms - b.ms);
+      ecSorted.slice(0, 5).forEach((r, i) => {
+        if (driverMap[r.driverId]) driverMap[r.driverId].ecBonus = 5 - i;
+      });
+    }
+
+    // ── Calcul total + filtre min 2 MQ ────────────────
+    const eligible = Object.values(driverMap)
+      .filter(d => d.mqCount >= 2)
+      .map(d => ({
+        ...d,
+        totalMqPoints: Object.values(d.mqPoints).reduce((s,p) => s+p, 0),
+        totalPoints:   Object.values(d.mqPoints).reduce((s,p) => s+p, 0) + d.ecBonus,
+      }))
+      .sort((a, b) => {
+        if (b.totalPoints !== a.totalPoints) return b.totalPoints - a.totalPoints;
+        for (let n = mqSessions.length; n >= 1; n--) {
+          const pa = a.mqPoints[n] ?? -1, pb = b.mqPoints[n] ?? -1;
+          if (pb !== pa) return pb - pa;
+        }
+        return 0;
+      });
+
+    let pos = 1;
+    eligible.forEach((d, i) => {
+      if (i > 0 && d.totalPoints === eligible[i-1].totalPoints) {
+        d.position = eligible[i-1].position;
+      } else { d.position = pos; }
+      pos = i + 2;
+      d.interimPoints = Math.max(0, 17 - d.position);
+    });
+
+    if (eligible.length === 0) return;
+
+    // ── Sauvegarde Firestore ───────────────────────────
+    // Vider l'ancien classement
+    const oldSnap = await getDocs(query(
+      collection(db,'interimStandings'),
+      where('meetingId','==',selectedMeetingId),
+      where('category', '==',selectedCategory)
+    ));
+    if (!oldSnap.empty) {
+      const batch = writeBatch(db);
+      oldSnap.docs.forEach(d => batch.delete(d.ref));
+      await batch.commit();
+    }
+    // Écrire le nouveau
+    for (const d of eligible) {
+      await addDoc(collection(db,'interimStandings'), {
+        meetingId:     selectedMeetingId,
+        category:      selectedCategory,
+        year:          selectedYear,
+        driverId:      d.driverId,
+        carNumber:     d.carNumber,
+        firstName:     d.firstName,
+        lastName:      d.lastName,
+        position:      d.position,
+        totalPoints:   d.totalPoints,
+        interimPoints: d.interimPoints,
+        mqPoints:      d.mqPoints,
+        ecBonus:       d.ecBonus,
+        updatedAt:     new Date(),
+      });
+    }
+    console.log(`[Auto] Classement intermédiaire mis à jour — ${eligible.length} pilotes`);
+  } catch (e) {
+    console.warn('[Auto] Erreur intermédiaire:', e);
   }
 }
 
@@ -1047,6 +1200,15 @@ function injectStyles() {
       min-width: unset;
       width: 44px;
     }
+    .grid-couloir {
+      font-family: var(--font-condensed);
+      font-size: 0.65rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      color: var(--clr-text-3);
+      text-transform: uppercase;
+    }
+    .grid-line-slot--pole .grid-couloir { color: var(--clr-accent); }
     .grid-note {
       font-size: 0.82rem;
       color: var(--clr-warning);
@@ -1433,11 +1595,9 @@ async function showStartingGrid(session) {
 
   // ── DF et Finale : grille 3 lignes (3-2-3) ────────────
   if (session.type === 'DF' || session.type === 'FIN') {
-    // Récupérer l'ordre depuis le classement intermédiaire (DF) ou résultats DF (Finale)
     let orderedPilots = [...participants];
 
     if (session.type === 'DF') {
-      // Trier par classement intermédiaire
       const intSnap = await getDocs(query(
         collection(db, 'interimStandings'),
         where('meetingId', '==', selectedMeetingId),
@@ -1449,7 +1609,6 @@ async function showStartingGrid(session) {
     }
 
     if (session.type === 'FIN') {
-      // Trier par résultats DF (points décroissants)
       const df1 = allSessions.find(s => s.type === 'DF' && s.num === 1);
       const df2 = allSessions.find(s => s.type === 'DF' && s.num === 2);
       const dfPtsMap = {};
@@ -1463,34 +1622,82 @@ async function showStartingGrid(session) {
       orderedPilots.sort((a, b) => (dfPtsMap[b.driverId] ?? 0) - (dfPtsMap[a.driverId] ?? 0));
     }
 
-    // Grille 3 lignes : 3-2-3 (8 pilotes max)
-    // Ligne 1 : pos 1, 2, 3 → places 1, 3, 5
-    // Ligne 2 : pos 4, 5   → places 2, 4
-    // Ligne 3 : pos 6, 7, 8 → places 6, 7, 8
-    const lines = [
-      { label: '1ère ligne', pilots: [orderedPilots[0], orderedPilots[2], orderedPilots[4]].filter(Boolean) },
-      { label: '2ème ligne', pilots: [orderedPilots[1], orderedPilots[3]].filter(Boolean) },
-      { label: '3ème ligne', pilots: [orderedPilots[5], orderedPilots[6], orderedPilots[7]].filter(Boolean) },
+    // Récupérer le côté de pole du meeting
+    const meeting = allMeetings.find(m => m.id === selectedMeetingId);
+    const poleSide = meeting?.poleSide || 'droite';
+    const poleLabel = poleSide === 'gauche' ? '◀ Côté gauche' : 'Côté droit ▶';
+
+    /**
+     * Disposition réglementaire 3-2-3 sur 5 couloirs :
+     * Ligne 1 : couloirs 1, 3, 5  (le meilleur classé = POLE en couloir 1)
+     * Ligne 2 : couloirs 2, 4
+     * Ligne 3 : couloirs 1, 3, 5
+     * 
+     * Attribution par classement :
+     * 1er → C1 L1 (POLE)
+     * 2nd → C2 L2
+     * 3ème → C3 L1
+     * 4ème → C4 L2
+     * 5ème → C5 L1
+     * 6ème → C1 L3
+     * 7ème → C3 L3
+     * 8ème → C5 L3
+     */
+    // Séquentiel : les 3 premiers sur la L1, les 2 suivants sur L2, les 3 derniers sur L3
+    // Couloirs : L1 et L3 → 1, 3, 5 / L2 → 2, 4
+    const assignments = [
+      { ligne: 1, couloir: 1, pole: true  }, // 1er
+      { ligne: 1, couloir: 3, pole: false }, // 2ème
+      { ligne: 1, couloir: 5, pole: false }, // 3ème
+      { ligne: 2, couloir: 2, pole: false }, // 4ème
+      { ligne: 2, couloir: 4, pole: false }, // 5ème
+      { ligne: 3, couloir: 1, pole: false }, // 6ème
+      { ligne: 3, couloir: 3, pole: false }, // 7ème
+      { ligne: 3, couloir: 5, pole: false }, // 8ème
     ];
+
+    // Construire la grille par ligne
+    const grid = { 1: [], 2: [], 3: [] };
+    orderedPilots.slice(0, 8).forEach((p, i) => {
+      const a = assignments[i];
+      if (a) grid[a.ligne].push({ ...a, pilot: p });
+    });
+    // Trier chaque ligne par couloir
+    [1,2,3].forEach(l => grid[l].sort((a,b) => a.couloir - b.couloir));
+
+    // Si pole à gauche, inverser l'ordre des couloirs dans l'affichage
+    // Pole à droite → C1 s'affiche à droite → on inverse l'ordre d'affichage
+    const reverseForDisplay = poleSide === 'droite';
+    if (reverseForDisplay) {
+      [1,2,3].forEach(l => grid[l].reverse());
+    }
+
+    const lineLabels = { 1: '1ère ligne', 2: '2ème ligne', 3: '3ème ligne' };
 
     gridHtml = `
       <div class="grid-note">
         ⭐ Le pilote en pole position choisit librement sa place sur la 1ère ligne
+        <span style="margin-left:8px;font-size:0.8rem">${poleLabel}</span>
       </div>
-      ${lines.map(line => `
-        <div class="grid-serie">
-          <div class="grid-serie-title">${line.label}</div>
-          <div class="grid-line-row">
-            ${line.pilots.map((p, pi) => `
-              <div class="grid-line-slot ${pi === 0 && line.label === '1ère ligne' ? 'grid-line-slot--pole' : ''}">
-                <div class="grid-num">${escHtml(p.carNumber)}</div>
-                <div class="grid-name-sm">${escHtml(p.lastName)}</div>
-                ${pi === 0 && line.label === '1ère ligne' ? '<div class="grid-pole">POLE</div>' : ''}
-              </div>
-            `).join('')}
+      ${[1,2,3].map(lineNum => {
+        const slots = grid[lineNum];
+        if (slots.length === 0) return '';
+        return `
+          <div class="grid-serie">
+            <div class="grid-serie-title">${lineLabels[lineNum]}</div>
+            <div class="grid-line-row">
+              ${slots.map(s => `
+                <div class="grid-line-slot ${s.pole ? 'grid-line-slot--pole' : ''}">
+                  <div class="grid-couloir">C${s.couloir}</div>
+                  <div class="grid-num">${escHtml(s.pilot.carNumber)}</div>
+                  <div class="grid-name-sm">${escHtml(s.pilot.lastName)}</div>
+                  ${s.pole ? '<div class="grid-pole">POLE</div>' : ''}
+                </div>
+              `).join('')}
+            </div>
           </div>
-        </div>
-      `).join('')}
+        `;
+      }).join('')}
     `;
   }
 

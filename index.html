@@ -56,6 +56,8 @@
       <li><a class="menu-item" data-view="standings"  href="#">🏆 Classements</a></li>
       <li><a class="menu-item" data-view="championship" href="#">🥇 Championnat</a></li>
       <li class="menu-separator"></li>
+      <li><a class="menu-item" data-view="spectator" href="#">📺 Mode Spectateur</a></li>
+      <li class="menu-separator"></li>
       <li><a class="menu-item menu-item--config" data-view="config" href="#">⚙️ Configuration</a></li>
     </ul>
     <div class="menu-footer">
@@ -106,6 +108,10 @@
         <div class="home-card" data-view="championship">
           <div class="home-card-icon">🥇</div>
           <div class="home-card-label">Championnat</div>
+        </div>
+        <div class="home-card" data-view="spectator">
+          <div class="home-card-icon">📺</div>
+          <div class="home-card-label">Spectateur</div>
         </div>
         <div class="home-card home-card--config" data-view="config">
           <div class="home-card-icon">⚙️</div>
@@ -178,6 +184,15 @@
         <div class="placeholder-icon">🥇</div>
         <div class="placeholder-title">Championnat</div>
         <div class="placeholder-desc">Cette vue sera construite à l'étape suivante.</div>
+      </div>
+    </div>
+
+    <!-- VUE : Spectateur -->
+    <div class="view" id="view-spectator" style="display:none">
+      <div class="view-placeholder">
+        <div class="placeholder-icon">📺</div>
+        <div class="placeholder-title">Mode Spectateur</div>
+        <div class="placeholder-desc">Chargement…</div>
       </div>
     </div>
 

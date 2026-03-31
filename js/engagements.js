@@ -94,15 +94,61 @@ async function toggleEngagement(driver) {
   const meeting = allMeetings.find(m => m.id === selectedMeetingId);
 
   if (engagedIds.has(driver.id)) {
-    // Désengager — trouver et supprimer le doc
-    const q = query(
-      collection(db, 'engagements'),
+    // Vérifier si le pilote a des données pour ce meeting
+    const [partSnap, resSnap] = await Promise.all([
+      getDocs(query(collection(db, 'sessionParticipants'),
+        where('meetingId', '==', selectedMeetingId),
+        where('driverId',  '==', driver.id))),
+      getDocs(query(collection(db, 'results'),
+        where('meetingId', '==', selectedMeetingId),
+        where('driverId',  '==', driver.id))),
+    ]);
+
+    const hasSessions = !partSnap.empty;
+    const hasTimes    = !resSnap.empty;
+
+    // Confirmation si des données existent
+    if (hasSessions || hasTimes) {
+      const detail = [
+        hasSessions ? `${partSnap.size} session(s) assignée(s)` : null,
+        hasTimes    ? `${resSnap.size} temps saisi(s)`          : null,
+      ].filter(Boolean).join(', ');
+      const msg = `Retirer ${driver.firstName} ${driver.lastName} de ce meeting ?\n\nSes données seront aussi supprimées : ${detail}\n\nContinuer ?`;
+      if (!window.confirm(msg)) return;
+    }
+
+    // Supprimer engagement
+    const qEng = query(collection(db, 'engagements'),
       where('meetingId', '==', selectedMeetingId),
-      where('driverId',  '==', driver.id)
-    );
-    const snap = await getDocs(q);
-    snap.docs.forEach(d => deleteDoc(d.ref));
-    toast(`${driver.firstName} ${driver.lastName} retiré`, 'warning');
+      where('driverId',  '==', driver.id));
+    const engSnap = await getDocs(qEng);
+    engSnap.docs.forEach(d => deleteDoc(d.ref));
+
+    // Supprimer sessions et temps en cascade
+    const { writeBatch } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
+    if (!partSnap.empty) {
+      const b = writeBatch(db);
+      partSnap.docs.forEach(d => b.delete(d.ref));
+      await b.commit();
+    }
+    if (!resSnap.empty) {
+      const b = writeBatch(db);
+      resSnap.docs.forEach(d => b.delete(d.ref));
+      await b.commit();
+    }
+    // Supprimer aussi les classements intermédiaires et meeting pour ce pilote/meeting
+    for (const col of ['interimStandings', 'meetingStandings']) {
+      const snap = await getDocs(query(collection(db, col),
+        where('meetingId', '==', selectedMeetingId),
+        where('driverId',  '==', driver.id)));
+      if (!snap.empty) {
+        const b = writeBatch(db);
+        snap.docs.forEach(d => b.delete(d.ref));
+        await b.commit();
+      }
+    }
+
+    toast(`${driver.firstName} ${driver.lastName} retiré et données supprimées`, 'warning');
   } else {
     // Engager
     await addDoc(collection(db, 'engagements'), {

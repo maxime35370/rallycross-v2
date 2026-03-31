@@ -13,6 +13,7 @@ const VIEW_TITLES = {
   timing:        'Chronométrage',
   standings:     'Classements',
   championship:  'Championnat',
+  spectator:     '📺 Mode Spectateur',
   config:        'Configuration',
 };
 
@@ -306,10 +307,12 @@ async function loadApp() {
   const { initTiming }     = await import('./timing.js');
   const { initStandings }      = await import('./standings.js');
   const { initChampionship }   = await import('./championship.js');
+  const { initSpectator }      = await import('./spectator.js');
   initSessions();
   initTiming();
   initStandings();
   initChampionship();
+  initSpectator();
 
   // Les prochains modules seront ajoutés ici au fil du développement :
   // const { initTiming } = await import('./timing.js');

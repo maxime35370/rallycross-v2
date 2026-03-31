@@ -284,6 +284,18 @@ function renderView() {
           </div>
 
           <div class="form-group">
+            <label class="form-label">Côté Pole Position</label>
+            <div class="mtg-pole-selector" id="mtg-pole-selector">
+              <button type="button" class="mtg-pole-btn is-active" data-side="droite">
+                ▶ Droite <span class="mtg-pole-hint">1er virage à droite</span>
+              </button>
+              <button type="button" class="mtg-pole-btn" data-side="gauche">
+                ◀ Gauche <span class="mtg-pole-hint">1er virage à gauche</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="form-group">
             <label class="form-label">
               Catégories concernées *
               <span class="text-muted">(au moins une)</span>
@@ -425,6 +437,14 @@ function getSelectedCategories() {
 }
 
 function setNbMQ(n) {
+  // Boutons côté pole
+  document.querySelectorAll('.mtg-pole-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.mtg-pole-btn').forEach(b => b.classList.remove('is-active'));
+      btn.classList.add('is-active');
+    });
+  });
+
   document.querySelectorAll('.mtg-mq-btn').forEach(btn => {
     btn.classList.toggle('is-active', parseInt(btn.dataset.n) === n);
   });
@@ -515,7 +535,8 @@ async function onSave() {
   if (!location)      { toast('Lieu / circuit obligatoire', 'error'); return; }
   if (cats.length === 0) { toast('Sélectionnez au moins une catégorie', 'error'); return; }
 
-  const data = { date, location, year, nbMQ, categories: cats };
+  const poleSide = document.querySelector('.mtg-pole-btn.is-active')?.dataset.side || 'droite';
+  const data = { date, location, year, nbMQ, categories: cats, poleSide };
 
   const btn = document.getElementById('mtg-modal-save');
   btn.disabled = true;
@@ -553,6 +574,14 @@ function bindEvents() {
   });
 
   // Sélecteur nombre MQ
+  // Boutons côté pole
+  document.querySelectorAll('.mtg-pole-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.mtg-pole-btn').forEach(b => b.classList.remove('is-active'));
+      btn.classList.add('is-active');
+    });
+  });
+
   document.querySelectorAll('.mtg-mq-btn').forEach(btn => {
     btn.addEventListener('click', () => setNbMQ(parseInt(btn.dataset.n)));
   });
@@ -584,6 +613,18 @@ function injectStyles() {
     }
 
     /* Sélecteur nb MQ */
+    .mtg-pole-selector { display: flex; gap: var(--sp-sm); margin-top: var(--sp-xs); }
+    .mtg-pole-btn {
+      flex: 1; padding: 10px var(--sp-sm);
+      background: var(--clr-surface); border: 1px solid var(--clr-border-2);
+      border-radius: var(--r-md); color: var(--clr-text-2);
+      font-size: 0.88rem; font-weight: 600; cursor: pointer;
+      transition: all var(--tr-fast); text-align: center;
+    }
+    .mtg-pole-btn.is-active { background: var(--clr-accent-dim); border-color: var(--clr-accent); color: var(--clr-accent-2); }
+    .mtg-pole-hint { display: block; font-size: 0.72rem; color: var(--clr-text-3); font-weight: 400; margin-top: 2px; }
+    .mtg-pole-btn.is-active .mtg-pole-hint { color: var(--clr-accent); }
+
     .mtg-mq-selector {
       display: flex; gap: var(--sp-sm);
     }

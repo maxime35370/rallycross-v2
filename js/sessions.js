@@ -261,6 +261,14 @@ async function autoAssignDemis() {
     toast(`Classement intermédiaire chargé — ${ranked.length} pilotes`, 'info', 2000);
   }
 
+  // Prendre les 16 premiers
+  const top16 = ranked.slice(0, 16);
+
+  // Sessions DF1 et DF2 — déclarées ici pour être disponibles dans les vérifications
+  const df1 = allSessions.find(s => s.type === 'DF' && s.num === 1);
+  const df2 = allSessions.find(s => s.type === 'DF' && s.num === 2);
+  if (!df1 || !df2) { toast('Sessions DF1 et DF2 introuvables', 'error'); return; }
+
   // Vérifier si des temps ont déjà été saisis en DF
   const { getDocs: gd0, query: q0, where: w0, collection: c0 } = await import(
     'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
@@ -272,24 +280,25 @@ async function autoAssignDemis() {
   const df2Count = sessionParticipants[df2.id]?.size || 0;
   const hasExisting = df1Count > 0 || df2Count > 0;
 
+  // Vérifier si la Finale a aussi des données
+  const fin = allSessions.find(s => s.type === 'FIN');
+  const finPartSnap = fin ? await gd0(q0(c0(db, 'sessionParticipants'), w0('sessionId', '==', fin.id))) : null;
+  const finResSnap  = fin ? await gd0(q0(c0(db, 'results'),             w0('sessionId', '==', fin.id))) : null;
+  const finHasData  = !finPartSnap?.empty || !finResSnap?.empty;
+
   if (hasTimedResults) {
-    // Cas critique : des temps ont déjà été saisis
-    const totalTimes = df1ResultsSnap.size + df2ResultsSnap.size;
-    const msg = `⚠️ ATTENTION — Des temps ont déjà été saisis en demi-finale !\n\n• DF1 : ${df1ResultsSnap.size} temps saisi(s)\n• DF2 : ${df2ResultsSnap.size} temps saisi(s)\n\nAuto DF va supprimer TOUS ces temps et réassigner les pilotes.\n\nCette action est irréversible. Continuer quand même ?`;
+    const finaleMsg = finHasData
+      ? `\n\n⚠️ La Finale (${finPartSnap?.size || 0} pilote(s), ${finResSnap?.size || 0} temps) sera aussi vidée car les qualifiés peuvent changer.`
+      : '';
+    const msg = `⚠️ ATTENTION — Des temps ont déjà été saisis en demi-finale !\n\n• DF1 : ${df1ResultsSnap.size} temps saisi(s)\n• DF2 : ${df2ResultsSnap.size} temps saisi(s)\n\nAuto DF va supprimer TOUS ces temps et réassigner les pilotes.${finaleMsg}\n\nCette action est irréversible. Continuer quand même ?`;
     if (!window.confirm(msg)) return;
   } else if (hasExisting) {
-    // Cas normal : pilotes assignés mais pas encore chronométrés
-    const msg = `⚡ Auto DF va réassigner toutes les demi-finales.\n\nActuellement :\n• DF1 : ${df1Count} pilote(s)\n• DF2 : ${df2Count} pilote(s)\n\nContinuer ?`;
+    const finaleMsg = finHasData
+      ? `\n\n⚠️ La Finale sera aussi vidée car les qualifiés peuvent changer.`
+      : '';
+    const msg = `⚡ Auto DF va réassigner toutes les demi-finales.\n\nActuellement :\n• DF1 : ${df1Count} pilote(s)\n• DF2 : ${df2Count} pilote(s)${finaleMsg}\n\nContinuer ?`;
     if (!window.confirm(msg)) return;
   }
-
-  // Prendre les 16 premiers
-  const top16 = ranked.slice(0, 16);
-
-  // Sessions DF1 et DF2
-  const df1 = allSessions.find(s => s.type === 'DF' && s.num === 1);
-  const df2 = allSessions.find(s => s.type === 'DF' && s.num === 2);
-  if (!df1 || !df2) { toast('Sessions DF1 et DF2 introuvables', 'error'); return; }
 
   // Vider les DF existantes — fetch frais depuis Firestore
   const { collection: fc, query: fq, where: fw, getDocs: fgd, deleteDoc: fd, writeBatch: fwb, doc: fdoc } = await import(
@@ -321,7 +330,23 @@ async function autoAssignDemis() {
     await addParticipant(targetSession.id, driver);
   }
 
-  toast(`${top16.length} pilotes répartis en DF1/DF2 ✓`, 'success');
+  // Si la Finale avait des données, la vider aussi (les qualifiés peuvent avoir changé)
+  if (fin && finHasData) {
+    const { collection: fc2, query: fq2, where: fw2, getDocs: fgd2, writeBatch: fwb2 } = await import(
+      'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
+    );
+    for (const col of ['sessionParticipants', 'results']) {
+      const snap = await fgd2(fq2(fc2(db, col), fw2('sessionId', '==', fin.id)));
+      if (!snap.empty) {
+        const batch = fwb2(db);
+        snap.docs.forEach(d => batch.delete(d.ref));
+        await batch.commit();
+      }
+    }
+    toast(`${top16.length} pilotes répartis en DF1/DF2 ✓ — Finale vidée, relancez Auto Finale`, 'success', 5000);
+  } else {
+    toast(`${top16.length} pilotes répartis en DF1/DF2 ✓`, 'success');
+  }
   renderSessionList();
   // Re-render le détail DF si on est dessus
   if (selectedSessionId) {

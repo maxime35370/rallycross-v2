@@ -115,12 +115,34 @@ async function saveDriver(data) {
 
 async function deleteDriver(id) {
   if (!db) return;
-  const { doc, deleteDoc } = await import(
+  const { doc, deleteDoc, collection, query, where, getDocs, writeBatch } = await import(
     'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
   );
   try {
+    // Collections liées à supprimer en cascade
+    const cascadeCollections = [
+      'engagements',
+      'sessionParticipants',
+      'results',
+      'interimStandings',
+      'meetingStandings',
+    ];
+
+    for (const col of cascadeCollections) {
+      const snap = await getDocs(query(
+        collection(db, col),
+        where('driverId', '==', id)
+      ));
+      if (!snap.empty) {
+        const batch = writeBatch(db);
+        snap.docs.forEach(d => batch.delete(d.ref));
+        await batch.commit();
+      }
+    }
+
+    // Supprimer le pilote lui-même
     await deleteDoc(doc(db, 'drivers', id));
-    toast('Pilote supprimé', 'warning');
+    toast('Pilote et toutes ses données supprimés', 'warning');
   } catch (err) {
     console.error(err);
     toast('Erreur lors de la suppression', 'error');
@@ -440,8 +462,191 @@ async function onSave() {
 async function onDelete(id) {
   const driver = allDrivers.find(d => d.id === id);
   if (!driver) return;
-  if (!window.confirm(`Supprimer ${driver.firstName} ${driver.lastName} (N°${driver.carNumber}) ?`)) return;
-  await deleteDriver(id);
+  await showDeleteConfirmModal(driver);
+}
+
+/**
+ * Modale de confirmation de suppression avec détail complet
+ * de toutes les données qui seront supprimées.
+ */
+async function showDeleteConfirmModal(driver) {
+  const { collection, query, where, getDocs, orderBy } = await import(
+    'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
+  );
+
+  // ── Récupérer toutes les données liées ────────────────
+  const [engSnap, partSnap, resSnap, interimSnap, meetingSnap] = await Promise.all([
+    getDocs(query(collection(db, 'engagements'),        where('driverId', '==', driver.id))),
+    getDocs(query(collection(db, 'sessionParticipants'),where('driverId', '==', driver.id))),
+    getDocs(query(collection(db, 'results'),            where('driverId', '==', driver.id))),
+    getDocs(query(collection(db, 'interimStandings'),   where('driverId', '==', driver.id))),
+    getDocs(query(collection(db, 'meetingStandings'),   where('driverId', '==', driver.id))),
+  ]);
+
+  const engagements  = engSnap.docs.map(d => d.data());
+  const participants = partSnap.docs.map(d => d.data());
+  const results      = resSnap.docs.map(d => d.data());
+
+  // ── Récupérer les noms des sessions ──────────────────
+  const sessionIds = [...new Set(participants.map(p => p.sessionId))];
+  const sessionsMap = {};
+  for (const sid of sessionIds) {
+    try {
+      const sSnap = await getDocs(query(
+        collection(db, 'sessions'), where('__name__', '==', sid)
+      ));
+      // Fallback : chercher par ID direct
+      const { doc, getDoc } = await import(
+        'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
+      );
+      const sDoc = await getDoc(doc(db, 'sessions', sid));
+      if (sDoc.exists()) sessionsMap[sid] = sDoc.data();
+    } catch {}
+  }
+
+  // ── Récupérer les noms des meetings ──────────────────
+  const meetingIds = [...new Set(engagements.map(e => e.meetingId))];
+  const meetingsMap = {};
+  for (const mid of meetingIds) {
+    try {
+      const { doc, getDoc } = await import(
+        'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
+      );
+      const mDoc = await getDoc(doc(db, 'meetings', mid));
+      if (mDoc.exists()) meetingsMap[mid] = mDoc.data();
+    } catch {}
+  }
+
+  // ── Grouper les résultats par session ─────────────────
+  const resultsBySession = {};
+  results.forEach(r => {
+    if (!resultsBySession[r.sessionId]) resultsBySession[r.sessionId] = [];
+    resultsBySession[r.sessionId].push(r);
+  });
+
+  // ── Construire le HTML de détail ──────────────────────
+  const SESSION_LABELS = { EC: 'Essais', MQ: 'MQ', DF: 'DF', FIN: 'Finale' };
+
+  const meetingBlocks = meetingIds.map(mid => {
+    const meeting = meetingsMap[mid];
+    const dateStr = meeting?.date ? new Date(meeting.date).toLocaleDateString('fr-FR') : '?';
+    const location = meeting?.location || '?';
+
+    const sessionsForMeeting = participants
+      .filter(p => {
+        const s = sessionsMap[p.sessionId];
+        return s?.meetingId === mid;
+      })
+      .sort((a, b) => {
+        const sa = sessionsMap[a.sessionId];
+        const sb = sessionsMap[b.sessionId];
+        return (sa?.order ?? 99) - (sb?.order ?? 99);
+      });
+
+    const sessionRows = sessionsForMeeting.map(p => {
+      const s = sessionsMap[p.sessionId];
+      const label = s ? `${SESSION_LABELS[s.type] || s.type}${s.num ? s.num : ''}` : '?';
+      const res = resultsBySession[p.sessionId]?.[0];
+      let timeStr = '<span class="text-muted">Pas de temps</span>';
+      if (res?.ms) {
+        const m = Math.floor(res.ms / 60000);
+        const sec = Math.floor((res.ms % 60000) / 1000);
+        const ms = res.ms % 1000;
+        timeStr = `<strong class="text-success">${m}:${String(sec).padStart(2,'0')}.${String(ms).padStart(3,'0')}</strong>`;
+      } else if (res?.status) {
+        timeStr = `<span class="badge badge-${res.status.toLowerCase().replace('_race','')}">${res.status === 'DSQ_RACE' ? 'DSQ EC' : res.status === 'DSQ' ? 'DSQ HC' : res.status}</span>`;
+      }
+      return `
+        <div class="drv-del-session-row">
+          <span class="badge badge-${(s?.type || 'mq').toLowerCase()}">${label}</span>
+          <span>${timeStr}</span>
+        </div>`;
+    }).join('');
+
+    return `
+      <div class="drv-del-meeting">
+        <div class="drv-del-meeting-title">📅 ${dateStr} — ${escHtml(location)}</div>
+        ${sessionsForMeeting.length === 0
+          ? '<div class="text-muted" style="font-size:0.8rem;padding:4px 0">Engagé mais aucune session assignée</div>'
+          : sessionRows}
+      </div>`;
+  }).join('');
+
+  // Impacts sur les classements
+  const hasInterim  = !interimSnap.empty;
+  const hasMeeting  = !meetingSnap.empty;
+  const hasTimes    = results.length > 0;
+
+  const impactHtml = (hasInterim || hasMeeting || hasTimes) ? `
+    <div class="drv-del-impact">
+      <div class="drv-del-impact-title">⚠️ Impacts sur les classements</div>
+      ${hasTimes ? `<div class="drv-del-impact-row">🔄 Les points MQ et le classement intermédiaire devront être recalculés et re-sauvegardés</div>` : ''}
+      ${hasInterim ? `<div class="drv-del-impact-row">🔄 La répartition DF1/DF2 (Auto DF) devra être relancée</div>` : ''}
+      ${hasMeeting ? `<div class="drv-del-impact-row">🔄 Le classement du meeting devra être re-sauvegardé</div>` : ''}
+      ${(hasInterim || hasMeeting) ? `<div class="drv-del-impact-row">🔄 Vérifier les qualifiés Finale et les remplaçants</div>` : ''}
+    </div>
+  ` : '';
+
+  // ── Afficher la modale ────────────────────────────────
+  let modal = document.getElementById('drv-delete-modal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'drv-delete-modal';
+    modal.className = 'modal-backdrop';
+    modal.innerHTML = `
+      <div class="modal" style="max-width:520px">
+        <div class="modal-header">
+          <span class="modal-title" id="drv-del-title"></span>
+          <button class="modal-close" id="drv-del-close">✕</button>
+        </div>
+        <div class="modal-body" id="drv-del-body"></div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary" id="drv-del-cancel">Annuler</button>
+          <button class="btn btn-danger"    id="drv-del-confirm">🗑️ Supprimer définitivement</button>
+        </div>
+      </div>`;
+    document.body.appendChild(modal);
+    document.getElementById('drv-del-close')?.addEventListener('click',  () => modal.classList.remove('is-open'));
+    document.getElementById('drv-del-cancel')?.addEventListener('click', () => modal.classList.remove('is-open'));
+    modal.addEventListener('click', e => { if (e.target === modal) modal.classList.remove('is-open'); });
+  }
+
+  document.getElementById('drv-del-title').textContent =
+    `Supprimer ${driver.firstName} ${driver.lastName} — N°${driver.carNumber}`;
+
+  document.getElementById('drv-del-body').innerHTML = `
+    <div class="drv-del-summary">
+      <span>🏁 ${engagements.length} meeting(s)</span>
+      <span>📋 ${participants.length} session(s)</span>
+      <span>⏱️ ${results.length} temps saisis</span>
+    </div>
+
+    ${meetingIds.length === 0
+      ? '<div class="text-muted" style="padding:var(--sp-md)">Aucune donnée associée à ce pilote.</div>'
+      : meetingBlocks}
+
+    ${impactHtml}
+  `;
+
+  // Brancher le bouton confirmer
+  const confirmBtn = document.getElementById('drv-del-confirm');
+  const newBtn = confirmBtn.cloneNode(true); // retirer les anciens listeners
+  confirmBtn.parentNode.replaceChild(newBtn, confirmBtn);
+  // Reset état du bouton à chaque ouverture
+  newBtn.disabled = false;
+  newBtn.textContent = '🗑️ Supprimer définitivement';
+
+  newBtn.addEventListener('click', async () => {
+    newBtn.disabled = true;
+    newBtn.textContent = '⏳ Suppression…';
+    modal.classList.remove('is-open');
+    await deleteDriver(driver.id);
+    // Reset pour la prochaine utilisation
+    newBtn.disabled = false;
+    newBtn.textContent = '🗑️ Supprimer définitivement';
+  });
+
+  modal.classList.add('is-open');
 }
 
 // ─────────────────────────────────────────────────────────
@@ -584,6 +789,33 @@ function injectStyles() {
 
     /* Compteur */
     .drv-counter { font-size: 0.82rem; margin-left: auto; }
+
+    /* Modale suppression pilote */
+    .drv-del-summary {
+      display: flex; gap: var(--sp-md); padding: var(--sp-sm) var(--sp-md);
+      background: var(--clr-bg-3); border-radius: var(--r-md);
+      margin-bottom: var(--sp-md); font-size: 0.85rem; font-weight: 600; flex-wrap: wrap;
+    }
+    .drv-del-meeting {
+      margin-bottom: var(--sp-sm); padding: var(--sp-sm) var(--sp-md);
+      background: var(--clr-surface); border: 1px solid var(--clr-border); border-radius: var(--r-md);
+    }
+    .drv-del-meeting-title {
+      font-size: 0.82rem; font-weight: 700; color: var(--clr-text-2);
+      margin-bottom: var(--sp-xs); padding-bottom: var(--sp-xs); border-bottom: 1px solid var(--clr-border);
+    }
+    .drv-del-session-row {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 5px 0; font-size: 0.85rem; border-bottom: 1px solid var(--clr-border);
+    }
+    .drv-del-session-row:last-child { border-bottom: none; }
+    .drv-del-impact {
+      padding: var(--sp-sm) var(--sp-md); background: rgba(255,170,0,0.08);
+      border: 1px solid var(--clr-warning); border-radius: var(--r-md); margin-top: var(--sp-md);
+    }
+    .drv-del-impact-title { font-size: 0.82rem; font-weight: 700; color: var(--clr-warning); margin-bottom: var(--sp-xs); }
+    .drv-del-impact-row { font-size: 0.8rem; color: var(--clr-text-2); padding: 3px 0; }
+    .text-success { color: var(--clr-success); }
   `;
   document.head.appendChild(style);
 }
