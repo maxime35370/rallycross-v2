@@ -784,16 +784,15 @@ function buildDfCombinedSlide(phase) {
   const DF_PTS   = [0,10,8,6,5,4,3,2,1];
 
   const dfPtsMap = {};
-  if (phase === 'DF1' || phase === 'DF2') {
-    df1Res.forEach((r, i) => {
-      if (r.ms) dfPtsMap[r.carNumber] = (dfPtsMap[r.carNumber] || 0) + (DF_PTS[i+1] || 0);
-    });
-  }
-  if (phase === 'DF2') {
-    df2Res.forEach((r, i) => {
-      if (r.ms) dfPtsMap[r.carNumber] = (dfPtsMap[r.carNumber] || 0) + (DF_PTS[i+1] || 0);
-    });
-  }
+  const addDfPts = (res) => res.forEach((r, i) => {
+    if (r.ms) {
+      dfPtsMap[r.carNumber] = (dfPtsMap[r.carNumber]||0) + (DF_PTS[i+1]||0);
+    } else if (r.status === 'DNF' && r.manualPosition) {
+      dfPtsMap[r.carNumber] = (dfPtsMap[r.carNumber]||0) + (DF_PTS[r.manualPosition]||0);
+    }
+  });
+  if (phase === 'DF1' || phase === 'DF2') addDfPts(df1Res);
+  if (phase === 'DF2') addDfPts(df2Res);
 
   const rows = interim.map(r => ({
     ...r,
@@ -868,8 +867,15 @@ function buildFinCombinedSlide() {
   df2Res.forEach((r, i) => { if (r.ms) dfPtsMap[r.carNumber] = (dfPtsMap[r.carNumber]||0) + (DF_PTS[i+1]||0); });
 
   // Points Finale par numéro
+  // Inclure les DNF avec position manuelle
   const finPtsMap = {};
-  finRes.forEach((r, i) => { if (r.ms) finPtsMap[r.carNumber] = FIN_PTS[i+1]||0; });
+  finRes.forEach((r, i) => {
+    if (r.ms) {
+      finPtsMap[r.carNumber] = FIN_PTS[i+1] || 0;
+    } else if (r.status === 'DNF' && r.manualPosition) {
+      finPtsMap[r.carNumber] = FIN_PTS[r.manualPosition] || 0;
+    }
+  });
 
   // Classement meeting complet
   const rows = interim.map(r => {
