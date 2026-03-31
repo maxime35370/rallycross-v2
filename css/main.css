@@ -366,3 +366,239 @@ ul { list-style: none; }
   margin-bottom: var(--sp-sm);
 }
 .placeholder-desc { font-size: 0.9rem; }
+
+/* ════════════════════════════════
+   MOBILE OPTIMISATION
+   Breakpoint principal : 640px
+════════════════════════════════ */
+
+/* Éviter le zoom sur les inputs iOS */
+@media (max-width: 640px) {
+  input[type="number"],
+  input[type="text"],
+  input[type="date"],
+  select,
+  textarea {
+    font-size: 16px !important; /* Empêche le zoom auto iOS */
+  }
+}
+
+/* Padding réduit sur mobile */
+@media (max-width: 640px) {
+  .app-main {
+    padding: var(--sp-sm) var(--sp-sm);
+  }
+
+  /* Tableau scrollable horizontalement */
+  .table-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Colonnes moins larges */
+  table { min-width: 480px; }
+
+  /* Toolbar empilée */
+  .toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .toolbar-select,
+  .toolbar-input {
+    width: 100%;
+  }
+
+  /* Section header empilé */
+  .section-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--sp-sm);
+  }
+
+  /* Formulaires pleine largeur */
+  .form-row {
+    grid-template-columns: 1fr;
+  }
+
+  /* Modal plein écran sur mobile */
+  .modal-backdrop {
+    padding: 0;
+    align-items: flex-end;
+  }
+  .modal {
+    max-width: 100%;
+    max-height: 92vh;
+    border-radius: var(--r-xl) var(--r-xl) 0 0;
+  }
+
+  /* Tabs scrollables */
+  .std-tabs {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 2px;
+  }
+  .std-tab { flex-shrink: 0; }
+}
+
+/* ════════════════════════════════
+   CHRONOMÉTRAGE MOBILE
+════════════════════════════════ */
+@media (max-width: 800px) {
+  /* Layout 1 colonne sur mobile */
+  .tim-layout {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Inputs de temps plus grands */
+  .tim-min, .tim-sec { width: 48px !important; padding: 8px 4px !important; font-size: 1rem !important; }
+  .tim-ms  { width: 58px !important; padding: 8px 4px !important; font-size: 1rem !important; }
+
+  /* Rangée pilote empilée sur très petit écran */
+  .tim-row--untimed {
+    flex-wrap: wrap;
+    gap: var(--sp-xs);
+    padding: var(--sp-sm);
+  }
+
+  /* Nom pilote pleine largeur */
+  .tim-name {
+    flex: 1 1 100%;
+    font-size: 1rem;
+  }
+
+  /* Boutons statuts plus larges */
+  .tim-status-btns {
+    flex-wrap: wrap;
+    gap: 4px;
+    width: 100%;
+  }
+  .tim-status-btn {
+    font-size: 0.78rem !important;
+    padding: 6px 10px !important;
+    flex: 1;
+    text-align: center;
+  }
+  .tim-dnf-group { flex: 2; }
+
+  /* Classement provisoire simplifié */
+  .tim-row--timed {
+    padding: var(--sp-sm);
+  }
+  .tim-time { font-size: 1rem !important; }
+}
+
+/* ════════════════════════════════
+   SESSIONS MOBILE (DF)
+════════════════════════════════ */
+@media (max-width: 680px) {
+  .ses-layout {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Liste sessions : scrollable horizontalement */
+  .ses-cards {
+    display: flex;
+    flex-direction: row;
+    overflow-x: auto;
+    gap: var(--sp-xs);
+    padding-bottom: var(--sp-xs);
+    -webkit-overflow-scrolling: touch;
+  }
+  .ses-card {
+    flex-shrink: 0;
+    min-width: 110px;
+  }
+  .ses-list-header { display: none; }
+
+  /* Boutons DF action toujours visibles sur mobile */
+  .ses-df-actions { opacity: 1 !important; }
+  .ses-df-action { font-size: 0.8rem !important; padding: 5px 8px !important; }
+}
+
+/* ════════════════════════════════
+   PILOTES MOBILE
+════════════════════════════════ */
+@media (max-width: 640px) {
+  /* Cacher colonnes moins importantes */
+  .drv-ranges { display: none; }
+
+  /* Actions toujours visibles */
+  .drv-actions { opacity: 1; }
+
+  /* Numéros de voiture plus visibles */
+  .drv-num {
+    width: 44px;
+    height: 32px;
+    font-size: 0.9rem;
+  }
+}
+
+/* ════════════════════════════════
+   BOUTONS TOUCH-FRIENDLY
+════════════════════════════════ */
+@media (max-width: 640px) {
+  /* Taille minimum pour les zones tactiles (44px recommandé Apple/Google) */
+  .btn { min-height: 40px; }
+  .btn-sm { min-height: 36px; }
+  .btn-icon { width: 40px; height: 40px; }
+
+  /* Cartes d'accueil plus grandes */
+  .home-card { padding: var(--sp-lg) var(--sp-sm); }
+  .home-card-icon { font-size: 2.4rem; }
+  .home-card-label { font-size: 0.8rem; }
+
+  /* Engagements : cartes pilotes */
+  .eng-driver-card {
+    padding: var(--sp-md);
+  }
+  .eng-toggle-btn {
+    min-height: 38px !important;
+    padding: 6px 14px !important;
+  }
+}
+
+/* ════════════════════════════════
+   COLONNES STICKY SUR MOBILE
+   Pos. + Pilote restent visibles
+   au scroll horizontal
+════════════════════════════════ */
+@media (max-width: 800px) {
+  /* Le wrapper doit avoir overflow-x: auto (déjà le cas) */
+  .table-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* Colonne Pos. */
+  table th:first-child,
+  table td:first-child {
+    position: sticky;
+    left: 0;
+    z-index: 2;
+    background: var(--clr-surface);
+  }
+
+  /* Colonne Pilote (2ème colonne) */
+  table th:nth-child(2),
+  table td:nth-child(2) {
+    position: sticky;
+    left: 46px; /* largeur de la colonne Pos. */
+    z-index: 2;
+    background: var(--clr-surface);
+    /* Ombre droite pour séparer visuellement */
+    box-shadow: 2px 0 6px rgba(0,0,0,0.4);
+  }
+
+  /* Header : fond plus sombre pour rester lisible */
+  table thead th:first-child,
+  table thead th:nth-child(2) {
+    background: var(--clr-bg-3);
+  }
+
+  /* Hover : maintenir la cohérence */
+  tbody tr:hover td:first-child,
+  tbody tr:hover td:nth-child(2) {
+    background: var(--clr-surface-2);
+  }
+}

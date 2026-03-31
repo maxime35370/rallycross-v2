@@ -426,10 +426,20 @@ function renderTimingTable() {
   const isEC = session.type === 'EC';
 
   content.innerHTML = `
+    <!-- Toggle mobile entre les 2 panneaux -->
+    <div class="tim-mobile-toggle" id="tim-mobile-toggle">
+      <button class="tim-toggle-btn is-active" data-panel="untimed">
+        ⏱️ À chronométrer <span class="tim-toggle-count">${untimed.length}</span>
+      </button>
+      <button class="tim-toggle-btn" data-panel="timed">
+        🏁 Classement <span class="tim-toggle-count">${timed.length}</span>
+      </button>
+    </div>
+
     <div class="tim-layout">
 
       <!-- Colonne gauche : non chronométrés -->
-      <div class="tim-panel tim-panel--untimed">
+      <div class="tim-panel tim-panel--untimed" id="tim-panel-untimed">
         <div class="tim-panel-header">
           <span class="tim-panel-title">À chronométrer</span>
           <span class="tim-panel-count">${untimed.length}</span>
@@ -443,7 +453,7 @@ function renderTimingTable() {
       </div>
 
       <!-- Colonne droite : chronométrés -->
-      <div class="tim-panel tim-panel--timed">
+      <div class="tim-panel tim-panel--timed" id="tim-panel-timed">
         <div class="tim-panel-header">
           <span class="tim-panel-title">Classement provisoire</span>
           <span class="tim-panel-count">${timed.length}</span>
@@ -534,6 +544,24 @@ function pilotRowTimed(p, index, session) {
 function bindTimingEvents(session) {
   const content = document.getElementById('tim-content');
   if (!content) return;
+
+  // Toggle mobile entre les 2 panneaux
+  content.querySelectorAll('.tim-toggle-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      content.querySelectorAll('.tim-toggle-btn').forEach(b => b.classList.remove('is-active'));
+      btn.classList.add('is-active');
+      const panel = btn.dataset.panel;
+      const untimed = content.getElementById?.('tim-panel-untimed') || content.querySelector('#tim-panel-untimed');
+      const timed   = content.getElementById?.('tim-panel-timed')   || content.querySelector('#tim-panel-timed');
+      if (panel === 'untimed') {
+        if (untimed) untimed.style.display = '';
+        if (timed)   timed.style.display   = window.innerWidth <= 800 ? 'none' : '';
+      } else {
+        if (untimed) untimed.style.display = window.innerWidth <= 800 ? 'none' : '';
+        if (timed)   timed.style.display   = '';
+      }
+    });
+  });
 
   // Bouton sauvegarder temps
   content.querySelectorAll('.tim-save-btn').forEach(btn => {
@@ -851,6 +879,46 @@ function injectStyles() {
       text-align: center;
       padding: var(--sp-2xl) var(--sp-md);
       color: var(--clr-text-3);
+    }
+
+    /* Toggle mobile */
+    .tim-mobile-toggle {
+      display: none;
+      gap: var(--sp-xs);
+      margin-bottom: var(--sp-sm);
+    }
+    .tim-toggle-btn {
+      flex: 1;
+      padding: 10px var(--sp-sm);
+      background: var(--clr-surface);
+      border: 1px solid var(--clr-border-2);
+      border-radius: var(--r-md);
+      color: var(--clr-text-2);
+      font-family: var(--font-condensed);
+      font-size: 0.88rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all var(--tr-fast);
+      text-align: center;
+    }
+    .tim-toggle-btn.is-active {
+      background: var(--clr-accent-dim);
+      border-color: var(--clr-accent);
+      color: var(--clr-accent-2);
+    }
+    .tim-toggle-count {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--clr-bg-3);
+      border-radius: 10px;
+      padding: 0 6px;
+      font-size: 0.75rem;
+      min-width: 20px;
+      margin-left: 4px;
+    }
+    @media (max-width: 800px) {
+      .tim-mobile-toggle { display: flex; }
     }
   `;
   document.head.appendChild(style);
