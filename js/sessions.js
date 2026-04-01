@@ -918,14 +918,16 @@ async function renderFinaleStandings(panel, session, assignedParticipants) {
   }
 
   const allReplacements = [
-    ...df1Replacements.map(r => ({ ...r, dfNum: 1 })),
-    ...df2Replacements.map(r => ({ ...r, dfNum: 2 })),
+    ...df1Replacements.map((r, i) => ({ ...r, dfNum: 1, dfPosition: i + 5 })),
+    ...df2Replacements.map((r, i) => ({ ...r, dfNum: 2, dfPosition: i + 5 })),
   ].map(r => ({
     ...r,
     totalMeetingPoints: (r.points ?? 0) + getInterimPoints(r.driverId),
   })).sort((a, b) => {
-    if (b.totalMeetingPoints !== a.totalMeetingPoints)
-      return b.totalMeetingPoints - a.totalMeetingPoints;
+    // 1. Position en DF en premier (5ème avant 6ème, etc.)
+    if (a.dfPosition !== b.dfPosition)
+      return a.dfPosition - b.dfPosition;
+    // 2. À position DF égale : classement intermédiaire (le mieux classé devant)
     return (interimMap[a.driverId] ?? 999) - (interimMap[b.driverId] ?? 999);
   });
 
@@ -996,7 +998,10 @@ async function renderFinaleStandings(panel, session, assignedParticipants) {
             ${pilotCard(d, d.dfNum)}
           </div>
           <span class="ses-fin-total-pts">
-            ${d.totalMeetingPoints} <span style="font-size:0.68rem;color:var(--clr-text-3)">pts total</span>
+            ${d.dfPosition}e DF${d.dfNum}
+            <span style="font-size:0.68rem;color:var(--clr-text-3)">
+              · inter. ${interimMap[d.driverId] ?? '?'}e
+            </span>
           </span>
         </div>
       `).join('')}

@@ -111,32 +111,100 @@ async function sortParticipantsForTiming(raw, session) {
 
   // ── Essais chronométrés ────────────────────────────────
   if (session.type === 'EC') {
-    // Tenter de récupérer le classement général championnat
     try {
-      const champQ = query(
-        collection(db, 'championshipStandings'),
-        where('year',     '==', selectedYear),
-        where('category', '==', selectedCategory),
-        orderBy('position', 'asc')
-      );
-      const champSnap = await getDocs(champQ);
+      const { calcInterimStandings } = await import('./calc.js');
+      const DF_PTS  = [0, 10, 8, 6, 5, 4, 3, 2, 1];
+      const FIN_PTS = [0, 15, 12, 9, 7, 6, 5, 4, 3];
 
-      if (!champSnap.empty) {
-        // Classement général existant
-        const ranked = champSnap.docs.map(d => d.data());
-        const rankedMap = {}; // driverId → position
-        ranked.forEach(r => { rankedMap[r.driverId] = r.position; });
+      // 1. Récupérer tous les meetings passés de la saison/catégorie
+      const allMeetingsSnap = await getDocs(query(
+        collection(db, 'meetings'),
+        where('year', '==', selectedYear)
+      ));
+      const pastMeetings = allMeetingsSnap.docs
+        .map(d => ({ id: d.id, ...d.data() }))
+        .filter(m =>
+          m.id !== selectedMeetingId &&           // exclure le meeting en cours
+          m.date < (allMeetings.find(x => x.id === selectedMeetingId)?.date || '9999')
+        );
 
-        const notRanked = raw.filter(p => !rankedMap[p.driverId])
-          .sort((a, b) => b.carNumber - a.carNumber); // numéros décroissants
-        const isRanked = raw.filter(p =>  rankedMap[p.driverId])
-          .sort((a, b) => rankedMap[b.driverId] - rankedMap[a.driverId]); // classement décroissant (le moins bon en premier)
-
-        return [...notRanked, ...isRanked];
+      if (pastMeetings.length === 0) {
+        // Premier meeting → numéros décroissants
+        return raw.sort((a, b) => b.carNumber - a.carNumber);
       }
-    } catch {}
 
-    // Fallback : numéros décroissants (premier meeting ou pas de classement)
+      // 2. Calculer les points cumulés pour chaque meeting passé
+      const pointsMap = {}; // driverId → total points cumulés
+
+      for (const meeting of pastMeetings) {
+        // Récupérer les sessions de ce meeting pour cette catégorie
+        const sessSnap = await getDocs(query(
+          collection(db, 'sessions'),
+          where('meetingId', '==', meeting.id),
+          where('category',  '==', selectedCategory)
+        ));
+        const meetingSessions = sessSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+        if (!meetingSessions.length) continue;
+
+        // Points intermédiaires via calcInterimStandings (calc.js)
+        const interim = await calcInterimStandings(db, meetingSessions);
+        interim.forEach(r => {
+          if (!pointsMap[r.driverId]) pointsMap[r.driverId] = 0;
+          pointsMap[r.driverId] += r.interimPoints ?? 0;
+        });
+
+        // Points DF
+        const dfSessions = meetingSessions.filter(s => s.type === 'DF');
+        for (const df of dfSessions) {
+          const resSnap = await getDocs(query(
+            collection(db, 'results'),
+            where('sessionId', '==', df.id)
+          ));
+          const finished = resSnap.docs
+            .map(d => d.data())
+            .filter(r => r.ms && !r.status)
+            .sort((a, b) => a.ms - b.ms);
+          finished.forEach((r, i) => {
+            if (!pointsMap[r.driverId]) pointsMap[r.driverId] = 0;
+            pointsMap[r.driverId] += DF_PTS[i + 1] ?? 0;
+          });
+        }
+
+        // Points Finale
+        const finSession = meetingSessions.find(s => s.type === 'FIN');
+        if (finSession) {
+          const resSnap = await getDocs(query(
+            collection(db, 'results'),
+            where('sessionId', '==', finSession.id)
+          ));
+          const finished = resSnap.docs
+            .map(d => d.data())
+            .filter(r => r.ms && !r.status)
+            .sort((a, b) => a.ms - b.ms);
+          finished.forEach((r, i) => {
+            if (!pointsMap[r.driverId]) pointsMap[r.driverId] = 0;
+            pointsMap[r.driverId] += FIN_PTS[i + 1] ?? 0;
+          });
+        }
+      }
+
+      // 3. Trier : nouveaux pilotes (sans historique) d'abord en numéros décroissants
+      //            puis les classés du moins bon au meilleur (leader passe en dernier)
+      const notRanked = raw
+        .filter(p => !pointsMap[p.driverId])
+        .sort((a, b) => b.carNumber - a.carNumber);
+
+      const ranked = raw
+        .filter(p => pointsMap[p.driverId])
+        .sort((a, b) => pointsMap[a.driverId] - pointsMap[b.driverId]); // croissant
+
+      return [...notRanked, ...ranked];
+
+    } catch (e) {
+      console.warn('Tri EC :', e);
+    }
+
+    // Fallback ultime
     return raw.sort((a, b) => b.carNumber - a.carNumber);
   }
 
@@ -1620,15 +1688,73 @@ async function showStartingGrid(session) {
     if (session.type === 'FIN') {
       const df1 = allSessions.find(s => s.type === 'DF' && s.num === 1);
       const df2 = allSessions.find(s => s.type === 'DF' && s.num === 2);
-      const dfPtsMap = {};
+
+      // Points DF par pilote
+      const dfPtsMap  = {}; // driverId → points DF
+      const dfPosMap  = {}; // driverId → position en DF (1er, 2ème, etc.)
+
       for (const df of [df1, df2].filter(Boolean)) {
-        const snap = await getDocs(query(collection(db,'results'), where('sessionId','==',df.id)));
-        snap.docs.forEach(d => {
-          const r = d.data();
-          dfPtsMap[r.driverId] = (dfPtsMap[r.driverId] ?? 0) + (r.points ?? 0);
+        const resSnap  = await getDocs(query(collection(db,'results'),             where('sessionId','==',df.id)));
+        const partSnap = await getDocs(query(collection(db,'sessionParticipants'), where('sessionId','==',df.id)));
+        const resultMap = {};
+        resSnap.docs.forEach(d => { resultMap[d.data().driverId] = d.data(); });
+
+        // Calculer la position dans cette DF
+        const finished = partSnap.docs
+          .map(d => d.data())
+          .map(p => ({ driverId: p.driverId, ms: resultMap[p.driverId]?.ms ?? null }))
+          .filter(r => r.ms)
+          .sort((a, b) => a.ms - b.ms);
+
+        finished.forEach((r, i) => {
+          dfPosMap[r.driverId] = i + 1;
+          dfPtsMap[r.driverId] = resultMap[r.driverId]?.points ?? 0;
         });
       }
-      orderedPilots.sort((a, b) => (dfPtsMap[b.driverId] ?? 0) - (dfPtsMap[a.driverId] ?? 0));
+      // Points intermédiaires par pilote
+      const intSnap = await getDocs(query(
+        collection(db,'interimStandings'),
+        where('meetingId','==',selectedMeetingId),
+        where('category', '==',selectedCategory)
+      ));
+      const intPtsMap = {};
+      intSnap.docs.forEach(d => {
+        intPtsMap[d.data().driverId] = d.data().interimPoints ?? 0;
+      });
+
+      // Total points par pilote = intermédiaire + DF
+      const totalPtsMap = {};
+      orderedPilots.forEach(p => {
+        totalPtsMap[p.driverId] = (intPtsMap[p.driverId] ?? 0) + (dfPtsMap[p.driverId] ?? 0);
+      });
+
+      // Tri : par rang DF croissant (1er avant 2ème),
+      // puis au sein du même rang par total points décroissant
+      const dfMsMap = {}; // driverId → temps en ms dans sa DF
+      for (const df of [df1, df2].filter(Boolean)) {
+        const resSnap = await getDocs(query(
+          collection(db,'results'), where('sessionId','==',df.id)
+        ));
+        resSnap.docs.forEach(d => {
+          const r = d.data();
+          if (r.ms) dfMsMap[r.driverId] = r.ms;
+        });
+      }
+
+      orderedPilots.sort((a, b) => {
+        // 1. Rang DF croissant (1er avant 2ème, etc.)
+        const posA = dfPosMap[a.driverId] ?? 99;
+        const posB = dfPosMap[b.driverId] ?? 99;
+        if (posA !== posB) return posA - posB;
+
+        // 2. Total points décroissant (intermédiaire + DF)
+        const ptsA = totalPtsMap[a.driverId] ?? 0;
+        const ptsB = totalPtsMap[b.driverId] ?? 0;
+        if (ptsA !== ptsB) return ptsB - ptsA;
+
+        // 3. Temps DF croissant (le plus rapide devant)
+        return (dfMsMap[a.driverId] ?? Infinity) - (dfMsMap[b.driverId] ?? Infinity);
+      });
     }
 
     // Récupérer le côté de pole du meeting

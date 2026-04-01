@@ -6,6 +6,7 @@
 import { db } from './firebase.js';
 import { toast, showView, categoryBadge } from './app.js';
 import { escHtml, sanitize, CATEGORIES } from './utils.js';
+import { showDriverProfile } from './driverProfile.js';
 
 // ─────────────────────────────────────────────────────────
 // PLAGES DE NUMÉROS → CATÉGORIE
@@ -336,8 +337,9 @@ function renderTable() {
       <td class="center text-muted">${escHtml(d.year)}</td>
       <td class="center">
         <div class="drv-actions">
-          <button class="btn btn-ghost btn-icon drv-edit-btn" data-id="${d.id}" title="Modifier">✏️</button>
-          <button class="btn btn-danger btn-icon drv-del-btn" data-id="${d.id}" title="Supprimer">🗑️</button>
+          <button class="btn btn-ghost btn-icon drv-profile-btn" data-id="${d.id}" title="Fiche pilote">📊</button>
+          <button class="btn btn-ghost btn-icon drv-edit-btn"    data-id="${d.id}" title="Modifier">✏️</button>
+          <button class="btn btn-danger btn-icon drv-del-btn"    data-id="${d.id}" title="Supprimer">🗑️</button>
         </div>
       </td>
     </tr>
@@ -349,6 +351,12 @@ function renderTable() {
   );
   document.querySelectorAll('.drv-del-btn').forEach(btn =>
     btn.addEventListener('click', () => onDelete(btn.dataset.id))
+  );
+  document.querySelectorAll('.drv-profile-btn').forEach(btn =>
+    btn.addEventListener('click', () => {
+      const driver = allDrivers.find(d => d.id === btn.dataset.id);
+      if (driver) showDriverProfile(driver);
+    })
   );
 }
 
