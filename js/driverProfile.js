@@ -298,39 +298,65 @@ function buildSeasonStats(meetingsData) {
   const finPos = [], finPts_a = [], finGap = [];
   let finWins = 0, finPodiums = 0;
   const totPts = [], totPos = [];
-
+ 
   for (const m of meetingsData) {
+ 
+    // ← MODIFIÉ : ne compter ce meeting que si au moins 1 résultat réel saisi en MQ
+    const hasRealResults = m.mqStats.some(mq =>
+      mq.participated && (mq.pts !== null || mq.status !== null)
+    );
+ 
+    // EC — OK tel quel car pos est null si pas de temps
     if (m.ecStats.pos != null) ecPos.push(m.ecStats.pos);
     if (m.ecStats.pts != null) ecPts.push(m.ecStats.pts);
     if (m.ecStats.gap != null) ecGap.push(m.ecStats.gap);
-
-    mqTotalPts.push(m.totalMQPts);
-    for (const mq of m.mqStats) {
-      if (!mq.participated) continue;
-      if (mq.pos != null) { mqPos.push(mq.pos); if (mq.pos === 1) mqWins++; if (mq.pos <= 3) mqPodiums++; }
-      if (mq.pts != null) mqPts_a.push(mq.pts);
-      if (mq.gap != null) mqGap.push(mq.gap);
+ 
+    // MQ — uniquement si résultats réels
+    if (hasRealResults) {
+      mqTotalPts.push(m.totalMQPts); // ← MODIFIÉ : conditionné à hasRealResults
+ 
+      for (const mq of m.mqStats) {
+        if (!mq.participated) continue;
+        if (mq.pts === null) continue; // ← MODIFIÉ : ignorer si pas de résultat réel
+        if (mq.pos != null) {
+          mqPos.push(mq.pos);
+          if (mq.pos === 1) mqWins++;
+          if (mq.pos <= 3) mqPodiums++;
+        }
+        if (mq.pts != null) mqPts_a.push(mq.pts);
+        if (mq.gap != null) mqGap.push(mq.gap);
+      }
     }
-
+ 
+    // Intermédiaire — OK car pos/pts null si pas calculé
     if (m.interimStats.pos != null) intPos.push(m.interimStats.pos);
     if (m.interimStats.pts != null) intPts.push(m.interimStats.pts);
-
+ 
+    // DF
     if (m.dfStats.participated) {
       if (m.dfStats.pos != null) dfPos.push(m.dfStats.pos);
       if (m.dfStats.pts != null) dfPts_a.push(m.dfStats.pts);
       if (m.dfStats.gap != null) dfGap.push(m.dfStats.gap);
     }
-
+ 
+    // Finale
     if (m.finStats.participated) {
-      if (m.finStats.pos != null) { finPos.push(m.finStats.pos); if (m.finStats.pos === 1) finWins++; if (m.finStats.pos <= 3) finPodiums++; }
+      if (m.finStats.pos != null) {
+        finPos.push(m.finStats.pos);
+        if (m.finStats.pos === 1) finWins++;
+        if (m.finStats.pos <= 3) finPodiums++;
+      }
       if (m.finStats.pts != null) finPts_a.push(m.finStats.pts);
       if (m.finStats.gap != null) finGap.push(m.finStats.gap);
     }
-
-    totPts.push(m.totalMeetingPts);
-    if (m.meetingPosition != null) totPos.push(m.meetingPosition);
+ 
+    // Total meeting — ← MODIFIÉ : conditionné à hasRealResults
+    if (hasRealResults) {
+      totPts.push(m.totalMeetingPts);
+      if (m.meetingPosition != null) totPos.push(m.meetingPosition);
+    }
   }
-
+ 
   return {
     ec:     { avgPos: avg(ecPos), avgPts: avg(ecPts), avgGap: avg(ecGap) },
     mq:     { avgPos: avg(mqPos), avgPts: avg(mqPts_a), avgGap: avg(mqGap), avgTotalPts: avg(mqTotalPts), wins: mqWins, podiums: mqPodiums },
