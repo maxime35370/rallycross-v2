@@ -8,28 +8,31 @@
 import { db } from './firebase.js';
 import { toast } from './app.js';
 import { escHtml } from './utils.js';
+// ← MODIFIÉ : import du calcul intermédiaire partagé depuis calc.js
+//   Plus de lecture Firestore interimStandings dans ce fichier
+import { calcInterimStandings } from './calc.js';
 
 // ─────────────────────────────────────────────────────────
 // ÉTAT LOCAL
 // ─────────────────────────────────────────────────────────
 
-let allMeetings       = [];
-let allSessions       = [];   // sessions du meeting+catégorie sélectionnés
-let engagedDrivers    = [];   // pilotes engagés au meeting+catégorie
-let sessionParticipants = {}; // { sessionId: Set(driverId) }
-let unsubMeetings     = null;
-let unsubSessions     = null;
-let unsubEngaged      = null;
-let unsubParticipants = {};
+let allMeetings         = [];
+let allSessions         = [];
+let engagedDrivers      = [];
+let sessionParticipants = {};
+let unsubMeetings       = null;
+let unsubSessions       = null;
+let unsubEngaged        = null;
+let unsubParticipants   = {};
 
 let selectedYear      = new Date().getFullYear();
 let selectedMeetingId = '';
 let selectedCategory  = '';
-let selectedSessionId = '';   // session en cours d'affichage détaillé
+let selectedSessionId = '';
 
 const CATEGORIES = ['Supercar', 'Super1600', 'Division 5', 'Féminines', 'D3', 'D4'];
 
-const SESSION_ORDER = { EC: 0, MQ: 1, DF: 2, FIN: 3 };
+const SESSION_ORDER  = { EC: 0, MQ: 1, DF: 2, FIN: 3 };
 const SESSION_LABELS = { EC: 'Essais', MQ: 'Qualif.', DF: '½ Finale', FIN: 'Finale' };
 
 // ─────────────────────────────────────────────────────────
@@ -94,7 +97,6 @@ async function loadAllParticipants() {
     'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
   );
 
-  // Arrêter les anciens listeners
   Object.values(unsubParticipants).forEach(u => u && u());
   unsubParticipants = {};
   sessionParticipants = {};
@@ -122,7 +124,6 @@ async function addParticipant(sessionId, driver) {
     'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
   );
 
-  // Vérifier doublon dans cette session
   const driverId = driver.id || driver.driverId;
   const q = query(
     collection(db, 'sessionParticipants'),
@@ -132,13 +133,10 @@ async function addParticipant(sessionId, driver) {
   const snap = await getDocs(q);
   if (!snap.empty) return;
 
-  // Vérification DF : un pilote ne peut pas être dans DF1 ET DF2
   const targetSession = allSessions.find(s => s.id === sessionId);
   if (targetSession?.type === 'DF') {
     const otherDf = allSessions.find(s => s.type === 'DF' && s.id !== sessionId);
-    if (otherDf && sessionParticipants[otherDf.id]?.has(driverId)) {
-      return; // Silencieux — le pilote n'apparaît pas dans la liste, pas besoin d'erreur
-    }
+    if (otherDf && sessionParticipants[otherDf.id]?.has(driverId)) return;
   }
 
   await addDoc(collection(db, 'sessionParticipants'), {
@@ -160,7 +158,6 @@ async function removeParticipant(sessionId, driverId) {
     'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
   );
 
-  // Supprimer le participant
   const qPart = query(
     collection(db, 'sessionParticipants'),
     where('sessionId', '==', sessionId),
@@ -169,7 +166,6 @@ async function removeParticipant(sessionId, driverId) {
   const snapPart = await getDocs(qPart);
   for (const d of snapPart.docs) await deleteDoc(d.ref);
 
-  // Supprimer aussi le résultat (temps) associé pour ne pas fausser les classements
   const qRes = query(
     collection(db, 'results'),
     where('sessionId', '==', sessionId),
@@ -178,7 +174,6 @@ async function removeParticipant(sessionId, driverId) {
   const snapRes = await getDocs(qRes);
   if (!snapRes.empty) {
     for (const d of snapRes.docs) await deleteDoc(d.ref);
-    // Informer que le temps a aussi été supprimé
     const session = allSessions.find(s => s.id === sessionId);
     if (session?.type === 'DF' || session?.type === 'FIN') {
       toast('Pilote retiré — son temps a aussi été supprimé', 'warning', 4000);
@@ -204,7 +199,6 @@ async function getParticipantsData(sessionId) {
 // LOGIQUE AUTOMATIQUE
 // ─────────────────────────────────────────────────────────
 
-/** EC + MQ : assigner tous les engagés */
 async function autoAssignAll(sessionId) {
   await loadEngaged();
   let count = 0;
@@ -218,38 +212,20 @@ async function autoAssignAll(sessionId) {
   toast(count > 0 ? `${count} pilote(s) assigné(s) ✓` : 'Tous déjà assignés', count > 0 ? 'success' : 'info');
 }
 
-/** DF1/DF2 : répartition alternée depuis classement intermédiaire */
+// ← MODIFIÉ : calcul direct depuis les résultats bruts via calc.js
+//   Plus de lecture Firestore interimStandings
 async function autoAssignDemis() {
   await loadEngaged();
 
-  // Récupérer le classement intermédiaire final (points MQ + EC)
-  // On utilise l'ordre du classement stocké dans Firestore (interimStandings)
-  // Pour l'instant : on prend les engagés triés par leur position dans le classement
-  // En attendant le module standings, on trie par carNumber comme fallback
-  const { collection, query, where, getDocs, orderBy } = await import(
-    'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
-  );
-
-  // Récupérer le classement intermédiaire depuis Firestore (sans orderBy pour éviter l'index)
   let ranked = [];
   try {
-    const q = query(
-      collection(db, 'interimStandings'),
-      where('meetingId', '==', selectedMeetingId),
-      where('category',  '==', selectedCategory)
-    );
-    const snap = await getDocs(q);
-    if (!snap.empty) {
-      ranked = snap.docs.map(d => d.data())
-        .sort((a, b) => (a.position ?? 99) - (b.position ?? 99)); // tri côté JS
-    }
+    ranked = await calcInterimStandings(db, allSessions);
   } catch (e) {
-    console.error('Erreur lecture interimStandings:', e);
+    console.error('Erreur calcul classement intermédiaire:', e);
   }
 
-  // Fallback : utiliser les engagés dans l'ordre numéro
   if (ranked.length === 0) {
-    toast('⚠️ Classement intermédiaire non trouvé — sauvegardez-le dans Classements dabord.', 'warning', 5000);
+    toast('⚠️ Pas encore assez de résultats MQ — assignation par numéro de voiture.', 'warning', 4000);
     ranked = engagedDrivers.map((d, i) => ({
       driverId:  d.id || d.driverId,
       carNumber: d.carNumber,
@@ -257,20 +233,13 @@ async function autoAssignDemis() {
       lastName:  d.lastName,
       position:  i + 1,
     }));
-  } else {
-    toast(`Classement intermédiaire chargé — ${ranked.length} pilotes`, 'info', 2000);
   }
 
-  // Prendre les 16 premiers
-  const top16 = ranked.slice(0, 16);
-
-  // Sessions DF1 et DF2 — déclarées ici pour être disponibles dans les vérifications
   const df1 = allSessions.find(s => s.type === 'DF' && s.num === 1);
   const df2 = allSessions.find(s => s.type === 'DF' && s.num === 2);
   if (!df1 || !df2) { toast('Sessions DF1 et DF2 introuvables', 'error'); return; }
 
-  // Vérifier si des temps ont déjà été saisis en DF
-  const { getDocs: gd0, query: q0, where: w0, collection: c0 } = await import(
+  const { collection: c0, query: q0, where: w0, getDocs: gd0 } = await import(
     'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
   );
   const df1ResultsSnap = await gd0(q0(c0(db, 'results'), w0('sessionId', '==', df1.id)));
@@ -280,57 +249,45 @@ async function autoAssignDemis() {
   const df2Count = sessionParticipants[df2.id]?.size || 0;
   const hasExisting = df1Count > 0 || df2Count > 0;
 
-  // Vérifier si la Finale a aussi des données
   const fin = allSessions.find(s => s.type === 'FIN');
   const finPartSnap = fin ? await gd0(q0(c0(db, 'sessionParticipants'), w0('sessionId', '==', fin.id))) : null;
   const finResSnap  = fin ? await gd0(q0(c0(db, 'results'),             w0('sessionId', '==', fin.id))) : null;
   const finHasData  = !finPartSnap?.empty || !finResSnap?.empty;
 
   if (hasTimedResults) {
-    const finaleMsg = finHasData
-      ? `\n\n⚠️ La Finale (${finPartSnap?.size || 0} pilote(s), ${finResSnap?.size || 0} temps) sera aussi vidée car les qualifiés peuvent changer.`
-      : '';
+    const finaleMsg = finHasData ? `\n\n⚠️ La Finale sera aussi vidée car les qualifiés peuvent changer.` : '';
     const msg = `⚠️ ATTENTION — Des temps ont déjà été saisis en demi-finale !\n\n• DF1 : ${df1ResultsSnap.size} temps saisi(s)\n• DF2 : ${df2ResultsSnap.size} temps saisi(s)\n\nAuto DF va supprimer TOUS ces temps et réassigner les pilotes.${finaleMsg}\n\nCette action est irréversible. Continuer quand même ?`;
     if (!window.confirm(msg)) return;
   } else if (hasExisting) {
-    const finaleMsg = finHasData
-      ? `\n\n⚠️ La Finale sera aussi vidée car les qualifiés peuvent changer.`
-      : '';
+    const finaleMsg = finHasData ? `\n\n⚠️ La Finale sera aussi vidée.` : '';
     const msg = `⚡ Auto DF va réassigner toutes les demi-finales.\n\nActuellement :\n• DF1 : ${df1Count} pilote(s)\n• DF2 : ${df2Count} pilote(s)${finaleMsg}\n\nContinuer ?`;
     if (!window.confirm(msg)) return;
   }
 
-  // Vider les DF existantes — fetch frais depuis Firestore
-  const { collection: fc, query: fq, where: fw, getDocs: fgd, deleteDoc: fd, writeBatch: fwb, doc: fdoc } = await import(
+  const { collection: fc, query: fq, where: fw, getDocs: fgd, writeBatch: fwb } = await import(
     'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
   );
   const clearDf = async (sessionId) => {
-    // Supprimer les participants
-    const snapPart = await fgd(fq(fc(db, 'sessionParticipants'), fw('sessionId', '==', sessionId)));
-    if (!snapPart.empty) {
-      const batchPart = fwb(db);
-      snapPart.docs.forEach(d => batchPart.delete(d.ref));
-      await batchPart.commit();
-    }
-    // Supprimer aussi les résultats (temps) pour ne pas polluer les classements
-    const snapRes = await fgd(fq(fc(db, 'results'), fw('sessionId', '==', sessionId)));
-    if (!snapRes.empty) {
-      const batchRes = fwb(db);
-      snapRes.docs.forEach(d => batchRes.delete(d.ref));
-      await batchRes.commit();
+    for (const col of ['sessionParticipants', 'results']) {
+      const snap = await fgd(fq(fc(db, col), fw('sessionId', '==', sessionId)));
+      if (!snap.empty) {
+        const batch = fwb(db);
+        snap.docs.forEach(d => batch.delete(d.ref));
+        await batch.commit();
+      }
     }
   };
   await clearDf(df1.id);
   await clearDf(df2.id);
 
-  // Répartition alternée : 1→DF1, 2→DF2, 3→DF1, 4→DF2...
+  // Répartition alternée : position impaire → DF1, paire → DF2
+  const top16 = ranked.slice(0, 16);
   for (let i = 0; i < top16.length; i++) {
     const driver = top16[i];
     const targetSession = i % 2 === 0 ? df1 : df2;
     await addParticipant(targetSession.id, driver);
   }
 
-  // Si la Finale avait des données, la vider aussi (les qualifiés peuvent avoir changé)
   if (fin && finHasData) {
     const { collection: fc2, query: fq2, where: fw2, getDocs: fgd2, writeBatch: fwb2 } = await import(
       'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
@@ -347,19 +304,17 @@ async function autoAssignDemis() {
   } else {
     toast(`${top16.length} pilotes répartis en DF1/DF2 ✓`, 'success');
   }
+
   renderSessionList();
-  // Re-render le détail DF si on est dessus
   if (selectedSessionId) {
     const panel = document.getElementById('ses-detail-panel');
     const session = allSessions.find(s => s.id === selectedSessionId);
     if (panel && session?.type === 'DF') {
-      const participants = await getParticipantsData(selectedSessionId);
-      await renderDfStandings(panel, session, participants);
+      await renderDfStandings(panel, session, await getParticipantsData(selectedSessionId));
     }
   }
 }
 
-/** Finale : top 4 de DF1 + top 4 de DF2, triés par temps */
 async function autoAssignFinale() {
   const df1 = allSessions.find(s => s.type === 'DF' && s.num === 1);
   const df2 = allSessions.find(s => s.type === 'DF' && s.num === 2);
@@ -370,14 +325,7 @@ async function autoAssignFinale() {
     'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
   );
 
-  /**
-   * Récupère les participants d'une DF + leurs résultats,
-   * trie par temps (les DNS/DSQ/DNF en dernier),
-   * et retourne les 4 premiers.
-   * Si un pilote n'a pas de résultat saisi, il n'est pas retenu.
-   */
   const getTop4 = async (dfSession) => {
-    // Participants assignés à cette DF
     const partSnap = await getDocs(query(
       collection(db, 'sessionParticipants'),
       where('sessionId', '==', dfSession.id)
@@ -385,7 +333,6 @@ async function autoAssignFinale() {
     const participants = partSnap.docs.map(d => d.data());
     if (participants.length === 0) return [];
 
-    // Résultats de cette DF
     const resSnap = await getDocs(query(
       collection(db, 'results'),
       where('sessionId', '==', dfSession.id)
@@ -393,30 +340,24 @@ async function autoAssignFinale() {
     const resultMap = {};
     resSnap.docs.forEach(d => { resultMap[d.data().driverId] = d.data(); });
 
-    // Fusionner participants + résultats
     const rows = participants.map(p => ({
       driverId:  p.driverId,
       carNumber: p.carNumber,
       firstName: p.firstName,
       lastName:  p.lastName,
-      ms:        resultMap[p.driverId]?.ms    ?? null,
+      ms:        resultMap[p.driverId]?.ms     ?? null,
       status:    resultMap[p.driverId]?.status ?? null,
     }));
 
-    if (rows.every(r => !r.ms && !r.status)) {
-      return []; // Aucun résultat saisi
-    }
+    if (rows.every(r => !r.ms && !r.status)) return [];
 
-    // Trier : finis par temps croissant, puis DNF, puis DNS/DSQ
     const order = r => {
       if (r.ms) return r.ms;
       if (r.status === 'DNF')      return 9000000;
       if (r.status === 'DSQ_RACE') return 9100000;
-      return 9999999; // DNS, DSQ
+      return 9999999;
     };
     rows.sort((a, b) => order(a) - order(b));
-
-    // Top 4 seulement (pilotes ayant terminé ou DNF)
     return rows.filter(r => r.ms || r.status === 'DNF').slice(0, 4);
   };
 
@@ -430,7 +371,6 @@ async function autoAssignFinale() {
 
   const finalistes = [...top4df1, ...top4df2];
 
-  // Vérifier si des temps ont déjà été saisis en Finale
   const finResultsSnap = await getDocs(query(
     collection(db, 'results'),
     where('sessionId', '==', fin.id)
@@ -442,16 +382,13 @@ async function autoAssignFinale() {
   const names = finalistes.map(d => `#${d.carNumber} ${d.lastName}`).join(', ');
 
   if (!finResultsSnap.empty) {
-    // Cas critique : des temps de finale ont déjà été saisis
     const msg = `⚠️ ATTENTION — Des temps ont déjà été saisis en Finale !\n\n${finResultsSnap.size} résultat(s) seront supprimés.\n\nAuto Finale va remplacer par :\n${names}\n\nCette action est irréversible. Continuer quand même ?`;
     if (!window.confirm(msg)) return;
   } else if (!finPartSnap.empty) {
-    // Cas normal : pilotes assignés mais pas encore chronométrés
     const msg = `⚡ Auto Finale va assigner ${finalistes.length} pilote(s) :\n${names}\n\nLa finale actuelle (${finPartSnap.size} pilote(s)) sera remplacée.\n\nContinuer ?`;
     if (!window.confirm(msg)) return;
   }
 
-  // Vider la finale depuis Firestore — participants ET résultats
   const clearSession = async (sessionId) => {
     for (const col of ['sessionParticipants', 'results']) {
       const snap = await getDocs(query(
@@ -467,7 +404,6 @@ async function autoAssignFinale() {
   };
   await clearSession(fin.id);
 
-  // Ajouter les finalistes
   for (const d of finalistes) {
     await addParticipant(fin.id, d);
   }
@@ -501,7 +437,6 @@ function renderView() {
       </select>
     </div>
 
-    <!-- Layout 2 colonnes : liste sessions | détail session -->
     <div class="ses-layout" id="ses-layout">
       <div class="ses-list-panel" id="ses-list-panel">
         <div class="ses-placeholder text-muted" style="padding:var(--sp-xl);text-align:center">
@@ -549,15 +484,14 @@ function renderSessionList() {
     return;
   }
 
-  // Bouton assignation globale DF
-  const hasDf = allSessions.some(s => s.type === 'DF');
+  const hasDf  = allSessions.some(s => s.type === 'DF');
   const hasFin = allSessions.some(s => s.type === 'FIN');
 
   panel.innerHTML = `
     <div class="ses-list-header">
       <span class="ses-list-title">Sessions</span>
       <div class="ses-list-actions">
-        ${hasDf ? `<button class="btn btn-secondary btn-sm" id="ses-auto-df-btn">⚡ Auto DF</button>` : ''}
+        ${hasDf  ? `<button class="btn btn-secondary btn-sm" id="ses-auto-df-btn">⚡ Auto DF</button>` : ''}
         ${hasFin ? `<button class="btn btn-secondary btn-sm" id="ses-auto-fin-btn">⚡ Auto Finale</button>` : ''}
       </div>
     </div>
@@ -566,7 +500,6 @@ function renderSessionList() {
     </div>
   `;
 
-  // Binder cartes
   panel.querySelectorAll('.ses-card').forEach(card => {
     card.addEventListener('click', () => {
       selectedSessionId = card.dataset.id;
@@ -581,7 +514,6 @@ function renderSessionList() {
   document.getElementById('ses-auto-fin-btn')
     ?.addEventListener('click', e => { e.stopPropagation(); autoAssignFinale(); });
 
-  // Restaurer la sélection active
   if (selectedSessionId) {
     panel.querySelector(`[data-id="${selectedSessionId}"]`)?.classList.add('is-active');
   }
@@ -614,11 +546,10 @@ async function renderSessionDetail() {
   const session = allSessions.find(s => s.id === selectedSessionId);
   if (!session) return;
 
-  const participants = await getParticipantsData(selectedSessionId);
+  const participants  = await getParticipantsData(selectedSessionId);
   const participantIds = new Set(participants.map(p => p.driverId));
 
   await loadEngaged();
-  // Pour une DF : exclure aussi les pilotes déjà dans l'autre DF
   let otherDfIds = new Set();
   if (session.type === 'DF') {
     const otherDf = allSessions.find(s => s.type === 'DF' && s.id !== selectedSessionId);
@@ -632,17 +563,11 @@ async function renderSessionDetail() {
   const isEcOrMq = session.type === 'EC' || session.type === 'MQ';
   const isDf     = session.type === 'DF';
 
-  const label = session.type === 'MQ' ? `MQ${session.num}`
-    : session.type === 'DF' ? `DF${session.num}`
-    : SESSION_LABELS[session.type] || session.type;
-
-  // ── DF : afficher le classement intermédiaire avec indication DF1/DF2 ──
   if (isDf) {
     await renderDfStandings(panel, session, participants);
     return;
   }
 
-  // ── Finale : afficher les qualifiés par paires DF1/DF2 ──
   if (session.type === 'FIN') {
     await renderFinaleStandings(panel, session, participants);
     return;
@@ -659,7 +584,6 @@ async function renderSessionDetail() {
       </div>
     </div>
 
-    <!-- Pilotes assignés -->
     <div class="ses-detail-section">
       <div class="ses-section-title">
         <span class="eng-group-dot eng-group-dot--on"></span>
@@ -679,7 +603,6 @@ async function renderSessionDetail() {
       </div>
     </div>
 
-    <!-- Pilotes non assignés (engagés mais pas dans cette session) -->
     ${notAssigned.length > 0 ? `
       <div class="ses-detail-section">
         <div class="ses-section-title">
@@ -699,7 +622,6 @@ async function renderSessionDetail() {
     ` : ''}
   `;
 
-  // Events
   document.getElementById('ses-auto-all-btn')
     ?.addEventListener('click', () => autoAssignAll(selectedSessionId));
 
@@ -749,23 +671,16 @@ function bindEvents() {
 }
 
 // ─────────────────────────────────────────────────────────
-// STYLES
+// VUE DF — CLASSEMENT INTERMÉDIAIRE AVEC RÉPARTITION
 // ─────────────────────────────────────────────────────────
 
-/**
- * Affiche le classement intermédiaire pour une DF
- * avec indication DF1/DF2 par pilote
- */
+// ← MODIFIÉ : utilise calcInterimStandings(db, allSessions) depuis calc.js
+//   Plus de lecture/écriture Firestore interimStandings
 async function renderDfStandings(panel, session, assignedParticipants) {
-  const { collection, query, where, getDocs, orderBy } = await import(
-    'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
-  );
-
   const df1 = allSessions.find(s => s.type === 'DF' && s.num === 1);
   const df2 = allSessions.find(s => s.type === 'DF' && s.num === 2);
 
-  // Récupérer les participants de DF1 et DF2
-  // Fetch frais depuis Firestore (évite le bug de timing avec onSnapshot)
+  // Fetch frais des participants DF depuis Firestore
   const freshFetch = async (sessionId) => {
     if (!sessionId) return new Set();
     const { collection: c2, query: q2, where: w2, getDocs: gd2 } = await import(
@@ -777,61 +692,24 @@ async function renderDfStandings(panel, session, assignedParticipants) {
 
   const df1Ids = await freshFetch(df1?.id);
   const df2Ids = await freshFetch(df2?.id);
-  const allDfIds = new Set([...df1Ids, ...df2Ids]);
 
-  // Tenter de récupérer le classement intermédiaire depuis Firestore
-  let standings = [];
-  try {
-    // Essai avec orderBy (nécessite un index composite)
-    const q = query(
-      collection(db, 'interimStandings'),
-      where('meetingId', '==', selectedMeetingId),
-      where('category',  '==', selectedCategory),
-      orderBy('position', 'asc')
-    );
-    const snap = await getDocs(q);
-    if (!snap.empty) {
-      standings = snap.docs.map(d => d.data());
-    }
-  } catch (e) {
-    // Fallback sans orderBy si l'index n'existe pas encore
-    try {
-      const { collection: col2, query: q2, where: w2, getDocs: gd2 } = await import(
-        'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
-      );
-      const q = q2(
-        col2(db, 'interimStandings'),
-        w2('meetingId', '==', selectedMeetingId),
-        w2('category',  '==', selectedCategory)
-      );
-      const snap = await gd2(q);
-      if (!snap.empty) {
-        standings = snap.docs.map(d => d.data())
-          .sort((a, b) => (a.position ?? 99) - (b.position ?? 99));
-      }
-    } catch (e2) {
-      console.error('interimStandings query error:', e2);
-    }
-  }
-
-  // Fallback : utiliser les engagés dans l'ordre numéro
+  // ← MODIFIÉ : calcul direct, plus de try/catch interimStandings Firestore
+  let standings = await calcInterimStandings(db, allSessions);
   if (standings.length === 0) {
     standings = engagedDrivers.map((d, i) => ({
-      driverId:  d.id || d.driverId,
-      carNumber: d.carNumber,
-      firstName: d.firstName,
-      lastName:  d.lastName,
+      driverId:    d.id || d.driverId,
+      carNumber:   d.carNumber,
+      firstName:   d.firstName,
+      lastName:    d.lastName,
       totalPoints: null,
-      position: i + 1,
+      position:    i + 1,
     }));
   }
-
   const hasRealStandings = standings[0]?.totalPoints != null;
-  // Exposer standings pour les event listeners
+
   panel._standings = standings;
 
-  // DF courante et DF adverse
-  const currentDf  = session.num; // 1 ou 2
+  const currentDf  = session.num;
   const otherDf    = currentDf === 1 ? 2 : 1;
   const currentIds = currentDf === 1 ? df1Ids : df2Ids;
   const otherIds   = currentDf === 1 ? df2Ids : df1Ids;
@@ -852,12 +730,10 @@ async function renderDfStandings(panel, session, assignedParticipants) {
 
     ${!hasRealStandings ? `
       <div class="ses-df-notice">
-        ⚠️ Classement intermédiaire non encore calculé — affichage par numéro de voiture.
-        Terminez les manches qualificatives et calculez le classement pour voir la répartition officielle.
+        ⚠️ Pas encore assez de résultats MQ — affichage par numéro de voiture.
       </div>
     ` : ''}
 
-    <!-- Classement avec indication DF -->
     <div class="ses-df-standings">
       <div class="ses-df-legend">
         <span class="ses-df-pill ses-df-pill--1">DF1</span>
@@ -867,19 +743,13 @@ async function renderDfStandings(panel, session, assignedParticipants) {
       </div>
 
       ${standings.slice(0, 16).map((p, i) => {
-        const pos = i + 1;
-        const dfNum = pos % 2 === 1 ? 1 : 2; // impair → DF1, pair → DF2
-        const isInDf1 = df1Ids.has(p.driverId);
-        const isInDf2 = df2Ids.has(p.driverId);
-        // isInCurrentDf : pilote dans la DF actuellement affichée
+        const pos   = i + 1;
+        const dfNum = pos % 2 === 1 ? 1 : 2;
         const isInCurrentDf = currentIds.has(p.driverId);
-        // isInOtherDf : pilote dans l'autre DF
         const isInOtherDf   = otherIds.has(p.driverId);
 
-        // Boutons d'action selon l'état du pilote
         let actionBtn = '';
         if (isInCurrentDf) {
-          // Dans cette DF → retirer ou basculer vers l'autre
           actionBtn = `
             <button class="btn btn-ghost btn-sm ses-df-action"
               data-action="remove" data-driver-id="${p.driverId}"
@@ -889,14 +759,12 @@ async function renderDfStandings(panel, session, assignedParticipants) {
               data-df="${currentDf}" title="Basculer vers DF${otherDf}">→ DF${otherDf}</button>
           `;
         } else if (isInOtherDf) {
-          // Dans l'autre DF → basculer vers cette DF
           actionBtn = `
             <button class="btn btn-secondary btn-sm ses-df-action"
               data-action="swap" data-driver-id="${p.driverId}"
               data-df="${otherDf}" title="Basculer vers DF${currentDf}">→ DF${currentDf}</button>
           `;
         } else {
-          // Non assigné → ajouter dans cette DF
           actionBtn = `
             <button class="btn btn-primary btn-sm ses-df-action"
               data-action="add" data-driver-id="${p.driverId}"
@@ -949,12 +817,11 @@ async function renderDfStandings(panel, session, assignedParticipants) {
   document.getElementById('ses-auto-df-inline')
     ?.addEventListener('click', () => autoAssignDemis());
 
-  // Boutons d'action manuels sur les lignes DF
   panel.querySelectorAll('.ses-df-action').forEach(btn => {
     btn.addEventListener('click', async () => {
-      const driverId = btn.dataset.driverId;
+      const driverId  = btn.dataset.driverId;
       const fromDfNum = parseInt(btn.dataset.df);
-      const action = btn.dataset.action;
+      const action    = btn.dataset.action;
 
       const df1 = allSessions.find(s => s.type === 'DF' && s.num === 1);
       const df2 = allSessions.find(s => s.type === 'DF' && s.num === 2);
@@ -962,10 +829,7 @@ async function renderDfStandings(panel, session, assignedParticipants) {
 
       const fromSession = fromDfNum === 1 ? df1 : df2;
       const toSession   = fromDfNum === 1 ? df2 : df1;
-
-      // Trouver le pilote dans la liste standings
-      const standings = panel._standings || [];
-      const driver = standings.find(p => p.driverId === driverId);
+      const driver = (panel._standings || []).find(p => p.driverId === driverId);
       if (!driver) return;
 
       if (action === 'remove') {
@@ -973,22 +837,21 @@ async function renderDfStandings(panel, session, assignedParticipants) {
       } else if (action === 'add') {
         await addParticipant(fromSession.id, driver);
       } else if (action === 'swap') {
-        // Retirer de la DF actuelle, ajouter dans l'autre
         await removeParticipant(fromSession.id, driverId);
         await addParticipant(toSession.id, driver);
       }
 
-      // Re-render
       await renderDfStandings(panel, session, await getParticipantsData(selectedSessionId));
     });
   });
 }
 
-/**
- * Vue Finale : affiche les pilotes qualifiés par paires DF1/DF2
- * ordonnés selon le règlement (départage par classement intermédiaire)
- * + remplaçants potentiels
- */
+// ─────────────────────────────────────────────────────────
+// VUE FINALE
+// ─────────────────────────────────────────────────────────
+
+// ← MODIFIÉ : utilise calcInterimStandings(db, allSessions) depuis calc.js
+//   Plus de lecture Firestore interimStandings
 async function renderFinaleStandings(panel, session, assignedParticipants) {
   const { collection, query, where, getDocs } = await import(
     'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
@@ -998,7 +861,6 @@ async function renderFinaleStandings(panel, session, assignedParticipants) {
   const df2 = allSessions.find(s => s.type === 'DF' && s.num === 2);
   const assignedIds = new Set(assignedParticipants.map(p => p.driverId));
 
-  // Récupérer résultats + participants des 2 DF
   const getDfResults = async (dfSession) => {
     if (!dfSession) return [];
     const [resSnap, partSnap] = await Promise.all([
@@ -1018,41 +880,34 @@ async function renderFinaleStandings(panel, session, assignedParticipants) {
       status:    resultMap[p.driverId]?.status ?? null,
       points:    resultMap[p.driverId]?.points ?? null,
     })).sort((a, b) => {
-      // Finis par temps, puis DNF, puis autres
       const order = r => r.ms ? r.ms : r.status === 'DNF' ? 9e6 : 9e9;
       return order(a) - order(b);
     });
   };
 
-  // Classement intermédiaire pour départage
-  const interimSnap = await getDocs(query(
-    collection(db, 'interimStandings'),
-    where('meetingId', '==', selectedMeetingId),
-    where('category',  '==', selectedCategory)
-  ));
-  const interimMap = {};
-  interimSnap.docs.forEach(d => {
-    const data = d.data();
-    interimMap[data.driverId] = data.position ?? 999;
-  });
+  // ← MODIFIÉ : calcul direct, plus de lecture Firestore interimStandings
+  const interimCalc = await calcInterimStandings(db, allSessions);
+  const interimMap  = {};
+  interimCalc.forEach(r => { interimMap[r.driverId] = r.position ?? 999; });
+
+  const getInterimPoints = (driverId) => {
+    const r = interimCalc.find(d => d.driverId === driverId);
+    return r?.interimPoints ?? 0;
+  };
 
   const df1Results = await getDfResults(df1);
   const df2Results = await getDfResults(df2);
 
-  // Les 4 premiers de chaque DF = qualifiés, le reste = remplaçants
-  const df1Qualified   = df1Results.filter(r => r.ms || r.status === 'DNF').slice(0, 4);
-  const df2Qualified   = df2Results.filter(r => r.ms || r.status === 'DNF').slice(0, 4);
+  const df1Qualified    = df1Results.filter(r => r.ms || r.status === 'DNF').slice(0, 4);
+  const df2Qualified    = df2Results.filter(r => r.ms || r.status === 'DNF').slice(0, 4);
   const df1Replacements = df1Results.filter(r => r.ms || r.status === 'DNF').slice(4);
   const df2Replacements = df2Results.filter(r => r.ms || r.status === 'DNF').slice(4);
 
-  // Construire les paires (rang 1 DF1 vs rang 1 DF2, etc.)
   const maxPairs = Math.max(df1Qualified.length, df2Qualified.length);
   const pairs = [];
   for (let i = 0; i < maxPairs; i++) {
     const d1 = df1Qualified[i] || null;
     const d2 = df2Qualified[i] || null;
-
-    // Départage par classement intermédiaire (le mieux classé en premier)
     let first = d1, second = d2;
     if (d1 && d2) {
       const pos1 = interimMap[d1.driverId] ?? 999;
@@ -1062,14 +917,6 @@ async function renderFinaleStandings(panel, session, assignedParticipants) {
     pairs.push({ rank: i + 1, first, second });
   }
 
-  // Remplaçants : fusionner DF1 et DF2
-  // Tri : points TOTAUX du meeting (points intermédiaires + points DF) décroissants
-  // Puis classement intermédiaire en cas d'égalité
-  const getInterimPoints = (driverId) => {
-    const doc = interimSnap.docs.find(d => d.data().driverId === driverId);
-    return doc?.data()?.interimPoints ?? 0;
-  };
-
   const allReplacements = [
     ...df1Replacements.map(r => ({ ...r, dfNum: 1 })),
     ...df2Replacements.map(r => ({ ...r, dfNum: 2 })),
@@ -1077,10 +924,8 @@ async function renderFinaleStandings(panel, session, assignedParticipants) {
     ...r,
     totalMeetingPoints: (r.points ?? 0) + getInterimPoints(r.driverId),
   })).sort((a, b) => {
-    // 1. Total meeting décroissant
     if (b.totalMeetingPoints !== a.totalMeetingPoints)
       return b.totalMeetingPoints - a.totalMeetingPoints;
-    // 2. Classement intermédiaire croissant (meilleur = plus petit numéro)
     return (interimMap[a.driverId] ?? 999) - (interimMap[b.driverId] ?? 999);
   });
 
@@ -1095,16 +940,14 @@ async function renderFinaleStandings(panel, session, assignedParticipants) {
         <span class="ses-df-pill ses-df-pill--${dfNum}">DF${dfNum}</span>
         <span class="ses-pilot-num">${escHtml(d.carNumber)}</span>
         <span class="ses-pilot-name">${escHtml(d.firstName)} <strong>${escHtml(d.lastName)}</strong></span>
-        ${interimPos ? `<span class="ses-fin-interim">${interimPos}ème</span>` : ''}
+        ${interimPos && interimPos < 999 ? `<span class="ses-fin-interim">${interimPos}ème</span>` : ''}
         ${isAssigned ? '<span class="ses-df-check">✓</span>' : ''}
         ${!isAssigned ? `
           <button class="btn btn-primary btn-sm ses-df-action"
-            data-action="add" data-driver-id="${d.driverId}" data-df="fin"
-            title="Ajouter en Finale">＋</button>
+            data-action="add" data-driver-id="${d.driverId}" data-df="fin">＋</button>
         ` : `
           <button class="btn btn-danger btn-sm ses-df-action"
-            data-action="remove-fin" data-driver-id="${d.driverId}"
-            title="Retirer de la Finale">✕</button>
+            data-action="remove-fin" data-driver-id="${d.driverId}">✕</button>
         `}
       </div>`;
   };
@@ -1126,7 +969,6 @@ async function renderFinaleStandings(panel, session, assignedParticipants) {
       </div>
     ` : ''}
 
-    <!-- Paires qualifiées -->
     <div class="ses-fin-section-title">
       <span>Qualifiés — 4 premiers de chaque ½ finale</span>
       <span class="text-muted" style="font-size:0.75rem">Ordre : classement intermédiaire en cas d'égalité</span>
@@ -1142,7 +984,6 @@ async function renderFinaleStandings(panel, session, assignedParticipants) {
       </div>
     `).join('')}
 
-    <!-- Remplaçants -->
     ${allReplacements.length > 0 ? `
       <div class="ses-fin-section-title" style="margin-top:var(--sp-lg)">
         Remplaçants potentiels
@@ -1162,7 +1003,6 @@ async function renderFinaleStandings(panel, session, assignedParticipants) {
     ` : ''}
   `;
 
-  // Events
   document.getElementById('ses-auto-fin-btn2')?.addEventListener('click', () => autoAssignFinale());
 
   panel.querySelectorAll('.ses-df-action').forEach(btn => {
@@ -1173,25 +1013,27 @@ async function renderFinaleStandings(panel, session, assignedParticipants) {
       if (!fin) return;
 
       if (action === 'add') {
-        // Trouver le pilote dans df1 ou df2
         const driver = [...df1Results, ...df2Results].find(d => d.driverId === driverId);
         if (driver) await addParticipant(fin.id, driver);
       } else if (action === 'remove-fin') {
         await removeParticipant(fin.id, driverId);
       }
-      // Re-render
+
       const updated = await getParticipantsData(fin.id);
       await renderFinaleStandings(panel, session, updated);
     });
   });
 }
 
+// ─────────────────────────────────────────────────────────
+// STYLES
+// ─────────────────────────────────────────────────────────
+
 function injectStyles() {
   if (document.getElementById('sessions-styles')) return;
   const style = document.createElement('style');
   style.id = 'sessions-styles';
   style.textContent = `
-    /* Layout 2 colonnes */
     .ses-layout {
       display: grid;
       grid-template-columns: 280px 1fr;
@@ -1202,7 +1044,6 @@ function injectStyles() {
       .ses-layout { grid-template-columns: 1fr; }
     }
 
-    /* Liste sessions (colonne gauche) */
     .ses-list-header {
       display: flex; align-items: center; justify-content: space-between;
       margin-bottom: var(--sp-sm);
@@ -1230,7 +1071,6 @@ function injectStyles() {
     }
     .ses-card:hover { background: var(--clr-surface-2); border-color: var(--clr-border-2); }
     .ses-card.is-active { background: var(--clr-surface-2); }
-
     .ses-card--ec.is-active  { border-left-color: var(--clr-info); }
     .ses-card--mq.is-active  { border-left-color: var(--clr-warning); }
     .ses-card--df.is-active  { border-left-color: #ff7730; }
@@ -1252,7 +1092,6 @@ function injectStyles() {
     .ses-card-count { text-align: right; font-family: var(--font-display); font-size: 1rem; font-weight: 700; color: var(--clr-accent-2); line-height: 1; }
     .ses-card-count span { display: block; font-family: var(--font-body); font-size: 0.65rem; color: var(--clr-text-3); font-weight: 400; }
 
-    /* Détail session (colonne droite) */
     .ses-detail-header {
       display: flex; align-items: flex-start; justify-content: space-between;
       gap: var(--sp-md); margin-bottom: var(--sp-md); flex-wrap: wrap;
@@ -1296,7 +1135,6 @@ function injectStyles() {
     }
     .ses-placeholder { color: var(--clr-text-3); font-size: 0.9rem; }
 
-    /* Classement intermédiaire DF */
     .ses-df-notice {
       padding: 8px var(--sp-md);
       background: var(--clr-warning-dim);
@@ -1307,81 +1145,51 @@ function injectStyles() {
       margin-bottom: var(--sp-md);
     }
     .ses-df-legend {
-      display: flex;
-      align-items: center;
-      gap: var(--sp-xs);
-      font-size: 0.78rem;
-      color: var(--clr-text-3);
+      display: flex; align-items: center; gap: var(--sp-xs);
+      font-size: 0.78rem; color: var(--clr-text-3);
       margin-bottom: var(--sp-sm);
     }
     .ses-df-standings { display: flex; flex-direction: column; gap: 3px; }
     .ses-df-row {
-      display: flex;
-      align-items: center;
-      gap: var(--sp-sm);
+      display: flex; align-items: center; gap: var(--sp-sm);
       padding: 7px var(--sp-sm);
       border-radius: var(--r-sm);
       border: 1px solid transparent;
       transition: background var(--tr-fast);
     }
     .ses-df-row:hover { background: var(--clr-surface-2); }
-    .ses-df-row--assigned {
-      background: rgba(30,215,96,0.06);
-      border-color: rgba(30,215,96,0.2);
-    }
+    .ses-df-row--assigned { background: rgba(30,215,96,0.06); border-color: rgba(30,215,96,0.2); }
     .ses-df-row--other { opacity: 0.45; }
     .ses-df-row--reserve { opacity: 0.5; }
 
     .ses-df-pos {
-      min-width: 22px;
-      font-family: var(--font-display);
-      font-size: 0.75rem;
-      color: var(--clr-text-3);
-      text-align: center;
-      flex-shrink: 0;
+      min-width: 22px; font-family: var(--font-display);
+      font-size: 0.75rem; color: var(--clr-text-3);
+      text-align: center; flex-shrink: 0;
     }
     .ses-df-pill {
-      padding: 2px 7px;
-      border-radius: 20px;
-      font-family: var(--font-condensed);
-      font-size: 0.7rem;
-      font-weight: 700;
-      letter-spacing: 0.06em;
-      flex-shrink: 0;
+      padding: 2px 7px; border-radius: 20px;
+      font-family: var(--font-condensed); font-size: 0.7rem; font-weight: 700;
+      letter-spacing: 0.06em; flex-shrink: 0;
     }
     .ses-df-pill--1       { background: rgba(255,119,48,0.2); color: #ff7730; border: 1px solid rgba(255,119,48,0.4); }
     .ses-df-pill--2       { background: rgba(59,158,255,0.2); color: var(--clr-info); border: 1px solid rgba(59,158,255,0.4); }
     .ses-df-pill--reserve { background: var(--clr-surface-2); color: var(--clr-text-3); border: 1px solid var(--clr-border); }
 
     .ses-df-pts {
-      margin-left: auto;
-      font-family: var(--font-display);
-      font-size: 0.8rem;
-      font-weight: 700;
-      color: var(--clr-accent-2);
-      flex-shrink: 0;
+      margin-left: auto; font-family: var(--font-display);
+      font-size: 0.8rem; font-weight: 700; color: var(--clr-accent-2); flex-shrink: 0;
     }
-    .ses-df-status { flex-shrink: 0; font-size: 0.78rem; }
     .ses-df-check { color: var(--clr-success); font-weight: 700; }
 
-    /* Vue Finale */
     .ses-fin-section-title {
-      display: flex;
-      align-items: baseline;
-      gap: var(--sp-sm);
-      font-family: var(--font-condensed);
-      font-size: 0.75rem;
-      font-weight: 700;
-      letter-spacing: 0.1em;
-      text-transform: uppercase;
-      color: var(--clr-text-3);
-      margin: var(--sp-sm) 0;
-      flex-wrap: wrap;
+      display: flex; align-items: baseline; gap: var(--sp-sm);
+      font-family: var(--font-condensed); font-size: 0.75rem; font-weight: 700;
+      letter-spacing: 0.1em; text-transform: uppercase; color: var(--clr-text-3);
+      margin: var(--sp-sm) 0; flex-wrap: wrap;
     }
     .ses-fin-pair {
-      display: flex;
-      align-items: flex-start;
-      gap: var(--sp-sm);
+      display: flex; align-items: flex-start; gap: var(--sp-sm);
       padding: var(--sp-xs) 0;
       border-bottom: 1px solid var(--clr-border);
     }
@@ -1390,69 +1198,41 @@ function injectStyles() {
     .ses-fin-pair--reserve:hover { opacity: 1; }
 
     .ses-fin-rank {
-      min-width: 22px;
-      font-family: var(--font-display);
-      font-size: 0.82rem;
-      font-weight: 700;
-      color: var(--clr-accent-2);
-      text-align: center;
-      flex-shrink: 0;
-      padding-top: 2px;
+      min-width: 22px; font-family: var(--font-display);
+      font-size: 0.82rem; font-weight: 700; color: var(--clr-accent-2);
+      text-align: center; flex-shrink: 0; padding-top: 2px;
     }
     .ses-fin-rank--reserve { color: var(--clr-text-3); }
 
-    .ses-fin-pair-pilots {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-    }
+    .ses-fin-pair-pilots { flex: 1; display: flex; flex-direction: column; gap: 4px; }
     .ses-fin-pilot {
-      display: flex;
-      align-items: center;
-      gap: var(--sp-sm);
-      padding: 6px var(--sp-sm);
-      border-radius: var(--r-sm);
-      border: 1px solid transparent;
-      transition: background var(--tr-fast);
-      flex-wrap: wrap;
+      display: flex; align-items: center; gap: var(--sp-sm);
+      padding: 6px var(--sp-sm); border-radius: var(--r-sm);
+      border: 1px solid transparent; transition: background var(--tr-fast); flex-wrap: wrap;
     }
     .ses-fin-pilot:hover { background: var(--clr-surface-2); }
-    .ses-fin-pilot--assigned {
-      background: rgba(30,215,96,0.06);
-      border-color: rgba(30,215,96,0.2);
-    }
+    .ses-fin-pilot--assigned { background: rgba(30,215,96,0.06); border-color: rgba(30,215,96,0.2); }
     .ses-fin-empty { color: var(--clr-text-3); font-size: 0.82rem; padding: 6px; }
     .ses-fin-total-pts {
-      font-family: var(--font-display);
-      font-size: 0.85rem;
-      font-weight: 700;
-      color: var(--clr-accent-2);
-      flex-shrink: 0;
-      align-self: center;
+      font-family: var(--font-display); font-size: 0.85rem; font-weight: 700;
+      color: var(--clr-accent-2); flex-shrink: 0; align-self: center;
     }
     .ses-fin-interim {
-      font-size: 0.72rem;
-      color: var(--clr-text-3);
-      font-style: italic;
-      margin-left: auto;
+      font-size: 0.72rem; color: var(--clr-text-3);
+      font-style: italic; margin-left: auto;
     }
-    .ses-df-pts-label { font-size: 0.7rem; color: var(--clr-text-3); font-weight: 400; font-family: var(--font-body); }
+
     .ses-df-actions {
-      display: flex;
-      gap: 4px;
-      flex-shrink: 0;
-      opacity: 0;
-      transition: opacity var(--tr-fast);
+      display: flex; gap: 4px; flex-shrink: 0;
+      opacity: 0; transition: opacity var(--tr-fast);
     }
     .ses-df-row:hover .ses-df-actions { opacity: 1; }
-    .ses-df-row--other .ses-df-actions { opacity: 0.7; }
-    .ses-df-row--other:hover .ses-df-actions { opacity: 1; }
+    .ses-df-row--other .ses-df-actions,
+    .ses-df-row--other:hover .ses-df-actions { opacity: 0.7; }
     .ses-df-action { font-size: 0.72rem !important; padding: 3px 7px !important; white-space: nowrap; }
+    .ses-df-pts-label { font-size: 0.7rem; color: var(--clr-text-3); font-weight: 400; font-family: var(--font-body); }
     .ses-df-pts-pos { font-size: 0.78rem; color: var(--clr-text-3); font-style: italic; font-family: var(--font-body); font-weight: 400; }
-    .ses-df-other { color: var(--clr-text-3); font-style: italic; }
 
-    /* Dot statut */
     .eng-group-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; display: inline-block; }
     .eng-group-dot--on  { background: var(--clr-success); box-shadow: 0 0 6px var(--clr-success); }
     .eng-group-dot--off { background: var(--clr-text-3); }

@@ -8,7 +8,7 @@
 
 import { db } from './firebase.js';
 import { toast } from './app.js';
-import { msToDisplay, inputToMs, msToFields, escHtml } from './utils.js';
+import { msToDisplay, inputToMs, msToFields, escHtml, parseTimeString } from './utils.js';
 
 // ─────────────────────────────────────────────────────────
 // ÉTAT LOCAL
@@ -592,17 +592,22 @@ function renderTimingTable() {
   const timed   = participants.filter(p => results[p.driverId]?.ms != null || SPECIAL_STATUSES.includes(results[p.driverId]?.status));
   const untimed = participants.filter(p => !results[p.driverId]?.ms && !SPECIAL_STATUSES.includes(results[p.driverId]?.status));
 
-  // Trier les chronométrés par temps (DNS/DNF/DSQ en dernier)
+  // Trier les chronométrés :
+  // - Finis par temps croissant
+  // - DNF avec position manuelle classés selon cette position
+  // - DNS/DSQ/DNF sans position en dernier
   const sortedTimed = [...timed].sort((a, b) => {
     const ra = results[a.driverId];
     const rb = results[b.driverId];
-    const aMs = ra?.ms ?? Infinity;
-    const bMs = rb?.ms ?? Infinity;
-    const aSpecial = SPECIAL_STATUSES.includes(ra?.status);
-    const bSpecial = SPECIAL_STATUSES.includes(rb?.status);
-    if (aSpecial && !bSpecial) return 1;
-    if (!aSpecial && bSpecial) return -1;
-    return aMs - bMs;
+
+    // Valeur de tri : temps en ms, ou position manuelle × 1000000, ou Infinity
+    const sortVal = (r) => {
+      if (r?.ms) return r.ms;
+      if (r?.status === 'DNF' && r?.manualPosition) return r.manualPosition * 1000000;
+      return Infinity; // DNS, DSQ, DNF sans position
+    };
+
+    return sortVal(ra) - sortVal(rb);
   });
 
   const isEC = session.type === 'EC';
@@ -701,8 +706,13 @@ function pilotRowUntimed(p, session) {
 function pilotRowTimed(p, index, session) {
   const r = results[p.driverId];
   const isSpecial = SPECIAL_STATUSES.includes(r?.status);
+  const isDnfWithPos = r?.status === 'DNF' && r?.manualPosition;
+
+  // Position affichée : index réel dans le tri pour les DNF avec position
+  const displayPos = isDnfWithPos ? r.manualPosition : (isSpecial ? null : index + 1);
+
   const statusLabel = r?.status === 'DSQ_RACE' ? 'DSQ EC' : r?.status === 'DSQ' ? 'DSQ HC' : r?.status;
-  const manualPosLabel = r?.status === 'DNF' && r?.manualPosition ? ` (${r.manualPosition}ème)` : '';
+  const manualPosLabel = isDnfWithPos ? ` (${r.manualPosition}ème)` : '';
   const badgeCls = r?.status === 'DNF' ? 'badge-dnf' : r?.status === 'DNS' ? 'badge-dns' : 'badge-dsq';
   const displayTime = isSpecial
     ? `<span class="badge ${badgeCls}">${statusLabel}${manualPosLabel}</span>`
@@ -710,7 +720,7 @@ function pilotRowTimed(p, index, session) {
 
   return `
     <div class="tim-row tim-row--timed" data-driver-id="${p.driverId}">
-      <span class="tim-pos">${isSpecial ? '—' : index + 1}</span>
+      <span class="tim-pos">${displayPos ?? '—'}</span>
       <span class="tim-num">${escHtml(p.carNumber)}</span>
       <span class="tim-name">${escHtml(p.firstName)} <strong>${escHtml(p.lastName)}</strong></span>
       <span class="tim-result">${displayTime}</span>
@@ -1514,7 +1524,6 @@ function showValidationModal(results, session, confidence, notes) {
       if (r.status) {
         await saveResult(p.driverId, null, r.status);
       } else if (r.time) {
-        const { msToDisplay: _, inputToMs, parseTimeString } = await import('./utils.js');
         const ms = parseTimeString(r.time);
         if (ms && ms > 0) {
           await saveResult(p.driverId, ms, null);

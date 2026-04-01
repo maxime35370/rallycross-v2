@@ -14,6 +14,7 @@ const VIEW_TITLES = {
   standings:     'Classements',
   championship:  'Championnat',
   spectator:     '📺 Mode Spectateur',
+  stats:         '📊 Statistiques',
   config:        'Configuration',
 };
 
@@ -308,11 +309,13 @@ async function loadApp() {
   const { initStandings }      = await import('./standings.js');
   const { initChampionship }   = await import('./championship.js');
   const { initSpectator }      = await import('./spectator.js');
+  const { initStats }          = await import('./stats.js');
   initSessions();
   initTiming();
   initStandings();
   initChampionship();
   initSpectator();
+  initStats();
 
   // Les prochains modules seront ajoutés ici au fil du développement :
   // const { initTiming } = await import('./timing.js');

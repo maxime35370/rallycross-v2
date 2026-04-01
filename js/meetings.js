@@ -174,21 +174,34 @@ async function deleteMeeting(id) {
   const { doc, deleteDoc, collection, query, where, getDocs, writeBatch } =
     await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
 
-  if (!window.confirm('Supprimer ce meeting et TOUTES ses sessions associées ?')) return;
+  if (!window.confirm('Supprimer ce meeting et TOUTES ses données associées ?\n\n• Sessions\n• Participants\n• Temps saisis\n• Engagements\n• Classements\n\nCette action est irréversible.')) return;
 
   try {
-    // Supprimer les sessions liées
-    const q = query(collection(db, 'sessions'), where('meetingId', '==', id));
-    const snap = await getDocs(q);
-    if (!snap.empty) {
-      const batch = writeBatch(db);
-      snap.docs.forEach(d => batch.delete(d.ref));
-      await batch.commit();
+    // Collections à nettoyer par meetingId
+    const collections = [
+      'sessions',
+      'sessionParticipants',
+      'results',
+      'engagements',
+      'meetingStandings',
+    ];
+
+    for (const col of collections) {
+      const snap = await getDocs(query(
+        collection(db, col),
+        where('meetingId', '==', id)
+      ));
+      if (!snap.empty) {
+        const batch = writeBatch(db);
+        snap.docs.forEach(d => batch.delete(d.ref));
+        await batch.commit();
+      }
     }
 
-    // Supprimer le meeting
+    // Supprimer le meeting lui-même
     await deleteDoc(doc(db, 'meetings', id));
-    toast('Meeting supprimé', 'warning');
+    toast('Meeting et toutes ses données supprimés', 'warning');
+
   } catch (err) {
     console.error(err);
     toast('Erreur lors de la suppression', 'error');
