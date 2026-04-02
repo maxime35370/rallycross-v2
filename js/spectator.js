@@ -19,7 +19,7 @@ let allSessions       = [];
 let unsubResults      = null;
 let lastResults       = [];
 
-let _interimRefreshTimer = null; // refresh périodique classement intermédiaire
+let _interimRefreshTimer = null;
 
 const CATEGORIES = ['Supercar', 'Super1600', 'Division 5', 'Féminines', 'D3', 'D4'];
 
@@ -76,49 +76,38 @@ async function subscribeResults(sessionId) {
   const q = query(collection(db, 'results'), where('sessionId', '==', sessionId));
   unsubResults = onSnapshot(q, snap => {
     lastResults = snap.docs.map(d => d.data());
-    renderLiveResults();
     const session = allSessions.find(s => s.id === sessionId);
+
     if (session?.type === 'MQ') {
       _carouselData.mqResults = lastResults;
       _carouselData.mqLabel   = `Manche qualificative ${session.num}`;
     }
+    if (session?.type === 'EC') {
+      _carouselData.ecResults = lastResults;
+    }
+
+    // Refresh immédiat si on est sur la slide des résultats (slide 0)
+    if (_carouselSlide === 0) {
+      renderCarouselSlide();
+    }
+
     updateTimestamp();
   });
 }
 
-// ← MODIFIÉ : calcul direct depuis calc.js, plus de lecture interimStandings Firestore
 async function refreshInterimLive() {
   if (!selectedMeetingId || !selectedCategory || !allSessions.length) return;
   try {
     const { calcInterimStandings } = await import('./calc.js');
     const rows = await calcInterimStandings(db, allSessions);
     const sorted = rows.sort((a, b) => (a.position ?? 99) - (b.position ?? 99));
-    renderInterimLive(sorted);
     _carouselData.interimRows = sorted;
+    // Refresh immédiat si on est sur la slide intermédiaire
+    if (_carouselSlide === 1) {
+      renderCarouselSlide();
+    }
     updateTimestamp();
   } catch {}
-}
-
-function renderInterimLive(rows) {
-  const block = document.getElementById('spc-interim-block');
-  if (!block) return;
-  if (rows.length === 0) { block.innerHTML = ''; return; }
-
-  const top8 = rows.slice(0, 8);
-  block.innerHTML = `
-    <div class="spc-card">
-      <div class="spc-card-title">🏆 Classement intermédiaire</div>
-      ${top8.map(r => `
-        <div class="spc-result-row ${r.position === 1 ? 'spc-result-row--first' : ''}">
-          <span class="spc-result-pos">${r.position}</span>
-          <span class="spc-result-num">${escHtml(r.carNumber)}</span>
-          <span class="spc-result-name">${escHtml(r.lastName || '')}</span>
-          <span class="spc-result-time spc-pts">${r.totalPoints} pts</span>
-        </div>
-      `).join('')}
-      ${rows.length > 8 ? `<div class="spc-empty" style="font-size:0.78rem">+${rows.length - 8} autres pilotes</div>` : ''}
-    </div>
-  `;
 }
 
 function updateTimestamp() {
@@ -189,6 +178,10 @@ async function renderContent() {
   const content = document.getElementById('spc-content');
   if (!content || !selectedMeetingId || !selectedCategory) return;
 
+  // Reset complet des données
+  _carouselData = { mqResults: [], mqLabel: '', interimRows: [], ecResults: [], sessionResults: {} };
+  _carouselSlide = 0;
+
   await loadSessions();
 
   const sessionResults = await Promise.all(
@@ -209,17 +202,15 @@ async function renderContent() {
     <div class="spc-updated" id="spc-timestamp">En attente de données…</div>
   `;
 
-  // ← MODIFIÉ : refresh périodique au lieu de subscribeInterim()
   await refreshInterimLive();
   if (_interimRefreshTimer) clearInterval(_interimRefreshTimer);
   _interimRefreshTimer = setInterval(refreshInterimLive, 30000);
 
-  // Pré-charger les résultats de toutes les sessions
   const sessionResultsMap = {};
   for (const s of allSessions) {
     const res = await fsQuery('results', [['sessionId','==',s.id]]);
     sessionResultsMap[s.id] = res;
-
+    if (s.type === 'EC' && res.length > 0) _carouselData.ecResults = res;
     if (s.type === 'MQ' && res.length > 0) {
       _carouselData.mqResults = res;
       _carouselData.mqLabel   = `Manche qualificative ${s.num}`;
@@ -228,22 +219,16 @@ async function renderContent() {
       _carouselData[`df${s.num}Results`] = res;
       _carouselData[`df${s.num}Label`]   = `Demi-finale ${s.num}`;
     }
-    if (s.type === 'FIN' && res.length > 0) {
-      _carouselData.finResults = res;
-    }
+    if (s.type === 'FIN' && res.length > 0) _carouselData.finResults = res;
   }
   _carouselData.sessionResults = sessionResultsMap;
   _carouselData.phase = detectPhase();
 
   await subscribeAdvancedSessions();
-
-  // ← MODIFIÉ : calcul direct pour le championnat
   loadChampionshipData();
-
   startCarousel();
 }
 
-// ← MODIFIÉ : calcul direct depuis collections brutes, plus de meetingStandings
 async function loadChampionshipData() {
   if (!selectedMeetingId || !selectedCategory) return;
   try {
@@ -251,11 +236,9 @@ async function loadChampionshipData() {
     const DF_PTS  = [0, 10, 8, 6, 5, 4, 3, 2, 1];
     const FIN_PTS = [0, 15, 12, 9, 7, 6, 5, 4, 3];
 
-    // Tous les meetings de la saison
     const allMeetingsSnap = await fsQuery('meetings', [['year', '==', selectedYear]]);
     const pastMeetings = allMeetingsSnap.filter(m => m.id !== selectedMeetingId);
-
-    const pointsMap = {}; // driverId → { carNumber, lastName, total }
+    const pointsMap = {};
 
     for (const meeting of pastMeetings) {
       const meetingSessions = await fsQuery('sessions', [
@@ -264,43 +247,31 @@ async function loadChampionshipData() {
       ]);
       if (!meetingSessions.length) continue;
 
-      // Points intermédiaires
       const interim = await calcInterimStandings(db, meetingSessions);
       interim.forEach(r => {
-        if (!pointsMap[r.driverId]) pointsMap[r.driverId] = {
-          driverId: r.driverId, carNumber: r.carNumber, lastName: r.lastName, total: 0,
-        };
+        if (!pointsMap[r.driverId]) pointsMap[r.driverId] = { driverId: r.driverId, carNumber: r.carNumber, lastName: r.lastName, total: 0 };
         pointsMap[r.driverId].total += r.interimPoints ?? 0;
       });
 
-      // Points DF
-      const dfSessions = meetingSessions.filter(s => s.type === 'DF');
-      for (const df of dfSessions) {
+      for (const df of meetingSessions.filter(s => s.type === 'DF')) {
         const res = await fsQuery('results', [['sessionId', '==', df.id]]);
-        res.filter(r => r.ms && !r.status)
-           .sort((a, b) => a.ms - b.ms)
-           .forEach((r, i) => {
-             if (!pointsMap[r.driverId]) pointsMap[r.driverId] = { driverId: r.driverId, carNumber: r.carNumber, lastName: r.lastName, total: 0 };
-             pointsMap[r.driverId].total += DF_PTS[i + 1] ?? 0;
-           });
+        res.filter(r => r.ms && !r.status).sort((a, b) => a.ms - b.ms).forEach((r, i) => {
+          if (!pointsMap[r.driverId]) pointsMap[r.driverId] = { driverId: r.driverId, carNumber: r.carNumber, lastName: r.lastName, total: 0 };
+          pointsMap[r.driverId].total += DF_PTS[i + 1] ?? 0;
+        });
       }
 
-      // Points Finale
       const finSession = meetingSessions.find(s => s.type === 'FIN');
       if (finSession) {
         const res = await fsQuery('results', [['sessionId', '==', finSession.id]]);
-        res.filter(r => r.ms && !r.status)
-           .sort((a, b) => a.ms - b.ms)
-           .forEach((r, i) => {
-             if (!pointsMap[r.driverId]) pointsMap[r.driverId] = { driverId: r.driverId, carNumber: r.carNumber, lastName: r.lastName, total: 0 };
-             pointsMap[r.driverId].total += FIN_PTS[i + 1] ?? 0;
-           });
+        res.filter(r => r.ms && !r.status).sort((a, b) => a.ms - b.ms).forEach((r, i) => {
+          if (!pointsMap[r.driverId]) pointsMap[r.driverId] = { driverId: r.driverId, carNumber: r.carNumber, lastName: r.lastName, total: 0 };
+          pointsMap[r.driverId].total += FIN_PTS[i + 1] ?? 0;
+        });
       }
     }
 
-    _carouselData.championshipRows = Object.values(pointsMap)
-      .sort((a, b) => b.total - a.total)
-      .slice(0, 10);
+    _carouselData.championshipRows = Object.values(pointsMap).sort((a, b) => b.total - a.total).slice(0, 10);
   } catch {}
 }
 
@@ -309,8 +280,7 @@ async function subscribeAdvancedSessions() {
   const { collection, query, where, onSnapshot } = await import(
     'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
   );
-  const advSessions = allSessions.filter(s => ['DF','FIN'].includes(s.type));
-  for (const s of advSessions) {
+  for (const s of allSessions.filter(s => ['DF','FIN'].includes(s.type))) {
     const q = query(collection(db,'results'), where('sessionId','==',s.id));
     onSnapshot(q, snap => {
       const results = snap.docs.map(d => d.data());
@@ -323,119 +293,26 @@ async function subscribeAdvancedSessions() {
       }
       if (s.type === 'DF') {
         _carouselData[`df${s.num}Results`] = results;
-        _carouselData[`df${s.num}Label`]   = `Demi-finale ${s.num}`;
       } else if (s.type === 'FIN') {
         _carouselData.finResults = results;
       }
+      if (_carouselSlide === 0) renderCarouselSlide();
       updateTimestamp();
     });
   }
 }
 
-function renderCurrentSession(session, results) {
-  const label = session.type === 'MQ' ? `Manche qualificative ${session.num}`
-    : session.type === 'DF' ? `Demi-finale ${session.num}`
-    : session.type === 'EC' ? 'Essais chronométrés'
-    : 'Finale';
-  const typeCls = session.type.toLowerCase();
-
-  const sorted = [...results].sort((a, b) => {
-    const aSpecial = ['DNS','DSQ'].includes(a.status);
-    const bSpecial = ['DNS','DSQ'].includes(b.status);
-    if (aSpecial && !bSpecial) return 1;
-    if (!aSpecial && bSpecial) return -1;
-    return (a.ms ?? Infinity) - (b.ms ?? Infinity);
-  });
-
-  return `
-    <div class="spc-card spc-card--session">
-      <div class="spc-card-title">
-        <span class="badge badge-${typeCls}">${label}</span>
-        <span class="spc-count">${results.length} résultat${results.length > 1 ? 's' : ''}</span>
-      </div>
-      <div class="spc-results" id="spc-live-results">
-        ${sorted.length === 0
-          ? `<div class="spc-empty">En attente des résultats…</div>`
-          : sorted.map((r, i) => `
-            <div class="spc-result-row ${i === 0 ? 'spc-result-row--first' : ''}">
-              <span class="spc-result-pos">${r.ms ? i + 1 : '—'}</span>
-              <span class="spc-result-num">${escHtml(r.carNumber)}</span>
-              <span class="spc-result-name">${escHtml(r.lastName || '')}</span>
-              <span class="spc-result-time">
-                ${r.ms ? msToDisplay(r.ms)
-                  : `<span class="badge badge-${r.status === 'DNF' ? 'dnf' : 'dns'}">${r.status}</span>`}
-              </span>
-            </div>
-          `).join('')}
-      </div>
-    </div>
-  `;
-}
-
-function renderLiveResults() {
-  const container = document.getElementById('spc-live-results');
-  if (!container) return;
-
-  const sorted = [...lastResults].sort((a, b) => {
-    const aSpecial = ['DNS','DSQ'].includes(a.status);
-    const bSpecial = ['DNS','DSQ'].includes(b.status);
-    if (aSpecial && !bSpecial) return 1;
-    if (!aSpecial && bSpecial) return -1;
-    return (a.ms ?? Infinity) - (b.ms ?? Infinity);
-  });
-
-  if (sorted.length === 0) {
-    container.innerHTML = `<div class="spc-empty">En attente des résultats…</div>`;
-    return;
-  }
-
-  container.innerHTML = sorted.map((r, i) => `
-    <div class="spc-result-row ${i === 0 ? 'spc-result-row--first' : ''}">
-      <span class="spc-result-pos">${r.ms ? i + 1 : '—'}</span>
-      <span class="spc-result-num">${escHtml(r.carNumber)}</span>
-      <span class="spc-result-name">${escHtml(r.lastName || '')}</span>
-      <span class="spc-result-time">
-        ${r.ms ? msToDisplay(r.ms)
-          : `<span class="badge badge-${r.status === 'DNF' ? 'dnf' : 'dns'}">${r.status}</span>`}
-      </span>
-    </div>
-  `).join('');
-}
-
-async function renderNextGrid(session) {
-  const label = session.type === 'MQ' ? `Manche qualificative ${session.num}`
-    : session.type === 'DF' ? `Demi-finale ${session.num}`
-    : session.type === 'EC' ? 'Essais chronométrés'
-    : 'Finale';
-
-  const participants = await fsQuery('sessionParticipants', [['sessionId', '==', session.id]]);
-  if (participants.length === 0) return '';
-
-  return `
-    <div class="spc-card">
-      <div class="spc-card-title">📋 Prochaine session — ${escHtml(label)}</div>
-      <div class="spc-grid-list">
-        ${participants.sort((a,b) => a.carNumber - b.carNumber).map(p => `
-          <div class="spc-grid-pill">
-            <span class="spc-grid-num">${escHtml(p.carNumber)}</span>
-            <span class="spc-grid-name">${escHtml(p.lastName || '')}</span>
-          </div>
-        `).join('')}
-      </div>
-    </div>
-  `;
-}
-
 // ─────────────────────────────────────────────────────────
-// GESTION DES LISTENERS
+// GESTION DES LISTENERS / ÉTAT CARROUSEL
 // ─────────────────────────────────────────────────────────
 
-let unsubNextParts = null;
-let _carouselTimer  = null;
-let _carouselSlide  = 0;
-let _carouselData   = { mqResults: [], mqLabel: '', interimRows: [] };
-let _dfScrollTimer  = null;
-let _dfScrollPhase  = 0;
+let unsubNextParts    = null;
+let _carouselTimer    = null;
+let _carouselSlide    = 0;
+let _carouselData     = { mqResults: [], mqLabel: '', interimRows: [], ecResults: [], sessionResults: {} };
+let _dfScrollTimer    = null;
+let _dfScrollPhase    = 0;
+let _stickyScrollTimer = null; // scroll sticky pour EC/MQ/interim
 
 function startRefresh() {
   const dot = document.getElementById('spc-live-dot');
@@ -443,9 +320,9 @@ function startRefresh() {
 }
 
 function stopRefresh() {
-  if (unsubResults)        { unsubResults();   unsubResults   = null; }
-  if (unsubNextParts)      { unsubNextParts(); unsubNextParts = null; }
-  if (_interimRefreshTimer){ clearInterval(_interimRefreshTimer); _interimRefreshTimer = null; }
+  if (unsubResults)          { unsubResults();   unsubResults   = null; }
+  if (unsubNextParts)        { unsubNextParts(); unsubNextParts = null; }
+  if (_interimRefreshTimer)  { clearInterval(_interimRefreshTimer); _interimRefreshTimer = null; }
   const dot = document.getElementById('spc-live-dot');
   if (dot) dot.classList.remove('spc-live-dot--active');
 }
@@ -460,12 +337,10 @@ function bindEvents() {
     selectedMeetingId = '';
     await loadMeetings();
   });
-
   document.getElementById('spc-meeting')?.addEventListener('change', async e => {
     selectedMeetingId = e.target.value;
     await renderContent();
   });
-
   document.getElementById('spc-category')?.addEventListener('change', async e => {
     selectedCategory = e.target.value;
     await renderContent();
@@ -482,26 +357,44 @@ function startCarousel() {
   _carouselTimer = setInterval(() => {
     const total = getCarouselTotal();
     _carouselSlide = (_carouselSlide + 1) % total;
-    stopDfScroll();
+    stopAllScrolls();
     renderCarouselSlide();
   }, 30000);
 }
 
 function stopCarousel() {
   if (_carouselTimer) { clearInterval(_carouselTimer); _carouselTimer = null; }
-  stopDfScroll();
+  stopAllScrolls();
 }
 
-function stopDfScroll() {
-  if (_dfScrollTimer) { clearTimeout(_dfScrollTimer); _dfScrollTimer = null; }
+function stopAllScrolls() {
+  if (_dfScrollTimer)     { clearTimeout(_dfScrollTimer);     _dfScrollTimer    = null; }
+  if (_stickyScrollTimer) { clearTimeout(_stickyScrollTimer); _stickyScrollTimer = null; }
+  // Annuler l'animation frame si en cours
+  const scrollable = document.querySelector('.spc-sticky-scroll');
+  if (scrollable?._stopScroll) scrollable._stopScroll();
   _dfScrollPhase = 0;
 }
 
+// Nombre de slides selon la phase et les données disponibles
 function getCarouselTotal() {
   const phase = _carouselData.phase;
   if (phase === 'FIN') return 1;
   if (phase === 'DF1' || phase === 'DF2') return 1;
-  return 2;
+
+  const hasEc = (_carouselData.ecResults || []).filter(r => r.ms).length > 0;
+  const hasMq = (_carouselData.mqResults || []).length > 0;
+
+  if (!hasMq) return hasEc ? 1 : 1; // EC seul → 1 slide
+
+  // Détecter le numéro de la MQ la plus avancée avec des résultats
+  const currentMqNum = allSessions
+    .filter(s => s.type === 'MQ')
+    .filter(s => (_carouselData.sessionResults?.[s.id] || []).length > 0)
+    .reduce((max, s) => Math.max(max, s.num ?? 0), 0);
+
+  if (currentMqNum <= 1) return 1; // MQ1 → seulement résultats
+  return 2;                         // MQ2+ → résultats + intermédiaire
 }
 
 function detectPhase() {
@@ -519,77 +412,144 @@ function renderCarouselSlide() {
   const block = document.getElementById('spc-carousel-block');
   if (!block) return;
 
+  stopAllScrolls();
+
   const phase = _carouselData.phase || 'MQ';
   const total = getCarouselTotal();
 
-  const indicators = `
+  const indicators = total > 1 ? `
     <div class="spc-carousel-indicators">
       ${Array.from({length: total}, (_, i) =>
         `<span class="spc-carousel-dot ${i === _carouselSlide ? 'is-active' : ''}"></span>`
       ).join('')}
-    </div>`;
+    </div>` : '';
 
   let html = '';
 
+  // ── Phase MQ / EC ──────────────────────────────────────
   if (phase === 'MQ') {
-    if (_carouselSlide === 0) {
-      html = buildResultsSlide(
-        _carouselData.mqResults || [],
-        _carouselData.mqLabel || 'Manche qualificative',
-        '🏁', 'mq'
+    const hasMq = (_carouselData.mqResults || []).length > 0;
+
+    if (!hasMq) {
+      // Seulement EC
+      html = buildStickySlide(
+        (_carouselData.ecResults || []).filter(r => r.ms).sort((a,b) => a.ms - b.ms),
+        '⏱️ Essais chronométrés — Top 10',
+        'ec',
+        true // afficher bonus EC
       );
+    } else if (_carouselSlide === 0) {
+      // Résultats MQ
+      const sorted = sortResults(_carouselData.mqResults || []);
+      html = buildStickySlide(sorted, `🏁 ${_carouselData.mqLabel || 'Manche qualificative'}`, 'mq', false);
     } else {
-      html = buildInterimSlide(_carouselData.interimRows || []);
+      // Classement intermédiaire
+      html = buildStickySlide(
+        _carouselData.interimRows || [],
+        '🏆 Classement intermédiaire',
+        'interim',
+        false,
+        true // mode intermédiaire (afficher points)
+      );
     }
-  } else if (phase === 'DF1') {
-    html = buildDfCombinedSlide('DF1');
-  } else if (phase === 'DF2') {
-    html = buildDfCombinedSlide('DF2');
-  } else if (phase === 'FIN') {
-    html = buildFinCombinedSlide();
   }
+
+  // ── Phase DF ───────────────────────────────────────────
+  else if (phase === 'DF1') html = buildDfCombinedSlide('DF1');
+  else if (phase === 'DF2') html = buildDfCombinedSlide('DF2');
+
+  // ── Phase Finale ───────────────────────────────────────
+  else if (phase === 'FIN') html = buildFinCombinedSlide();
 
   block.innerHTML = indicators + html;
   startCountdown();
 
-  if ((phase === 'DF1' || phase === 'DF2' || phase === 'FIN') && _carouselSlide === 0) {
-    stopDfScroll();
-    _dfScrollPhase = 0;
+  // Démarrer le bon scroll selon la phase
+  if (phase === 'MQ') {
+    startStickyScroll();
+  } else if ((phase === 'DF1' || phase === 'DF2' || phase === 'FIN') && _carouselSlide === 0) {
     startDfAutoScroll();
-  } else {
-    stopDfScroll();
   }
 }
+
+// ─────────────────────────────────────────────────────────
+// SCROLL STICKY TOP 5 (EC, MQ, Intermédiaire)
+// Top 5 fixe, les suivants défilent en 15s, pause 5s en bas
+// ─────────────────────────────────────────────────────────
+
+function startStickyScroll() {
+  const scrollable = document.querySelector('.spc-sticky-scroll');
+  if (!scrollable) return;
+
+  const maxScroll = scrollable.scrollHeight - scrollable.clientHeight;
+  if (maxScroll <= 10) return;
+
+  // Vitesse : parcourir maxScroll en 15 secondes
+  // = maxScroll px / (15 * 60 frames) ≈ px par frame
+  const pxPerFrame = maxScroll / (15 * 60);
+  let animFrameId  = null;
+  let pauseTimer   = null;
+  let scrolling    = true; // true = descente, false = pause/remontée
+
+  function scrollDown() {
+    const el = document.querySelector('.spc-sticky-scroll');
+    if (!el) return;
+
+    const current = el.scrollTop;
+    const max     = el.scrollHeight - el.clientHeight;
+
+    if (current < max - 1) {
+      el.scrollTop += pxPerFrame;
+      animFrameId = requestAnimationFrame(scrollDown);
+    } else {
+      // Arrivé en bas — pause 5s puis remontée instantanée
+      pauseTimer = setTimeout(() => {
+        const e2 = document.querySelector('.spc-sticky-scroll');
+        if (e2) e2.scrollTop = 0;
+        pauseTimer = setTimeout(() => {
+          animFrameId = requestAnimationFrame(scrollDown);
+        }, 3000); // 3s en haut
+      }, 3000); // 3s en bas
+    }
+  }
+
+  // Démarrer après 3s en haut (temps de lecture du top 5)
+  _stickyScrollTimer = setTimeout(() => {
+    animFrameId = requestAnimationFrame(scrollDown);
+  }, 3000);
+
+  // Stocker les refs pour pouvoir tout annuler
+  scrollable._stopScroll = () => {
+    if (animFrameId) cancelAnimationFrame(animFrameId);
+    if (pauseTimer)  clearTimeout(pauseTimer);
+  };
+}
+
+// ─────────────────────────────────────────────────────────
+// SCROLL DF / FINALE (comportement existant)
+// ─────────────────────────────────────────────────────────
 
 function startDfAutoScroll() {
   const container = document.querySelector('.spc-df-combined');
   if (!container) return;
-  const isFinale = _carouselData.phase === 'FIN';
-  if (isFinale) startFinaleAutoScroll(container);
-  else          startDfStickyScroll(container);
+  if (_carouselData.phase === 'FIN') startFinaleAutoScroll();
+  else startDfStickyScroll();
 }
 
-function startFinaleAutoScroll(container) {
+function startFinaleAutoScroll() {
   function scrollStep() {
     const c = document.querySelector('.spc-df-combined');
     if (!c) return;
     const maxScroll  = c.scrollHeight - c.clientHeight;
     const current    = c.scrollTop;
     const pageHeight = c.clientHeight;
-
     if (_dfScrollPhase === 0) {
       c.scrollTo({ top: 0, behavior: 'smooth' });
-      _dfScrollTimer = setTimeout(() => {
-        _dfScrollPhase = maxScroll > 10 ? 1 : 3;
-        scrollStep();
-      }, 15000);
+      _dfScrollTimer = setTimeout(() => { _dfScrollPhase = maxScroll > 10 ? 1 : 3; scrollStep(); }, 15000);
     } else if (_dfScrollPhase === 1) {
       const nextTop = Math.min(current + pageHeight, maxScroll);
       c.scrollTo({ top: nextTop, behavior: 'smooth' });
-      _dfScrollTimer = setTimeout(() => {
-        _dfScrollPhase = nextTop < maxScroll - 10 ? 1 : 3;
-        scrollStep();
-      }, 15000);
+      _dfScrollTimer = setTimeout(() => { _dfScrollPhase = nextTop < maxScroll - 10 ? 1 : 3; scrollStep(); }, 15000);
     } else if (_dfScrollPhase === 3) {
       c.scrollTo({ top: 0, behavior: 'smooth' });
       _dfScrollTimer = setTimeout(() => { _dfScrollPhase = 0; scrollStep(); }, 4000);
@@ -598,14 +558,12 @@ function startFinaleAutoScroll(container) {
   _dfScrollTimer = setTimeout(scrollStep, 500);
 }
 
-function startDfStickyScroll(container) {
-  const rest    = container.querySelector('.spc-df-rest');
+function startDfStickyScroll() {
+  const rest    = document.querySelector('.spc-df-rest');
   const hasRest = rest && rest.children.length > 0;
-
   function scrollToPhase() {
     const c = document.querySelector('.spc-df-combined');
     if (!c) return;
-
     if (_dfScrollPhase === 0) {
       c.scrollTo({ top: 0, behavior: 'smooth' });
       _dfScrollTimer = setTimeout(() => { _dfScrollPhase = 1; scrollToPhase(); }, 15000);
@@ -644,46 +602,60 @@ function statusLabel(r) {
   return `<span class="spc-status-badge">${lbl}</span>`;
 }
 
-function buildResultsSlide(results, title, icon, type) {
-  const sorted = sortResults(results);
+/**
+ * Slide générique avec top 5 sticky + scroll des suivants
+ * @param {Array}   rows       - tableau de résultats triés
+ * @param {string}  title      - titre de la slide
+ * @param {string}  type       - classe CSS (ec, mq, interim)
+ * @param {boolean} showBonus  - afficher les bonus EC (+5/+4...)
+ * @param {boolean} isInterim  - mode intermédiaire (afficher pts)
+ */
+function buildStickySlide(rows, title, type, showBonus = false, isInterim = false) {
+  const top5  = rows.slice(0, 5);
+  const rest  = rows.slice(5);
+
+  const renderRow = (r, i, isTop = false) => {
+    const pos     = isInterim ? r.position : (r.ms ? i + 1 : '—');
+    const timeVal = isInterim
+      ? `<span class="spc-carousel-pts">${r.totalPoints} pts</span>`
+      : r.ms
+        ? `<span class="spc-carousel-time">${msToDisplay(r.ms)}</span>`
+        : statusLabel(r);
+    const bonus = showBonus && i < 5
+      ? `<span class="spc-ec-bonus">+${5 - i} pts</span>`
+      : '';
+
+    return `
+      <div class="spc-carousel-row ${i === 0 && isTop ? 'spc-carousel-row--first' : ''}">
+        <span class="spc-carousel-pos">${pos}</span>
+        <span class="spc-carousel-num">${escHtml(r.carNumber)}</span>
+        <span class="spc-carousel-name">${escHtml((r.lastName || r.lastName || '').toUpperCase())}</span>
+        ${timeVal}
+        ${bonus}
+      </div>`;
+  };
+
   return `
     <div class="spc-carousel-slide spc-carousel-slide--${type}">
       <div class="spc-carousel-title">
-        <span class="spc-carousel-icon">${icon}</span>
         ${escHtml(title)}
         <span class="spc-carousel-timer" id="spc-ctimer"></span>
       </div>
-      ${sorted.length === 0
-        ? `<div class="spc-carousel-empty">En attente des résultats…</div>`
-        : sorted.map((r, i) => `
-          <div class="spc-carousel-row ${i === 0 ? 'spc-carousel-row--first' : ''}">
-            <span class="spc-carousel-pos">${r.ms ? i + 1 : '—'}</span>
-            <span class="spc-carousel-num">${escHtml(r.carNumber)}</span>
-            <span class="spc-carousel-name">${escHtml((r.lastName || '').toUpperCase())}</span>
-            <span class="spc-carousel-time">
-              ${r.ms ? msToDisplay(r.ms) : statusLabel(r)}
-            </span>
-          </div>`).join('')}
-    </div>`;
-}
-
-function buildInterimSlide(rows) {
-  return `
-    <div class="spc-carousel-slide spc-carousel-slide--interim">
-      <div class="spc-carousel-title">
-        <span class="spc-carousel-icon">🏆</span>
-        Classement intermédiaire
-        <span class="spc-carousel-timer" id="spc-ctimer"></span>
-      </div>
+      ${showBonus ? `<div class="spc-ec-note">★ Top 5 : bonus points (+5/+4/+3/+2/+1) ajoutés au classement intermédiaire</div>` : ''}
       ${rows.length === 0
-        ? `<div class="spc-carousel-empty">Classement non encore disponible</div>`
-        : rows.map(r => `
-          <div class="spc-carousel-row ${r.position === 1 ? 'spc-carousel-row--first' : ''}">
-            <span class="spc-carousel-pos">${r.position}</span>
-            <span class="spc-carousel-num">${escHtml(r.carNumber)}</span>
-            <span class="spc-carousel-name">${escHtml((r.lastName || '').toUpperCase())}</span>
-            <span class="spc-carousel-time spc-carousel-pts">${r.totalPoints} pts</span>
-          </div>`).join('')}
+        ? `<div class="spc-carousel-empty">En attente des résultats…</div>`
+        : `
+          <!-- Top 5 sticky -->
+          <div class="spc-sticky-top5">
+            ${top5.map((r, i) => renderRow(r, i, true)).join('')}
+          </div>
+          <!-- Suite scrollable -->
+          ${rest.length > 0 ? `
+            <div class="spc-sticky-scroll">
+              ${rest.map((r, i) => renderRow(r, i + 5, false)).join('')}
+            </div>
+          ` : ''}
+        `}
     </div>`;
 }
 
@@ -709,7 +681,6 @@ function buildDfCombinedSlide(phase) {
   const interim  = _carouselData.interimRows || [];
   const df1Res   = sortResults(_carouselData.df1Results || []);
   const df2Res   = sortResults(_carouselData.df2Results || []);
-
   const dfPtsMap = {};
   const addDfPts = (res) => res.forEach((r, i) => {
     if (r.ms) dfPtsMap[r.carNumber] = (dfPtsMap[r.carNumber]||0) + (DF_PTS[i+1]||0);
@@ -719,7 +690,7 @@ function buildDfCombinedSlide(phase) {
   addDfPts(df1Res);
   if (phase === 'DF2') addDfPts(df2Res);
 
-  const rows = interim.map(r => ({
+  const rows  = interim.map(r => ({
     ...r,
     interimPts: r.interimPoints ?? 0,
     dfPts:      dfPtsMap[r.carNumber] || 0,
@@ -730,38 +701,6 @@ function buildDfCombinedSlide(phase) {
   const rest  = rows.slice(16);
   const title = phase === 'DF1' ? 'Classement après DF1' : 'Classement après DF1 & DF2';
 
-  const cumulSection = `
-    <div class="spc-df-cumul-sticky" id="spc-df-sticky">
-      <div class="spc-df-section-title">📊 ${title}</div>
-      <div class="spc-cumul-headers">
-        <span class="spc-cumul-hdr">Inter.</span>
-        <span class="spc-cumul-hdr">DF</span>
-        <span class="spc-cumul-hdr spc-cumul-hdr--total">Total</span>
-      </div>
-      ${top16.map((r, i) => `
-        <div class="spc-carousel-row ${i === 0 ? 'spc-carousel-row--first' : ''}">
-          <span class="spc-carousel-pos">${i + 1}</span>
-          <span class="spc-carousel-num">${escHtml(r.carNumber)}</span>
-          <span class="spc-carousel-name">${escHtml((r.lastName || '').toUpperCase())}</span>
-          <span class="spc-cumul-pts">${r.interimPts || '—'}</span>
-          <span class="spc-cumul-pts">${r.dfPts || '—'}</span>
-          <span class="spc-cumul-pts spc-cumul-pts--total">${r.grandTotal}</span>
-        </div>`).join('')}
-    </div>
-    ${rest.length > 0 ? `
-      <div class="spc-df-rest">
-        ${rest.map((r, i) => `
-          <div class="spc-carousel-row">
-            <span class="spc-carousel-pos">${17 + i}</span>
-            <span class="spc-carousel-num">${escHtml(r.carNumber)}</span>
-            <span class="spc-carousel-name">${escHtml((r.lastName || '').toUpperCase())}</span>
-            <span class="spc-cumul-pts">${r.interimPts || '—'}</span>
-            <span class="spc-cumul-pts">${r.dfPts || '—'}</span>
-            <span class="spc-cumul-pts spc-cumul-pts--total">${r.grandTotal}</span>
-          </div>`).join('')}
-      </div>` : ''}
-  `;
-
   return `
     <div class="spc-carousel-slide spc-carousel-slide--df spc-df-combined">
       <div class="spc-carousel-title">
@@ -770,7 +709,35 @@ function buildDfCombinedSlide(phase) {
         <span class="spc-carousel-timer" id="spc-ctimer"></span>
       </div>
       ${dfSection}
-      ${cumulSection}
+      <div class="spc-df-cumul-sticky" id="spc-df-sticky">
+        <div class="spc-df-section-title">📊 ${title}</div>
+        <div class="spc-cumul-headers">
+          <span class="spc-cumul-hdr">Inter.</span>
+          <span class="spc-cumul-hdr">DF</span>
+          <span class="spc-cumul-hdr spc-cumul-hdr--total">Total</span>
+        </div>
+        ${top16.map((r, i) => `
+          <div class="spc-carousel-row ${i === 0 ? 'spc-carousel-row--first' : ''}">
+            <span class="spc-carousel-pos">${i + 1}</span>
+            <span class="spc-carousel-num">${escHtml(r.carNumber)}</span>
+            <span class="spc-carousel-name">${escHtml((r.lastName || '').toUpperCase())}</span>
+            <span class="spc-cumul-pts">${r.interimPts || '—'}</span>
+            <span class="spc-cumul-pts">${r.dfPts || '—'}</span>
+            <span class="spc-cumul-pts spc-cumul-pts--total">${r.grandTotal}</span>
+          </div>`).join('')}
+      </div>
+      ${rest.length > 0 ? `
+        <div class="spc-df-rest">
+          ${rest.map((r, i) => `
+            <div class="spc-carousel-row">
+              <span class="spc-carousel-pos">${17 + i}</span>
+              <span class="spc-carousel-num">${escHtml(r.carNumber)}</span>
+              <span class="spc-carousel-name">${escHtml((r.lastName || '').toUpperCase())}</span>
+              <span class="spc-cumul-pts">${r.interimPts || '—'}</span>
+              <span class="spc-cumul-pts">${r.dfPts || '—'}</span>
+              <span class="spc-cumul-pts spc-cumul-pts--total">${r.grandTotal}</span>
+            </div>`).join('')}
+        </div>` : ''}
     </div>`;
 }
 
@@ -779,11 +746,10 @@ function buildFinCombinedSlide() {
   const interim = _carouselData.interimRows || [];
   const df1Res  = sortResults(_carouselData.df1Results  || []);
   const df2Res  = sortResults(_carouselData.df2Results  || []);
-
   const DF_PTS  = [0,10,8,6,5,4,3,2,1];
   const FIN_PTS = [0,15,12,9,7,6,5,4,3];
 
-  const dfPtsMap  = {};
+  const dfPtsMap = {};
   df1Res.forEach((r, i) => { if (r.ms) dfPtsMap[r.carNumber] = (dfPtsMap[r.carNumber]||0) + (DF_PTS[i+1]||0); });
   df2Res.forEach((r, i) => { if (r.ms) dfPtsMap[r.carNumber] = (dfPtsMap[r.carNumber]||0) + (DF_PTS[i+1]||0); });
 
@@ -800,41 +766,6 @@ function buildFinCombinedSlide() {
     return { ...r, interimPts, dfPts, finPts, grandTotal: interimPts + dfPts + finPts };
   }).sort((a, b) => b.grandTotal - a.grandTotal);
 
-  const finSection = `
-    <div class="spc-df-results-section">
-      <div class="spc-df-section-title">🏆 Finale</div>
-      ${finRes.length === 0
-        ? `<div class="spc-carousel-empty">En attente des résultats…</div>`
-        : finRes.map((r, i) => `
-          <div class="spc-carousel-row ${i === 0 ? 'spc-carousel-row--first' : ''}">
-            <span class="spc-carousel-pos">${r.ms ? i + 1 : '—'}</span>
-            <span class="spc-carousel-num">${escHtml(r.carNumber)}</span>
-            <span class="spc-carousel-name">${escHtml((r.lastName || '').toUpperCase())}</span>
-            <span class="spc-carousel-time">${r.ms ? msToDisplay(r.ms) : statusLabel(r)}</span>
-          </div>`).join('')}
-    </div>`;
-
-  const meetingSection = rows.length === 0 ? '' : `
-    <div class="spc-df-meeting-section">
-      <div class="spc-df-section-title">🥇 Classement du meeting</div>
-      <div class="spc-cumul-headers">
-        <span class="spc-cumul-hdr">Inter.</span>
-        <span class="spc-cumul-hdr">DF</span>
-        <span class="spc-cumul-hdr">Fin.</span>
-        <span class="spc-cumul-hdr spc-cumul-hdr--total">Total</span>
-      </div>
-      ${rows.map((r, i) => `
-        <div class="spc-carousel-row ${i === 0 ? 'spc-carousel-row--first' : ''}">
-          <span class="spc-carousel-pos">${i + 1}</span>
-          <span class="spc-carousel-num">${escHtml(r.carNumber)}</span>
-          <span class="spc-carousel-name">${escHtml((r.lastName || '').toUpperCase())}</span>
-          <span class="spc-cumul-pts">${r.interimPts || '—'}</span>
-          <span class="spc-cumul-pts">${r.dfPts      || '—'}</span>
-          <span class="spc-cumul-pts">${r.finPts     || '—'}</span>
-          <span class="spc-cumul-pts spc-cumul-pts--total">${r.grandTotal}</span>
-        </div>`).join('')}
-    </div>`;
-
   return `
     <div class="spc-carousel-slide spc-carousel-slide--fin spc-df-combined">
       <div class="spc-carousel-title">
@@ -842,29 +773,38 @@ function buildFinCombinedSlide() {
         Finale
         <span class="spc-carousel-timer" id="spc-ctimer"></span>
       </div>
-      ${finSection}
-      ${meetingSection}
-    </div>`;
-}
-
-function buildChampionshipSlide() {
-  const rows = _carouselData.championshipRows || [];
-  return `
-    <div class="spc-carousel-slide spc-carousel-slide--champ">
-      <div class="spc-carousel-title">
-        <span class="spc-carousel-icon">🏅</span>
-        Championnat saison
-        <span class="spc-carousel-timer" id="spc-ctimer"></span>
+      <div class="spc-df-results-section">
+        <div class="spc-df-section-title">🏆 Finale</div>
+        ${finRes.length === 0
+          ? `<div class="spc-carousel-empty">En attente des résultats…</div>`
+          : finRes.map((r, i) => `
+            <div class="spc-carousel-row ${i === 0 ? 'spc-carousel-row--first' : ''}">
+              <span class="spc-carousel-pos">${r.ms ? i + 1 : '—'}</span>
+              <span class="spc-carousel-num">${escHtml(r.carNumber)}</span>
+              <span class="spc-carousel-name">${escHtml((r.lastName || '').toUpperCase())}</span>
+              <span class="spc-carousel-time">${r.ms ? msToDisplay(r.ms) : statusLabel(r)}</span>
+            </div>`).join('')}
       </div>
-      ${rows.length === 0
-        ? `<div class="spc-carousel-empty">Chargement du championnat…</div>`
-        : rows.map((r, i) => `
-          <div class="spc-carousel-row ${i === 0 ? 'spc-carousel-row--first' : ''}">
-            <span class="spc-carousel-pos">${i + 1}</span>
-            <span class="spc-carousel-num">${escHtml(r.carNumber)}</span>
-            <span class="spc-carousel-name">${escHtml((r.lastName || '').toUpperCase())}</span>
-            <span class="spc-carousel-time spc-carousel-pts">${r.total} pts</span>
-          </div>`).join('')}
+      ${rows.length === 0 ? '' : `
+        <div class="spc-df-meeting-section">
+          <div class="spc-df-section-title">🥇 Classement du meeting</div>
+          <div class="spc-cumul-headers">
+            <span class="spc-cumul-hdr">Inter.</span>
+            <span class="spc-cumul-hdr">DF</span>
+            <span class="spc-cumul-hdr">Fin.</span>
+            <span class="spc-cumul-hdr spc-cumul-hdr--total">Total</span>
+          </div>
+          ${rows.map((r, i) => `
+            <div class="spc-carousel-row ${i === 0 ? 'spc-carousel-row--first' : ''}">
+              <span class="spc-carousel-pos">${i + 1}</span>
+              <span class="spc-carousel-num">${escHtml(r.carNumber)}</span>
+              <span class="spc-carousel-name">${escHtml((r.lastName || '').toUpperCase())}</span>
+              <span class="spc-cumul-pts">${r.interimPts || '—'}</span>
+              <span class="spc-cumul-pts">${r.dfPts      || '—'}</span>
+              <span class="spc-cumul-pts">${r.finPts     || '—'}</span>
+              <span class="spc-cumul-pts spc-cumul-pts--total">${r.grandTotal}</span>
+            </div>`).join('')}
+        </div>`}
     </div>`;
 }
 

@@ -53,107 +53,7 @@
 }
 .spc-live-dot--active .spc-live-label { color: var(--clr-success); }
 
-/* ── Cards ── */
-.spc-card {
-  background: var(--clr-surface);
-  border: 1px solid var(--clr-border);
-  border-radius: var(--r-lg);
-  padding: var(--sp-md);
-  margin-bottom: var(--sp-md);
-}
-.spc-card--session { border-top: 3px solid var(--clr-accent); }
-.spc-card-title {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  font-family: var(--font-condensed);
-  font-size: 0.8rem;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--clr-text-3);
-  margin-bottom: var(--sp-sm);
-  padding-bottom: var(--sp-xs);
-  border-bottom: 1px solid var(--clr-border);
-}
-.spc-count { font-size: 0.75rem; color: var(--clr-accent-2); }
-.spc-empty { text-align: center; padding: var(--sp-md); color: var(--clr-text-3); font-size: 0.85rem; }
-
-/* ── Résultats ── */
-.spc-result-row {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-sm);
-  padding: 10px var(--sp-xs);
-  border-bottom: 1px solid var(--clr-border);
-}
-.spc-result-row:last-child { border-bottom: none; }
-.spc-result-row--first {
-  background: rgba(255,85,0,0.06);
-  border-radius: var(--r-sm);
-}
-.spc-result-pos {
-  min-width: 24px;
-  font-family: var(--font-display);
-  font-size: 0.9rem;
-  font-weight: 700;
-  color: var(--clr-text-3);
-  text-align: center;
-}
-.spc-result-row--first .spc-result-pos { color: var(--clr-accent); font-size: 1rem; }
-.spc-result-num {
-  min-width: 42px;
-  text-align: center;
-  font-family: var(--font-display);
-  font-size: 0.88rem;
-  font-weight: 700;
-  color: var(--clr-accent-2);
-  background: var(--clr-bg-3);
-  border: 1px solid var(--clr-border-2);
-  border-radius: var(--r-sm);
-  padding: 3px 6px;
-}
-.spc-result-name {
-  flex: 1;
-  font-size: 1rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-.spc-result-time {
-  font-family: var(--font-display);
-  font-size: 0.95rem;
-  font-weight: 700;
-  color: var(--clr-success);
-}
-.spc-pts { color: var(--clr-accent-2) !important; }
-
-/* ── Grille prochaine session ── */
-.spc-grid-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--sp-xs);
-  padding-top: var(--sp-xs);
-}
-.spc-grid-pill {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-  background: var(--clr-bg-3);
-  border: 1px solid var(--clr-border-2);
-  border-radius: 20px;
-  font-size: 0.85rem;
-}
-.spc-grid-num {
-  font-family: var(--font-display);
-  font-weight: 700;
-  color: var(--clr-accent-2);
-  font-size: 0.88rem;
-}
-.spc-grid-name { color: var(--clr-text-2); font-weight: 500; }
-
-/* ── Carrousel ── */
+/* ── Carrousel indicateurs ── */
 .spc-carousel-indicators {
   display: flex;
   justify-content: center;
@@ -168,6 +68,7 @@
 }
 .spc-carousel-dot.is-active { background: var(--clr-accent); }
 
+/* ── Slide principale ── */
 .spc-carousel-slide {
   background: var(--clr-surface);
   border: 1px solid var(--clr-border);
@@ -180,13 +81,14 @@
   from { opacity: 0; transform: translateY(8px); }
   to   { opacity: 1; transform: translateY(0); }
 }
+.spc-carousel-slide--ec      { border-top: 3px solid var(--clr-info); }
 .spc-carousel-slide--mq      { border-top: 3px solid var(--clr-accent); }
 .spc-carousel-slide--interim  { border-top: 3px solid #ffd700; }
 .spc-carousel-slide--df       { border-top: 3px solid var(--clr-info); }
 .spc-carousel-slide--fin      { border-top: 3px solid #ffd700; }
-.spc-carousel-slide--cumul    { border-top: 3px solid var(--clr-success); }
 .spc-carousel-slide--champ    { border-top: 3px solid var(--clr-accent); }
 
+/* ── Titre slide ── */
 .spc-carousel-title {
   display: flex;
   align-items: center;
@@ -210,6 +112,7 @@
   font-weight: 400;
 }
 
+/* ── Lignes résultats ── */
 .spc-carousel-row {
   display: flex;
   align-items: center;
@@ -254,12 +157,50 @@
   font-weight: 700;
   color: var(--clr-success);
 }
-.spc-carousel-pts  { color: var(--clr-accent-2) !important; }
+.spc-carousel-pts  { color: var(--clr-accent-2); font-family: var(--font-display); font-size: 1rem; font-weight: 700; }
 .spc-carousel-empty {
   text-align: center;
   padding: var(--sp-lg);
   color: var(--clr-text-3);
   font-size: 0.9rem;
+}
+
+/* ── Sticky top 5 + scroll ── */
+.spc-sticky-top5 {
+  /* Les 5 premiers — toujours visibles, positionnés en sticky */
+  position: sticky;
+  top: 0;
+  background: var(--clr-surface);
+  z-index: 10;
+  border-bottom: 2px solid var(--clr-accent);
+  padding-bottom: 4px;
+  margin-bottom: 4px;
+}
+
+.spc-sticky-scroll {
+  /* Les suivants — scrollables */
+  overflow-y: auto;
+  max-height: calc(100vh - 420px);
+  scroll-behavior: smooth;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.spc-sticky-scroll::-webkit-scrollbar { display: none; }
+
+/* ── Note EC bonus ── */
+.spc-ec-note {
+  font-size: 0.75rem;
+  color: var(--clr-text-3);
+  padding: var(--sp-xs) 0 var(--sp-sm);
+  border-bottom: 1px solid var(--clr-border);
+  margin-bottom: var(--sp-xs);
+}
+.spc-ec-bonus {
+  font-family: var(--font-display);
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--clr-accent-2);
+  flex-shrink: 0;
 }
 
 /* ── Slide DF combiné ── */
@@ -347,6 +288,32 @@
   border-radius: 20px;
   background: var(--clr-danger-dim);
   color: var(--clr-danger);
+}
+
+/* ── Cards (compatibilité) ── */
+.spc-card {
+  background: var(--clr-surface);
+  border: 1px solid var(--clr-border);
+  border-radius: var(--r-lg);
+  padding: var(--sp-md);
+  margin-bottom: var(--sp-md);
+}
+.spc-card-title {
+  font-family: var(--font-condensed);
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--clr-text-3);
+  margin-bottom: var(--sp-sm);
+  padding-bottom: var(--sp-xs);
+  border-bottom: 1px solid var(--clr-border);
+}
+.spc-empty {
+  text-align: center;
+  padding: var(--sp-md);
+  color: var(--clr-text-3);
+  font-size: 0.85rem;
 }
 
 /* ── Timestamp ── */
