@@ -423,3 +423,41 @@ tbody tr:hover { background: var(--clr-surface-2); }
 .mt-sm { margin-top: var(--sp-sm); }
 .mt-md { margin-top: var(--sp-md); }
 .mt-lg { margin-top: var(--sp-lg); }
+
+
+.tim-num {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 36px; height: 24px;
+  background: var(--clr-bg-3);
+  border: 1px solid var(--clr-border-2);
+  border-radius: var(--r-sm);
+  font-family: var(--font-display);
+  font-size: 0.75rem; font-weight: 700;
+  color: var(--clr-accent-2);
+  padding: 0 4px;
+}
+
+/* ── Championnat / Meeting (partagé) ── */
+.chp-absent { color: var(--clr-text-3); font-size: 0.8rem; }
+
+.chp-total {
+  font-family: var(--font-display);
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--clr-accent-2);
+}
+
+.chp-total-col {
+  min-width: 70px;
+  border-left: 1px solid var(--clr-border);
+}
+
+.chp-pos {
+  font-family: var(--font-display);
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: var(--clr-text-2);
+}
+.chp-pos-1 { color: #ffd700; font-size: 1rem; }
+.chp-pos-2 { color: #c0c0c0; }
+.chp-pos-3 { color: #cd7f32; }

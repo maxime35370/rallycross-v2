@@ -1,10 +1,12 @@
 /* ═══════════════════════════════════════════════
    STATS.JS — Statistiques saison par catégorie
-   Agrégation depuis meetingStandings + results
+   Calcul direct depuis collections brutes
+   Plus besoin de meetingStandings ou interimStandings
 ═══════════════════════════════════════════════ */
 
 import { db } from './firebase.js';
 import { escHtml } from './utils.js';
+import { calcInterimStandings } from './calc.js';
 
 // ─────────────────────────────────────────────────────────
 // ÉTAT
@@ -13,7 +15,7 @@ import { escHtml } from './utils.js';
 let selectedYear     = new Date().getFullYear();
 let selectedCategory = '';
 let allMeetings      = [];
-let sortState        = { table: null, key: null, asc: false }; // état tri
+let sortState        = { table: null, key: null, asc: false };
 
 const CATEGORIES = ['Supercar', 'Super1600', 'Division 5', 'Féminines', 'D3', 'D4'];
 
@@ -50,37 +52,35 @@ async function loadMeetings() {
 // CALCUL STATISTIQUES
 // ─────────────────────────────────────────────────────────
 
+function calcMqPoints(pos, total) {
+  if (pos === 1) return 50;
+  if (pos === 2) return 45;
+  if (pos === 3) return 42;
+  if (pos >= 4)  return Math.max(0, 44 - pos);
+  return 0;
+}
+
 async function calcStats() {
   if (!selectedCategory || allMeetings.length === 0) return null;
 
-  // ── Données brutes ────────────────────────────────────
-  const [meetingStandings, interimStandings] = await Promise.all([
-    fsQuery('meetingStandings', [
-      ['category', '==', selectedCategory],
-      ['year',     '==', selectedYear],
-    ]),
-    fsQuery('interimStandings', [
-      ['category', '==', selectedCategory],
-      ['year',     '==', selectedYear],
-    ]),
-  ]);
+  const DF_PTS  = [0, 10, 8, 6, 5, 4, 3, 2, 1];
+  const FIN_PTS = [0, 15, 12, 9, 7, 6, 5, 4, 3];
 
-  // Résultats par session (EC, MQ, DF, FIN) pour tous les meetings
+  // ── Résultats bruts ───────────────────────────────────
   const allResults = await fsQuery('results', [
     ['category', '==', selectedCategory],
     ['year',     '==', selectedYear],
   ]);
 
-  // Sessions pour avoir les types
   const allSessions = await fsQuery('sessions', [
     ['category', '==', selectedCategory],
     ['year',     '==', selectedYear],
   ]);
-  const sessionMap = {}; // sessionId → session
+  const sessionMap = {};
   allSessions.forEach(s => { sessionMap[s.id] = s; });
 
   // ── Indexer par pilote ────────────────────────────────
-  const pilots = {}; // driverId → { info, meetings: {} }
+  const pilots = {};
 
   const ensurePilot = (r) => {
     if (!pilots[r.driverId]) {
@@ -89,32 +89,24 @@ async function calcStats() {
         carNumber: r.carNumber,
         firstName: r.firstName,
         lastName:  r.lastName,
-        meetings:  {}, // meetingId → { ec, mq[], interim, df[], fin }
+        meetings:  {},
       };
     }
     if (!pilots[r.driverId].meetings[r.meetingId]) {
       pilots[r.driverId].meetings[r.meetingId] = {
-        ec:     null,
-        mq:     [],
-        interim: null,
-        df:     [],
-        fin:    null,
-        total:  null,
+        ec: null, mq: [], interim: null, df: [], fin: null, total: null,
       };
     }
     return pilots[r.driverId].meetings[r.meetingId];
   };
 
   // ── EC ────────────────────────────────────────────────
-  allResults
-    .filter(r => r.sessionType === 'EC')
-    .forEach(r => {
-      const m = ensurePilot(r);
-      m.ec = { ms: r.ms, status: r.status };
-    });
+  allResults.filter(r => r.sessionType === 'EC').forEach(r => {
+    const m = ensurePilot(r);
+    m.ec = { ms: r.ms, status: r.status };
+  });
 
   // ── MQ ────────────────────────────────────────────────
-  // Calculer les positions MQ (trier par temps dans chaque session)
   const mqBySession = {};
   allResults.filter(r => r.sessionType === 'MQ').forEach(r => {
     if (!mqBySession[r.sessionId]) mqBySession[r.sessionId] = [];
@@ -123,22 +115,15 @@ async function calcStats() {
   Object.entries(mqBySession).forEach(([sid, res]) => {
     const session = sessionMap[sid];
     if (!session) return;
-    const sorted = [...res].filter(r => r.ms).sort((a,b) => a.ms - b.ms);
+    const sorted = res.filter(r => r.ms).sort((a, b) => a.ms - b.ms);
     sorted.forEach((r, i) => {
       const m = ensurePilot(r);
-      m.mq.push({ position: i + 1, points: r.ms ? calcMqPoints(i + 1, res.length) : 0, sessionNum: session.num });
+      m.mq.push({ position: i + 1, points: calcMqPoints(i + 1, res.length), sessionNum: session.num });
     });
-    // DNS/DSQ/DNF sans temps
     res.filter(r => !r.ms).forEach(r => {
       const m = ensurePilot(r);
       m.mq.push({ position: null, points: 0, status: r.status, sessionNum: session?.num });
     });
-  });
-
-  // ── Intermédiaire ─────────────────────────────────────
-  interimStandings.forEach(r => {
-    const m = ensurePilot(r);
-    m.interim = { position: r.position, interimPoints: r.interimPoints ?? 0 };
   });
 
   // ── DF ────────────────────────────────────────────────
@@ -147,12 +132,11 @@ async function calcStats() {
     if (!dfBySession[r.sessionId]) dfBySession[r.sessionId] = [];
     dfBySession[r.sessionId].push(r);
   });
-  const DF_PTS = [0,10,8,6,5,4,3,2,1];
   Object.entries(dfBySession).forEach(([sid, res]) => {
-    const sorted = [...res].filter(r => r.ms).sort((a,b) => a.ms - b.ms);
+    const sorted = res.filter(r => r.ms).sort((a, b) => a.ms - b.ms);
     sorted.forEach((r, i) => {
       const m = ensurePilot(r);
-      m.df.push({ position: i + 1, points: DF_PTS[i+1] || 0 });
+      m.df.push({ position: i + 1, points: DF_PTS[i + 1] || 0 });
     });
     res.filter(r => r.status === 'DNF' && r.manualPosition).forEach(r => {
       const m = ensurePilot(r);
@@ -161,17 +145,16 @@ async function calcStats() {
   });
 
   // ── Finale ────────────────────────────────────────────
-  const FIN_PTS = [0,15,12,9,7,6,5,4,3];
   const finBySession = {};
   allResults.filter(r => r.sessionType === 'FIN').forEach(r => {
     if (!finBySession[r.sessionId]) finBySession[r.sessionId] = [];
     finBySession[r.sessionId].push(r);
   });
   Object.entries(finBySession).forEach(([sid, res]) => {
-    const sorted = [...res].filter(r => r.ms).sort((a,b) => a.ms - b.ms);
+    const sorted = res.filter(r => r.ms).sort((a, b) => a.ms - b.ms);
     sorted.forEach((r, i) => {
       const m = ensurePilot(r);
-      m.fin = { position: i + 1, points: FIN_PTS[i+1] || 0 };
+      m.fin = { position: i + 1, points: FIN_PTS[i + 1] || 0 };
     });
     res.filter(r => r.status === 'DNF' && r.manualPosition).forEach(r => {
       const m = ensurePilot(r);
@@ -179,112 +162,111 @@ async function calcStats() {
     });
   });
 
-  // ── Total meeting ─────────────────────────────────────
-  meetingStandings.forEach(r => {
-    const m = ensurePilot(r);
-    m.total = { totalPts: r.totalPts, position: r.position };
+  // ── Classement intermédiaire — calcul direct ──────────
+  for (const meeting of allMeetings) {
+    const meetingSessions = allSessions.filter(s => s.meetingId === meeting.id);
+    if (!meetingSessions.length) continue;
+    try {
+      const interim = await calcInterimStandings(db, meetingSessions);
+      interim.forEach(r => {
+        if (!pilots[r.driverId]) return;
+        if (!pilots[r.driverId].meetings[meeting.id]) {
+          pilots[r.driverId].meetings[meeting.id] = {
+            ec: null, mq: [], interim: null, df: [], fin: null, total: null,
+          };
+        }
+        pilots[r.driverId].meetings[meeting.id].interim = {
+          position:      r.position,
+          interimPoints: r.interimPoints ?? 0,
+          ecBonus:       r.ecBonus ?? 0,
+        };
+      });
+    } catch {}
+  }
+
+  // ── Total meeting — calcul direct ─────────────────────
+  Object.values(pilots).forEach(p => {
+    Object.entries(p.meetings).forEach(([meetingId, m]) => {
+      const interimPts = m.interim?.interimPoints ?? 0;
+      const dfPts      = m.df.reduce((s, r) => s + r.points, 0);
+      const finPts     = m.fin?.points ?? 0;
+      const totalPts   = interimPts + dfPts + finPts;
+      const hasRealResults = m.mq.some(mq => mq.points !== null);
+      m.total = hasRealResults ? { totalPts } : null;
+    });
   });
 
   // ── Calcul des stats agrégées par pilote ──────────────
-  const nbMeetings = allMeetings.length;
-
   return Object.values(pilots).map(p => {
     const meetings = Object.values(p.meetings);
-    const nbMeetingsParticipated = meetings.length;
 
-    // EC
-    const ecBonuses = meetings.map(m => {
-      if (!m.ec?.ms) return 0;
-      // Le bonus EC est dans interimStandings
-      return 0; // on va le lire depuis interimStandings
-    });
-    const interimData = interimStandings.filter(r => r.driverId === p.driverId);
-    const ecBonusTotal = interimData.reduce((s, r) => s + (r.ecBonus ?? 0), 0);
+    // EC bonus
+    const interimData  = meetings.filter(m => m.interim);
+    const ecBonusTotal = interimData.reduce((s, m) => s + (m.interim.ecBonus ?? 0), 0);
     const ecBonusMoy   = interimData.length > 0 ? +(ecBonusTotal / interimData.length).toFixed(1) : 0;
 
     // MQ
     const allMqResults = meetings.flatMap(m => m.mq);
     const mqWithPos    = allMqResults.filter(r => r.position !== null);
-    const mqPtsMoy     = mqWithPos.length > 0 ? +(mqWithPos.reduce((s,r) => s + r.points, 0) / mqWithPos.length).toFixed(1) : 0;
-    const mqPosMoy     = mqWithPos.length > 0 ? +(mqWithPos.reduce((s,r) => s + r.position, 0) / mqWithPos.length).toFixed(1) : 0;
+    const mqPtsMoy     = mqWithPos.length > 0 ? +(mqWithPos.reduce((s, r) => s + r.points, 0) / mqWithPos.length).toFixed(1) : 0;
+    const mqPosMoy     = mqWithPos.length > 0 ? +(mqWithPos.reduce((s, r) => s + r.position, 0) / mqWithPos.length).toFixed(1) : 0;
 
     // Intermédiaire
     const interimMeetings = meetings.filter(m => m.interim);
     const interimPtsTotal = interimMeetings.reduce((s, m) => s + (m.interim.interimPoints ?? 0), 0);
-    const interimPosMoy   = interimMeetings.length > 0
-      ? +(interimMeetings.reduce((s, m) => s + m.interim.position, 0) / interimMeetings.length).toFixed(1) : null;
-    const interimPtsMoy   = interimMeetings.length > 0
-      ? +(interimPtsTotal / interimMeetings.length).toFixed(1) : null;
+    const interimPosMoy   = interimMeetings.length > 0 ? +(interimMeetings.reduce((s, m) => s + m.interim.position, 0) / interimMeetings.length).toFixed(1) : null;
+    const interimPtsMoy   = interimMeetings.length > 0 ? +(interimPtsTotal / interimMeetings.length).toFixed(1) : null;
 
     // DF
-    const allDf       = meetings.flatMap(m => m.df);
-    const dfWithPos   = allDf.filter(r => r.position !== null);
-    const dfPosMoy    = dfWithPos.length > 0 ? +(dfWithPos.reduce((s,r) => s + r.position, 0) / dfWithPos.length).toFixed(1) : null;
-    const dfPtsMoy    = dfWithPos.length > 0 ? +(dfWithPos.reduce((s,r) => s + r.points, 0) / dfWithPos.length).toFixed(1) : null;
-    const nbDf        = meetings.filter(m => m.df.length > 0).length;
+    const allDf     = meetings.flatMap(m => m.df);
+    const dfWithPos = allDf.filter(r => r.position !== null);
+    const dfPosMoy  = dfWithPos.length > 0 ? +(dfWithPos.reduce((s, r) => s + r.position, 0) / dfWithPos.length).toFixed(1) : null;
+    const dfPtsMoy  = dfWithPos.length > 0 ? +(dfWithPos.reduce((s, r) => s + r.points, 0) / dfWithPos.length).toFixed(1) : null;
+    const nbDf      = meetings.filter(m => m.df.length > 0).length;
 
     // Finale
     const finMeetings = meetings.filter(m => m.fin);
     const finPosMoy   = finMeetings.length > 0 ? +(finMeetings.reduce((s, m) => s + m.fin.position, 0) / finMeetings.length).toFixed(1) : null;
     const finPtsMoy   = finMeetings.length > 0 ? +(finMeetings.reduce((s, m) => s + m.fin.points, 0) / finMeetings.length).toFixed(1) : null;
 
-    // Phase finale (DF + Finale) par meeting
-    const phaseFinalePts = meetings.map(m => {
-      const df  = m.df.reduce((s, r) => s + r.points, 0);
-      const fin = m.fin?.points ?? 0;
-      return df + fin;
-    });
-    const phaseFinaleMoy = phaseFinalePts.length > 0
-      ? +(phaseFinalePts.reduce((s,v) => s+v, 0) / phaseFinalePts.length).toFixed(1) : null;
+    // Phase finale
+    const phaseFinalePts = meetings.map(m => m.df.reduce((s, r) => s + r.points, 0) + (m.fin?.points ?? 0));
+    const phaseFinaleMoy = phaseFinalePts.length > 0 ? +(phaseFinalePts.reduce((s, v) => s + v, 0) / phaseFinalePts.length).toFixed(1) : null;
 
     // Total meeting
     const totalMeetings = meetings.filter(m => m.total);
     const totalPtsAll   = totalMeetings.map(m => m.total.totalPts);
-    const totalMoy      = totalPtsAll.length > 0 ? +(totalPtsAll.reduce((s,v) => s+v, 0) / totalPtsAll.length).toFixed(1) : null;
-    const totalSum      = totalPtsAll.reduce((s,v) => s+v, 0);
+    const totalMoy      = totalPtsAll.length > 0 ? +(totalPtsAll.reduce((s, v) => s + v, 0) / totalPtsAll.length).toFixed(1) : null;
+    const totalSum      = totalPtsAll.reduce((s, v) => s + v, 0);
 
     // Taux qualification
+    const nbMeetingsParticipated = meetings.filter(m => m.mq.some(mq => mq.points !== null)).length;
     const tauxDf  = nbMeetingsParticipated > 0 ? Math.round(nbDf / nbMeetingsParticipated * 100) : 0;
     const tauxFin = nbMeetingsParticipated > 0 ? Math.round(finMeetings.length / nbMeetingsParticipated * 100) : 0;
 
-    // Progression : points par meeting dans l'ordre
+    // Progression par meeting
     const progression = allMeetings.map(m => {
-      const s = meetingStandings.find(r => r.driverId === p.driverId && r.meetingId === m.id);
-      return s?.totalPts ?? null;
+      const meetingData = p.meetings[m.id];
+      return meetingData?.total?.totalPts ?? null;
     });
 
     return {
       ...p,
       nbMeetings: nbMeetingsParticipated,
-      // EC
       ecBonusTotal, ecBonusMoy,
-      // MQ
       nbMq: allMqResults.length,
       mqPtsMoy, mqPosMoy,
-      // Intermédiaire
       interimPtsTotal, interimPtsMoy, interimPosMoy,
-      // DF
       nbDf, dfPosMoy, dfPtsMoy,
-      // Finale
       nbFin: finMeetings.length, finPosMoy, finPtsMoy,
-      // Phase finale
       phaseFinaleMoy,
-      // Meeting
       totalSum, totalMoy,
-      // Taux
       tauxDf, tauxFin,
-      // Progression
       progression,
     };
-  }).sort((a, b) => b.totalSum - a.totalSum);
-}
-
-function calcMqPoints(pos, total) {
-  if (pos === 1) return 50;
-  if (pos === 2) return 45;
-  if (pos === 3) return 42;
-  if (pos >= 4)  return Math.max(0, 44 - pos);
-  return 0;
+  })
+  .filter(p => p.nbMeetings > 0)
+  .sort((a, b) => b.totalSum - a.totalSum);
 }
 
 // ─────────────────────────────────────────────────────────
@@ -310,10 +292,8 @@ function renderView() {
       </select>
     </div>
 
-    <!-- Liste meetings -->
     <div id="sta-meetings" class="sta-meetings-list"></div>
 
-    <!-- Tableau stats -->
     <div id="sta-content">
       <div class="tim-placeholder">
         <div class="placeholder-icon">📊</div>
@@ -332,7 +312,7 @@ function refreshMeetingList() {
     <div class="sta-meetings-bar">
       ${allMeetings.map((m, i) => {
         const d = m.date ? new Date(m.date).toLocaleDateString('fr-FR', {day:'2-digit', month:'2-digit'}) : '?';
-        return `<span class="sta-meeting-chip">M${i+1} — ${d} ${escHtml(m.location?.split(' ')[0] || '')}`;
+        return `<span class="sta-meeting-chip">M${i+1} — ${d} ${escHtml(m.location?.split(' ')[0] || '')}</span>`;
       }).join('')}
     </div>`;
 }
@@ -362,7 +342,7 @@ async function renderStats() {
     }).join('');
 
     content.innerHTML = `
-      <!-- Progression saison -->
+      <!-- Points par meeting -->
       <div class="sta-section">
         <div class="sta-section-title">📈 Points par meeting</div>
         <div class="table-wrap">
@@ -376,17 +356,7 @@ async function renderStats() {
               <th class="center sta-col-moy" data-sort="totalMoy">Moy/meeting ↕</th>
             </tr></thead>
             <tbody>
-              ${stats.map((p, i) => `
-                <tr>
-                  <td class="center"><span class="${i<3?'std-pos-top':''}">${i+1}</span></td>
-                  <td>${escHtml(p.firstName)} <strong>${escHtml(p.lastName)}</strong></td>
-                  <td class="center"><span class="tim-num">${escHtml(p.carNumber)}</span></td>
-                  ${p.progression.map(pts => `
-                    <td class="center">${pts != null ? `<span class="sta-pts">${pts}</span>` : '<span class="sta-absent">—</span>'}</td>
-                  `).join('')}
-                  <td class="center"><strong class="sta-total">${p.totalSum}</strong></td>
-                  <td class="center"><span class="sta-moy">${p.totalMoy ?? '—'}</span></td>
-                </tr>`).join('')}
+              ${renderProgressionRows(stats)}
             </tbody>
           </table>
         </div>
@@ -402,15 +372,7 @@ async function renderStats() {
               <th class="center" data-sort="ecBonusTotal">Pts bonus total ↕</th>
               <th class="center" data-sort="ecBonusMoy">Moy. bonus/meeting ↕</th>
             </tr></thead>
-            <tbody>
-              ${stats.filter(p => p.ecBonusTotal > 0).map(p => `
-                <tr>
-                  <td>${escHtml(p.firstName)} <strong>${escHtml(p.lastName)}</strong></td>
-                  <td class="center"><span class="tim-num">${escHtml(p.carNumber)}</span></td>
-                  <td class="center"><span class="sta-pts">${p.ecBonusTotal}</span></td>
-                  <td class="center"><span class="sta-moy">${p.ecBonusMoy}</span></td>
-                </tr>`).join('')}
-            </tbody>
+            <tbody>${renderEcRows(stats)}</tbody>
           </table>
         </div>
       </div>
@@ -426,16 +388,7 @@ async function renderStats() {
               <th class="center" data-sort="mqPtsMoy">Moy. pts MQ ↕</th>
               <th class="center" data-sort="mqPosMoy">Moy. place MQ ↕</th>
             </tr></thead>
-            <tbody>
-              ${stats.map(p => `
-                <tr>
-                  <td>${escHtml(p.firstName)} <strong>${escHtml(p.lastName)}</strong></td>
-                  <td class="center"><span class="tim-num">${escHtml(p.carNumber)}</span></td>
-                  <td class="center">${p.nbMq}</td>
-                  <td class="center"><span class="sta-pts">${p.mqPtsMoy}</span></td>
-                  <td class="center"><span class="sta-moy">${p.mqPosMoy || '—'}</span></td>
-                </tr>`).join('')}
-            </tbody>
+            <tbody>${renderMqRows(stats)}</tbody>
           </table>
         </div>
       </div>
@@ -452,17 +405,7 @@ async function renderStats() {
               <th class="center" data-sort="interimPtsMoy">Moy. pts inter. ↕</th>
               <th class="center" data-sort="interimPosMoy">Moy. place inter. ↕</th>
             </tr></thead>
-            <tbody>
-              ${stats.map(p => `
-                <tr>
-                  <td>${escHtml(p.firstName)} <strong>${escHtml(p.lastName)}</strong></td>
-                  <td class="center"><span class="tim-num">${escHtml(p.carNumber)}</span></td>
-                  <td class="center">${p.nbMeetings}</td>
-                  <td class="center"><span class="sta-pts">${p.interimPtsTotal}</span></td>
-                  <td class="center"><span class="sta-moy">${p.interimPtsMoy ?? '—'}</span></td>
-                  <td class="center"><span class="sta-moy">${p.interimPosMoy ?? '—'}</span></td>
-                </tr>`).join('')}
-            </tbody>
+            <tbody>${renderInterimRows(stats)}</tbody>
           </table>
         </div>
       </div>
@@ -479,17 +422,7 @@ async function renderStats() {
               <th class="center" data-sort="dfPosMoy">Moy. place ↕</th>
               <th class="center" data-sort="dfPtsMoy">Moy. pts ↕</th>
             </tr></thead>
-            <tbody>
-              ${stats.map(p => `
-                <tr>
-                  <td>${escHtml(p.firstName)} <strong>${escHtml(p.lastName)}</strong></td>
-                  <td class="center"><span class="tim-num">${escHtml(p.carNumber)}</span></td>
-                  <td class="center">${p.nbDf}</td>
-                  <td class="center"><span class="sta-taux ${p.tauxDf >= 75 ? 'sta-taux--high' : p.tauxDf >= 50 ? 'sta-taux--mid' : 'sta-taux--low'}">${p.tauxDf}%</span></td>
-                  <td class="center"><span class="sta-moy">${p.dfPosMoy ?? '—'}</span></td>
-                  <td class="center"><span class="sta-pts">${p.dfPtsMoy ?? '—'}</span></td>
-                </tr>`).join('')}
-            </tbody>
+            <tbody>${renderDfRows(stats)}</tbody>
           </table>
         </div>
       </div>
@@ -507,18 +440,7 @@ async function renderStats() {
               <th class="center" data-sort="finPtsMoy">Moy. pts ↕</th>
               <th class="center" data-sort="phaseFinaleMoy">Moy. pts DF+Fin. ↕</th>
             </tr></thead>
-            <tbody>
-              ${stats.map(p => `
-                <tr>
-                  <td>${escHtml(p.firstName)} <strong>${escHtml(p.lastName)}</strong></td>
-                  <td class="center"><span class="tim-num">${escHtml(p.carNumber)}</span></td>
-                  <td class="center">${p.nbFin}</td>
-                  <td class="center"><span class="sta-taux ${p.tauxFin >= 75 ? 'sta-taux--high' : p.tauxFin >= 50 ? 'sta-taux--mid' : 'sta-taux--low'}">${p.tauxFin}%</span></td>
-                  <td class="center"><span class="sta-moy">${p.finPosMoy ?? '—'}</span></td>
-                  <td class="center"><span class="sta-pts">${p.finPtsMoy ?? '—'}</span></td>
-                  <td class="center"><span class="sta-pts">${p.phaseFinaleMoy ?? '—'}</span></td>
-                </tr>`).join('')}
-            </tbody>
+            <tbody>${renderFinRows(stats)}</tbody>
           </table>
         </div>
       </div>
@@ -534,32 +456,30 @@ async function renderStats() {
 // TRI DES COLONNES
 // ─────────────────────────────────────────────────────────
 
-let _lastStats = []; // cache pour le tri sans re-fetch
+let _lastStats = [];
 
 function bindSortHeaders() {
   document.querySelectorAll('th[data-sort]').forEach(th => {
     th.style.cursor = 'pointer';
     th.title = 'Cliquer pour trier';
     th.addEventListener('click', () => {
-      const table = th.closest('table');
-      const key   = th.dataset.sort;
+      const table   = th.closest('table');
+      const key     = th.dataset.sort;
       const tableId = th.closest('.sta-section')?.querySelector('.sta-section-title')?.textContent?.trim() || key;
 
       if (sortState.table === tableId && sortState.key === key) {
-        sortState.asc = !sortState.asc; // inverser
+        sortState.asc = !sortState.asc;
       } else {
         sortState.table = tableId;
         sortState.key   = key;
-        sortState.asc   = false; // par défaut décroissant
+        sortState.asc   = false;
       }
 
-      // Mettre à jour les indicateurs visuels
       document.querySelectorAll('th[data-sort]').forEach(t => {
         t.classList.remove('sta-sort-asc', 'sta-sort-desc');
       });
       th.classList.add(sortState.asc ? 'sta-sort-asc' : 'sta-sort-desc');
 
-      // Trier et re-rendre le tbody de ce tableau uniquement
       const tbody = table.querySelector('tbody');
       if (!tbody) return;
 
@@ -570,28 +490,17 @@ function bindSortHeaders() {
         return sortState.asc ? va - vb : vb - va;
       });
 
-      // Re-rendre les lignes du tableau concerné
       const renderers = {
-        'progression': renderProgressionRows,
-        'ecBonusTotal': renderEcRows,
-        'ecBonusMoy': renderEcRows,
-        'nbMq': renderMqRows,
-        'mqPtsMoy': renderMqRows,
-        'mqPosMoy': renderMqRows,
-        'interimPtsTotal': renderInterimRows,
-        'interimPtsMoy': renderInterimRows,
-        'interimPosMoy': renderInterimRows,
-        'nbDf': renderDfRows,
-        'tauxDf': renderDfRows,
-        'dfPosMoy': renderDfRows,
-        'dfPtsMoy': renderDfRows,
-        'nbFin': renderFinRows,
-        'tauxFin': renderFinRows,
-        'finPosMoy': renderFinRows,
-        'finPtsMoy': renderFinRows,
+        'totalSum': renderProgressionRows, 'totalMoy': renderProgressionRows,
+        'ecBonusTotal': renderEcRows,      'ecBonusMoy': renderEcRows,
+        'nbMq': renderMqRows,              'mqPtsMoy': renderMqRows,    'mqPosMoy': renderMqRows,
+        'nbMeetings': renderInterimRows,   'interimPtsTotal': renderInterimRows,
+        'interimPtsMoy': renderInterimRows,'interimPosMoy': renderInterimRows,
+        'nbDf': renderDfRows,              'tauxDf': renderDfRows,
+        'dfPosMoy': renderDfRows,          'dfPtsMoy': renderDfRows,
+        'nbFin': renderFinRows,            'tauxFin': renderFinRows,
+        'finPosMoy': renderFinRows,        'finPtsMoy': renderFinRows,
         'phaseFinaleMoy': renderFinRows,
-        'totalSum': renderProgressionRows,
-        'totalMoy': renderProgressionRows,
       };
 
       const renderer = renderers[key];
@@ -600,7 +509,10 @@ function bindSortHeaders() {
   });
 }
 
-// Fonctions de rendu des lignes par tableau
+// ─────────────────────────────────────────────────────────
+// RENDUS LIGNES
+// ─────────────────────────────────────────────────────────
+
 function renderProgressionRows(stats) {
   return stats.map((p, i) => `
     <tr>
@@ -690,84 +602,10 @@ function bindEvents() {
 }
 
 // ─────────────────────────────────────────────────────────
-// STYLES
-// ─────────────────────────────────────────────────────────
-
-function injectStyles() {
-  if (document.getElementById('stats-styles')) return;
-  const style = document.createElement('style');
-  style.id = 'stats-styles';
-  style.textContent = `
-    .sta-section { margin-bottom: var(--sp-xl); }
-    .sta-section-title {
-      font-family: var(--font-condensed);
-      font-size: 0.8rem; font-weight: 700;
-      letter-spacing: 0.1em; text-transform: uppercase;
-      color: var(--clr-text-3);
-      margin-bottom: var(--sp-sm);
-      padding-bottom: var(--sp-xs);
-      border-bottom: 1px solid var(--clr-border);
-    }
-    .sta-meetings-list { margin-bottom: var(--sp-md); }
-    .sta-meetings-bar {
-      display: flex; gap: 4px; flex-wrap: wrap;
-      font-size: 0.75rem; color: var(--clr-text-3);
-    }
-    .sta-meeting-chip {
-      background: var(--clr-surface);
-      border: 1px solid var(--clr-border);
-      border-radius: var(--r-sm);
-      padding: 2px 8px;
-    }
-    .sta-col-meeting { min-width: 52px; font-size: 0.75rem; }
-    .sta-col-total { min-width: 60px; border-left: 1px solid var(--clr-border); }
-    .sta-col-moy { min-width: 80px; }
-
-    .sta-pts    { font-family: var(--font-display); font-weight: 700; color: var(--clr-accent-2); }
-    .sta-total  { font-family: var(--font-display); font-size: 1rem; font-weight: 700; color: var(--clr-accent-2); }
-    .sta-moy    { font-family: var(--font-display); font-weight: 600; color: var(--clr-text-2); }
-    .sta-absent { color: var(--clr-text-3); }
-
-    .sta-taux {
-      display: inline-block;
-      padding: 2px 8px;
-      border-radius: 20px;
-      font-family: var(--font-display);
-      font-size: 0.82rem;
-      font-weight: 700;
-    }
-    .sta-taux--high { background: rgba(30,215,96,0.15);  color: var(--clr-success); }
-    .sta-taux--mid  { background: rgba(255,170,0,0.15);  color: var(--clr-warning); }
-    .sta-taux--low  { background: rgba(255,85,0,0.15);   color: var(--clr-danger); }
-
-    /* Tri colonnes */
-    th[data-sort] {
-      cursor: pointer;
-      user-select: none;
-      white-space: nowrap;
-      transition: color var(--tr-fast);
-    }
-    th[data-sort]:hover { color: var(--clr-accent-2); }
-    th[data-sort].sta-sort-asc::after  { content: ' ▲'; color: var(--clr-accent); font-size: 0.65rem; }
-    th[data-sort].sta-sort-desc::after { content: ' ▼'; color: var(--clr-accent); font-size: 0.65rem; }
-
-    .tim-num {
-      display: inline-flex; align-items: center; justify-content: center;
-      min-width: 36px; height: 24px;
-      background: var(--clr-bg-3); border: 1px solid var(--clr-border-2);
-      border-radius: var(--r-sm); font-family: var(--font-display);
-      font-size: 0.75rem; font-weight: 700; color: var(--clr-accent-2); padding: 0 4px;
-    }
-  `;
-  document.head.appendChild(style);
-}
-
-// ─────────────────────────────────────────────────────────
 // INIT
 // ─────────────────────────────────────────────────────────
 
 export function initStats() {
-  injectStyles();
   document.addEventListener('viewchange', async e => {
     if (e.detail.view === 'stats') {
       renderView();

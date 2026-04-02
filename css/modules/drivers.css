@@ -1,0 +1,138 @@
+/* ═══════════════════════════════════════════════
+   DRIVERS.CSS — Styles de la gestion des pilotes
+═══════════════════════════════════════════════ */
+
+/* ── Légende des plages de numéros ── */
+.drv-ranges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-xs);
+  margin-bottom: var(--sp-sm);
+}
+
+.drv-range-pill {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border-radius: 20px;
+  font-size: 0.75rem;
+  font-family: var(--font-condensed);
+  font-weight: 600;
+  border: 1px solid;
+}
+
+.drv-range-sc    { background: rgba(255,85,0,0.12);    color: var(--clr-cat-supercar);  border-color: rgba(255,85,0,0.3); }
+.drv-range-s1600 { background: rgba(59,158,255,0.12);  color: var(--clr-cat-super1600); border-color: rgba(59,158,255,0.3); }
+.drv-range-d5    { background: rgba(30,215,96,0.12);   color: var(--clr-cat-d5);        border-color: rgba(30,215,96,0.3); }
+.drv-range-f     { background: rgba(224,64,251,0.12);  color: var(--clr-cat-feminines); border-color: rgba(224,64,251,0.3); }
+.drv-range-d3    { background: rgba(255,210,63,0.12);  color: var(--clr-cat-d3);        border-color: rgba(255,210,63,0.3); }
+.drv-range-d4    { background: rgba(154,160,180,0.12); color: var(--clr-cat-d4);        border-color: rgba(154,160,180,0.3); }
+
+.drv-range-code { font-weight: 700; }
+.drv-range-nums { opacity: 0.7; font-size: 0.7rem; }
+
+/* ── Tableau pilotes ── */
+.drv-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 36px;
+  height: 28px;
+  background: var(--clr-bg-3);
+  border: 1px solid var(--clr-border-2);
+  border-radius: var(--r-sm);
+  font-family: var(--font-display);
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--clr-accent-2);
+}
+
+.drv-fullname { font-size: 0.95rem; }
+.drv-fullname strong { font-weight: 600; }
+
+.drv-actions {
+  display: flex;
+  gap: 4px;
+  justify-content: center;
+}
+
+.drv-counter {
+  font-size: 0.82rem;
+  margin-left: auto;
+}
+
+/* ── Prévisualisation catégorie dans la modale ── */
+.drv-cat-preview {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-sm);
+  padding: 6px 10px;
+  border-radius: var(--r-sm);
+  font-size: 0.82rem;
+  margin-top: 4px;
+  flex-wrap: wrap;
+}
+.drv-cat-preview--ok  { background: var(--clr-success-dim); color: var(--clr-success); }
+.drv-cat-preview--err { background: var(--clr-danger-dim);  color: var(--clr-danger); }
+
+/* ── Modale suppression pilote ── */
+.drv-del-summary {
+  display: flex;
+  gap: var(--sp-md);
+  padding: var(--sp-sm) var(--sp-md);
+  background: var(--clr-bg-3);
+  border-radius: var(--r-md);
+  margin-bottom: var(--sp-md);
+  font-size: 0.85rem;
+  font-weight: 600;
+  flex-wrap: wrap;
+}
+
+.drv-del-meeting {
+  margin-bottom: var(--sp-sm);
+  padding: var(--sp-sm) var(--sp-md);
+  background: var(--clr-surface);
+  border: 1px solid var(--clr-border);
+  border-radius: var(--r-md);
+}
+
+.drv-del-meeting-title {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--clr-text-2);
+  margin-bottom: var(--sp-xs);
+  padding-bottom: var(--sp-xs);
+  border-bottom: 1px solid var(--clr-border);
+}
+
+.drv-del-session-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 0;
+  font-size: 0.85rem;
+  border-bottom: 1px solid var(--clr-border);
+}
+.drv-del-session-row:last-child { border-bottom: none; }
+
+.drv-del-impact {
+  padding: var(--sp-sm) var(--sp-md);
+  background: rgba(255,170,0,0.08);
+  border: 1px solid var(--clr-warning);
+  border-radius: var(--r-md);
+  margin-top: var(--sp-md);
+}
+.drv-del-impact-title {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--clr-warning);
+  margin-bottom: var(--sp-xs);
+}
+.drv-del-impact-row {
+  font-size: 0.8rem;
+  color: var(--clr-text-2);
+  padding: 3px 0;
+}
+
+.text-success { color: var(--clr-success); }

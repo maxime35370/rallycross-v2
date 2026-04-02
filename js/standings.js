@@ -324,7 +324,7 @@ async function renderInterimTab(content) {
           <th class="center">N°</th>
           ${mqSessions.map(mq => `<th class="center">MQ${mq.num}</th>`).join('')}
           <th class="center">EC+</th>
-          <th class="center">Total MQ</th>
+          <th class="center">Total MQ + EC</th>
           <th class="center">Pts inter.</th>
         </tr></thead>
         <tbody>
@@ -343,7 +343,7 @@ async function renderInterimTab(content) {
                 <td class="center">
                   ${r.ecBonus > 0 ? `<span class="std-bonus">+${r.ecBonus}</span>` : '—'}
                 </td>
-                <td class="center"><strong>${r.totalMqPoints}</strong></td>
+                <td class="center"><strong>${r.totalPoints}</strong></td>
                 <td class="center">
                   ${r.position <= 16
                     ? `<strong class="text-accent">${r.interimPoints}</strong>`
@@ -698,119 +698,10 @@ function showTabs() {
 }
 
 // ─────────────────────────────────────────────────────────
-// STYLES
-// ─────────────────────────────────────────────────────────
-
-function injectStyles() {
-  if (document.getElementById('standings-styles')) return;
-  const style = document.createElement('style');
-  style.id = 'standings-styles';
-  style.textContent = `
-    .std-tabs {
-      display: flex;
-      gap: 4px;
-      margin-bottom: var(--sp-md);
-      flex-wrap: wrap;
-    }
-    .std-tab {
-      padding: 7px 14px;
-      background: var(--clr-surface);
-      border: 1px solid var(--clr-border-2);
-      border-radius: var(--r-md);
-      color: var(--clr-text-2);
-      font-family: var(--font-condensed);
-      font-size: 0.85rem;
-      font-weight: 600;
-      letter-spacing: 0.05em;
-      cursor: pointer;
-      transition: all var(--tr-fast);
-    }
-    .std-tab:hover  { border-color: var(--clr-accent); color: var(--clr-text); }
-    .std-tab.is-active {
-      background: var(--clr-accent-dim);
-      border-color: var(--clr-accent);
-      color: var(--clr-accent-2);
-    }
-
-    .std-section { margin-bottom: var(--sp-lg); }
-    .std-section-title {
-      font-family: var(--font-condensed);
-      font-size: 0.8rem;
-      font-weight: 700;
-      letter-spacing: 0.1em;
-      text-transform: uppercase;
-      color: var(--clr-text-3);
-      margin-bottom: var(--sp-sm);
-    }
-    .std-header-row {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      margin-bottom: var(--sp-md);
-    }
-    .std-table-title {
-      font-family: var(--font-condensed);
-      font-size: 0.82rem;
-      font-weight: 700;
-      letter-spacing: 0.1em;
-      text-transform: uppercase;
-      color: var(--clr-text-3);
-    }
-
-    .std-pos-top {
-      font-family: var(--font-display);
-      font-weight: 700;
-      color: var(--clr-accent-2);
-    }
-    .std-bonus {
-      color: var(--clr-success);
-      font-weight: 700;
-      font-size: 0.85rem;
-    }
-    .std-row-reserve td { opacity: 0.5; }
-    .std-note {
-      font-size: 0.8rem;
-      color: var(--clr-text-3);
-      padding: var(--sp-sm) 0;
-    }
-    .tim-time {
-      font-family: var(--font-display);
-      font-size: 0.88rem;
-      font-weight: 700;
-      color: var(--clr-success);
-    }
-    .tim-num {
-      display: inline-flex; align-items: center; justify-content: center;
-      min-width: 36px; height: 24px;
-      background: var(--clr-bg-3);
-      border: 1px solid var(--clr-border-2);
-      border-radius: var(--r-sm);
-      font-family: var(--font-display);
-      font-size: 0.75rem; font-weight: 700;
-      color: var(--clr-accent-2);
-      padding: 0 4px;
-    }
-    .chp-absent { color: var(--clr-text-3); font-size: 0.8rem; }
-    .chp-total {
-      font-family: var(--font-display);
-      font-size: 1rem;
-      font-weight: 700;
-      color: var(--clr-accent-2);
-    }
-    .chp-total-col {
-      min-width: 70px;
-      border-left: 1px solid var(--clr-border);
-    }
-  `;
-  document.head.appendChild(style);
-}
-
-// ─────────────────────────────────────────────────────────
 // INIT
 // ─────────────────────────────────────────────────────────
 
 export function initStandings() {
-  injectStyles();
   document.addEventListener('viewchange', async e => {
     if (e.detail.view === 'standings') {
       renderView();

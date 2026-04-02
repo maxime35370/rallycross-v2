@@ -1,0 +1,71 @@
+/* ═══════════════════════════════════════════════
+   STATS.CSS — Styles des statistiques saison
+═══════════════════════════════════════════════ */
+
+/* ── Sections ── */
+.sta-section { margin-bottom: var(--sp-xl); }
+
+.sta-section-title {
+  font-family: var(--font-condensed);
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--clr-text-3);
+  margin-bottom: var(--sp-sm);
+  padding-bottom: var(--sp-xs);
+  border-bottom: 1px solid var(--clr-border);
+}
+
+/* ── Barre meetings ── */
+.sta-meetings-list { margin-bottom: var(--sp-md); }
+
+.sta-meetings-bar {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  font-size: 0.75rem;
+  color: var(--clr-text-3);
+}
+
+.sta-meeting-chip {
+  background: var(--clr-surface);
+  border: 1px solid var(--clr-border);
+  border-radius: var(--r-sm);
+  padding: 2px 8px;
+}
+
+/* ── Colonnes spéciales ── */
+.sta-col-meeting { min-width: 52px; font-size: 0.75rem; }
+.sta-col-total   { min-width: 60px; border-left: 1px solid var(--clr-border); }
+.sta-col-moy     { min-width: 80px; }
+
+/* ── Valeurs ── */
+.sta-pts   { font-family: var(--font-display); font-weight: 700; color: var(--clr-accent-2); }
+.sta-total { font-family: var(--font-display); font-size: 1rem; font-weight: 700; color: var(--clr-accent-2); }
+.sta-moy   { font-family: var(--font-display); font-weight: 600; color: var(--clr-text-2); }
+.sta-absent { color: var(--clr-text-3); }
+
+/* ── Taux de qualification ── */
+.sta-taux {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 20px;
+  font-family: var(--font-display);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+.sta-taux--high { background: rgba(30,215,96,0.15);  color: var(--clr-success); }
+.sta-taux--mid  { background: rgba(255,170,0,0.15);  color: var(--clr-warning); }
+.sta-taux--low  { background: rgba(255,85,0,0.15);   color: var(--clr-danger); }
+
+/* ── Tri des colonnes ── */
+th[data-sort] {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  transition: color var(--tr-fast);
+}
+th[data-sort]:hover { color: var(--clr-accent-2); }
+th[data-sort].sta-sort-asc::after  { content: ' ▲'; color: var(--clr-accent); font-size: 0.65rem; }
+th[data-sort].sta-sort-desc::after { content: ' ▼'; color: var(--clr-accent); font-size: 0.65rem; }

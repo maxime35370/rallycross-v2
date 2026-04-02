@@ -1,24 +1,33 @@
 /* ═══════════════════════════════════════════════
    CHAMPIONSHIP.JS — Classement général saison
    Cumul par meeting : pts intermédiaire + DF + Finale
-   Tous les meetings comptent, pas de joker
+   Calcul direct depuis les collections brutes
+   Plus besoin de sauvegarder meetingStandings
 ═══════════════════════════════════════════════ */
 
 import { db } from './firebase.js';
 import { toast } from './app.js';
 import { escHtml } from './utils.js';
+import { calcInterimStandings } from './calc.js';
 
 // ─────────────────────────────────────────────────────────
 // ÉTAT LOCAL
 // ─────────────────────────────────────────────────────────
 
-let allMeetings  = [];
+let allMeetings   = [];
 let unsubMeetings = null;
 
 let selectedYear     = new Date().getFullYear();
 let selectedCategory = '';
 
 const CATEGORIES = ['Supercar', 'Super1600', 'Division 5', 'Féminines', 'D3', 'D4'];
+
+// ─────────────────────────────────────────────────────────
+// BARÈMES
+// ─────────────────────────────────────────────────────────
+
+const DF_POINTS  = [0, 10, 8, 6, 5, 4, 3, 2, 1];
+const FIN_POINTS = [0, 15, 12, 9, 7, 6, 5, 4, 3];
 
 // ─────────────────────────────────────────────────────────
 // FIRESTORE — HELPERS
@@ -28,37 +37,123 @@ async function fsQuery(collectionName, filters) {
   const { collection, query, where, getDocs } = await import(
     'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
   );
-  let q = collection(db, collectionName);
   const constraints = filters.map(([field, op, val]) => where(field, op, val));
-  const snap = await getDocs(query(q, ...constraints));
+  const snap = await getDocs(query(collection(db, collectionName), ...constraints));
   return snap.docs.map(d => ({ id: d.id, ...d.data() }));
 }
 
+async function fsGetResults(sessionId) {
+  return fsQuery('results', [['sessionId', '==', sessionId]]);
+}
+
+async function fsGetParticipants(sessionId) {
+  return fsQuery('sessionParticipants', [['sessionId', '==', sessionId]]);
+}
+
 // ─────────────────────────────────────────────────────────
-// CALCUL DES POINTS PAR MEETING
+// CALCUL POINTS D'UNE PHASE (DF ou FIN)
 // ─────────────────────────────────────────────────────────
 
-/**
- * Pour un meeting donné, retourne les points de chaque pilote
- * depuis la collection meetingStandings (sauvegardée depuis Classements → Meeting).
- * Fallback : retourne [] si pas encore sauvegardé.
- */
+async function calcPhasePoints(session) {
+  const results      = await fsGetResults(session.id);
+  const participants = await fsGetParticipants(session.id);
+  const resultMap    = {};
+  results.forEach(r => { resultMap[r.driverId] = r; });
+
+  const ptsFn = session.type === 'DF' ? (p => DF_POINTS[p] ?? 0) : (p => FIN_POINTS[p] ?? 0);
+
+  const finished = participants
+    .map(p => ({ driverId: p.driverId, ms: resultMap[p.driverId]?.ms ?? null, status: resultMap[p.driverId]?.status ?? null }))
+    .filter(r => r.ms && !r.status)
+    .sort((a, b) => a.ms - b.ms);
+
+  const out = {};
+  let pos = 1;
+  finished.forEach(r => { out[r.driverId] = ptsFn(pos++); });
+
+  // Pilotes avec statut spécial → 0 pts (1 pt DSQ_RACE)
+  participants.forEach(p => {
+    if (out[p.driverId] !== undefined) return;
+    const r = resultMap[p.driverId];
+    out[p.driverId] = r?.status === 'DSQ_RACE' ? 1 : 0;
+  });
+
+  return out; // { driverId → points }
+}
+
+// ─────────────────────────────────────────────────────────
+// CALCUL POINTS PAR MEETING — DIRECT DEPUIS COLLECTIONS BRUTES
+// Plus besoin de sauvegarder meetingStandings
+// ─────────────────────────────────────────────────────────
+
 async function getMeetingPoints(meetingId) {
-  const rows = await fsQuery('meetingStandings', [
+  // 1. Sessions du meeting pour cette catégorie
+  const sessions = await fsQuery('sessions', [
     ['meetingId', '==', meetingId],
     ['category',  '==', selectedCategory],
   ]);
+  if (!sessions.length) return [];
 
-  return rows.map(r => ({
-    driverId:  r.driverId,
-    carNumber: r.carNumber,
-    firstName: r.firstName,
-    lastName:  r.lastName,
-    interim:   r.interimPts  ?? 0,
-    df:        r.dfPts       ?? 0,
-    fin:       r.finalePts   ?? 0,
-    total:     r.totalPts    ?? 0,
-  }));
+  // 2. Classement intermédiaire (via calc.js — calcul direct)
+  const interimRows = await calcInterimStandings(db, sessions);
+
+  // Map driverId → données pilote + points intermédiaires
+  const driverMap = {};
+  interimRows.forEach(r => {
+    driverMap[r.driverId] = {
+      driverId:  r.driverId,
+      carNumber: r.carNumber,
+      firstName: r.firstName,
+      lastName:  r.lastName,
+      interim:   r.interimPoints ?? 0,
+      df:        0,
+      fin:       0,
+    };
+  });
+
+  // 3. Points DF
+  const dfSessions = sessions.filter(s => s.type === 'DF');
+  for (const df of dfSessions) {
+    const ptsMap = await calcPhasePoints(df);
+    const parts  = await fsGetParticipants(df.id);
+    parts.forEach(p => {
+      if (!driverMap[p.driverId]) {
+        driverMap[p.driverId] = {
+          driverId:  p.driverId,
+          carNumber: p.carNumber,
+          firstName: p.firstName,
+          lastName:  p.lastName,
+          interim: 0, df: 0, fin: 0,
+        };
+      }
+      driverMap[p.driverId].df += ptsMap[p.driverId] ?? 0;
+    });
+  }
+
+  // 4. Points Finale
+  const finSession = sessions.find(s => s.type === 'FIN');
+  if (finSession) {
+    const ptsMap = await calcPhasePoints(finSession);
+    const parts  = await fsGetParticipants(finSession.id);
+    parts.forEach(p => {
+      if (!driverMap[p.driverId]) {
+        driverMap[p.driverId] = {
+          driverId:  p.driverId,
+          carNumber: p.carNumber,
+          firstName: p.firstName,
+          lastName:  p.lastName,
+          interim: 0, df: 0, fin: 0,
+        };
+      }
+      driverMap[p.driverId].fin = ptsMap[p.driverId] ?? 0;
+    });
+  }
+
+  // 5. Calculer le total et retourner
+  return Object.values(driverMap).map(d => ({
+    ...d,
+    total: d.interim + d.df + d.fin,
+  })).filter(d => d.interim > 0 || d.df > 0 || d.fin > 0); // exclure pilotes sans aucun point
 }
 
 // ─────────────────────────────────────────────────────────
@@ -68,8 +163,7 @@ async function getMeetingPoints(meetingId) {
 async function calcChampionship() {
   if (!selectedCategory || allMeetings.length === 0) return [];
 
-  // Points cumulés par pilote sur tous les meetings
-  const champMap = {}; // driverId → { info, meetingPts: {meetingId: total}, grandTotal }
+  const champMap = {};
 
   for (const meeting of allMeetings) {
     const pts = await getMeetingPoints(meeting.id);
@@ -186,7 +280,6 @@ async function renderChampionship() {
       return;
     }
 
-    // En-têtes colonnes meetings
     const meetingHeaders = allMeetings.map(m => {
       const d = m.date ? new Date(m.date).toLocaleDateString('fr-FR', { day:'2-digit', month:'2-digit' }) : '?';
       return `<th class="center chp-meeting-col" title="${escHtml(m.location)}">${d}<br><span class="chp-loc">${escHtml(m.location?.split(' ')[0] || '?')}</span></th>`;
@@ -215,21 +308,16 @@ async function renderChampionship() {
 
               return `
                 <tr>
-                  <td class="center">
-                    <span class="chp-pos ${posClass}">${pos}</span>
-                  </td>
+                  <td class="center"><span class="chp-pos ${posClass}">${pos}</span></td>
                   <td>${escHtml(d.firstName)} <strong>${escHtml(d.lastName)}</strong></td>
                   <td class="center"><span class="tim-num">${escHtml(d.carNumber)}</span></td>
                   ${meetingCells}
-                  <td class="center">
-                    <strong class="chp-total">${d.grandTotal}</strong>
-                  </td>
+                  <td class="center"><strong class="chp-total">${d.grandTotal}</strong></td>
                 </tr>`;
             }).join('')}
           </tbody>
         </table>
       </div>
-
       <div class="chp-legend">
         <span>Points / meeting = intermédiaire + ½ finale + finale</span>
         <span>·</span>
@@ -260,91 +348,10 @@ function bindEvents() {
 }
 
 // ─────────────────────────────────────────────────────────
-// STYLES
-// ─────────────────────────────────────────────────────────
-
-function injectStyles() {
-  if (document.getElementById('championship-styles')) return;
-  const style = document.createElement('style');
-  style.id = 'championship-styles';
-  style.textContent = `
-    .chp-meeting-col {
-      min-width: 60px;
-      font-size: 0.75rem;
-      line-height: 1.3;
-    }
-    .chp-loc {
-      font-size: 0.68rem;
-      color: var(--clr-text-3);
-      font-weight: 400;
-      font-family: var(--font-body);
-      letter-spacing: 0;
-    }
-    .chp-total-col {
-      min-width: 70px;
-      border-left: 1px solid var(--clr-border);
-    }
-
-    .chp-pos {
-      font-family: var(--font-display);
-      font-size: 0.88rem;
-      font-weight: 700;
-      color: var(--clr-text-2);
-    }
-    .chp-pos-1 { color: #ffd700; font-size: 1rem; }
-    .chp-pos-2 { color: #c0c0c0; }
-    .chp-pos-3 { color: #cd7f32; }
-
-    .chp-pts {
-      font-family: var(--font-display);
-      font-size: 0.82rem;
-      font-weight: 600;
-      color: var(--clr-text);
-    }
-    .chp-absent { color: var(--clr-text-3); font-size: 0.8rem; }
-
-    .chp-total {
-      font-family: var(--font-display);
-      font-size: 1rem;
-      font-weight: 700;
-      color: var(--clr-accent-2);
-    }
-
-    /* Top 3 rows */
-    tbody tr:has(.chp-pos-1) { background: rgba(255,215,0,0.04); }
-    tbody tr:has(.chp-pos-2) { background: rgba(192,192,192,0.04); }
-    tbody tr:has(.chp-pos-3) { background: rgba(205,127,50,0.04); }
-
-    .chp-legend {
-      display: flex;
-      gap: var(--sp-sm);
-      font-size: 0.78rem;
-      color: var(--clr-text-3);
-      padding: var(--sp-sm) 0;
-      flex-wrap: wrap;
-    }
-
-    .tim-num {
-      display: inline-flex; align-items: center; justify-content: center;
-      min-width: 36px; height: 24px;
-      background: var(--clr-bg-3);
-      border: 1px solid var(--clr-border-2);
-      border-radius: var(--r-sm);
-      font-family: var(--font-display);
-      font-size: 0.75rem; font-weight: 700;
-      color: var(--clr-accent-2);
-      padding: 0 4px;
-    }
-  `;
-  document.head.appendChild(style);
-}
-
-// ─────────────────────────────────────────────────────────
 // INIT
 // ─────────────────────────────────────────────────────────
 
 export function initChampionship() {
-  injectStyles();
   document.addEventListener('viewchange', async e => {
     if (e.detail.view === 'championship') {
       renderView();

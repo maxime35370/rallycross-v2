@@ -1,0 +1,171 @@
+/* ═══════════════════════════════════════════════
+   MEETINGS.CSS — Styles de la gestion des meetings
+═══════════════════════════════════════════════ */
+
+.mtg-date {
+  font-family: var(--font-condensed);
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.mtg-cats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+
+.mtg-mq-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  background: var(--clr-accent-dim);
+  border: 1px solid var(--clr-accent);
+  border-radius: var(--r-sm);
+  font-family: var(--font-display);
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--clr-accent-2);
+}
+
+/* ── Sélecteur côté Pole ── */
+.mtg-pole-selector {
+  display: flex;
+  gap: var(--sp-sm);
+  margin-top: var(--sp-xs);
+}
+
+.mtg-pole-btn {
+  flex: 1;
+  padding: 10px var(--sp-sm);
+  background: var(--clr-surface);
+  border: 1px solid var(--clr-border-2);
+  border-radius: var(--r-md);
+  color: var(--clr-text-2);
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--tr-fast);
+  text-align: center;
+}
+.mtg-pole-btn.is-active {
+  background: var(--clr-accent-dim);
+  border-color: var(--clr-accent);
+  color: var(--clr-accent-2);
+}
+.mtg-pole-hint {
+  display: block;
+  font-size: 0.72rem;
+  color: var(--clr-text-3);
+  font-weight: 400;
+  margin-top: 2px;
+}
+.mtg-pole-btn.is-active .mtg-pole-hint {
+  color: var(--clr-accent);
+}
+
+/* ── Sélecteur nombre MQ ── */
+.mtg-mq-selector {
+  display: flex;
+  gap: var(--sp-sm);
+}
+
+.mtg-mq-btn {
+  flex: 1;
+  padding: 8px;
+  background: var(--clr-surface);
+  border: 1px solid var(--clr-border-2);
+  border-radius: var(--r-md);
+  color: var(--clr-text-2);
+  font-family: var(--font-condensed);
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--tr-fast);
+}
+.mtg-mq-btn:hover {
+  border-color: var(--clr-accent);
+  color: var(--clr-text);
+}
+.mtg-mq-btn.is-active {
+  background: var(--clr-accent-dim);
+  border-color: var(--clr-accent);
+  color: var(--clr-accent-2);
+}
+
+/* ── Checkboxes catégories ── */
+.mtg-cat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: var(--sp-sm);
+}
+
+.mtg-cat-checkbox {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-sm);
+  padding: 8px 10px;
+  background: var(--clr-surface);
+  border: 1px solid var(--clr-border-2);
+  border-radius: var(--r-md);
+  cursor: pointer;
+  transition: all var(--tr-fast);
+}
+.mtg-cat-checkbox:hover {
+  border-color: var(--clr-accent);
+}
+.mtg-cat-checkbox input[type=checkbox] {
+  accent-color: var(--clr-accent);
+  width: 15px;
+  height: 15px;
+}
+.mtg-cat-label {
+  font-size: 0.88rem;
+  font-weight: 500;
+}
+
+/* ── Preview sessions ── */
+.mtg-sessions-preview {
+  margin-top: var(--sp-md);
+}
+.mtg-preview-grid {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-sm);
+  margin-bottom: var(--sp-sm);
+}
+.mtg-preview-cat {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-sm);
+  flex-wrap: wrap;
+}
+.mtg-preview-cat-name {
+  min-width: 80px;
+}
+.mtg-preview-sessions {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.mtg-preview-session {
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-family: var(--font-condensed);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+.mtg-preview-ec  { background: var(--clr-info-dim);       color: var(--clr-info); }
+.mtg-preview-mq  { background: var(--clr-warning-dim);    color: var(--clr-warning); }
+.mtg-preview-df  { background: rgba(255,119,48,0.18);     color: #ff7730; }
+.mtg-preview-fin { background: var(--clr-accent-dim);     color: var(--clr-accent); }
+
+.mtg-preview-total {
+  font-size: 0.82rem;
+  color: var(--clr-text-3);
+  border-top: 1px solid var(--clr-border);
+  padding-top: var(--sp-sm);
+  margin-top: var(--sp-xs);
+}
