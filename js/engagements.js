@@ -137,7 +137,7 @@ async function toggleEngagement(driver) {
       await b.commit();
     }
     // Supprimer aussi les classements intermédiaires et meeting pour ce pilote/meeting
-    for (const col of ['interimStandings', 'meetingStandings']) {
+    for (const col of ['meetingStandings']) {
       const snap = await getDocs(query(collection(db, col),
         where('meetingId', '==', selectedMeetingId),
         where('driverId',  '==', driver.id)));
@@ -442,124 +442,10 @@ function bindEvents() {
 }
 
 // ─────────────────────────────────────────────────────────
-// STYLES
-// ─────────────────────────────────────────────────────────
-
-function injectStyles() {
-  if (document.getElementById('engagements-styles')) return;
-  const style = document.createElement('style');
-  style.id = 'engagements-styles';
-  style.textContent = `
-    .eng-placeholder {
-      text-align: center;
-      padding: var(--sp-2xl) var(--sp-md);
-      color: var(--clr-text-3);
-    }
-
-    /* En-tête stats */
-    .eng-header {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: var(--sp-md);
-      flex-wrap: wrap;
-      margin-bottom: var(--sp-md);
-    }
-    .eng-header-meeting {
-      font-family: var(--font-condensed);
-      font-size: 0.95rem;
-      font-weight: 600;
-      color: var(--clr-text-2);
-      margin-bottom: var(--sp-xs);
-    }
-    .eng-header-stats {
-      display: flex;
-      align-items: baseline;
-      gap: var(--sp-xs);
-    }
-    .eng-stat { display: flex; align-items: baseline; gap: 4px; }
-    .eng-stat-value {
-      font-family: var(--font-display);
-      font-size: 1.6rem;
-      font-weight: 700;
-      color: var(--clr-accent);
-    }
-    .eng-stat-label { font-size: 0.82rem; color: var(--clr-text-3); }
-    .eng-stat-sep { font-size: 1.2rem; color: var(--clr-text-3); margin: 0 2px; }
-    .eng-header-actions { display: flex; gap: var(--sp-sm); }
-
-    /* Groupes */
-    .eng-group-title {
-      display: flex;
-      align-items: center;
-      gap: var(--sp-sm);
-      font-family: var(--font-condensed);
-      font-size: 0.78rem;
-      font-weight: 700;
-      letter-spacing: 0.1em;
-      text-transform: uppercase;
-      color: var(--clr-text-3);
-      margin-bottom: var(--sp-sm);
-    }
-    .eng-group-dot {
-      width: 8px; height: 8px;
-      border-radius: 50%;
-      flex-shrink: 0;
-    }
-    .eng-group-dot--on  { background: var(--clr-success); box-shadow: 0 0 6px var(--clr-success); }
-    .eng-group-dot--off { background: var(--clr-text-3); }
-
-    /* Cards pilotes */
-    .eng-driver-card {
-      display: flex;
-      align-items: center;
-      gap: var(--sp-md);
-      padding: 10px var(--sp-md);
-      background: var(--clr-surface);
-      border: 1px solid var(--clr-border);
-      border-radius: var(--r-md);
-      margin-bottom: var(--sp-xs);
-      transition: border-color var(--tr-fast), background var(--tr-fast);
-    }
-    .eng-driver-card--on {
-      border-color: rgba(30, 215, 96, 0.3);
-      background: rgba(30, 215, 96, 0.05);
-    }
-    .eng-driver-num {
-      min-width: 44px;
-      text-align: center;
-      font-family: var(--font-display);
-      font-size: 0.85rem;
-      font-weight: 700;
-      color: var(--clr-accent-2);
-      background: var(--clr-bg-3);
-      border: 1px solid var(--clr-border-2);
-      border-radius: var(--r-sm);
-      padding: 3px 6px;
-    }
-    .eng-driver-name {
-      flex: 1;
-      font-size: 0.95rem;
-    }
-    .eng-driver-name strong { font-weight: 600; }
-
-    .eng-empty {
-      text-align: center;
-      padding: var(--sp-xl);
-      color: var(--clr-text-3);
-      font-size: 0.9rem;
-    }
-    .eng-empty a { color: var(--clr-accent-2); }
-  `;
-  document.head.appendChild(style);
-}
-
-// ─────────────────────────────────────────────────────────
 // INIT
 // ─────────────────────────────────────────────────────────
 
 export function initEngagements() {
-  injectStyles();
   document.addEventListener('viewchange', e => {
     if (e.detail.view === 'engagements') {
       renderView();
