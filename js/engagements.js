@@ -69,6 +69,7 @@ async function loadEngaged() {
     renderDriversList();
     return;
   }
+  engagedIds = new Set();
   const { collection, query, where, onSnapshot } = await import(
     'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
   );
@@ -354,6 +355,9 @@ function renderDriversList() {
   const statVal = document.querySelector('.eng-stat-value');
   if (statVal) statVal.textContent = engagedIds.size;
 
+  const statTotal = document.querySelectorAll('.eng-stat-value')[1];
+  if (statTotal && allDrivers.length > 0) statTotal.textContent = allDrivers.length;
+
   if (allDrivers.length === 0) {
     list.innerHTML = `
       <div class="eng-empty">
@@ -429,15 +433,18 @@ function bindEvents() {
 
   document.getElementById('eng-meeting')?.addEventListener('change', e => {
     selectedMeetingId = e.target.value;
+    engagedIds = new Set();
     loadEngaged();
     renderContent();
   });
 
   document.getElementById('eng-category')?.addEventListener('change', e => {
     selectedCategory = e.target.value;
-    loadDrivers();
-    loadEngaged();
-    renderContent();
+    allDrivers  = [];
+    engagedIds  = new Set(); 
+    renderContent();      
+    loadDrivers();        
+    loadEngaged();        
   });
 }
 
