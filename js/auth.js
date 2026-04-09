@@ -158,16 +158,17 @@ function removeAuthGates() {
 // ─────────────────────────────────────────────────────────
 
 export async function initAuth() {
-  // On attend que Firebase soit initialise
+  // Toujours afficher l'UI d'auth dans le menu
+  document.addEventListener('viewchange', onViewChange);
+  renderAuthUI();
+
+  // Initialiser Firebase Auth si Firebase est pret
   try {
     const { getApps } = await import(
       'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js'
     );
     const apps = getApps();
-    if (apps.length === 0) {
-      // Firebase pas encore init — on attend, l'auth se fera apres
-      return;
-    }
+    if (apps.length === 0) return;
 
     const { getAuth, onAuthStateChanged } = await import(
       'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js'
@@ -183,7 +184,6 @@ export async function initAuth() {
         removeAuthGates();
       }
 
-      // Dispatch event for other modules
       document.dispatchEvent(
         new CustomEvent('authchange', { detail: { user } })
       );
@@ -191,9 +191,4 @@ export async function initAuth() {
   } catch (err) {
     console.error('Auth init error:', err);
   }
-
-  // Ecouter les changements de vue pour la protection
-  document.addEventListener('viewchange', onViewChange);
-
-  renderAuthUI();
 }
