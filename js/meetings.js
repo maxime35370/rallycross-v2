@@ -7,6 +7,7 @@ import { db } from './firebase.js';
 import { toast } from './app.js';
 import { escHtml, sanitize, formatDate, CATEGORIES } from './utils.js';
 import { logAudit } from './audit.js';
+import { requireAuth } from './auth.js';
 
 // ─────────────────────────────────────────────────────────
 // CONSTANTES
@@ -87,6 +88,7 @@ async function loadMeetings() {
 
 async function saveMeeting(data) {
   if (!db) { toast('Firebase non connecté', 'error'); return null; }
+  if (!requireAuth()) return null;
 
   const { collection, doc, addDoc, updateDoc, writeBatch } = await import(
     'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
@@ -173,6 +175,7 @@ async function generateSessions(meetingId, meetingData) {
 
 async function deleteMeeting(id) {
   if (!db) return;
+  if (!requireAuth()) return;
 
   const { doc, deleteDoc, collection, query, where, getDocs, writeBatch } =
     await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');

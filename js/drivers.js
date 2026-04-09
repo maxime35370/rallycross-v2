@@ -7,6 +7,7 @@ import { db } from './firebase.js';
 import { toast, showView, categoryBadge } from './app.js';
 import { escHtml, sanitize, CATEGORIES } from './utils.js';
 import { logAudit } from './audit.js';
+import { requireAuth } from './auth.js';
 import { showDriverProfile } from './driverProfile.js';
 
 // ─────────────────────────────────────────────────────────
@@ -77,6 +78,7 @@ async function loadDrivers() {
 
 async function saveDriver(data) {
   if (!db) { toast('Firebase non connecté', 'error'); return false; }
+  if (!requireAuth()) return false;
 
   const { collection, doc, addDoc, updateDoc, query, where, getDocs } =
     await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
@@ -119,6 +121,7 @@ async function saveDriver(data) {
 
 async function deleteDriver(id) {
   if (!db) return;
+  if (!requireAuth()) return;
   const { doc, deleteDoc, collection, query, where, getDocs, writeBatch } = await import(
     'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
   );

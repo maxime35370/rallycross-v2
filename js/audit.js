@@ -55,16 +55,38 @@ export async function logAudit(action, entity, entityId, details = {}) {
 // AFFICHAGE DU JOURNAL (vue admin)
 // ─────────────────────────────────────────────────────────
 
-async function loadAuditLog(limit = 50) {
+async function loadAuditLog(maxResults = 50) {
   if (!db) return [];
-  const { collection, query, orderBy, getDocs, limitFn } = await import(
+  const fs = await import(
     'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
-  ).then(m => ({ ...m, limitFn: m.limit }));
-
-  const snap = await getDocs(
-    query(collection(db, 'auditLog'), orderBy('timestamp', 'desc'), limitFn(limit))
   );
-  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+  try {
+    const snap = await fs.getDocs(
+      fs.query(
+        fs.collection(db, 'auditLog'),
+        fs.orderBy('timestamp', 'desc'),
+        fs.limit(maxResults)
+      )
+    );
+    return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  } catch (err) {
+    console.error('Audit log query error:', err);
+    // Fallback sans orderBy (si l'index Firestore n'existe pas encore)
+    try {
+      const snap = await fs.getDocs(fs.collection(db, 'auditLog'));
+      const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      docs.sort((a, b) => {
+        const ta = a.timestamp?.toMillis?.() || 0;
+        const tb = b.timestamp?.toMillis?.() || 0;
+        return tb - ta;
+      });
+      return docs.slice(0, maxResults);
+    } catch (e2) {
+      console.error('Audit log fallback error:', e2);
+      return [];
+    }
+  }
 }
 
 function formatTimestamp(ts) {
@@ -108,7 +130,12 @@ async function render() {
   document.getElementById('audit-refresh-btn')
     ?.addEventListener('click', render);
 
-  const logs = await loadAuditLog(100);
+  let logs = [];
+  try {
+    logs = await loadAuditLog(100);
+  } catch (err) {
+    console.error('Audit render error:', err);
+  }
 
   if (logs.length === 0) {
     view.querySelector('.loading-state').innerHTML = `
