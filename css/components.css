@@ -461,3 +461,84 @@ tbody tr:hover { background: var(--clr-surface-2); }
 .chp-pos-1 { color: #ffd700; font-size: 1rem; }
 .chp-pos-2 { color: #c0c0c0; }
 .chp-pos-3 { color: #cd7f32; }
+
+/* ════════════════════════════════
+   AUTH UI (menu drawer)
+════════════════════════════════ */
+.menu-auth-section {
+  padding: var(--sp-sm) var(--sp-md);
+  border-top: 1px solid var(--clr-border);
+  border-bottom: 1px solid var(--clr-border);
+  margin-bottom: var(--sp-sm);
+}
+
+.auth-login-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-xs);
+}
+
+.form-input-sm {
+  padding: 6px 10px;
+  font-size: 0.82rem;
+}
+
+.auth-error {
+  color: var(--clr-danger);
+  font-size: 0.78rem;
+  min-height: 1em;
+}
+
+.auth-logged {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-xs);
+  flex-wrap: wrap;
+}
+
+.auth-user-icon {
+  font-size: 1rem;
+}
+
+.auth-user-email {
+  font-size: 0.8rem;
+  color: var(--clr-text-2);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ════════════════════════════════
+   AUTH GATE (protection des vues)
+════════════════════════════════ */
+.auth-gate {
+  background: var(--clr-warning-dim);
+  border: 1px solid var(--clr-warning);
+  border-radius: var(--r-lg);
+  padding: var(--sp-lg);
+  margin-bottom: var(--sp-lg);
+  text-align: center;
+}
+
+.auth-gate-content h3 {
+  margin: var(--sp-sm) 0;
+  color: var(--clr-warning);
+  font-family: var(--font-condensed);
+  font-size: 1.1rem;
+}
+
+.auth-gate-content p {
+  font-size: 0.88rem;
+  color: var(--clr-text-2);
+  margin: var(--sp-xs) 0;
+}
+
+.auth-gate-icon {
+  font-size: 2rem;
+}
+
+.auth-gate-hint {
+  font-size: 0.78rem !important;
+  opacity: 0.7;
+}

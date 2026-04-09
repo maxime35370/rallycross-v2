@@ -4,6 +4,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>RX Chrono</title>
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#ff5500">
+  <link rel="icon" href="icons/icon-192.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon-192.svg">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Exo+2:wght@300;400;500;600&family=Barlow+Condensed:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/theme.css">
@@ -71,6 +75,9 @@
       <li class="menu-separator"></li>
       <li><a class="menu-item menu-item--config" data-view="config" href="#">⚙️ Configuration</a></li>
     </ul>
+    <!-- Auth UI -->
+    <div class="menu-auth-section" id="menu-auth"></div>
+
     <div class="menu-footer">
       <div class="menu-firebase-status" id="menu-firebase-status">
         <span class="status-dot" id="status-dot"></span>
@@ -231,6 +238,15 @@
        SCRIPTS
   ═══════════════════════════════════════ -->
   <script type="module" src="js/app.js"></script>
+
+  <!-- Service Worker registration -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js').catch(() => {});
+      });
+    }
+  </script>
 
 </body>
 </html>
