@@ -23,6 +23,7 @@
   <link rel="stylesheet" href="css/modules/driverProfile.css">
   <link rel="stylesheet" href="css/modules/engagements.css">
   <link rel="stylesheet" href="css/modules/spectator.css">
+  <link rel="stylesheet" href="css/modules/settings.css">
 </head>
 <body>
 
@@ -74,6 +75,7 @@
       <li><a class="menu-item" data-view="spectator" href="#">📺 Mode Spectateur</a></li>
       <li class="menu-separator"></li>
       <li><a class="menu-item menu-item--config" data-view="config" href="#">⚙️ Configuration</a></li>
+      <li><a class="menu-item menu-item--settings" data-view="settings" href="#">🏆 Réglages Championnats</a></li>
     </ul>
 
     <div class="menu-footer">
@@ -222,6 +224,9 @@
         <div class="placeholder-desc">Chargement…</div>
       </div>
     </div>
+
+    <!-- VUE : Réglages Championnats (bureau uniquement) -->
+    <div class="view" id="view-settings" style="display:none"></div>
 
     <!-- VUE : Configuration -->
     <div class="view" id="view-config" style="display:none">

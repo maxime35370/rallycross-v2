@@ -16,6 +16,7 @@ const VIEW_TITLES = {
   spectator:     '📺 Mode Spectateur',
   stats:         '📊 Statistiques',
   config:        'Configuration',
+  settings: '⚙️ Réglages Championnats',
 };
 
 // ── État courant ───────────────────────────────
@@ -314,12 +315,14 @@ async function loadApp() {
   const { initChampionship }   = await import('./championship.js');
   const { initSpectator }      = await import('./spectator.js');
   const { initStats }          = await import('./stats.js');
+  const { initSettings } = await import('./settings.js');
   initSessions();
   initTiming();
   initStandings();
   initChampionship();
   initSpectator();
   initStats();
+  initSettings();
 
   // Les prochains modules seront ajoutés ici au fil du développement :
   // const { initTiming } = await import('./timing.js');

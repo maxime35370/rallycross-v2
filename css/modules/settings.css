@@ -1,0 +1,548 @@
+/* ═══════════════════════════════════════════════
+   SETTINGS.CSS — Page Réglages Championnats
+═══════════════════════════════════════════════ */
+
+/* ── Page wrapper ── */
+.settings-page {
+  max-width: 860px;
+  margin: 0 auto;
+}
+
+/* ── Header page ── */
+.settings-header {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-md);
+  margin-bottom: var(--sp-lg);
+  flex-wrap: wrap;
+}
+
+.settings-header-left {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-sm);
+  flex: 1;
+}
+
+.settings-title {
+  font-family: var(--font-display);
+  font-size: 1.1rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: var(--clr-text);
+  margin: 0;
+}
+
+.settings-count {
+  font-size: 0.8rem;
+  color: var(--clr-text-3);
+  background: var(--clr-bg-3);
+  padding: 2px 8px;
+  border-radius: 20px;
+}
+
+/* ── Empty state ── */
+.settings-empty {
+  text-align: center;
+  padding: var(--sp-2xl) var(--sp-md);
+  color: var(--clr-text-3);
+}
+
+.settings-empty-icon {
+  font-size: 2.5rem;
+  display: block;
+  margin-bottom: var(--sp-md);
+}
+
+/* ─────────────────────────────────────────────
+   LISTE DES CHAMPIONNATS
+───────────────────────────────────────────── */
+
+.champ-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-sm);
+}
+
+.champ-card {
+  background: var(--clr-surface);
+  border: 1px solid var(--clr-border);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+  transition: box-shadow var(--tr-fast), transform var(--tr-fast);
+}
+
+.champ-card:hover {
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
+}
+
+.champ-card--active .champ-card-status-bar {
+  background: var(--clr-accent);
+}
+
+.champ-card-status-bar {
+  height: 3px;
+  background: var(--clr-border-2);
+}
+
+.champ-card-body {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: var(--sp-md);
+  gap: var(--sp-md);
+}
+
+.champ-card-name {
+  font-weight: 700;
+  font-size: 1rem;
+  color: var(--clr-text);
+  margin-bottom: var(--sp-xs);
+}
+
+.champ-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-sm);
+  margin-bottom: var(--sp-sm);
+  font-size: 0.82rem;
+  color: var(--clr-text-3);
+}
+
+.champ-card-year,
+.champ-card-reg {
+  background: var(--clr-bg-3);
+  padding: 1px 7px;
+  border-radius: 4px;
+  font-size: 0.78rem;
+}
+
+.champ-status {
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 1px 7px;
+  border-radius: 20px;
+  font-family: var(--font-condensed);
+  letter-spacing: 0.05em;
+}
+
+.champ-status--active   { background: rgba(30,215,96,0.15); color: var(--clr-success); }
+.champ-status--inactive { background: var(--clr-bg-3);      color: var(--clr-text-3); }
+
+.champ-card-cats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.champ-cat-pill {
+  background: var(--clr-accent-dim);
+  color: var(--clr-accent-2);
+  border: 1px solid rgba(255,85,0,0.3);
+  border-radius: 20px;
+  padding: 1px 7px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  font-family: var(--font-condensed);
+  letter-spacing: 0.05em;
+}
+
+.champ-card-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+/* ─────────────────────────────────────────────
+   ÉDITEUR — ONGLETS
+───────────────────────────────────────────── */
+
+.editor-tabs-bar {
+  display: flex;
+  gap: 4px;
+  border-bottom: 2px solid var(--clr-border);
+  margin-bottom: var(--sp-lg);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.editor-tabs-bar::-webkit-scrollbar { display: none; }
+
+.editor-tab {
+  padding: 8px var(--sp-md);
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 0.88rem;
+  font-weight: 500;
+  color: var(--clr-text-3);
+  border-bottom: 3px solid transparent;
+  margin-bottom: -2px;
+  white-space: nowrap;
+  transition: color var(--tr-fast), border-color var(--tr-fast);
+  font-family: var(--font-condensed);
+  letter-spacing: 0.04em;
+}
+
+.editor-tab:hover { color: var(--clr-text); }
+
+.editor-tab.is-active {
+  color: var(--clr-accent-2);
+  border-bottom-color: var(--clr-accent);
+  font-weight: 700;
+}
+
+/* ── Contenu onglet ── */
+.tab-panel {
+  animation: tabFadeIn 0.15s ease;
+}
+
+@keyframes tabFadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ─────────────────────────────────────────────
+   SECTION HEADER (dans onglets)
+───────────────────────────────────────────── */
+
+.settings-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--sp-md);
+}
+
+.settings-section-title {
+  font-family: var(--font-condensed);
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--clr-text-3);
+}
+
+/* ─────────────────────────────────────────────
+   TOGGLE SWITCH (custom, distinct du .mtg-*)
+───────────────────────────────────────────── */
+
+.settings-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-sm);
+  cursor: pointer;
+  user-select: none;
+}
+
+.settings-toggle input[type="checkbox"] {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.settings-toggle-track {
+  width: 40px;
+  height: 22px;
+  background: var(--clr-border-2);
+  border-radius: 11px;
+  position: relative;
+  transition: background var(--tr-fast);
+  flex-shrink: 0;
+}
+
+.settings-toggle input:checked + .settings-toggle-track {
+  background: var(--clr-accent);
+}
+
+.settings-toggle-thumb {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  background: white;
+  border-radius: 50%;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+  transition: transform var(--tr-fast);
+}
+
+.settings-toggle input:checked + .settings-toggle-track .settings-toggle-thumb {
+  transform: translateX(18px);
+}
+
+/* Version sm */
+.settings-toggle--sm .settings-toggle-track { width: 32px; height: 18px; }
+.settings-toggle--sm .settings-toggle-thumb { width: 12px; height: 12px; }
+.settings-toggle--sm input:checked + .settings-toggle-track .settings-toggle-thumb {
+  transform: translateX(14px);
+}
+
+/* ─────────────────────────────────────────────
+   CATÉGORIES
+───────────────────────────────────────────── */
+
+.cat-row {
+  background: var(--clr-surface);
+  border: 1px solid var(--clr-border);
+  border-radius: var(--r-md);
+  padding: var(--sp-md);
+  margin-bottom: var(--sp-sm);
+  transition: border-color var(--tr-fast);
+}
+
+.cat-row:hover { border-color: var(--clr-border-2); }
+
+.cat-row-header {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-sm);
+  flex-wrap: wrap;
+  margin-bottom: var(--sp-sm);
+}
+
+.range-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-sm);
+  margin-bottom: 4px;
+  flex-wrap: wrap;
+}
+
+/* ─────────────────────────────────────────────
+   SESSIONS CONFIG
+───────────────────────────────────────────── */
+
+.session-config-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--sp-md);
+  margin-bottom: var(--sp-md);
+}
+
+.session-config-card {
+  background: var(--clr-surface);
+  border: 1px solid var(--clr-border);
+  border-radius: var(--r-md);
+  padding: var(--sp-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-sm);
+}
+
+.session-config-card--drop {
+  grid-column: 1 / -1;
+  background: var(--clr-bg-3);
+}
+
+.session-config-label {
+  font-family: var(--font-condensed);
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--clr-text-2);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-sm);
+  margin-bottom: 2px;
+}
+
+.settings-form-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-sm);
+  flex-wrap: wrap;
+}
+
+.settings-form-row .form-label {
+  flex: 1;
+  min-width: 140px;
+  margin: 0;
+  text-transform: none;
+  font-size: 0.85rem;
+  color: var(--clr-text-2);
+}
+
+/* ─────────────────────────────────────────────
+   BARÈME DE POINTS
+───────────────────────────────────────────── */
+
+.pts-session-tabs {
+  display: flex;
+  gap: var(--sp-sm);
+  margin-bottom: var(--sp-lg);
+  flex-wrap: wrap;
+}
+
+.pts-session-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-sm);
+  padding: 7px var(--sp-md);
+  border: 1px solid var(--clr-border-2);
+  border-radius: var(--r-md);
+  background: var(--clr-surface);
+  cursor: pointer;
+  font-size: 0.88rem;
+  color: var(--clr-text-2);
+  transition: all var(--tr-fast);
+  font-family: var(--font-condensed);
+  font-weight: 600;
+}
+
+.pts-session-tab:hover {
+  border-color: var(--clr-accent);
+  color: var(--clr-accent-2);
+}
+
+.pts-session-tab.is-active {
+  background: var(--clr-accent-dim);
+  border-color: var(--clr-accent);
+  color: var(--clr-accent-2);
+}
+
+.pts-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--clr-border);
+  border-radius: var(--r-lg);
+  margin-bottom: var(--sp-sm);
+}
+
+.pts-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+
+.pts-table thead th {
+  background: var(--clr-bg-3);
+  padding: 8px var(--sp-md);
+  text-align: left;
+  font-family: var(--font-condensed);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--clr-text-3);
+  border-bottom: 1px solid var(--clr-border);
+}
+
+.pts-table tbody tr {
+  border-bottom: 1px solid var(--clr-border);
+  transition: background var(--tr-fast);
+}
+
+.pts-table tbody tr:last-child { border-bottom: none; }
+.pts-table tbody tr:hover { background: var(--clr-surface); }
+
+.pts-row--override { background: rgba(255,85,0,0.05) !important; }
+
+.pts-pos {
+  padding: 5px var(--sp-md);
+  font-weight: 600;
+  color: var(--clr-text-2);
+  width: 90px;
+  white-space: nowrap;
+}
+
+.pts-computed {
+  padding: 5px var(--sp-md);
+  color: var(--clr-text-3);
+  font-size: 0.85rem;
+}
+
+.pts-computed--none { color: var(--clr-border-2); }
+
+.pts-effective {
+  padding: 5px var(--sp-md);
+  color: var(--clr-accent-2);
+}
+
+/* ─────────────────────────────────────────────
+   STATUTS SPÉCIAUX
+───────────────────────────────────────────── */
+
+.status-rules-grid {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-sm);
+}
+
+.status-rule-card {
+  background: var(--clr-surface);
+  border: 1px solid var(--clr-border);
+  border-radius: var(--r-md);
+  padding: var(--sp-md);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-lg);
+  flex-wrap: wrap;
+  transition: border-color var(--tr-fast);
+}
+
+.status-rule-card:hover { border-color: var(--clr-border-2); }
+
+.status-rule-label {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--clr-text);
+  min-width: 220px;
+  flex-shrink: 0;
+}
+
+.status-rule-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-md);
+  flex-wrap: wrap;
+  flex: 1;
+}
+
+.status-rule-mode-label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-sm);
+  font-size: 0.85rem;
+  color: var(--clr-text-2);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.status-rule-mode-label input[type="radio"] {
+  accent-color: var(--clr-accent);
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+}
+
+.status-rule-offset,
+.status-rule-fixed {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-xs);
+  transition: opacity var(--tr-fast);
+}
+
+@media (max-width: 600px) {
+  .status-rule-card  { flex-direction: column; align-items: flex-start; }
+  .status-rule-label { min-width: unset; }
+}
+
+.menu-item--settings {
+  opacity: 0.65;
+  font-size: 0.9rem;
+}
+
+.menu-item--settings:hover { opacity: 1; }
+
+/* ─────────────────────────────────────────────
+   RESPONSIVE
+───────────────────────────────────────────── */
+
+@media (max-width: 600px) {
+  .session-config-grid { grid-template-columns: 1fr; }
+  .session-config-card--drop { grid-column: 1; }
+  .champ-card-body { flex-direction: column; }
+  .champ-card-actions { align-self: flex-end; }
+  .settings-form-row .form-label { min-width: 100px; }
+}
