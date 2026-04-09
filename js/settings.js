@@ -7,6 +7,12 @@ import { db } from './firebase.js';
 import { toast } from './app.js';
 import { logAudit } from './audit.js';
 import { requireAuth } from './auth.js';
+import { loadChampionships, renderChampionshipSelector } from './context.js';
+
+async function refreshHeaderSelector() {
+  await loadChampionships();
+  renderChampionshipSelector();
+}
 import { escHtml } from './utils.js';
 
 // ─────────────────────────────────────────────────────────
@@ -1030,9 +1036,9 @@ async function saveChamp() {
     await setDoc(doc(db, 'championships', id), payload);
     logAudit(_editingChamp === 'new' ? 'create' : 'update', 'championship', id, { label: _editData.name });
     toast(`✅ "${_editData.name}" enregistré`, 'success');
+    refreshHeaderSelector();
     renderSettingsList();
-  } catch (e) {
-    console.error('Settings – sauvegarde :', e);
+  } catch (e) {    console.error('Settings – sauvegarde :', e);
     toast('Erreur lors de la sauvegarde', 'error');
     if (btn) { btn.disabled = false; btn.textContent = '💾 Enregistrer'; }
   }
@@ -1060,6 +1066,7 @@ async function duplicateChamp(champId, champs) {
     });
     logAudit('create', 'championship', dupId, { label: `${copy.name} (copie de ${original.name})` });
     toast(`📋 "${original.name}" dupliqué`, 'success');
+    refreshHeaderSelector();
     renderSettingsList();
   } catch (e) {
     console.error('Settings – duplication :', e);
@@ -1082,6 +1089,7 @@ async function deleteChamp(champId, name) {
     await deleteDoc(doc(db, 'championships', champId));
     logAudit('delete', 'championship', champId, { label: name });
     toast(`🗑️ "${name}" supprimé`, 'success');
+    refreshHeaderSelector();
     renderSettingsList();
   } catch (e) {
     console.error('Settings – suppression :', e);

@@ -672,4 +672,9 @@ export function initMeetings() {
       loadMeetings();
     }
   });
+
+  // Recharger quand on change de championnat dans le header
+  document.addEventListener('championshipchange', () => {
+    loadMeetings();
+  });
 }

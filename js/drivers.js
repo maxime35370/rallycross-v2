@@ -804,4 +804,9 @@ export function initDrivers() {
       loadDrivers();
     }
   });
+
+  // Recharger quand on change de championnat dans le header
+  document.addEventListener('championshipchange', () => {
+    loadDrivers();
+  });
 }
