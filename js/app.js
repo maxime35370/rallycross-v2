@@ -294,6 +294,10 @@ async function loadApp() {
   const { initFirebase } = await import('./firebase.js');
   await initFirebase();
 
+  // Charger l'authentification (apres Firebase)
+  const { initAuth } = await import('./auth.js');
+  await initAuth();
+
   // Modules des vues — chargés une seule fois au démarrage
   const { initConfig }   = await import('./config.js');
   const { initDrivers }  = await import('./drivers.js');

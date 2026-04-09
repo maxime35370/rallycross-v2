@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192">
+  <rect width="192" height="192" rx="32" fill="#0d0f14"/>
+  <text x="96" y="72" text-anchor="middle" font-family="sans-serif" font-weight="900" font-size="40" fill="#ff5500">RX</text>
+  <text x="96" y="120" text-anchor="middle" font-family="sans-serif" font-weight="600" font-size="28" fill="#ffffff">CHRONO</text>
+  <text x="96" y="156" text-anchor="middle" font-size="48">&#127937;</text>
+</svg>

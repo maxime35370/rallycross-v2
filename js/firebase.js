@@ -1,6 +1,6 @@
 /* ═══════════════════════════════════════════════
-   FIREBASE.JS — Initialisation Firebase depuis localStorage
-   Les clés ne sont jamais codées en dur.
+   FIREBASE.JS — Initialisation Firebase
+   Config par defaut integree, surchargeable via localStorage.
 ═══════════════════════════════════════════════ */
 
 import { setFirebaseStatus } from './app.js';
@@ -9,21 +9,32 @@ import { setFirebaseStatus } from './app.js';
 export let db = null;
 
 // ─────────────────────────────────────────────────────────
+// CONFIG PAR DÉFAUT
+// ─────────────────────────────────────────────────────────
+const DEFAULT_CONFIG = {
+  apiKey: "AIzaSyBv2Fh-YDX1kEnKHWxQhxXYl_x5EwRrk1E",
+  authDomain: "rallycross-1512f.firebaseapp.com",
+  projectId: "rallycross-1512f",
+  storageBucket: "rallycross-1512f.firebasestorage.app",
+  messagingSenderId: "123635957863",
+  appId: "1:123635957863:web:f229eb25637dd0656794c2",
+};
+
+// ─────────────────────────────────────────────────────────
 // CLÉ DE STOCKAGE LOCAL
 // ─────────────────────────────────────────────────────────
 const LS_KEY = 'rx_firebase_config';
 
 /**
- * Récupère la config Firebase depuis localStorage.
+ * Récupère la config Firebase : localStorage en priorité, sinon config par défaut.
  * @returns {object|null}
  */
 export function getStoredConfig() {
   try {
     const raw = localStorage.getItem(LS_KEY);
-    return raw ? JSON.parse(raw) : null;
-  } catch {
-    return null;
-  }
+    if (raw) return JSON.parse(raw);
+  } catch { /* ignore */ }
+  return DEFAULT_CONFIG;
 }
 
 /**
