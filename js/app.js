@@ -280,8 +280,19 @@ function init() {
     if (e.key === 'Escape') closeMenu();
   });
 
-  // Vue initiale
-  showView('home');
+  // Vue initiale : lire le hash de l'URL (#spectator, #standings, etc.)
+  const hashView = window.location.hash.replace('#', '');
+  showView(VIEW_TITLES[hashView] ? hashView : 'home');
+
+  // Mettre a jour le hash quand on change de vue
+  document.addEventListener('viewchange', (e) => {
+    const v = e.detail?.view;
+    if (v && v !== 'home') {
+      history.replaceState(null, '', '#' + v);
+    } else {
+      history.replaceState(null, '', window.location.pathname);
+    }
+  });
 
   // Charger Firebase et les modules au démarrage
   loadApp();
