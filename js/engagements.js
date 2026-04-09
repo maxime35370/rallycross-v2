@@ -6,6 +6,7 @@
 import { db } from './firebase.js';
 import { toast } from './app.js';
 import { escHtml, CATEGORIES } from './utils.js';
+import { logAudit } from './audit.js';
 
 // ─────────────────────────────────────────────────────────
 // ÉTAT LOCAL
@@ -149,6 +150,7 @@ async function toggleEngagement(driver) {
       }
     }
 
+    logAudit('delete', 'engagement', driver.id, { label: `${driver.firstName} ${driver.lastName} retire du meeting` });
     toast(`${driver.firstName} ${driver.lastName} retiré et données supprimées`, 'warning');
   } else {
     // Engager
@@ -162,6 +164,7 @@ async function toggleEngagement(driver) {
       lastName:   driver.lastName,
       createdAt:  new Date(),
     });
+    logAudit('create', 'engagement', driver.id, { label: `${driver.firstName} ${driver.lastName} engage` });
     toast(`${driver.firstName} ${driver.lastName} engagé ✓`, 'success');
   }
 }

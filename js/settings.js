@@ -5,6 +5,7 @@
 
 import { db } from './firebase.js';
 import { toast } from './app.js';
+import { logAudit } from './audit.js';
 import { escHtml } from './utils.js';
 
 // ─────────────────────────────────────────────────────────
@@ -851,6 +852,7 @@ async function saveChamp() {
     if (_editingChamp === 'new') payload.createdAt = new Date();
 
     await setDoc(doc(db, 'championships', id), payload);
+    logAudit(_editingChamp === 'new' ? 'create' : 'update', 'championship', id, { label: _editData.name });
     toast(`✅ "${_editData.name}" enregistré`, 'success');
     renderSettingsList();
   } catch (e) {
@@ -875,9 +877,11 @@ async function duplicateChamp(champId, champs) {
     const { doc, setDoc } = await import(
       'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
     );
-    await setDoc(doc(db, 'championships', `champ_${Date.now()}`), {
+    const dupId = `champ_${Date.now()}`;
+    await setDoc(doc(db, 'championships', dupId), {
       ...copy, createdAt: new Date(), updatedAt: new Date(),
     });
+    logAudit('create', 'championship', dupId, { label: `${copy.name} (copie de ${original.name})` });
     toast(`📋 "${original.name}" dupliqué`, 'success');
     renderSettingsList();
   } catch (e) {
@@ -898,6 +902,7 @@ async function deleteChamp(champId, name) {
       'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
     );
     await deleteDoc(doc(db, 'championships', champId));
+    logAudit('delete', 'championship', champId, { label: name });
     toast(`🗑️ "${name}" supprimé`, 'success');
     renderSettingsList();
   } catch (e) {

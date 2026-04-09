@@ -6,6 +6,7 @@
 import { db } from './firebase.js';
 import { toast } from './app.js';
 import { escHtml, sanitize, formatDate, CATEGORIES } from './utils.js';
+import { logAudit } from './audit.js';
 
 // ─────────────────────────────────────────────────────────
 // CONSTANTES
@@ -105,6 +106,7 @@ async function saveMeeting(data) {
         categories: data.categories,
         nbMQ:       data.nbMQ,
       });
+      logAudit('update', 'meeting', editingId, { label: `${data.location} ${data.date}` });
       toast('Meeting modifié ✓', 'success');
       return editingId;
 
@@ -118,6 +120,7 @@ async function saveMeeting(data) {
       // Génération automatique des sessions dans un batch
       await generateSessions(meetRef.id, data);
 
+      logAudit('create', 'meeting', meetRef.id, { label: `${data.location} ${data.date}` });
       toast('Meeting créé + sessions générées ✓', 'success');
       return meetRef.id;
     }
@@ -199,7 +202,9 @@ async function deleteMeeting(id) {
     }
 
     // Supprimer le meeting lui-même
+    const meetData = allMeetings.find(m => m.id === id);
     await deleteDoc(doc(db, 'meetings', id));
+    logAudit('delete', 'meeting', id, { label: meetData ? `${meetData.location} ${meetData.date}` : id });
     toast('Meeting et toutes ses données supprimés', 'warning');
 
   } catch (err) {
