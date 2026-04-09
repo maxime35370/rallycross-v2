@@ -198,6 +198,7 @@ function renderView() {
     <div class="section-header">
       <h2 class="section-title">👥 <span>Pilotes</span></h2>
       <div class="section-actions">
+        <button class="btn btn-secondary btn-sm" id="drv-assign-champ-btn" title="Associer tous les pilotes affiches au championnat actif">🔗 Lier au championnat</button>
         <button class="btn btn-primary" id="drv-add-btn">＋ Ajouter un pilote</button>
       </div>
     </div>
@@ -677,10 +678,57 @@ async function showDeleteConfirmModal(driver) {
 // ÉVÉNEMENTS
 // ─────────────────────────────────────────────────────────
 
+// ─────────────────────────────────────────────────────────
+// ASSOCIER TOUS LES PILOTES AU CHAMPIONNAT ACTIF
+// ─────────────────────────────────────────────────────────
+
+async function assignAllToChampionship() {
+  if (!requireAuth()) return;
+  const champId = getActiveChampionshipId();
+  if (!champId) {
+    toast('Selectionnez un championnat dans le header d\'abord', 'error');
+    return;
+  }
+
+  // Pilotes sans championshipId ou avec un autre
+  const toUpdate = allDrivers.filter(d => d.championshipId !== champId);
+  if (toUpdate.length === 0) {
+    toast('Tous les pilotes sont deja lies a ce championnat', 'info');
+    return;
+  }
+
+  const { getActiveChampionship } = await import('./context.js');
+  const champ = getActiveChampionship();
+  const champName = champ?.name || champId;
+
+  if (!window.confirm(`Associer ${toUpdate.length} pilote(s) au championnat "${champName}" ?`)) return;
+
+  const { doc, updateDoc } = await import(
+    'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
+  );
+
+  let count = 0;
+  for (const driver of toUpdate) {
+    try {
+      await updateDoc(doc(db, 'drivers', driver.id), { championshipId: champId });
+      count++;
+    } catch (err) {
+      console.error(`Erreur maj pilote ${driver.id}:`, err);
+    }
+  }
+
+  logAudit('update', 'driver', 'batch', { label: `${count} pilotes lies au championnat "${champName}"` });
+  toast(`${count} pilote(s) associe(s) au championnat`, 'success');
+}
+
 function bindEvents() {
   // Bouton ajouter
   document.getElementById('drv-add-btn')
     ?.addEventListener('click', openAdd);
+
+  // Bouton associer au championnat
+  document.getElementById('drv-assign-champ-btn')
+    ?.addEventListener('click', assignAllToChampionship);
 
   // Modal fermeture
   document.getElementById('drv-modal-close')
