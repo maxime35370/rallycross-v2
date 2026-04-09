@@ -251,7 +251,6 @@ function renderView() {
     <div class="section-header">
       <h2 class="section-title">👥 <span>Pilotes</span></h2>
       <div class="section-actions">
-        <button class="btn btn-secondary btn-sm" id="drv-assign-champ-btn" title="Associer tous les pilotes affiches au championnat actif">🔗 Lier au championnat</button>
         <button class="btn btn-primary" id="drv-add-btn">＋ Ajouter un pilote</button>
       </div>
     </div>
@@ -798,9 +797,6 @@ function bindEvents() {
   document.getElementById('drv-add-btn')
     ?.addEventListener('click', openAdd);
 
-  // Bouton associer au championnat
-  document.getElementById('drv-assign-champ-btn')
-    ?.addEventListener('click', assignAllToChampionship);
 
   // Modal fermeture
   document.getElementById('drv-modal-close')

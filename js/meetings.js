@@ -237,7 +237,6 @@ function renderView() {
     <div class="section-header">
       <h2 class="section-title">📅 <span>Meetings</span></h2>
       <div class="section-actions">
-        <button class="btn btn-secondary btn-sm" id="mtg-assign-champ-btn" title="Associer tous les meetings affiches au championnat actif">🔗 Lier au championnat</button>
         <button class="btn btn-primary" id="mtg-add-btn">＋ Créer un meeting</button>
       </div>
     </div>
@@ -623,9 +622,6 @@ async function assignAllMeetingsToChampionship() {
 function bindEvents() {
   document.getElementById('mtg-add-btn')
     ?.addEventListener('click', openAdd);
-
-  document.getElementById('mtg-assign-champ-btn')
-    ?.addEventListener('click', assignAllMeetingsToChampionship);
 
   document.getElementById('mtg-modal-close')
     ?.addEventListener('click', closeModal);
