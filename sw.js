@@ -2,54 +2,63 @@
    SERVICE WORKER — Cache offline pour RX Chrono
    Strategie : cache-first pour les assets statiques,
    network-first pour les requetes Firebase.
+   Compatible GitHub Pages (sous-dossier) et racine.
 ═══════════════════════════════════════════════ */
 
-const CACHE_NAME = 'rx-chrono-v2';
+const CACHE_NAME = 'rx-chrono-v4';
 
-// Assets statiques a mettre en cache lors de l'installation
-const STATIC_ASSETS = [
-  '/',
-  '/index.html',
-  '/manifest.json',
-  '/css/theme.css',
-  '/css/main.css',
-  '/css/components.css',
-  '/css/modules/championship.css',
-  '/css/modules/meetings.css',
-  '/css/modules/drivers.css',
-  '/css/modules/standings.css',
-  '/css/modules/sessions.css',
-  '/css/modules/timing.css',
-  '/css/modules/stats.css',
-  '/css/modules/driverProfile.css',
-  '/css/modules/engagements.css',
-  '/css/modules/spectator.css',
-  '/css/modules/settings.css',
-  '/js/app.js',
-  '/js/firebase.js',
-  '/js/auth.js',
-  '/js/config.js',
-  '/js/utils.js',
-  '/js/calc.js',
-  '/js/drivers.js',
-  '/js/meetings.js',
-  '/js/engagements.js',
-  '/js/sessions.js',
-  '/js/timing.js',
-  '/js/standings.js',
-  '/js/championship.js',
-  '/js/stats.js',
-  '/js/spectator.js',
-  '/js/driverProfile.js',
-  '/js/settings.js',
-  '/js/audit.js',
-  '/js/qrcode.js',
+// Assets relatifs au scope du SW (pas de / en prefixe)
+const ASSET_PATHS = [
+  'index.html',
+  'manifest.json',
+  'css/theme.css',
+  'css/main.css',
+  'css/components.css',
+  'css/modules/championship.css',
+  'css/modules/meetings.css',
+  'css/modules/drivers.css',
+  'css/modules/standings.css',
+  'css/modules/sessions.css',
+  'css/modules/timing.css',
+  'css/modules/stats.css',
+  'css/modules/driverProfile.css',
+  'css/modules/engagements.css',
+  'css/modules/spectator.css',
+  'css/modules/settings.css',
+  'js/app.js',
+  'js/firebase.js',
+  'js/auth.js',
+  'js/config.js',
+  'js/utils.js',
+  'js/calc.js',
+  'js/drivers.js',
+  'js/meetings.js',
+  'js/engagements.js',
+  'js/sessions.js',
+  'js/timing.js',
+  'js/standings.js',
+  'js/championship.js',
+  'js/stats.js',
+  'js/spectator.js',
+  'js/driverProfile.js',
+  'js/settings.js',
+  'js/audit.js',
+  'js/qrcode.js',
 ];
 
 // ── Installation : pre-cache des assets statiques ──
 self.addEventListener('install', (event) => {
+  // Construire les URLs relatives au scope du SW
+  const base = self.registration.scope;
+  const urls = ASSET_PATHS.map((p) => new URL(p, base).href);
+
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(STATIC_ASSETS))
+    caches.open(CACHE_NAME).then((cache) =>
+      // Cache chaque fichier individuellement pour ne pas bloquer si un echoue
+      Promise.allSettled(urls.map((url) =>
+        cache.add(url).catch((err) => console.warn('SW cache skip:', url, err.message))
+      ))
+    )
   );
   self.skipWaiting();
 });
