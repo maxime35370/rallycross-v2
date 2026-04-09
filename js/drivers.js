@@ -475,8 +475,11 @@ function closeModal() {
 // ─────────────────────────────────────────────────────────
 
 function showCatPreview(num) {
-  // En mode numeros libres, pas d'auto-detection
-  if (getChampFreeNumberCategories()) return;
+  // En mode numeros libres (select visible), pas d'auto-detection
+  if (document.getElementById('drv-category-select')) {
+    hideCatPreview();
+    return;
+  }
 
   const preview = document.getElementById('drv-cat-preview');
   const catInput = document.getElementById('drv-category');
@@ -524,12 +527,12 @@ async function onSave() {
   if (!lastName)  { toast('Nom obligatoire', 'error'); return; }
   if (!carNum || isNaN(carNum)) { toast('Numéro de voiture obligatoire', 'error'); return; }
 
+  // Determiner la categorie selon le mode
   let category;
-  const freeCats = getChampFreeNumberCategories();
-  if (freeCats) {
+  const catSelect = document.getElementById('drv-category-select');
+  if (catSelect) {
     // Mode numeros libres : categorie choisie manuellement
-    const select = document.getElementById('drv-category-select');
-    category = select?.value;
+    category = catSelect.value;
     if (!category) { toast('Choisissez une catégorie', 'error'); return; }
   } else {
     // Mode numeros fixes : auto-detection par plage
