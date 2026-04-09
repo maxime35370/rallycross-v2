@@ -4,7 +4,7 @@
    network-first pour les requetes Firebase.
 ═══════════════════════════════════════════════ */
 
-const CACHE_NAME = 'rx-chrono-v2';
+const CACHE_NAME = 'rx-chrono-v3';
 
 // Assets statiques a mettre en cache lors de l'installation
 const STATIC_ASSETS = [
