@@ -205,6 +205,23 @@ function getFilteredDrivers() {
 // RENDU
 // ─────────────────────────────────────────────────────────
 
+function renderCategoryField() {
+  const freeCats = getChampFreeNumberCategories();
+  if (freeCats) {
+    const opts = freeCats.map(c =>
+      '<option value="' + escHtml(c.id) + '">' + escHtml(c.name || c.id) + '</option>'
+    ).join('');
+    return '<label class="form-label">Cat\u00e9gorie *</label>' +
+      '<select class="form-select" id="drv-category-select">' +
+      '<option value="">\u2014 Choisir une cat\u00e9gorie \u2014</option>' +
+      opts +
+      '</select>' +
+      '<input type="hidden" id="drv-category" value="">';
+  }
+  return '<label class="form-label">Cat\u00e9gorie <span class="text-muted">(d\u00e9tect\u00e9e automatiquement)</span></label>' +
+    '<input class="form-input" type="text" id="drv-category" readonly placeholder="Saisir un N\u00b0 de voiture valide">';
+}
+
 function renderView() {
   const currentYear = new Date().getFullYear();
   const years = [currentYear - 1, currentYear, currentYear + 1];
@@ -313,24 +330,7 @@ function renderView() {
 
           <!-- Catégorie : auto-detectée OU sélecteur selon le règlement -->
           <div class="form-group" id="drv-cat-group">
-            ${(() => {
-              const freeCats = getChampFreeNumberCategories();
-              if (freeCats) {
-                return \`
-                  <label class="form-label">Catégorie *</label>
-                  <select class="form-select" id="drv-category-select">
-                    <option value="">— Choisir une catégorie —</option>
-                    \${freeCats.map(c => \`<option value="\${escHtml(c.id)}">\${escHtml(c.name || c.id)}</option>\`).join('')}
-                  </select>
-                  <input type="hidden" id="drv-category" value="">
-                \`;
-              }
-              return \`
-                <label class="form-label">Catégorie <span class="text-muted">(détectée automatiquement)</span></label>
-                <input class="form-input" type="text" id="drv-category" readonly
-                  placeholder="Saisir un N° de voiture valide">
-              \`;
-            })()}
+            ${renderCategoryField()}
           </div>
 
           <div class="form-group">
