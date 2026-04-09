@@ -263,6 +263,10 @@ function init() {
     });
   });
 
+  // Clic sur le logo/brand → retour accueil
+  document.querySelector('.header-brand')
+    ?.addEventListener('click', () => showView('home'));
+
   // Cards de l'accueil
   document.querySelectorAll('.home-card[data-view]').forEach(el => {
     el.addEventListener('click', () => showView(el.dataset.view));
