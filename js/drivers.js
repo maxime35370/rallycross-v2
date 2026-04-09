@@ -6,6 +6,7 @@
 import { db } from './firebase.js';
 import { toast, showView, categoryBadge } from './app.js';
 import { escHtml, sanitize, CATEGORIES } from './utils.js';
+import { logAudit } from './audit.js';
 import { showDriverProfile } from './driverProfile.js';
 
 // ─────────────────────────────────────────────────────────
@@ -98,12 +99,14 @@ async function saveDriver(data) {
     if (editingId) {
       const ref = doc(db, 'drivers', editingId);
       await updateDoc(ref, data);
+      logAudit('update', 'driver', editingId, { label: `${data.firstName} ${data.lastName} #${data.carNumber}` });
       toast('Pilote modifié ✓', 'success');
     } else {
-      await addDoc(collection(db, 'drivers'), {
+      const newRef = await addDoc(collection(db, 'drivers'), {
         ...data,
         createdAt: new Date(),
       });
+      logAudit('create', 'driver', newRef.id, { label: `${data.firstName} ${data.lastName} #${data.carNumber}` });
       toast('Pilote ajouté ✓', 'success');
     }
     return true;
@@ -142,7 +145,9 @@ async function deleteDriver(id) {
     }
 
     // Supprimer le pilote lui-même
+    const driverData = allDrivers.find(d => d.id === id);
     await deleteDoc(doc(db, 'drivers', id));
+    logAudit('delete', 'driver', id, { label: driverData ? `${driverData.firstName} ${driverData.lastName} #${driverData.carNumber}` : id });
     toast('Pilote et toutes ses données supprimés', 'warning');
   } catch (err) {
     console.error(err);

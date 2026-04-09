@@ -8,6 +8,7 @@
 
 import { db } from './firebase.js';
 import { toast } from './app.js';
+import { logAudit } from './audit.js';
 import { msToDisplay, inputToMs, msToFields, escHtml, parseTimeString } from './utils.js';
 
 // ─────────────────────────────────────────────────────────
@@ -300,6 +301,7 @@ async function saveResult(driverId, ms, status, manualPosition = null) {
 
   try {
     await setDoc(doc(db, 'results', docId), data);
+    logAudit('update', 'result', docId, { label: `#${participant.carNumber} ${participant.firstName} ${participant.lastName}`, ms, status: status || null });
   } catch (err) {
     console.error(err);
     toast('Erreur lors de la sauvegarde', 'error');
@@ -313,6 +315,7 @@ async function clearResult(driverId) {
   const { doc, deleteDoc } = await import(
     'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
   );
+  logAudit('delete', 'result', existing.docId, { label: `Temps efface pour pilote ${driverId}` });
   await deleteDoc(doc(db, 'results', existing.docId));
 }
 

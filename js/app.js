@@ -16,7 +16,8 @@ const VIEW_TITLES = {
   spectator:     '📺 Mode Spectateur',
   stats:         '📊 Statistiques',
   config:        'Configuration',
-  settings: '⚙️ Réglages Championnats',
+  settings:      'Reglages Championnats',
+  audit:         'Journal d\'audit',
 };
 
 // ── État courant ───────────────────────────────
@@ -316,6 +317,7 @@ async function loadApp() {
   const { initSpectator }      = await import('./spectator.js');
   const { initStats }          = await import('./stats.js');
   const { initSettings } = await import('./settings.js');
+  const { initAudit }    = await import('./audit.js');
   initSessions();
   initTiming();
   initStandings();
@@ -323,10 +325,38 @@ async function loadApp() {
   initSpectator();
   initStats();
   initSettings();
+  initAudit();
 
-  // Les prochains modules seront ajoutés ici au fil du développement :
-  // const { initTiming } = await import('./timing.js');
-  // ...
+  // Initialiser le QR code sur la page d'accueil
+  initHomeQr();
+}
+
+// ─────────────────────────────────────────────────────────
+// QR CODE SPECTATEUR (page d'accueil)
+// ─────────────────────────────────────────────────────────
+
+async function initHomeQr() {
+  try {
+    const { generateQrHtml, getSpectatorUrl } = await import('./qrcode.js');
+    const url = getSpectatorUrl();
+    const container = document.getElementById('home-qr-code');
+    const urlEl     = document.getElementById('home-qr-url');
+    const copyBtn   = document.getElementById('home-qr-copy');
+
+    if (container) container.innerHTML = generateQrHtml(url, 180);
+    if (urlEl)     urlEl.textContent = url;
+    if (copyBtn) {
+      copyBtn.addEventListener('click', () => {
+        navigator.clipboard.writeText(url).then(() => {
+          toast('Lien copie !', 'success');
+        }).catch(() => {
+          toast('Erreur de copie', 'error');
+        });
+      });
+    }
+  } catch (err) {
+    console.error('QR init error:', err);
+  }
 }
 
 // Démarrage après chargement du DOM

@@ -74,6 +74,8 @@
       <li><a class="menu-item" data-view="stats" href="#">📊 Statistiques</a></li>
       <li><a class="menu-item" data-view="spectator" href="#">📺 Mode Spectateur</a></li>
       <li class="menu-separator"></li>
+      <li><a class="menu-item" data-view="audit" href="#">📋 Journal d'audit</a></li>
+      <li class="menu-separator"></li>
       <li><a class="menu-item menu-item--config" data-view="config" href="#">⚙️ Configuration</a></li>
       <li><a class="menu-item menu-item--settings" data-view="settings" href="#">🏆 Réglages Championnats</a></li>
     </ul>
@@ -142,6 +144,16 @@
           <div class="home-card-label">Configuration</div>
         </div>
       </div>
+
+      <!-- QR Code Spectateur -->
+      <div class="home-qr-section card" id="home-qr-section">
+        <div class="card-title">📱 QR Code — Mode Spectateur</div>
+        <p class="home-qr-desc">Scannez ou partagez ce QR code pour acceder au mode spectateur en temps reel.</p>
+        <div class="home-qr-code" id="home-qr-code"></div>
+        <div class="home-qr-url" id="home-qr-url"></div>
+        <button class="btn btn-secondary btn-sm" id="home-qr-copy">Copier le lien</button>
+      </div>
+
       <div class="home-alert" id="home-alert" style="display:none">
         <span>⚠️</span>
         <span>Firebase non configuré — <a href="#" data-view="config">Aller à la configuration</a></span>
@@ -224,6 +236,9 @@
         <div class="placeholder-desc">Chargement…</div>
       </div>
     </div>
+
+    <!-- VUE : Journal d'audit -->
+    <div class="view" id="view-audit" style="display:none"></div>
 
     <!-- VUE : Réglages Championnats (bureau uniquement) -->
     <div class="view" id="view-settings" style="display:none"></div>
