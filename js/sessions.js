@@ -8,6 +8,7 @@
 import { db } from './firebase.js';
 import { toast } from './app.js';
 import { escHtml } from './utils.js';
+import { getChampionshipConfig } from './settings.js';
 import { calcInterimStandings } from './calc.js';
 
 // ─────────────────────────────────────────────────────────
@@ -19,6 +20,7 @@ let allSessions         = [];
 let engagedDrivers      = [];
 let sessionParticipants = {};
 let unsubMeetings       = null;
+let _activeRegulation   = null;
 let unsubSessions       = null;
 let unsubEngaged        = null;
 let unsubParticipants   = {};
@@ -202,7 +204,7 @@ async function autoAssignDemis() {
   await loadEngaged();
 
   let ranked = [];
-  try { ranked = await calcInterimStandings(db, allSessions); } catch {}
+  try { ranked = await calcInterimStandings(db, allSessions, _activeRegulation); } catch {}
 
   if (ranked.length === 0) {
     toast('⚠️ Pas encore assez de résultats MQ — assignation par numéro de voiture.', 'warning', 4000);
@@ -704,7 +706,7 @@ async function renderDfStandings(panel, session, assignedParticipants) {
   const df2Ids = await freshFetch(df2?.id);
   const assignedToADf = new Set([...df1Ids, ...df2Ids]);
 
-  let rawStandings = await calcInterimStandings(db, allSessions);
+  let rawStandings = await calcInterimStandings(db, allSessions, _activeRegulation);
   if (rawStandings.length === 0) {
     rawStandings = engagedDrivers.map((d, i) => ({
       driverId: d.id || d.driverId, carNumber: d.carNumber,
@@ -882,7 +884,7 @@ async function renderFinaleStandings(panel, session, assignedParticipants) {
     });
   };
 
-  const interimCalc = await calcInterimStandings(db, allSessions);
+  const interimCalc = await calcInterimStandings(db, allSessions, _activeRegulation);
   const interimMap  = {};
   interimCalc.forEach(r => { interimMap[r.driverId] = r.position ?? 999; });
   const getInterimPoints = (driverId) => (interimCalc.find(d => d.driverId === driverId)?.interimPoints ?? 0);
@@ -1060,6 +1062,7 @@ async function renderFinaleStandings(panel, session, assignedParticipants) {
 export function initSessions() {
   document.addEventListener('viewchange', async e => {
     if (e.detail.view === 'sessions') {
+      try { _activeRegulation = await getChampionshipConfig(); } catch { _activeRegulation = null; }
       renderView();
       await loadMeetings();
       if (selectedMeetingId && selectedCategory) {
