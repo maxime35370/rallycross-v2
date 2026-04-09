@@ -8,7 +8,18 @@ import { toast, showView, categoryBadge } from './app.js';
 import { escHtml, sanitize, CATEGORIES } from './utils.js';
 import { logAudit } from './audit.js';
 import { requireAuth } from './auth.js';
-import { getActiveChampionshipId } from './context.js';
+import { getActiveChampionshipId, getActiveChampionship } from './context.js';
+
+/**
+ * Verifie si le championnat actif utilise des numeros libres.
+ * Retourne les categories du championnat si numeros libres, null sinon.
+ */
+function getChampFreeNumberCategories() {
+  const champ = getActiveChampionship();
+  if (!champ?.categories?.length) return null;
+  const hasFree = champ.categories.some(c => c.freeNumbers);
+  return hasFree ? champ.categories : null;
+}
 import { showDriverProfile } from './driverProfile.js';
 
 // ─────────────────────────────────────────────────────────
@@ -293,18 +304,33 @@ function renderView() {
               class="form-input"
               type="number"
               id="drv-carnum"
-              min="1" max="500"
-              placeholder="Ex: 42 → Supercar"
+              min="1" max="9999"
+              placeholder="Numéro du pilote"
             >
-            <!-- Badge catégorie auto-détectée -->
+            <!-- Badge catégorie auto-détectée (mode numéros fixes) -->
             <div id="drv-cat-preview" class="drv-cat-preview" style="display:none"></div>
           </div>
 
-          <!-- Catégorie (lecture seule, remplie auto) -->
-          <div class="form-group">
-            <label class="form-label">Catégorie <span class="text-muted">(détectée automatiquement)</span></label>
-            <input class="form-input" type="text" id="drv-category" readonly
-              placeholder="Saisir un N° de voiture valide (1–500)">
+          <!-- Catégorie : auto-detectée OU sélecteur selon le règlement -->
+          <div class="form-group" id="drv-cat-group">
+            ${(() => {
+              const freeCats = getChampFreeNumberCategories();
+              if (freeCats) {
+                return \`
+                  <label class="form-label">Catégorie *</label>
+                  <select class="form-select" id="drv-category-select">
+                    <option value="">— Choisir une catégorie —</option>
+                    \${freeCats.map(c => \`<option value="\${escHtml(c.id)}">\${escHtml(c.name || c.id)}</option>\`).join('')}
+                  </select>
+                  <input type="hidden" id="drv-category" value="">
+                \`;
+              }
+              return \`
+                <label class="form-label">Catégorie <span class="text-muted">(détectée automatiquement)</span></label>
+                <input class="form-input" type="text" id="drv-category" readonly
+                  placeholder="Saisir un N° de voiture valide">
+              \`;
+            })()}
           </div>
 
           <div class="form-group">
@@ -393,6 +419,8 @@ function openAdd() {
   document.getElementById('drv-lastname').value  = '';
   document.getElementById('drv-carnum').value    = '';
   document.getElementById('drv-category').value  = '';
+  const catSelect = document.getElementById('drv-category-select');
+  if (catSelect) catSelect.value = '';
   document.getElementById('drv-year').value      = String(filterYear);
   hideCatPreview();
   document.getElementById('drv-modal').classList.add('is-open');
@@ -409,6 +437,8 @@ function openEdit(id) {
   document.getElementById('drv-lastname').value  = driver.lastName  || '';
   document.getElementById('drv-carnum').value    = driver.carNumber || '';
   document.getElementById('drv-category').value  = driver.category  || '';
+  const catSelect = document.getElementById('drv-category-select');
+  if (catSelect) catSelect.value = driver.category || '';
   document.getElementById('drv-year').value      = String(driver.year);
   showCatPreview(driver.carNumber);
   document.getElementById('drv-modal').classList.add('is-open');
@@ -425,6 +455,9 @@ function closeModal() {
 // ─────────────────────────────────────────────────────────
 
 function showCatPreview(num) {
+  // En mode numeros libres, pas d'auto-detection
+  if (getChampFreeNumberCategories()) return;
+
   const preview = document.getElementById('drv-cat-preview');
   const catInput = document.getElementById('drv-category');
   if (!preview || !catInput) return;
@@ -444,7 +477,7 @@ function showCatPreview(num) {
     catInput.value = '';
     if (!isNaN(n) && num !== '') {
       preview.style.display = 'flex';
-      preview.innerHTML = `<span>⚠️ Numéro hors plage (1–500)</span>`;
+      preview.innerHTML = `<span>⚠️ Numéro hors plage</span>`;
       preview.className = 'drv-cat-preview drv-cat-preview--err';
     } else {
       hideCatPreview();
@@ -471,17 +504,28 @@ async function onSave() {
   if (!lastName)  { toast('Nom obligatoire', 'error'); return; }
   if (!carNum || isNaN(carNum)) { toast('Numéro de voiture obligatoire', 'error'); return; }
 
-  const match = getCategoryFromNumber(carNum);
-  if (!match) {
-    toast('Numéro de voiture hors plage (1–500)', 'error');
-    return;
+  let category;
+  const freeCats = getChampFreeNumberCategories();
+  if (freeCats) {
+    // Mode numeros libres : categorie choisie manuellement
+    const select = document.getElementById('drv-category-select');
+    category = select?.value;
+    if (!category) { toast('Choisissez une catégorie', 'error'); return; }
+  } else {
+    // Mode numeros fixes : auto-detection par plage
+    const match = getCategoryFromNumber(carNum);
+    if (!match) {
+      toast('Numéro de voiture hors plage', 'error');
+      return;
+    }
+    category = match.category;
   }
 
   const data = {
     firstName,
     lastName,
     carNumber: carNum,
-    category:  match.category,
+    category,
     year,
   };
 
@@ -757,6 +801,13 @@ function bindEvents() {
   // Auto-détection catégorie au changement du numéro
   document.getElementById('drv-carnum')
     ?.addEventListener('input', e => showCatPreview(e.target.value));
+
+  // Mode numeros libres : syncer le select avec le hidden input
+  document.getElementById('drv-category-select')
+    ?.addEventListener('change', e => {
+      const hidden = document.getElementById('drv-category');
+      if (hidden) hidden.value = e.target.value;
+    });
 
   // Filtres
   document.getElementById('drv-filter-year')?.addEventListener('change', e => {
