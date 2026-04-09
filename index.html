@@ -243,7 +243,8 @@
   <script>
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
-        navigator.serviceWorker.register('/sw.js').catch(() => {});
+        const swPath = location.pathname.includes('/rallycross-v2/') ? '/rallycross-v2/sw.js' : '/sw.js';
+        navigator.serviceWorker.register(swPath).catch(() => {});
       });
     }
   </script>
