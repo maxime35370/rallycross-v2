@@ -8,8 +8,6 @@
 import { db } from './firebase.js';
 import { toast } from './app.js';
 import { escHtml } from './utils.js';
-// ← MODIFIÉ : import du calcul intermédiaire partagé depuis calc.js
-//   Plus de lecture Firestore interimStandings dans ce fichier
 import { calcInterimStandings } from './calc.js';
 
 // ─────────────────────────────────────────────────────────
@@ -30,9 +28,11 @@ let selectedMeetingId = '';
 let selectedCategory  = '';
 let selectedSessionId = '';
 
-const CATEGORIES = ['Supercar', 'Super1600', 'Division 5', 'Féminines', 'D3', 'D4'];
+let _dfStandings  = []; // classement complet pour handleForfait DF
+let _dfForfaits   = new Set(); // forfaits DF — exclus des remplaçants DF
+let _finForfaits  = new Set(); // forfaits Finale — exclus des remplaçants Finale
 
-const SESSION_ORDER  = { EC: 0, MQ: 1, DF: 2, FIN: 3 };
+const CATEGORIES = ['Supercar', 'Super1600', 'Division 5', 'Féminines', 'D3', 'D4'];
 const SESSION_LABELS = { EC: 'Essais', MQ: 'Qualif.', DF: '½ Finale', FIN: 'Finale' };
 
 // ─────────────────────────────────────────────────────────
@@ -80,12 +80,11 @@ async function loadEngaged() {
   const { collection, query, where, getDocs } = await import(
     'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
   );
-  const q = query(
+  const snap = await getDocs(query(
     collection(db, 'engagements'),
     where('meetingId', '==', selectedMeetingId),
     where('category',  '==', selectedCategory)
-  );
-  const snap = await getDocs(q);
+  ));
   engagedDrivers = snap.docs
     .map(d => ({ id: d.data().driverId, ...d.data() }))
     .sort((a, b) => a.carNumber - b.carNumber);
@@ -96,16 +95,11 @@ async function loadAllParticipants() {
   const { collection, query, where, onSnapshot } = await import(
     'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
   );
-
   Object.values(unsubParticipants).forEach(u => u && u());
   unsubParticipants = {};
   sessionParticipants = {};
-
   for (const session of allSessions) {
-    const q = query(
-      collection(db, 'sessionParticipants'),
-      where('sessionId', '==', session.id)
-    );
+    const q = query(collection(db, 'sessionParticipants'), where('sessionId', '==', session.id));
     unsubParticipants[session.id] = onSnapshot(q, snap => {
       sessionParticipants[session.id] = new Set(snap.docs.map(d => d.data().driverId));
       renderSessionList();
@@ -123,14 +117,12 @@ async function addParticipant(sessionId, driver) {
   const { collection, addDoc, query, where, getDocs } = await import(
     'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
   );
-
   const driverId = driver.id || driver.driverId;
-  const q = query(
+  const snap = await getDocs(query(
     collection(db, 'sessionParticipants'),
     where('sessionId', '==', sessionId),
     where('driverId',  '==', driverId)
-  );
-  const snap = await getDocs(q);
+  ));
   if (!snap.empty) return;
 
   const targetSession = allSessions.find(s => s.id === sessionId);
@@ -157,21 +149,18 @@ async function removeParticipant(sessionId, driverId) {
   const { collection, query, where, getDocs, deleteDoc } = await import(
     'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
   );
-
-  const qPart = query(
+  const snapPart = await getDocs(query(
     collection(db, 'sessionParticipants'),
     where('sessionId', '==', sessionId),
     where('driverId',  '==', driverId)
-  );
-  const snapPart = await getDocs(qPart);
+  ));
   for (const d of snapPart.docs) await deleteDoc(d.ref);
 
-  const qRes = query(
+  const snapRes = await getDocs(query(
     collection(db, 'results'),
     where('sessionId', '==', sessionId),
     where('driverId',  '==', driverId)
-  );
-  const snapRes = await getDocs(qRes);
+  ));
   if (!snapRes.empty) {
     for (const d of snapRes.docs) await deleteDoc(d.ref);
     const session = allSessions.find(s => s.id === sessionId);
@@ -186,11 +175,10 @@ async function getParticipantsData(sessionId) {
   const { collection, query, where, getDocs } = await import(
     'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
   );
-  const q = query(
+  const snap = await getDocs(query(
     collection(db, 'sessionParticipants'),
     where('sessionId', '==', sessionId)
-  );
-  const snap = await getDocs(q);
+  ));
   return snap.docs.map(d => ({ id: d.id, ...d.data() }))
     .sort((a, b) => a.carNumber - b.carNumber);
 }
@@ -204,34 +192,23 @@ async function autoAssignAll(sessionId) {
   let count = 0;
   for (const d of engagedDrivers) {
     const already = sessionParticipants[sessionId]?.has(d.id || d.driverId);
-    if (!already) {
-      await addParticipant(sessionId, d);
-      count++;
-    }
+    if (!already) { await addParticipant(sessionId, d); count++; }
   }
   toast(count > 0 ? `${count} pilote(s) assigné(s) ✓` : 'Tous déjà assignés', count > 0 ? 'success' : 'info');
 }
 
-// ← MODIFIÉ : calcul direct depuis les résultats bruts via calc.js
-//   Plus de lecture Firestore interimStandings
 async function autoAssignDemis() {
+  _dfForfaits = new Set();
   await loadEngaged();
 
   let ranked = [];
-  try {
-    ranked = await calcInterimStandings(db, allSessions);
-  } catch (e) {
-    console.error('Erreur calcul classement intermédiaire:', e);
-  }
+  try { ranked = await calcInterimStandings(db, allSessions); } catch {}
 
   if (ranked.length === 0) {
     toast('⚠️ Pas encore assez de résultats MQ — assignation par numéro de voiture.', 'warning', 4000);
     ranked = engagedDrivers.map((d, i) => ({
-      driverId:  d.id || d.driverId,
-      carNumber: d.carNumber,
-      firstName: d.firstName,
-      lastName:  d.lastName,
-      position:  i + 1,
+      driverId: d.id || d.driverId, carNumber: d.carNumber,
+      firstName: d.firstName, lastName: d.lastName, position: i + 1,
     }));
   }
 
@@ -251,17 +228,15 @@ async function autoAssignDemis() {
 
   const fin = allSessions.find(s => s.type === 'FIN');
   const finPartSnap = fin ? await gd0(q0(c0(db, 'sessionParticipants'), w0('sessionId', '==', fin.id))) : null;
-  const finResSnap  = fin ? await gd0(q0(c0(db, 'results'),             w0('sessionId', '==', fin.id))) : null;
+  const finResSnap  = fin ? await gd0(q0(c0(db, 'results'), w0('sessionId', '==', fin.id))) : null;
   const finHasData  = !finPartSnap?.empty || !finResSnap?.empty;
 
   if (hasTimedResults) {
-    const finaleMsg = finHasData ? `\n\n⚠️ La Finale sera aussi vidée car les qualifiés peuvent changer.` : '';
-    const msg = `⚠️ ATTENTION — Des temps ont déjà été saisis en demi-finale !\n\n• DF1 : ${df1ResultsSnap.size} temps saisi(s)\n• DF2 : ${df2ResultsSnap.size} temps saisi(s)\n\nAuto DF va supprimer TOUS ces temps et réassigner les pilotes.${finaleMsg}\n\nCette action est irréversible. Continuer quand même ?`;
-    if (!window.confirm(msg)) return;
+    const finaleMsg = finHasData ? `\n\n⚠️ La Finale sera aussi vidée.` : '';
+    if (!window.confirm(`⚠️ Des temps ont déjà été saisis en DF !\n\n• DF1 : ${df1ResultsSnap.size} résultat(s)\n• DF2 : ${df2ResultsSnap.size} résultat(s)\n\nAuto DF va tout supprimer et réassigner.${finaleMsg}\n\nContinuer ?`)) return;
   } else if (hasExisting) {
     const finaleMsg = finHasData ? `\n\n⚠️ La Finale sera aussi vidée.` : '';
-    const msg = `⚡ Auto DF va réassigner toutes les demi-finales.\n\nActuellement :\n• DF1 : ${df1Count} pilote(s)\n• DF2 : ${df2Count} pilote(s)${finaleMsg}\n\nContinuer ?`;
-    if (!window.confirm(msg)) return;
+    if (!window.confirm(`⚡ Auto DF va réassigner les demi-finales.\n\nDF1 : ${df1Count} / DF2 : ${df2Count} pilotes${finaleMsg}\n\nContinuer ?`)) return;
   }
 
   const { collection: fc, query: fq, where: fw, getDocs: fgd, writeBatch: fwb } = await import(
@@ -270,22 +245,15 @@ async function autoAssignDemis() {
   const clearDf = async (sessionId) => {
     for (const col of ['sessionParticipants', 'results']) {
       const snap = await fgd(fq(fc(db, col), fw('sessionId', '==', sessionId)));
-      if (!snap.empty) {
-        const batch = fwb(db);
-        snap.docs.forEach(d => batch.delete(d.ref));
-        await batch.commit();
-      }
+      if (!snap.empty) { const b = fwb(db); snap.docs.forEach(d => b.delete(d.ref)); await b.commit(); }
     }
   };
   await clearDf(df1.id);
   await clearDf(df2.id);
 
-  // Répartition alternée : position impaire → DF1, paire → DF2
   const top16 = ranked.slice(0, 16);
   for (let i = 0; i < top16.length; i++) {
-    const driver = top16[i];
-    const targetSession = i % 2 === 0 ? df1 : df2;
-    await addParticipant(targetSession.id, driver);
+    await addParticipant(i % 2 === 0 ? df1.id : df2.id, top16[i]);
   }
 
   if (fin && finHasData) {
@@ -294,11 +262,7 @@ async function autoAssignDemis() {
     );
     for (const col of ['sessionParticipants', 'results']) {
       const snap = await fgd2(fq2(fc2(db, col), fw2('sessionId', '==', fin.id)));
-      if (!snap.empty) {
-        const batch = fwb2(db);
-        snap.docs.forEach(d => batch.delete(d.ref));
-        await batch.commit();
-      }
+      if (!snap.empty) { const b = fwb2(db); snap.docs.forEach(d => b.delete(d.ref)); await b.commit(); }
     }
     toast(`${top16.length} pilotes répartis en DF1/DF2 ✓ — Finale vidée, relancez Auto Finale`, 'success', 5000);
   } else {
@@ -316,6 +280,9 @@ async function autoAssignDemis() {
 }
 
 async function autoAssignFinale() {
+  // Reset forfaits Finale à chaque Auto Finale
+  _finForfaits = new Set();
+
   const df1 = allSessions.find(s => s.type === 'DF' && s.num === 1);
   const df2 = allSessions.find(s => s.type === 'DF' && s.num === 2);
   const fin = allSessions.find(s => s.type === 'FIN');
@@ -326,89 +293,195 @@ async function autoAssignFinale() {
   );
 
   const getTop4 = async (dfSession) => {
-    const partSnap = await getDocs(query(
-      collection(db, 'sessionParticipants'),
-      where('sessionId', '==', dfSession.id)
-    ));
+    const partSnap = await getDocs(query(collection(db, 'sessionParticipants'), where('sessionId', '==', dfSession.id)));
     const participants = partSnap.docs.map(d => d.data());
     if (participants.length === 0) return [];
-
-    const resSnap = await getDocs(query(
-      collection(db, 'results'),
-      where('sessionId', '==', dfSession.id)
-    ));
+    const resSnap = await getDocs(query(collection(db, 'results'), where('sessionId', '==', dfSession.id)));
     const resultMap = {};
     resSnap.docs.forEach(d => { resultMap[d.data().driverId] = d.data(); });
-
     const rows = participants.map(p => ({
-      driverId:  p.driverId,
-      carNumber: p.carNumber,
-      firstName: p.firstName,
-      lastName:  p.lastName,
-      ms:        resultMap[p.driverId]?.ms     ?? null,
-      status:    resultMap[p.driverId]?.status ?? null,
+      driverId: p.driverId, carNumber: p.carNumber, firstName: p.firstName, lastName: p.lastName,
+      ms: resultMap[p.driverId]?.ms ?? null, status: resultMap[p.driverId]?.status ?? null,
     }));
-
     if (rows.every(r => !r.ms && !r.status)) return [];
-
-    const order = r => {
-      if (r.ms) return r.ms;
-      if (r.status === 'DNF')      return 9000000;
-      if (r.status === 'DSQ_RACE') return 9100000;
-      return 9999999;
-    };
+    const order = r => r.ms ? r.ms : r.status === 'DNF' ? 9000000 : r.status === 'DSQ_RACE' ? 9100000 : 9999999;
     rows.sort((a, b) => order(a) - order(b));
     return rows.filter(r => r.ms || r.status === 'DNF').slice(0, 4);
   };
 
   const top4df1 = await getTop4(df1);
   const top4df2 = await getTop4(df2);
-
   if (top4df1.length === 0 && top4df2.length === 0) {
-    toast('Aucun résultat de DF disponible. Saisissez dabord les temps des DF.', 'warning');
-    return;
+    toast('Aucun résultat de DF disponible.', 'warning'); return;
   }
 
   const finalistes = [...top4df1, ...top4df2];
-
-  const finResultsSnap = await getDocs(query(
-    collection(db, 'results'),
-    where('sessionId', '==', fin.id)
-  ));
-  const finPartSnap = await getDocs(query(
-    collection(db, 'sessionParticipants'),
-    where('sessionId', '==', fin.id)
-  ));
+  const finResultsSnap = await getDocs(query(collection(db, 'results'), where('sessionId', '==', fin.id)));
+  const finPartSnap    = await getDocs(query(collection(db, 'sessionParticipants'), where('sessionId', '==', fin.id)));
   const names = finalistes.map(d => `#${d.carNumber} ${d.lastName}`).join(', ');
 
   if (!finResultsSnap.empty) {
-    const msg = `⚠️ ATTENTION — Des temps ont déjà été saisis en Finale !\n\n${finResultsSnap.size} résultat(s) seront supprimés.\n\nAuto Finale va remplacer par :\n${names}\n\nCette action est irréversible. Continuer quand même ?`;
-    if (!window.confirm(msg)) return;
+    if (!window.confirm(`⚠️ Des temps existent en Finale !\n${finResultsSnap.size} résultat(s) seront supprimés.\n\nRemplacer par :\n${names}\n\nContinuer ?`)) return;
   } else if (!finPartSnap.empty) {
-    const msg = `⚡ Auto Finale va assigner ${finalistes.length} pilote(s) :\n${names}\n\nLa finale actuelle (${finPartSnap.size} pilote(s)) sera remplacée.\n\nContinuer ?`;
-    if (!window.confirm(msg)) return;
+    if (!window.confirm(`⚡ Auto Finale va assigner :\n${names}\n\nContinuer ?`)) return;
   }
 
-  const clearSession = async (sessionId) => {
-    for (const col of ['sessionParticipants', 'results']) {
-      const snap = await getDocs(query(
-        collection(db, col),
-        where('sessionId', '==', sessionId)
-      ));
-      if (!snap.empty) {
-        const batch = writeBatch(db);
-        snap.docs.forEach(d => batch.delete(d.ref));
-        await batch.commit();
-      }
-    }
-  };
-  await clearSession(fin.id);
-
-  for (const d of finalistes) {
-    await addParticipant(fin.id, d);
+  for (const col of ['sessionParticipants', 'results']) {
+    const snap = await getDocs(query(collection(db, col), where('sessionId', '==', fin.id)));
+    if (!snap.empty) { const b = writeBatch(db); snap.docs.forEach(d => b.delete(d.ref)); await b.commit(); }
   }
-
+  for (const d of finalistes) await addParticipant(fin.id, d);
   toast(`${finalistes.length} finalistes assignés ✓`, 'success');
+}
+
+// ─────────────────────────────────────────────────────────
+// GESTION FORFAIT DF
+// ─────────────────────────────────────────────────────────
+
+async function handleForfait(forfaitDriverId) {
+  const df1 = allSessions.find(s => s.type === 'DF' && s.num === 1);
+  const df2 = allSessions.find(s => s.type === 'DF' && s.num === 2);
+  if (!df1 || !df2) return;
+
+  const { collection, query, where, getDocs, writeBatch } = await import(
+    'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
+  );
+
+  const fetchIds = async (sessionId) => {
+    const snap = await getDocs(query(collection(db, 'sessionParticipants'), where('sessionId', '==', sessionId)));
+    return new Set(snap.docs.map(d => d.data().driverId));
+  };
+
+  const df1Ids = await fetchIds(df1.id);
+  const df2Ids = await fetchIds(df2.id);
+  const assignedToADf = new Set([...df1Ids, ...df2Ids]);
+
+  const activeInDf = _dfStandings.filter(p => assignedToADf.has(p.driverId));
+  const idx = activeInDf.findIndex(p => p.driverId === forfaitDriverId);
+  if (idx === -1) return;
+
+  const forfaitDriver = activeInDf[idx];
+  _dfForfaits.add(forfaitDriverId);
+
+  const reserves = _dfStandings.filter(p =>
+    !assignedToADf.has(p.driverId) && !_dfForfaits.has(p.driverId)
+  );
+  const reserve = reserves[0];
+
+  const reserveLabel = reserve
+    ? `${reserve.firstName} ${reserve.lastName} (#${reserve.carNumber}) entre en grille`
+    : 'Aucun remplaçant disponible';
+
+  if (!window.confirm(`🚫 Déclarer forfait ${forfaitDriver.firstName} ${forfaitDriver.lastName} (#${forfaitDriver.carNumber}) ?\n\nTout le monde derrière lui remonte d'une place.\n${reserveLabel}.\n\nContinuer ?`)) {
+    _dfForfaits.delete(forfaitDriverId);
+    return;
+  }
+
+  const [df1Res, df2Res] = await Promise.all([
+    getDocs(query(collection(db, 'results'), where('sessionId', '==', df1.id))),
+    getDocs(query(collection(db, 'results'), where('sessionId', '==', df2.id))),
+  ]);
+  if (!df1Res.empty || !df2Res.empty) {
+    if (!window.confirm(`⚠️ Des temps ont déjà été saisis en DF !\nIls seront supprimés. Continuer ?`)) {
+      _dfForfaits.delete(forfaitDriverId);
+      return;
+    }
+  }
+
+  const newAssignment = [
+    ...activeInDf.slice(0, idx),
+    ...activeInDf.slice(idx + 1),
+    ...(reserve ? [reserve] : []),
+  ];
+
+  for (const dfSession of [df1, df2]) {
+    for (const col of ['sessionParticipants', 'results']) {
+      const snap = await getDocs(query(collection(db, col), where('sessionId', '==', dfSession.id)));
+      if (!snap.empty) { const b = writeBatch(db); snap.docs.forEach(d => b.delete(d.ref)); await b.commit(); }
+    }
+  }
+
+  for (let i = 0; i < newAssignment.length; i++) {
+    await addParticipant(i % 2 === 0 ? df1.id : df2.id, newAssignment[i]);
+  }
+
+  const reserveMsg = reserve ? ` — ${reserve.firstName} ${reserve.lastName} entré en grille` : '';
+  toast(`Forfait déclaré${reserveMsg} ✓`, 'success', 4000);
+
+  const panel = document.getElementById('ses-detail-panel');
+  const session = allSessions.find(s => s.id === selectedSessionId);
+  if (panel && session) {
+    await renderDfStandings(panel, session, await getParticipantsData(selectedSessionId));
+  }
+}
+
+// ─────────────────────────────────────────────────────────
+// GESTION FORFAIT FINALE
+// Quand un finaliste qualifié ne peut pas se présenter :
+// - il est retiré de la Finale (Firestore)
+// - le 1er remplaçant de sa DF (5ème, 6ème...) entre à sa place
+// ─────────────────────────────────────────────────────────
+
+async function handleFinaleForfait(forfaitDriverId, allReplacements, panel, session) {
+  const fin = allSessions.find(s => s.type === 'FIN');
+  if (!fin) return;
+
+  const { collection, query, where, getDocs } = await import(
+    'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
+  );
+
+  // Trouver le pilote forfait parmi les assignés à la Finale
+  const finParts = await getDocs(query(
+    collection(db, 'sessionParticipants'),
+    where('sessionId', '==', fin.id)
+  ));
+  const assignedIds = new Set(finParts.docs.map(d => d.data().driverId));
+  const forfaitPart = finParts.docs.map(d => d.data()).find(p => p.driverId === forfaitDriverId);
+  if (!forfaitPart) return;
+
+  // Marquer comme forfait AVANT de chercher le remplaçant
+  _finForfaits.add(forfaitDriverId);
+
+  // 1er remplaçant disponible (non forfait, non déjà en Finale)
+  const reserve = allReplacements.find(r =>
+    !assignedIds.has(r.driverId) && !_finForfaits.has(r.driverId)
+  );
+
+  const reserveLabel = reserve
+    ? `${reserve.firstName} ${reserve.lastName} (#${reserve.carNumber}) — ${reserve.dfPosition}e de DF${reserve.dfNum}`
+    : 'Aucun remplaçant disponible';
+
+  if (!window.confirm(
+    `🚫 Déclarer forfait ${forfaitPart.firstName} ${forfaitPart.lastName} (#${forfaitPart.carNumber}) pour la Finale ?\n\n` +
+    `Remplaçant : ${reserveLabel}.\n\nContinuer ?`
+  )) {
+    _finForfaits.delete(forfaitDriverId);
+    return;
+  }
+
+  // Vérifier si des résultats existent déjà en Finale
+  const finRes = await getDocs(query(collection(db, 'results'), where('sessionId', '==', fin.id)));
+  if (!finRes.empty) {
+    if (!window.confirm(`⚠️ Des temps ont déjà été saisis en Finale !\nIls seront supprimés pour ce pilote. Continuer ?`)) {
+      _finForfaits.delete(forfaitDriverId);
+      return;
+    }
+  }
+
+  // Retirer le forfait de la Finale
+  await removeParticipant(fin.id, forfaitDriverId);
+
+  // Ajouter le remplaçant si disponible
+  if (reserve) {
+    await addParticipant(fin.id, reserve);
+    toast(`Forfait déclaré — ${reserve.firstName} ${reserve.lastName} entre en Finale ✓`, 'success', 4000);
+  } else {
+    toast(`Forfait déclaré — aucun remplaçant disponible`, 'warning', 4000);
+  }
+
+  // Re-render
+  const updated = await getParticipantsData(fin.id);
+  await renderFinaleStandings(panel, session, updated);
 }
 
 // ─────────────────────────────────────────────────────────
@@ -423,7 +496,6 @@ function renderView() {
     <div class="section-header">
       <h2 class="section-title">🏁 <span>Sessions</span></h2>
     </div>
-
     <div class="toolbar" style="flex-wrap:wrap">
       <select class="toolbar-select" id="ses-year">
         ${years.map(y => `<option value="${y}" ${y === selectedYear ? 'selected':''}>${y}</option>`).join('')}
@@ -436,21 +508,15 @@ function renderView() {
         ${CATEGORIES.map(c => `<option value="${c}" ${c===selectedCategory?'selected':''}>${escHtml(c)}</option>`).join('')}
       </select>
     </div>
-
     <div class="ses-layout" id="ses-layout">
       <div class="ses-list-panel" id="ses-list-panel">
-        <div class="ses-placeholder text-muted" style="padding:var(--sp-xl);text-align:center">
-          Sélectionnez un meeting et une catégorie
-        </div>
+        <div class="ses-placeholder text-muted" style="padding:var(--sp-xl);text-align:center">Sélectionnez un meeting et une catégorie</div>
       </div>
       <div class="ses-detail-panel" id="ses-detail-panel">
-        <div class="ses-placeholder text-muted" style="padding:var(--sp-xl);text-align:center">
-          Sélectionnez une session
-        </div>
+        <div class="ses-placeholder text-muted" style="padding:var(--sp-xl);text-align:center">Sélectionnez une session</div>
       </div>
     </div>
   `;
-
   bindEvents();
   refreshMeetingSelect();
 }
@@ -478,9 +544,8 @@ function renderSessionList() {
     panel.innerHTML = `<div class="ses-placeholder text-muted" style="padding:var(--sp-xl);text-align:center">Sélectionnez un meeting et une catégorie</div>`;
     return;
   }
-
   if (allSessions.length === 0) {
-    panel.innerHTML = `<div class="ses-placeholder text-muted" style="padding:var(--sp-xl);text-align:center">Aucune session trouvée pour cette sélection.</div>`;
+    panel.innerHTML = `<div class="ses-placeholder text-muted" style="padding:var(--sp-xl);text-align:center">Aucune session trouvée.</div>`;
     return;
   }
 
@@ -495,9 +560,7 @@ function renderSessionList() {
         ${hasFin ? `<button class="btn btn-secondary btn-sm" id="ses-auto-fin-btn">⚡ Auto Finale</button>` : ''}
       </div>
     </div>
-    <div class="ses-cards">
-      ${allSessions.map(s => sessionCard(s)).join('')}
-    </div>
+    <div class="ses-cards">${allSessions.map(s => sessionCard(s)).join('')}</div>
   `;
 
   panel.querySelectorAll('.ses-card').forEach(card => {
@@ -509,10 +572,8 @@ function renderSessionList() {
     });
   });
 
-  document.getElementById('ses-auto-df-btn')
-    ?.addEventListener('click', e => { e.stopPropagation(); autoAssignDemis(); });
-  document.getElementById('ses-auto-fin-btn')
-    ?.addEventListener('click', e => { e.stopPropagation(); autoAssignFinale(); });
+  document.getElementById('ses-auto-df-btn')?.addEventListener('click', e => { e.stopPropagation(); autoAssignDemis(); });
+  document.getElementById('ses-auto-fin-btn')?.addEventListener('click', e => { e.stopPropagation(); autoAssignFinale(); });
 
   if (selectedSessionId) {
     panel.querySelector(`[data-id="${selectedSessionId}"]`)?.classList.add('is-active');
@@ -525,10 +586,8 @@ function sessionCard(session) {
   const label = session.type === 'MQ' ? `MQ${session.num}`
     : session.type === 'DF' ? `DF${session.num}`
     : SESSION_LABELS[session.type] || session.type;
-
   return `
-    <div class="ses-card ses-card--${typeCls} ${selectedSessionId === session.id ? 'is-active' : ''}"
-      data-id="${session.id}">
+    <div class="ses-card ses-card--${typeCls} ${selectedSessionId === session.id ? 'is-active' : ''}" data-id="${session.id}">
       <div class="ses-card-badge">${label}</div>
       <div class="ses-card-info">
         <div class="ses-card-label">${escHtml(session.label)}</div>
@@ -546,7 +605,7 @@ async function renderSessionDetail() {
   const session = allSessions.find(s => s.id === selectedSessionId);
   if (!session) return;
 
-  const participants  = await getParticipantsData(selectedSessionId);
+  const participants   = await getParticipantsData(selectedSessionId);
   const participantIds = new Set(participants.map(p => p.driverId));
 
   await loadEngaged();
@@ -555,23 +614,15 @@ async function renderSessionDetail() {
     const otherDf = allSessions.find(s => s.type === 'DF' && s.id !== selectedSessionId);
     if (otherDf) otherDfIds = sessionParticipants[otherDf.id] || new Set();
   }
+
+  if (session.type === 'DF')  { await renderDfStandings(panel, session, participants); return; }
+  if (session.type === 'FIN') { await renderFinaleStandings(panel, session, participants); return; }
+
   const notAssigned = engagedDrivers.filter(d => {
     const id = d.id || d.driverId;
     return !participantIds.has(id) && !otherDfIds.has(id);
   });
-
   const isEcOrMq = session.type === 'EC' || session.type === 'MQ';
-  const isDf     = session.type === 'DF';
-
-  if (isDf) {
-    await renderDfStandings(panel, session, participants);
-    return;
-  }
-
-  if (session.type === 'FIN') {
-    await renderFinaleStandings(panel, session, participants);
-    return;
-  }
 
   panel.innerHTML = `
     <div class="ses-detail-header">
@@ -579,66 +630,39 @@ async function renderSessionDetail() {
         <div class="ses-detail-label">${escHtml(session.label)}</div>
         <div class="ses-detail-meta">${session.tours} tour${session.tours > 1?'s':''} · ${participants.length} pilote${participants.length>1?'s':''}</div>
       </div>
-      <div style="display:flex;gap:var(--sp-sm);flex-wrap:wrap">
-        ${isEcOrMq ? `<button class="btn btn-primary btn-sm" id="ses-auto-all-btn">✅ Assigner tous les engagés</button>` : ''}
-      </div>
+      ${isEcOrMq ? `<button class="btn btn-primary btn-sm" id="ses-auto-all-btn">✅ Assigner tous les engagés</button>` : ''}
     </div>
-
     <div class="ses-detail-section">
-      <div class="ses-section-title">
-        <span class="eng-group-dot eng-group-dot--on"></span>
-        Assignés (${participants.length})
-      </div>
-      <div id="ses-assigned-list">
-        ${participants.length === 0
-          ? `<div class="ses-empty">Aucun pilote assigné</div>`
-          : participants.map(p => `
-            <div class="ses-pilot-row">
-              <span class="ses-pilot-num">${escHtml(p.carNumber)}</span>
-              <span class="ses-pilot-name">${escHtml(p.firstName)} <strong>${escHtml(p.lastName)}</strong></span>
-              <button class="btn btn-danger btn-sm ses-remove-btn" data-driver-id="${p.driverId}">✕</button>
-            </div>
-          `).join('')
-        }
-      </div>
+      <div class="ses-section-title"><span class="eng-group-dot eng-group-dot--on"></span>Assignés (${participants.length})</div>
+      ${participants.length === 0
+        ? `<div class="ses-empty">Aucun pilote assigné</div>`
+        : participants.map(p => `
+          <div class="ses-pilot-row">
+            <span class="ses-pilot-num">${escHtml(p.carNumber)}</span>
+            <span class="ses-pilot-name">${escHtml(p.firstName)} <strong>${escHtml(p.lastName)}</strong></span>
+            <button class="btn btn-danger btn-sm ses-remove-btn" data-driver-id="${p.driverId}">✕</button>
+          </div>`).join('')}
     </div>
-
     ${notAssigned.length > 0 ? `
       <div class="ses-detail-section">
-        <div class="ses-section-title">
-          <span class="eng-group-dot eng-group-dot--off"></span>
-          Non assignés (${notAssigned.length})
-        </div>
-        <div id="ses-unassigned-list">
-          ${notAssigned.map(d => `
-            <div class="ses-pilot-row ses-pilot-row--dim">
-              <span class="ses-pilot-num">${escHtml(d.carNumber)}</span>
-              <span class="ses-pilot-name">${escHtml(d.firstName)} <strong>${escHtml(d.lastName)}</strong></span>
-              <button class="btn btn-secondary btn-sm ses-add-btn" data-driver-id="${d.id || d.driverId}">＋</button>
-            </div>
-          `).join('')}
-        </div>
-      </div>
-    ` : ''}
+        <div class="ses-section-title"><span class="eng-group-dot eng-group-dot--off"></span>Non assignés (${notAssigned.length})</div>
+        ${notAssigned.map(d => `
+          <div class="ses-pilot-row ses-pilot-row--dim">
+            <span class="ses-pilot-num">${escHtml(d.carNumber)}</span>
+            <span class="ses-pilot-name">${escHtml(d.firstName)} <strong>${escHtml(d.lastName)}</strong></span>
+            <button class="btn btn-secondary btn-sm ses-add-btn" data-driver-id="${d.id || d.driverId}">＋</button>
+          </div>`).join('')}
+      </div>` : ''}
   `;
 
-  document.getElementById('ses-auto-all-btn')
-    ?.addEventListener('click', () => autoAssignAll(selectedSessionId));
-
+  document.getElementById('ses-auto-all-btn')?.addEventListener('click', () => autoAssignAll(selectedSessionId));
   panel.querySelectorAll('.ses-remove-btn').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      await removeParticipant(selectedSessionId, btn.dataset.driverId);
-      renderSessionDetail();
-    });
+    btn.addEventListener('click', async () => { await removeParticipant(selectedSessionId, btn.dataset.driverId); renderSessionDetail(); });
   });
-
   panel.querySelectorAll('.ses-add-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
       const driver = engagedDrivers.find(d => (d.id || d.driverId) === btn.dataset.driverId);
-      if (driver) {
-        await addParticipant(selectedSessionId, driver);
-        renderSessionDetail();
-      }
+      if (driver) { await addParticipant(selectedSessionId, driver); renderSessionDetail(); }
     });
   });
 }
@@ -649,38 +673,24 @@ async function renderSessionDetail() {
 
 function bindEvents() {
   document.getElementById('ses-year')?.addEventListener('change', e => {
-    selectedYear = parseInt(e.target.value);
-    selectedMeetingId = '';
-    selectedSessionId = '';
-    loadMeetings();
+    selectedYear = parseInt(e.target.value); selectedMeetingId = ''; selectedSessionId = ''; loadMeetings();
   });
-
   document.getElementById('ses-meeting')?.addEventListener('change', e => {
-    selectedMeetingId = e.target.value;
-    selectedSessionId = '';
-    loadSessions();
-    loadEngaged();
+    selectedMeetingId = e.target.value; selectedSessionId = ''; loadSessions(); loadEngaged();
   });
-
   document.getElementById('ses-category')?.addEventListener('change', e => {
-    selectedCategory = e.target.value;
-    selectedSessionId = '';
-    loadSessions();
-    loadEngaged();
+    selectedCategory = e.target.value; selectedSessionId = ''; loadSessions(); loadEngaged();
   });
 }
 
 // ─────────────────────────────────────────────────────────
-// VUE DF — CLASSEMENT INTERMÉDIAIRE AVEC RÉPARTITION
+// VUE DF
 // ─────────────────────────────────────────────────────────
 
-// ← MODIFIÉ : utilise calcInterimStandings(db, allSessions) depuis calc.js
-//   Plus de lecture/écriture Firestore interimStandings
 async function renderDfStandings(panel, session, assignedParticipants) {
   const df1 = allSessions.find(s => s.type === 'DF' && s.num === 1);
   const df2 = allSessions.find(s => s.type === 'DF' && s.num === 2);
 
-  // Fetch frais des participants DF depuis Firestore
   const freshFetch = async (sessionId) => {
     if (!sessionId) return new Set();
     const { collection: c2, query: q2, where: w2, getDocs: gd2 } = await import(
@@ -692,22 +702,24 @@ async function renderDfStandings(panel, session, assignedParticipants) {
 
   const df1Ids = await freshFetch(df1?.id);
   const df2Ids = await freshFetch(df2?.id);
+  const assignedToADf = new Set([...df1Ids, ...df2Ids]);
 
-  // ← MODIFIÉ : calcul direct, plus de try/catch interimStandings Firestore
-  let standings = await calcInterimStandings(db, allSessions);
-  if (standings.length === 0) {
-    standings = engagedDrivers.map((d, i) => ({
-      driverId:    d.id || d.driverId,
-      carNumber:   d.carNumber,
-      firstName:   d.firstName,
-      lastName:    d.lastName,
-      totalPoints: null,
-      position:    i + 1,
+  let rawStandings = await calcInterimStandings(db, allSessions);
+  if (rawStandings.length === 0) {
+    rawStandings = engagedDrivers.map((d, i) => ({
+      driverId: d.id || d.driverId, carNumber: d.carNumber,
+      firstName: d.firstName, lastName: d.lastName, totalPoints: null, position: i + 1,
     }));
   }
-  const hasRealStandings = standings[0]?.totalPoints != null;
 
-  panel._standings = standings;
+  _dfStandings = rawStandings;
+
+  const assignedStandings = rawStandings.filter(p =>  assignedToADf.has(p.driverId));
+  const reserveStandings  = rawStandings.filter(p => !assignedToADf.has(p.driverId) && !_dfForfaits.has(p.driverId));
+  const forfaitStandings  = rawStandings.filter(p =>  _dfForfaits.has(p.driverId));
+
+  const hasRealStandings = rawStandings[0]?.totalPoints != null;
+  panel._standings = rawStandings;
 
   const currentDf  = session.num;
   const otherDf    = currentDf === 1 ? 2 : 1;
@@ -718,140 +730,131 @@ async function renderDfStandings(panel, session, assignedParticipants) {
     <div class="ses-detail-header">
       <div>
         <div class="ses-detail-label">${escHtml(session.label)}</div>
-        <div class="ses-detail-meta">
-          ${session.tours} tours ·
-          ${currentIds.size} pilote${currentIds.size > 1 ? 's' : ''} assigné${currentIds.size > 1 ? 's' : ''}
-        </div>
+        <div class="ses-detail-meta">${session.tours} tours · ${currentIds.size} pilote${currentIds.size > 1 ? 's' : ''} assigné${currentIds.size > 1 ? 's' : ''}</div>
       </div>
-      <div style="display:flex;gap:var(--sp-sm)">
-        <button class="btn btn-secondary btn-sm" id="ses-auto-df-inline">⚡ Auto DF</button>
-      </div>
+      <button class="btn btn-secondary btn-sm" id="ses-auto-df-inline">⚡ Auto DF</button>
     </div>
 
-    ${!hasRealStandings ? `
-      <div class="ses-df-notice">
-        ⚠️ Pas encore assez de résultats MQ — affichage par numéro de voiture.
-      </div>
-    ` : ''}
+    ${!hasRealStandings ? `<div class="ses-df-notice">⚠️ Pas encore assez de résultats MQ.</div>` : ''}
+    ${_dfForfaits.size > 0 ? `<div class="ses-df-notice" style="background:rgba(255,85,0,0.08);border-color:var(--clr-accent)">🚫 ${_dfForfaits.size} forfait(s) déclaré(s)</div>` : ''}
 
     <div class="ses-df-standings">
       <div class="ses-df-legend">
-        <span class="ses-df-pill ses-df-pill--1">DF1</span>
-        <span>Places impaires</span>
-        <span class="ses-df-pill ses-df-pill--2" style="margin-left:var(--sp-md)">DF2</span>
-        <span>Places paires</span>
+        <span class="ses-df-pill ses-df-pill--1">DF1</span><span>Places impaires</span>
+        <span class="ses-df-pill ses-df-pill--2" style="margin-left:var(--sp-md)">DF2</span><span>Places paires</span>
+        <span style="margin-left:auto;font-size:0.72rem;color:var(--clr-text-3)">🚫 = Déclarer forfait</span>
       </div>
 
-      ${standings.slice(0, 16).map((p, i) => {
-        const pos   = i + 1;
+      ${assignedStandings.map((p, i) => {
+        const pos = i + 1;
         const dfNum = pos % 2 === 1 ? 1 : 2;
         const isInCurrentDf = currentIds.has(p.driverId);
         const isInOtherDf   = otherIds.has(p.driverId);
-
         let actionBtn = '';
         if (isInCurrentDf) {
           actionBtn = `
-            <button class="btn btn-ghost btn-sm ses-df-action"
-              data-action="remove" data-driver-id="${p.driverId}"
-              data-df="${currentDf}" title="Retirer de DF${currentDf}">✕</button>
-            <button class="btn btn-secondary btn-sm ses-df-action"
-              data-action="swap" data-driver-id="${p.driverId}"
-              data-df="${currentDf}" title="Basculer vers DF${otherDf}">→ DF${otherDf}</button>
-          `;
+            <button class="btn btn-ghost btn-sm ses-df-action" data-action="remove" data-driver-id="${p.driverId}" data-df="${currentDf}">✕</button>
+            <button class="btn btn-secondary btn-sm ses-df-action" data-action="swap" data-driver-id="${p.driverId}" data-df="${currentDf}">→ DF${otherDf}</button>`;
         } else if (isInOtherDf) {
-          actionBtn = `
-            <button class="btn btn-secondary btn-sm ses-df-action"
-              data-action="swap" data-driver-id="${p.driverId}"
-              data-df="${otherDf}" title="Basculer vers DF${currentDf}">→ DF${currentDf}</button>
-          `;
+          actionBtn = `<button class="btn btn-secondary btn-sm ses-df-action" data-action="swap" data-driver-id="${p.driverId}" data-df="${otherDf}">→ DF${currentDf}</button>`;
         } else {
-          actionBtn = `
-            <button class="btn btn-primary btn-sm ses-df-action"
-              data-action="add" data-driver-id="${p.driverId}"
-              data-df="${currentDf}" title="Ajouter en DF${currentDf}">＋ DF${currentDf}</button>
-          `;
+          actionBtn = `<button class="btn btn-primary btn-sm ses-df-action" data-action="add" data-driver-id="${p.driverId}" data-df="${currentDf}">＋ DF${currentDf}</button>`;
         }
-
         return `
           <div class="ses-df-row ${isInCurrentDf ? 'ses-df-row--assigned' : ''} ${isInOtherDf ? 'ses-df-row--other' : ''}">
             <span class="ses-df-pos">${pos}</span>
             <span class="ses-df-pill ses-df-pill--${dfNum}">DF${dfNum}</span>
             <span class="ses-pilot-num">${escHtml(p.carNumber)}</span>
-            <span class="ses-pilot-name">
-              ${escHtml(p.firstName)} <strong>${escHtml(p.lastName)}</strong>
-            </span>
+            <span class="ses-pilot-name">${escHtml(p.firstName)} <strong>${escHtml(p.lastName)}</strong></span>
             <span class="ses-df-pts">
               ${hasRealStandings && p.totalPoints != null
                 ? `${p.totalPoints} <span class="ses-df-pts-label">pts</span>`
-                : `<span class="ses-df-pts-pos">(${pos}ème)</span>`
-              }
+                : `<span class="ses-df-pts-pos">(${pos}ème)</span>`}
             </span>
-            <span class="ses-df-actions">${actionBtn}</span>
-          </div>
-        `;
+            <span class="ses-df-actions">
+              <button class="btn btn-ghost btn-sm ses-forfait-btn" data-driver-id="${p.driverId}" title="Déclarer forfait">🚫</button>
+              ${actionBtn}
+            </span>
+          </div>`;
       }).join('')}
 
-      ${standings.length > 16 ? `
+      ${reserveStandings.length > 0 ? `
         <div class="ses-df-row ses-df-row--reserve">
           <span style="grid-column:1/-1;color:var(--clr-text-3);font-size:0.8rem;padding:var(--sp-sm) 0">
             Pilotes 17+ : remplaçants potentiels si forfait
           </span>
         </div>
-        ${standings.slice(16).map((p, i) => `
+        ${reserveStandings.map((p, i) => `
           <div class="ses-df-row ses-df-row--reserve">
-            <span class="ses-df-pos">${17 + i}</span>
+            <span class="ses-df-pos">${assignedStandings.length + i + 1}</span>
             <span class="ses-df-pill ses-df-pill--reserve">RES</span>
             <span class="ses-pilot-num">${escHtml(p.carNumber)}</span>
-            <span class="ses-pilot-name">
-              ${escHtml(p.firstName)} <strong>${escHtml(p.lastName)}</strong>
+            <span class="ses-pilot-name">${escHtml(p.firstName)} <strong>${escHtml(p.lastName)}</strong></span>
+            ${hasRealStandings && p.totalPoints != null ? `<span class="ses-df-pts">${p.totalPoints} pts</span>` : ''}
+          </div>`).join('')}
+      ` : ''}
+
+      ${forfaitStandings.length > 0 ? `
+        <div class="ses-df-row ses-df-row--reserve" style="margin-top:var(--sp-sm)">
+          <span style="grid-column:1/-1;color:var(--clr-danger);font-size:0.8rem;padding:var(--sp-sm) 0">
+            🚫 Forfaits déclarés — non rappelables (sauf annulation)
+          </span>
+        </div>
+        ${forfaitStandings.map(p => `
+          <div class="ses-df-row ses-df-row--reserve" style="opacity:0.5">
+            <span class="ses-df-pos">—</span>
+            <span class="ses-df-pill ses-df-pill--reserve">FRF</span>
+            <span class="ses-pilot-num">${escHtml(p.carNumber)}</span>
+            <span class="ses-pilot-name" style="text-decoration:line-through">${escHtml(p.firstName)} <strong>${escHtml(p.lastName)}</strong></span>
+            ${hasRealStandings && p.totalPoints != null ? `<span class="ses-df-pts">${p.totalPoints} pts</span>` : ''}
+            <span class="ses-df-actions">
+              <button class="btn btn-secondary btn-sm ses-annuler-forfait-btn" data-driver-id="${p.driverId}">↩ Annuler</button>
             </span>
-            ${hasRealStandings && p.totalPoints != null
-              ? `<span class="ses-df-pts">${p.totalPoints} pts</span>`
-              : ''}
-          </div>
-        `).join('')}
+          </div>`).join('')}
       ` : ''}
     </div>
   `;
 
-  document.getElementById('ses-auto-df-inline')
-    ?.addEventListener('click', () => autoAssignDemis());
+  document.getElementById('ses-auto-df-inline')?.addEventListener('click', () => autoAssignDemis());
+
+  panel.querySelectorAll('.ses-forfait-btn').forEach(btn => {
+    btn.addEventListener('click', async () => await handleForfait(btn.dataset.driverId));
+  });
+
+  panel.querySelectorAll('.ses-annuler-forfait-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const driverId = btn.dataset.driverId;
+      const driver = _dfStandings.find(p => p.driverId === driverId);
+      _dfForfaits.delete(driverId);
+      toast(`Forfait annulé — ${driver?.firstName || ''} ${driver?.lastName || ''} est de nouveau disponible`, 'info', 3000);
+      await renderDfStandings(panel, session, await getParticipantsData(selectedSessionId));
+    });
+  });
 
   panel.querySelectorAll('.ses-df-action').forEach(btn => {
     btn.addEventListener('click', async () => {
       const driverId  = btn.dataset.driverId;
       const fromDfNum = parseInt(btn.dataset.df);
       const action    = btn.dataset.action;
-
       const df1 = allSessions.find(s => s.type === 'DF' && s.num === 1);
       const df2 = allSessions.find(s => s.type === 'DF' && s.num === 2);
       if (!df1 || !df2) return;
-
       const fromSession = fromDfNum === 1 ? df1 : df2;
       const toSession   = fromDfNum === 1 ? df2 : df1;
       const driver = (panel._standings || []).find(p => p.driverId === driverId);
       if (!driver) return;
-
-      if (action === 'remove') {
-        await removeParticipant(fromSession.id, driverId);
-      } else if (action === 'add') {
-        await addParticipant(fromSession.id, driver);
-      } else if (action === 'swap') {
-        await removeParticipant(fromSession.id, driverId);
-        await addParticipant(toSession.id, driver);
-      }
-
+      if (action === 'remove')      await removeParticipant(fromSession.id, driverId);
+      else if (action === 'add')    await addParticipant(fromSession.id, driver);
+      else if (action === 'swap') { await removeParticipant(fromSession.id, driverId); await addParticipant(toSession.id, driver); }
       await renderDfStandings(panel, session, await getParticipantsData(selectedSessionId));
     });
   });
 }
 
 // ─────────────────────────────────────────────────────────
-// VUE FINALE
+// VUE FINALE — avec gestion forfait
 // ─────────────────────────────────────────────────────────
 
-// ← MODIFIÉ : utilise calcInterimStandings(db, allSessions) depuis calc.js
-//   Plus de lecture Firestore interimStandings
 async function renderFinaleStandings(panel, session, assignedParticipants) {
   const { collection, query, where, getDocs } = await import(
     'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
@@ -869,31 +872,20 @@ async function renderFinaleStandings(panel, session, assignedParticipants) {
     ]);
     const resultMap = {};
     resSnap.docs.forEach(d => { resultMap[d.data().driverId] = d.data(); });
-    const participants = partSnap.docs.map(d => d.data());
-
-    return participants.map(p => ({
-      driverId:  p.driverId,
-      carNumber: p.carNumber,
-      firstName: p.firstName,
-      lastName:  p.lastName,
-      ms:        resultMap[p.driverId]?.ms     ?? null,
-      status:    resultMap[p.driverId]?.status ?? null,
-      points:    resultMap[p.driverId]?.points ?? null,
+    return partSnap.docs.map(d => d.data()).map(p => ({
+      driverId: p.driverId, carNumber: p.carNumber, firstName: p.firstName, lastName: p.lastName,
+      ms: resultMap[p.driverId]?.ms ?? null, status: resultMap[p.driverId]?.status ?? null,
+      points: resultMap[p.driverId]?.points ?? null,
     })).sort((a, b) => {
       const order = r => r.ms ? r.ms : r.status === 'DNF' ? 9e6 : 9e9;
       return order(a) - order(b);
     });
   };
 
-  // ← MODIFIÉ : calcul direct, plus de lecture Firestore interimStandings
   const interimCalc = await calcInterimStandings(db, allSessions);
   const interimMap  = {};
   interimCalc.forEach(r => { interimMap[r.driverId] = r.position ?? 999; });
-
-  const getInterimPoints = (driverId) => {
-    const r = interimCalc.find(d => d.driverId === driverId);
-    return r?.interimPoints ?? 0;
-  };
+  const getInterimPoints = (driverId) => (interimCalc.find(d => d.driverId === driverId)?.interimPoints ?? 0);
 
   const df1Results = await getDfResults(df1);
   const df2Results = await getDfResults(df2);
@@ -909,48 +901,45 @@ async function renderFinaleStandings(panel, session, assignedParticipants) {
     const d1 = df1Qualified[i] || null;
     const d2 = df2Qualified[i] || null;
     let first = d1, second = d2;
-    if (d1 && d2) {
-      const pos1 = interimMap[d1.driverId] ?? 999;
-      const pos2 = interimMap[d2.driverId] ?? 999;
-      if (pos2 < pos1) { first = d2; second = d1; }
+    if (d1 && d2 && (interimMap[d2.driverId] ?? 999) < (interimMap[d1.driverId] ?? 999)) {
+      first = d2; second = d1;
     }
     pairs.push({ rank: i + 1, first, second });
   }
 
+  // Tous les remplaçants triés par position DF puis classement intermédiaire
   const allReplacements = [
     ...df1Replacements.map((r, i) => ({ ...r, dfNum: 1, dfPosition: i + 5 })),
     ...df2Replacements.map((r, i) => ({ ...r, dfNum: 2, dfPosition: i + 5 })),
-  ].map(r => ({
-    ...r,
-    totalMeetingPoints: (r.points ?? 0) + getInterimPoints(r.driverId),
-  })).sort((a, b) => {
-    // 1. Position en DF en premier (5ème avant 6ème, etc.)
-    if (a.dfPosition !== b.dfPosition)
-      return a.dfPosition - b.dfPosition;
-    // 2. À position DF égale : classement intermédiaire (le mieux classé devant)
-    return (interimMap[a.driverId] ?? 999) - (interimMap[b.driverId] ?? 999);
-  });
+  ].map(r => ({ ...r, totalMeetingPoints: (r.points ?? 0) + getInterimPoints(r.driverId) }))
+   .sort((a, b) => a.dfPosition !== b.dfPosition
+     ? a.dfPosition - b.dfPosition
+     : (interimMap[a.driverId] ?? 999) - (interimMap[b.driverId] ?? 999));
 
-  const hasNoResults = df1Results.length === 0 && df2Results.length === 0;
+  // Forfaits Finale déclarés
+  const forfaitFinaleDrivers = assignedParticipants.filter(p => _finForfaits.has(p.driverId));
 
   const pilotCard = (d, dfNum) => {
     if (!d) return `<div class="ses-fin-empty">—</div>`;
-    const isAssigned = assignedIds.has(d.driverId);
-    const interimPos = interimMap[d.driverId];
+    const isAssigned  = assignedIds.has(d.driverId);
+    const isForfait   = _finForfaits.has(d.driverId);
+    const interimPos  = interimMap[d.driverId];
     return `
-      <div class="ses-fin-pilot ${isAssigned ? 'ses-fin-pilot--assigned' : ''}">
+      <div class="ses-fin-pilot ${isAssigned && !isForfait ? 'ses-fin-pilot--assigned' : ''}" ${isForfait ? 'style="opacity:0.4"' : ''}>
         <span class="ses-df-pill ses-df-pill--${dfNum}">DF${dfNum}</span>
         <span class="ses-pilot-num">${escHtml(d.carNumber)}</span>
-        <span class="ses-pilot-name">${escHtml(d.firstName)} <strong>${escHtml(d.lastName)}</strong></span>
+        <span class="ses-pilot-name" ${isForfait ? 'style="text-decoration:line-through"' : ''}>
+          ${escHtml(d.firstName)} <strong>${escHtml(d.lastName)}</strong>
+        </span>
         ${interimPos && interimPos < 999 ? `<span class="ses-fin-interim">${interimPos}ème</span>` : ''}
-        ${isAssigned ? '<span class="ses-df-check">✓</span>' : ''}
-        ${!isAssigned ? `
-          <button class="btn btn-primary btn-sm ses-df-action"
-            data-action="add" data-driver-id="${d.driverId}" data-df="fin">＋</button>
-        ` : `
-          <button class="btn btn-danger btn-sm ses-df-action"
-            data-action="remove-fin" data-driver-id="${d.driverId}">✕</button>
-        `}
+        ${isAssigned && !isForfait ? '<span class="ses-df-check">✓</span>' : ''}
+        ${isForfait ? `<span style="font-size:0.75rem;color:var(--clr-danger)">🚫 Forfait</span>` : ''}
+        ${!isAssigned && !isForfait ? `
+          <button class="btn btn-primary btn-sm ses-df-action" data-action="add" data-driver-id="${d.driverId}" data-df="fin">＋</button>
+        ` : isAssigned && !isForfait ? `
+          <button class="btn btn-ghost btn-sm ses-fin-forfait-btn" data-driver-id="${d.driverId}" title="Déclarer forfait pour la Finale">🚫</button>
+          <button class="btn btn-danger btn-sm ses-df-action" data-action="remove-fin" data-driver-id="${d.driverId}">✕</button>
+        ` : ''}
       </div>`;
   };
 
@@ -958,22 +947,22 @@ async function renderFinaleStandings(panel, session, assignedParticipants) {
     <div class="ses-detail-header">
       <div>
         <div class="ses-detail-label">Finale</div>
-        <div class="ses-detail-meta">
-          7 tours · ${assignedParticipants.length} pilote${assignedParticipants.length>1?'s':''} assigné${assignedParticipants.length>1?'s':''}
-        </div>
+        <div class="ses-detail-meta">7 tours · ${assignedParticipants.length} pilote${assignedParticipants.length>1?'s':''} assigné${assignedParticipants.length>1?'s':''}</div>
       </div>
       <button class="btn btn-primary btn-sm" id="ses-auto-fin-btn2">⚡ Auto Finale</button>
     </div>
 
-    ${hasNoResults ? `
-      <div class="ses-df-notice">
-        ⚠️ Aucun résultat de demi-finale saisi. Chronométrez les DF d'abord.
-      </div>
-    ` : ''}
+    ${df1Results.length === 0 && df2Results.length === 0 ? `
+      <div class="ses-df-notice">⚠️ Aucun résultat de DF. Chronométrez les DF d'abord.</div>` : ''}
+
+    ${_finForfaits.size > 0 ? `
+      <div class="ses-df-notice" style="background:rgba(255,85,0,0.08);border-color:var(--clr-accent)">
+        🚫 ${_finForfaits.size} forfait(s) déclaré(s) pour la Finale
+      </div>` : ''}
 
     <div class="ses-fin-section-title">
       <span>Qualifiés — 4 premiers de chaque ½ finale</span>
-      <span class="text-muted" style="font-size:0.75rem">Ordre : classement intermédiaire en cas d'égalité</span>
+      <span class="text-muted" style="font-size:0.75rem">🚫 = Déclarer forfait Finale</span>
     </div>
 
     ${pairs.map(p => `
@@ -983,47 +972,81 @@ async function renderFinaleStandings(panel, session, assignedParticipants) {
           ${pilotCard(p.first,  p.first  === df1Qualified[p.rank-1] || (!df2Qualified[p.rank-1] && p.first) ? 1 : 2)}
           ${p.second ? pilotCard(p.second, p.second === df2Qualified[p.rank-1] || (!df1Qualified[p.rank-1] && p.second) ? 2 : 1) : ''}
         </div>
-      </div>
-    `).join('')}
+      </div>`).join('')}
 
     ${allReplacements.length > 0 ? `
       <div class="ses-fin-section-title" style="margin-top:var(--sp-lg)">
         Remplaçants potentiels
-        <span class="text-muted" style="font-size:0.75rem">triés par points DF puis classement intermédiaire</span>
+        <span class="text-muted" style="font-size:0.75rem">triés par position DF puis classement intermédiaire</span>
       </div>
-      ${allReplacements.map((d, i) => `
-        <div class="ses-fin-pair ses-fin-pair--reserve">
-          <span class="ses-fin-rank ses-fin-rank--reserve">${i+1}</span>
-          <div class="ses-fin-pair-pilots">
-            ${pilotCard(d, d.dfNum)}
-          </div>
-          <span class="ses-fin-total-pts">
-            ${d.dfPosition}e DF${d.dfNum}
-            <span style="font-size:0.68rem;color:var(--clr-text-3)">
-              · inter. ${interimMap[d.driverId] ?? '?'}e
+      ${allReplacements.map((d, i) => {
+        const isAssigned = assignedIds.has(d.driverId);
+        const isForfait  = _finForfaits.has(d.driverId);
+        return `
+          <div class="ses-fin-pair ${isForfait ? '' : isAssigned ? '' : 'ses-fin-pair--reserve'}">
+            <span class="ses-fin-rank ${isForfait || isAssigned ? '' : 'ses-fin-rank--reserve'}">${i+1}</span>
+            <div class="ses-fin-pair-pilots">${pilotCard(d, d.dfNum)}</div>
+            <span class="ses-fin-total-pts">
+              ${d.dfPosition}e DF${d.dfNum}
+              <span style="font-size:0.68rem;color:var(--clr-text-3)">· inter. ${interimMap[d.driverId] ?? '?'}e</span>
             </span>
-          </span>
-        </div>
-      `).join('')}
+          </div>`;
+      }).join('')}
+    ` : ''}
+
+    ${forfaitFinaleDrivers.length > 0 ? `
+      <div class="ses-fin-section-title" style="margin-top:var(--sp-lg);color:var(--clr-danger)">
+        🚫 Forfaits Finale — non rappelables
+        <span class="text-muted" style="font-size:0.75rem">Utilisez ↩ Annuler pour corriger une erreur</span>
+      </div>
+      ${forfaitFinaleDrivers.map(p => `
+        <div class="ses-fin-pair" style="opacity:0.4">
+          <span class="ses-fin-rank">—</span>
+          <div class="ses-fin-pair-pilots">
+            <div class="ses-fin-pilot">
+              <span class="ses-pilot-num">${escHtml(p.carNumber)}</span>
+              <span class="ses-pilot-name" style="text-decoration:line-through">${escHtml(p.firstName)} <strong>${escHtml(p.lastName)}</strong></span>
+              <button class="btn btn-secondary btn-sm ses-annuler-fin-forfait-btn" data-driver-id="${p.driverId}"
+                style="opacity:1">↩ Annuler</button>
+            </div>
+          </div>
+        </div>`).join('')}
     ` : ''}
   `;
 
   document.getElementById('ses-auto-fin-btn2')?.addEventListener('click', () => autoAssignFinale());
 
+  // Boutons forfait Finale
+  panel.querySelectorAll('.ses-fin-forfait-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      await handleFinaleForfait(btn.dataset.driverId, allReplacements, panel, session);
+    });
+  });
+
+  // Boutons annuler forfait Finale
+  panel.querySelectorAll('.ses-annuler-fin-forfait-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const driverId = btn.dataset.driverId;
+      _finForfaits.delete(driverId);
+      toast('Forfait Finale annulé — pilote disponible à nouveau', 'info', 3000);
+      const updated = await getParticipantsData(allSessions.find(s => s.type === 'FIN')?.id || '');
+      await renderFinaleStandings(panel, session, updated);
+    });
+  });
+
+  // Boutons assignation manuelle
   panel.querySelectorAll('.ses-df-action').forEach(btn => {
     btn.addEventListener('click', async () => {
       const driverId = btn.dataset.driverId;
       const action   = btn.dataset.action;
       const fin      = allSessions.find(s => s.type === 'FIN');
       if (!fin) return;
-
       if (action === 'add') {
         const driver = [...df1Results, ...df2Results].find(d => d.driverId === driverId);
         if (driver) await addParticipant(fin.id, driver);
       } else if (action === 'remove-fin') {
         await removeParticipant(fin.id, driverId);
       }
-
       const updated = await getParticipantsData(fin.id);
       await renderFinaleStandings(panel, session, updated);
     });

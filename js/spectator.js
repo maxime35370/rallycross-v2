@@ -17,7 +17,6 @@ let selectedCategory  = '';
 let allMeetings       = [];
 let allSessions       = [];
 let unsubResults      = null;
-let lastResults       = [];
 
 let _interimRefreshTimer = null;
 
@@ -64,6 +63,8 @@ async function loadSessions() {
 
 // ─────────────────────────────────────────────────────────
 // LIVE LISTENERS
+// Les callbacks mettent à jour _carouselData UNIQUEMENT
+// Le rendu visuel est géré exclusivement par le carrousel
 // ─────────────────────────────────────────────────────────
 
 async function subscribeResults(sessionId) {
@@ -75,21 +76,19 @@ async function subscribeResults(sessionId) {
   );
   const q = query(collection(db, 'results'), where('sessionId', '==', sessionId));
   unsubResults = onSnapshot(q, snap => {
-    lastResults = snap.docs.map(d => d.data());
+    const results = snap.docs.map(d => d.data());
     const session = allSessions.find(s => s.id === sessionId);
 
+    // Mise à jour des données uniquement — pas de re-render
     if (session?.type === 'MQ') {
-      _carouselData.mqResults = lastResults;
+      _carouselData.mqResults = results;
       _carouselData.mqLabel   = `Manche qualificative ${session.num}`;
     }
     if (session?.type === 'EC') {
-      _carouselData.ecResults = lastResults;
+      _carouselData.ecResults = results;
     }
-
-    // Refresh immédiat si on est sur la slide des résultats (slide 0)
-    if (_carouselSlide === 0) {
-      renderCarouselSlide();
-    }
+    if (!_carouselData.sessionResults) _carouselData.sessionResults = {};
+    _carouselData.sessionResults[sessionId] = results;
 
     updateTimestamp();
   });
@@ -100,12 +99,8 @@ async function refreshInterimLive() {
   try {
     const { calcInterimStandings } = await import('./calc.js');
     const rows = await calcInterimStandings(db, allSessions);
-    const sorted = rows.sort((a, b) => (a.position ?? 99) - (b.position ?? 99));
-    _carouselData.interimRows = sorted;
-    // Refresh immédiat si on est sur la slide intermédiaire
-    if (_carouselSlide === 1) {
-      renderCarouselSlide();
-    }
+    // Mise à jour des données uniquement — pas de re-render
+    _carouselData.interimRows = rows.sort((a, b) => (a.position ?? 99) - (b.position ?? 99));
     updateTimestamp();
   } catch {}
 }
@@ -178,7 +173,7 @@ async function renderContent() {
   const content = document.getElementById('spc-content');
   if (!content || !selectedMeetingId || !selectedCategory) return;
 
-  // Reset complet des données
+  // Reset complet
   _carouselData = { mqResults: [], mqLabel: '', interimRows: [], ecResults: [], sessionResults: {} };
   _carouselSlide = 0;
 
@@ -195,37 +190,39 @@ async function renderContent() {
   const currentSR      = withResults[withResults.length - 1] || null;
   const currentSession = currentSR?.session || null;
 
-  if (currentSession) await subscribeResults(currentSession.id);
-
-  content.innerHTML = `
-    <div id="spc-carousel-block"></div>
-    <div class="spc-updated" id="spc-timestamp">En attente de données…</div>
-  `;
-
-  await refreshInterimLive();
-  if (_interimRefreshTimer) clearInterval(_interimRefreshTimer);
-  _interimRefreshTimer = setInterval(refreshInterimLive, 30000);
-
+  // Pré-charger toutes les données avant d'afficher
   const sessionResultsMap = {};
   for (const s of allSessions) {
     const res = await fsQuery('results', [['sessionId','==',s.id]]);
     sessionResultsMap[s.id] = res;
-    if (s.type === 'EC' && res.length > 0) _carouselData.ecResults = res;
-    if (s.type === 'MQ' && res.length > 0) {
-      _carouselData.mqResults = res;
-      _carouselData.mqLabel   = `Manche qualificative ${s.num}`;
-    }
-    if (s.type === 'DF' && res.length > 0) {
-      _carouselData[`df${s.num}Results`] = res;
-      _carouselData[`df${s.num}Label`]   = `Demi-finale ${s.num}`;
-    }
+    if (s.type === 'EC'  && res.length > 0) _carouselData.ecResults = res;
+    if (s.type === 'MQ'  && res.length > 0) { _carouselData.mqResults = res; _carouselData.mqLabel = `Manche qualificative ${s.num}`; }
+    if (s.type === 'DF'  && res.length > 0) { _carouselData[`df${s.num}Results`] = res; }
     if (s.type === 'FIN' && res.length > 0) _carouselData.finResults = res;
   }
   _carouselData.sessionResults = sessionResultsMap;
   _carouselData.phase = detectPhase();
 
+  // Classement intermédiaire initial
+  await refreshInterimLive();
+
+  // Afficher la structure HTML
+  content.innerHTML = `
+    <div id="spc-carousel-block"></div>
+    <div class="spc-updated" id="spc-timestamp">En attente de données…</div>
+  `;
+
+  // Abonnements live (mettent à jour _carouselData uniquement)
+  if (currentSession) await subscribeResults(currentSession.id);
   await subscribeAdvancedSessions();
+
+  // Refresh intermédiaire toutes les 30s (données uniquement)
+  if (_interimRefreshTimer) clearInterval(_interimRefreshTimer);
+  _interimRefreshTimer = setInterval(refreshInterimLive, 30000);
+
   loadChampionshipData();
+
+  // Démarrer le carrousel — seul maître du rendu
   startCarousel();
 }
 
@@ -286,33 +283,34 @@ async function subscribeAdvancedSessions() {
       const results = snap.docs.map(d => d.data());
       if (!_carouselData.sessionResults) _carouselData.sessionResults = {};
       _carouselData.sessionResults[s.id] = results;
+      // Mise à jour phase si nécessaire
       const newPhase = detectPhase();
       if (newPhase !== _carouselData.phase) {
         _carouselData.phase = newPhase;
         _carouselSlide = 0;
+        // Changement de phase → re-render complet
+        renderCarouselSlide();
       }
-      if (s.type === 'DF') {
-        _carouselData[`df${s.num}Results`] = results;
-      } else if (s.type === 'FIN') {
-        _carouselData.finResults = results;
-      }
-      if (_carouselSlide === 0) renderCarouselSlide();
+      if (s.type === 'DF')  _carouselData[`df${s.num}Results`] = results;
+      if (s.type === 'FIN') _carouselData.finResults = results;
       updateTimestamp();
     });
   }
 }
 
 // ─────────────────────────────────────────────────────────
-// GESTION DES LISTENERS / ÉTAT CARROUSEL
+// ÉTAT CARROUSEL
 // ─────────────────────────────────────────────────────────
 
-let unsubNextParts    = null;
-let _carouselTimer    = null;
-let _carouselSlide    = 0;
-let _carouselData     = { mqResults: [], mqLabel: '', interimRows: [], ecResults: [], sessionResults: {} };
-let _dfScrollTimer    = null;
-let _dfScrollPhase    = 0;
-let _stickyScrollTimer = null; // scroll sticky pour EC/MQ/interim
+let unsubNextParts     = null;
+let _carouselTimer     = null;
+let _carouselSlide     = 0;
+let _carouselData      = { mqResults: [], mqLabel: '', interimRows: [], ecResults: [], sessionResults: {} };
+let _dfScrollTimer     = null;
+let _dfScrollPhase     = 0;
+let _stickyScrollTimer = null;
+let _stickyAnimFrameId = null;
+let _stickyPauseTimer  = null;
 
 function startRefresh() {
   const dot = document.getElementById('spc-live-dot');
@@ -320,9 +318,9 @@ function startRefresh() {
 }
 
 function stopRefresh() {
-  if (unsubResults)          { unsubResults();   unsubResults   = null; }
-  if (unsubNextParts)        { unsubNextParts(); unsubNextParts = null; }
-  if (_interimRefreshTimer)  { clearInterval(_interimRefreshTimer); _interimRefreshTimer = null; }
+  if (unsubResults)         { unsubResults();   unsubResults   = null; }
+  if (unsubNextParts)       { unsubNextParts(); unsubNextParts = null; }
+  if (_interimRefreshTimer) { clearInterval(_interimRefreshTimer); _interimRefreshTimer = null; }
   const dot = document.getElementById('spc-live-dot');
   if (dot) dot.classList.remove('spc-live-dot--active');
 }
@@ -348,7 +346,7 @@ function bindEvents() {
 }
 
 // ─────────────────────────────────────────────────────────
-// CARROUSEL AUTO
+// CARROUSEL AUTO — seul maître du rendu visuel
 // ─────────────────────────────────────────────────────────
 
 function startCarousel() {
@@ -357,9 +355,8 @@ function startCarousel() {
   _carouselTimer = setInterval(() => {
     const total = getCarouselTotal();
     _carouselSlide = (_carouselSlide + 1) % total;
-    stopAllScrolls();
     renderCarouselSlide();
-  }, 30000);
+  }, 20000);
 }
 
 function stopCarousel() {
@@ -368,33 +365,27 @@ function stopCarousel() {
 }
 
 function stopAllScrolls() {
-  if (_dfScrollTimer)     { clearTimeout(_dfScrollTimer);     _dfScrollTimer    = null; }
-  if (_stickyScrollTimer) { clearTimeout(_stickyScrollTimer); _stickyScrollTimer = null; }
-  // Annuler l'animation frame si en cours
-  const scrollable = document.querySelector('.spc-sticky-scroll');
-  if (scrollable?._stopScroll) scrollable._stopScroll();
+  if (_dfScrollTimer)     { clearTimeout(_dfScrollTimer);             _dfScrollTimer     = null; }
+  if (_stickyScrollTimer) { clearTimeout(_stickyScrollTimer);         _stickyScrollTimer = null; }
+  if (_stickyAnimFrameId) { cancelAnimationFrame(_stickyAnimFrameId); _stickyAnimFrameId = null; }
+  if (_stickyPauseTimer)  { clearTimeout(_stickyPauseTimer);          _stickyPauseTimer  = null; }
   _dfScrollPhase = 0;
 }
 
-// Nombre de slides selon la phase et les données disponibles
 function getCarouselTotal() {
   const phase = _carouselData.phase;
-  if (phase === 'FIN') return 1;
-  if (phase === 'DF1' || phase === 'DF2') return 1;
+  if (phase === 'FIN' || phase === 'DF1' || phase === 'DF2') return 1;
 
   const hasEc = (_carouselData.ecResults || []).filter(r => r.ms).length > 0;
   const hasMq = (_carouselData.mqResults || []).length > 0;
+  if (!hasMq) return 1;
 
-  if (!hasMq) return hasEc ? 1 : 1; // EC seul → 1 slide
-
-  // Détecter le numéro de la MQ la plus avancée avec des résultats
   const currentMqNum = allSessions
     .filter(s => s.type === 'MQ')
     .filter(s => (_carouselData.sessionResults?.[s.id] || []).length > 0)
     .reduce((max, s) => Math.max(max, s.num ?? 0), 0);
 
-  if (currentMqNum <= 1) return 1; // MQ1 → seulement résultats
-  return 2;                         // MQ2+ → résultats + intermédiaire
+  return currentMqNum <= 1 ? 1 : 2;
 }
 
 function detectPhase() {
@@ -412,6 +403,7 @@ function renderCarouselSlide() {
   const block = document.getElementById('spc-carousel-block');
   if (!block) return;
 
+  // Arrêter les scrolls en cours avant de re-rendre
   stopAllScrolls();
 
   const phase = _carouselData.phase || 'MQ';
@@ -426,55 +418,43 @@ function renderCarouselSlide() {
 
   let html = '';
 
-  // ── Phase MQ / EC ──────────────────────────────────────
   if (phase === 'MQ') {
     const hasMq = (_carouselData.mqResults || []).length > 0;
-
     if (!hasMq) {
-      // Seulement EC
       html = buildStickySlide(
         (_carouselData.ecResults || []).filter(r => r.ms).sort((a,b) => a.ms - b.ms),
-        '⏱️ Essais chronométrés — Top 10',
-        'ec',
-        true // afficher bonus EC
+        '⏱️ Essais chronométrés — Top 10', 'ec', true
       );
     } else if (_carouselSlide === 0) {
-      // Résultats MQ
-      const sorted = sortResults(_carouselData.mqResults || []);
-      html = buildStickySlide(sorted, `🏁 ${_carouselData.mqLabel || 'Manche qualificative'}`, 'mq', false);
+      html = buildStickySlide(
+        sortResults(_carouselData.mqResults || []),
+        `🏁 ${_carouselData.mqLabel || 'Manche qualificative'}`, 'mq', false
+      );
     } else {
-      // Classement intermédiaire
       html = buildStickySlide(
         _carouselData.interimRows || [],
-        '🏆 Classement intermédiaire',
-        'interim',
-        false,
-        true // mode intermédiaire (afficher points)
+        '🏆 Classement intermédiaire', 'interim', false, true
       );
     }
   }
-
-  // ── Phase DF ───────────────────────────────────────────
   else if (phase === 'DF1') html = buildDfCombinedSlide('DF1');
   else if (phase === 'DF2') html = buildDfCombinedSlide('DF2');
-
-  // ── Phase Finale ───────────────────────────────────────
   else if (phase === 'FIN') html = buildFinCombinedSlide();
 
   block.innerHTML = indicators + html;
   startCountdown();
 
-  // Démarrer le bon scroll selon la phase
+  // Démarrer le scroll APRÈS que le DOM soit prêt
   if (phase === 'MQ') {
-    startStickyScroll();
-  } else if ((phase === 'DF1' || phase === 'DF2' || phase === 'FIN') && _carouselSlide === 0) {
-    startDfAutoScroll();
+    setTimeout(() => startStickyScroll(), 150);
+  } else if (phase === 'DF1' || phase === 'DF2' || phase === 'FIN') {
+    setTimeout(() => startDfAutoScroll(), 150);
   }
 }
 
 // ─────────────────────────────────────────────────────────
-// SCROLL STICKY TOP 5 (EC, MQ, Intermédiaire)
-// Top 5 fixe, les suivants défilent en 15s, pause 5s en bas
+// SCROLL STICKY TOP 5
+// Variables module — annulation fiable via stopAllScrolls()
 // ─────────────────────────────────────────────────────────
 
 function startStickyScroll() {
@@ -484,49 +464,37 @@ function startStickyScroll() {
   const maxScroll = scrollable.scrollHeight - scrollable.clientHeight;
   if (maxScroll <= 10) return;
 
-  // Vitesse : parcourir maxScroll en 15 secondes
-  // = maxScroll px / (15 * 60 frames) ≈ px par frame
-  const pxPerFrame = maxScroll / (15 * 60);
-  let animFrameId  = null;
-  let pauseTimer   = null;
-  let scrolling    = true; // true = descente, false = pause/remontée
+  // px à avancer par frame pour parcourir maxScroll en 15s à ~60fps
+  const pxPerFrame = maxScroll / (14 * 60);
 
   function scrollDown() {
     const el = document.querySelector('.spc-sticky-scroll');
     if (!el) return;
 
-    const current = el.scrollTop;
-    const max     = el.scrollHeight - el.clientHeight;
-
-    if (current < max - 1) {
+    if (el.scrollTop < el.scrollHeight - el.clientHeight - 1) {
       el.scrollTop += pxPerFrame;
-      animFrameId = requestAnimationFrame(scrollDown);
+      _stickyAnimFrameId = requestAnimationFrame(scrollDown);
     } else {
-      // Arrivé en bas — pause 5s puis remontée instantanée
-      pauseTimer = setTimeout(() => {
+      // Pause 3s en bas
+      _stickyPauseTimer = setTimeout(() => {
         const e2 = document.querySelector('.spc-sticky-scroll');
         if (e2) e2.scrollTop = 0;
-        pauseTimer = setTimeout(() => {
-          animFrameId = requestAnimationFrame(scrollDown);
-        }, 3000); // 3s en haut
-      }, 3000); // 3s en bas
+        // Pause 3s en haut puis recommence
+        _stickyPauseTimer = setTimeout(() => {
+          _stickyAnimFrameId = requestAnimationFrame(scrollDown);
+        }, 3000);
+      }, 3000);
     }
   }
 
-  // Démarrer après 3s en haut (temps de lecture du top 5)
+  // Pause initiale de 3s pour lire le top 5
   _stickyScrollTimer = setTimeout(() => {
-    animFrameId = requestAnimationFrame(scrollDown);
+    _stickyAnimFrameId = requestAnimationFrame(scrollDown);
   }, 3000);
-
-  // Stocker les refs pour pouvoir tout annuler
-  scrollable._stopScroll = () => {
-    if (animFrameId) cancelAnimationFrame(animFrameId);
-    if (pauseTimer)  clearTimeout(pauseTimer);
-  };
 }
 
 // ─────────────────────────────────────────────────────────
-// SCROLL DF / FINALE (comportement existant)
+// SCROLL DF / FINALE
 // ─────────────────────────────────────────────────────────
 
 function startDfAutoScroll() {
@@ -602,17 +570,9 @@ function statusLabel(r) {
   return `<span class="spc-status-badge">${lbl}</span>`;
 }
 
-/**
- * Slide générique avec top 5 sticky + scroll des suivants
- * @param {Array}   rows       - tableau de résultats triés
- * @param {string}  title      - titre de la slide
- * @param {string}  type       - classe CSS (ec, mq, interim)
- * @param {boolean} showBonus  - afficher les bonus EC (+5/+4...)
- * @param {boolean} isInterim  - mode intermédiaire (afficher pts)
- */
 function buildStickySlide(rows, title, type, showBonus = false, isInterim = false) {
-  const top5  = rows.slice(0, 5);
-  const rest  = rows.slice(5);
+  const top5 = rows.slice(0, 5);
+  const rest = rows.slice(5);
 
   const renderRow = (r, i, isTop = false) => {
     const pos     = isInterim ? r.position : (r.ms ? i + 1 : '—');
@@ -624,14 +584,12 @@ function buildStickySlide(rows, title, type, showBonus = false, isInterim = fals
     const bonus = showBonus && i < 5
       ? `<span class="spc-ec-bonus">+${5 - i} pts</span>`
       : '';
-
     return `
       <div class="spc-carousel-row ${i === 0 && isTop ? 'spc-carousel-row--first' : ''}">
         <span class="spc-carousel-pos">${pos}</span>
         <span class="spc-carousel-num">${escHtml(r.carNumber)}</span>
-        <span class="spc-carousel-name">${escHtml((r.lastName || r.lastName || '').toUpperCase())}</span>
-        ${timeVal}
-        ${bonus}
+        <span class="spc-carousel-name">${escHtml((r.lastName || '').toUpperCase())}</span>
+        ${timeVal}${bonus}
       </div>`;
   };
 
@@ -644,18 +602,12 @@ function buildStickySlide(rows, title, type, showBonus = false, isInterim = fals
       ${showBonus ? `<div class="spc-ec-note">★ Top 5 : bonus points (+5/+4/+3/+2/+1) ajoutés au classement intermédiaire</div>` : ''}
       ${rows.length === 0
         ? `<div class="spc-carousel-empty">En attente des résultats…</div>`
-        : `
-          <!-- Top 5 sticky -->
-          <div class="spc-sticky-top5">
+        : `<div class="spc-sticky-top5">
             ${top5.map((r, i) => renderRow(r, i, true)).join('')}
-          </div>
-          <!-- Suite scrollable -->
-          ${rest.length > 0 ? `
-            <div class="spc-sticky-scroll">
-              ${rest.map((r, i) => renderRow(r, i + 5, false)).join('')}
-            </div>
-          ` : ''}
-        `}
+           </div>
+           ${rest.length > 0
+             ? `<div class="spc-sticky-scroll">${rest.map((r, i) => renderRow(r, i + 5, false)).join('')}</div>`
+             : ''}`}
     </div>`;
 }
 
@@ -663,20 +615,6 @@ function buildDfCombinedSlide(phase) {
   const dfNum  = phase === 'DF1' ? 1 : 2;
   const dfRes  = sortResults(_carouselData[`df${dfNum}Results`] || []);
   const DF_PTS = [0,10,8,6,5,4,3,2,1];
-
-  const dfSection = `
-    <div class="spc-df-results-section">
-      <div class="spc-df-section-title">🏁 Demi-finale ${dfNum}</div>
-      ${dfRes.length === 0
-        ? `<div class="spc-carousel-empty">En attente des résultats…</div>`
-        : dfRes.map((r, i) => `
-          <div class="spc-carousel-row ${i === 0 ? 'spc-carousel-row--first' : ''}">
-            <span class="spc-carousel-pos">${r.ms ? i + 1 : '—'}</span>
-            <span class="spc-carousel-num">${escHtml(r.carNumber)}</span>
-            <span class="spc-carousel-name">${escHtml((r.lastName || '').toUpperCase())}</span>
-            <span class="spc-carousel-time">${r.ms ? msToDisplay(r.ms) : statusLabel(r)}</span>
-          </div>`).join('')}
-    </div>`;
 
   const interim  = _carouselData.interimRows || [];
   const df1Res   = sortResults(_carouselData.df1Results || []);
@@ -708,8 +646,19 @@ function buildDfCombinedSlide(phase) {
         Demi-finale ${dfNum}
         <span class="spc-carousel-timer" id="spc-ctimer"></span>
       </div>
-      ${dfSection}
-      <div class="spc-df-cumul-sticky" id="spc-df-sticky">
+      <div class="spc-df-results-section">
+        <div class="spc-df-section-title">🏁 Demi-finale ${dfNum}</div>
+        ${dfRes.length === 0
+          ? `<div class="spc-carousel-empty">En attente des résultats…</div>`
+          : dfRes.map((r, i) => `
+            <div class="spc-carousel-row ${i === 0 ? 'spc-carousel-row--first' : ''}">
+              <span class="spc-carousel-pos">${r.ms ? i + 1 : '—'}</span>
+              <span class="spc-carousel-num">${escHtml(r.carNumber)}</span>
+              <span class="spc-carousel-name">${escHtml((r.lastName || '').toUpperCase())}</span>
+              <span class="spc-carousel-time">${r.ms ? msToDisplay(r.ms) : statusLabel(r)}</span>
+            </div>`).join('')}
+      </div>
+      <div class="spc-df-cumul-sticky">
         <div class="spc-df-section-title">📊 ${title}</div>
         <div class="spc-cumul-headers">
           <span class="spc-cumul-hdr">Inter.</span>
@@ -809,7 +758,7 @@ function buildFinCombinedSlide() {
 }
 
 function startCountdown() {
-  let remaining = 30;
+  let remaining = 20;
   const update = () => {
     const el = document.getElementById('spc-ctimer');
     if (el) el.textContent = `${remaining}s`;
