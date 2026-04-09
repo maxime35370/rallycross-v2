@@ -5,6 +5,7 @@
 
 import { db } from './firebase.js';
 import { escHtml } from './utils.js';
+import { toast } from './app.js';
 
 // ─────────────────────────────────────────────────────────
 // ENREGISTREMENT D'UN EVENEMENT
@@ -48,6 +49,7 @@ export async function logAudit(action, entity, entityId, details = {}) {
     });
   } catch (err) {
     console.error('Audit log error:', err);
+    toast(`Audit log: ${err.code || err.message}`, 'warning', 5000);
   }
 }
 
