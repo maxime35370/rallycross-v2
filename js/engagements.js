@@ -7,6 +7,7 @@ import { db } from './firebase.js';
 import { toast } from './app.js';
 import { escHtml, CATEGORIES } from './utils.js';
 import { logAudit } from './audit.js';
+import { requireAuth } from './auth.js';
 
 // ─────────────────────────────────────────────────────────
 // ÉTAT LOCAL
@@ -89,6 +90,7 @@ async function loadEngaged() {
 
 async function toggleEngagement(driver) {
   if (!db || !selectedMeetingId) return;
+  if (!requireAuth()) return;
   const { collection, query, where, getDocs, addDoc, deleteDoc } = await import(
     'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
   );
@@ -171,6 +173,7 @@ async function toggleEngagement(driver) {
 
 async function clearAllEngagements() {
   if (!db || !selectedMeetingId || !selectedCategory) return;
+  if (!requireAuth()) return;
   if (!window.confirm(`Retirer tous les pilotes ${selectedCategory} de ce meeting ?`)) return;
 
   const { collection, query, where, getDocs, writeBatch } = await import(
@@ -192,6 +195,7 @@ async function clearAllEngagements() {
 
 async function engageAll() {
   if (!db || !selectedMeetingId || allDrivers.length === 0) return;
+  if (!requireAuth()) return;
   const { collection, query, where, getDocs, addDoc } = await import(
     'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
   );

@@ -33,6 +33,17 @@ export function isProtectedView(viewId) {
   return PROTECTED_VIEWS.includes(viewId);
 }
 
+/**
+ * Verifie que l'utilisateur est connecte avant une action d'ecriture.
+ * Affiche un toast d'erreur si non connecte.
+ * @returns {boolean} true si authentifie, false sinon
+ */
+export function requireAuth() {
+  if (currentUser) return true;
+  toast('Connexion requise pour cette action', 'error');
+  return false;
+}
+
 // ─────────────────────────────────────────────────────────
 // UI : Barre d'auth dans le menu
 // ─────────────────────────────────────────────────────────

@@ -6,6 +6,7 @@
 import { db } from './firebase.js';
 import { toast } from './app.js';
 import { logAudit } from './audit.js';
+import { requireAuth } from './auth.js';
 import { escHtml } from './utils.js';
 
 // ─────────────────────────────────────────────────────────
@@ -983,6 +984,7 @@ function syncCurrentTabToData() {
 // ─────────────────────────────────────────────────────────
 
 async function onSaveAsReglement() {
+  if (!requireAuth()) return;
   syncCurrentTabToData();
   const defaultName = _editData.regulation || _editData.name || 'Nouveau reglement';
   const name = window.prompt('Nom du reglement :', defaultName);
@@ -1006,6 +1008,7 @@ async function onSaveAsReglement() {
 // ─────────────────────────────────────────────────────────
 
 async function saveChamp() {
+  if (!requireAuth()) return;
   syncCurrentTabToData();
 
   if (!_editData.name)                    { toast('Le nom est obligatoire', 'error'); return; }
@@ -1040,6 +1043,7 @@ async function saveChamp() {
 // ─────────────────────────────────────────────────────────
 
 async function duplicateChamp(champId, champs) {
+  if (!requireAuth()) return;
   const original = champs.find(c => c.id === champId);
   if (!original || !db) return;
   const copy = JSON.parse(JSON.stringify(original));
@@ -1068,6 +1072,7 @@ async function duplicateChamp(champId, champs) {
 // ─────────────────────────────────────────────────────────
 
 async function deleteChamp(champId, name) {
+  if (!requireAuth()) return;
   if (!window.confirm(`Supprimer "${name}" ?\nCette action est irréversible.`)) return;
   if (!db) return;
   try {

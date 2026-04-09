@@ -9,6 +9,7 @@
 import { db } from './firebase.js';
 import { toast } from './app.js';
 import { logAudit } from './audit.js';
+import { requireAuth } from './auth.js';
 import { msToDisplay, inputToMs, msToFields, escHtml, parseTimeString } from './utils.js';
 
 // ─────────────────────────────────────────────────────────
@@ -270,6 +271,7 @@ async function loadResults() {
 
 async function saveResult(driverId, ms, status, manualPosition = null) {
   if (!db || !selectedSessionId) return;
+  if (!requireAuth()) return;
   const { collection, doc, setDoc } = await import(
     'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
   );
@@ -310,6 +312,7 @@ async function saveResult(driverId, ms, status, manualPosition = null) {
 
 async function clearResult(driverId) {
   if (!db) return;
+  if (!requireAuth()) return;
   const existing = results[driverId];
   if (!existing?.docId) return;
   const { doc, deleteDoc } = await import(
