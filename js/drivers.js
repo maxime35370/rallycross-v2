@@ -205,6 +205,26 @@ function getFilteredDrivers() {
 // RENDU
 // ─────────────────────────────────────────────────────────
 
+/**
+ * Retourne les categories a afficher selon le championnat actif.
+ * Si le championnat a des categories definies, les utilise.
+ * Sinon, retourne les plages par defaut (FFSA).
+ */
+function getActiveCategories() {
+  const champ = getActiveChampionship();
+  if (champ?.categories?.length) {
+    return champ.categories.map(c => ({
+      category: c.id || c.name,
+      code: (c.id || c.name || '').substring(0, 4).toUpperCase(),
+      name: c.name || c.id,
+      min: c.carNumberRanges?.[0]?.min || null,
+      max: c.carNumberRanges?.[0]?.max || null,
+      freeNumbers: c.freeNumbers || false,
+    }));
+  }
+  return CAR_NUMBER_RANGES.map(r => ({ ...r, name: r.category, freeNumbers: false }));
+}
+
 function renderCategoryField() {
   const freeCats = getChampFreeNumberCategories();
   if (freeCats) {
@@ -248,9 +268,9 @@ function renderView() {
       <!-- Filtre catégorie -->
       <select class="toolbar-select" id="drv-filter-cat">
         <option value="">Toutes catégories</option>
-        ${CAR_NUMBER_RANGES.map(r => `
+        ${getActiveCategories().map(r => `
           <option value="${r.category}" ${filterCat === r.category ? 'selected' : ''}>
-            ${r.category} (${r.code}) — N°${r.min}–${r.max}
+            ${escHtml(r.name)}${r.min ? ` (N°${r.min}–${r.max})` : r.freeNumbers ? ' (N° libre)' : ''}
           </option>
         `).join('')}
       </select>
@@ -270,12 +290,12 @@ function renderView() {
       <span class="drv-counter text-muted" id="drv-counter"></span>
     </div>
 
-    <!-- Légende des plages -->
+    <!-- Légende des catégories -->
     <div class="drv-ranges" id="drv-ranges">
-      ${CAR_NUMBER_RANGES.map(r => `
-        <div class="drv-range-pill drv-range-${r.code.toLowerCase()}">
-          <span class="drv-range-code">${r.code}</span>
-          <span class="drv-range-nums">${r.min}–${r.max}</span>
+      ${getActiveCategories().map(r => `
+        <div class="drv-range-pill">
+          <span class="drv-range-code">${escHtml(r.code)}</span>
+          <span class="drv-range-nums">${r.freeNumbers ? 'N° libre' : r.min ? r.min + '–' + r.max : ''}</span>
         </div>
       `).join('')}
     </div>
