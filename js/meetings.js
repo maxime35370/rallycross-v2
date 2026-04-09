@@ -8,6 +8,7 @@ import { toast } from './app.js';
 import { escHtml, sanitize, formatDate, CATEGORIES } from './utils.js';
 import { logAudit } from './audit.js';
 import { requireAuth } from './auth.js';
+import { getActiveChampionshipId, getActiveChampionship } from './context.js';
 
 // ─────────────────────────────────────────────────────────
 // CONSTANTES
@@ -71,11 +72,15 @@ async function loadMeetings() {
 
   if (unsubscribe) unsubscribe();
 
-  const q = query(
-    collection(db, 'meetings'),
+  const champId = getActiveChampionshipId();
+  const constraints = [
     where('year', '==', filterYear),
-    orderBy('date', 'asc')
-  );
+    orderBy('date', 'asc'),
+  ];
+  // Filtrer par championnat si un est selectionne
+  if (champId) constraints.unshift(where('championshipId', '==', champId));
+
+  const q = query(collection(db, 'meetings'), ...constraints);
 
   unsubscribe = onSnapshot(q, snap => {
     allMeetings = snap.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -113,9 +118,11 @@ async function saveMeeting(data) {
       return editingId;
 
     } else {
-      // Création du meeting
+      // Création du meeting (lie au championnat actif)
+      const champId = getActiveChampionshipId();
       const meetRef = await addDoc(collection(db, 'meetings'), {
         ...data,
+        championshipId: champId || null,
         createdAt: new Date(),
       });
 

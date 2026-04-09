@@ -8,6 +8,7 @@ import { toast, showView, categoryBadge } from './app.js';
 import { escHtml, sanitize, CATEGORIES } from './utils.js';
 import { logAudit } from './audit.js';
 import { requireAuth } from './auth.js';
+import { getActiveChampionshipId } from './context.js';
 import { showDriverProfile } from './driverProfile.js';
 
 // ─────────────────────────────────────────────────────────
@@ -61,11 +62,14 @@ async function loadDrivers() {
   // Arrêter le listener précédent si existant
   if (unsubscribe) unsubscribe();
 
-  const q = query(
-    collection(db, 'drivers'),
+  const champId = getActiveChampionshipId();
+  const constraints = [
     where('year', '==', filterYear),
-    orderBy('carNumber', 'asc')
-  );
+    orderBy('carNumber', 'asc'),
+  ];
+  if (champId) constraints.unshift(where('championshipId', '==', champId));
+
+  const q = query(collection(db, 'drivers'), ...constraints);
 
   unsubscribe = onSnapshot(q, snap => {
     allDrivers = snap.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -83,13 +87,16 @@ async function saveDriver(data) {
   const { collection, doc, addDoc, updateDoc, query, where, getDocs } =
     await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
 
-  // Vérifier doublon numéro (même année, même catégorie, pas le même pilote)
-  const q = query(
-    collection(db, 'drivers'),
+  // Vérifier doublon numéro (même année, même catégorie, même championnat)
+  const champId = getActiveChampionshipId();
+  const dupConstraints = [
     where('year',      '==', data.year),
     where('carNumber', '==', data.carNumber),
-    where('category',  '==', data.category)
-  );
+    where('category',  '==', data.category),
+  ];
+  if (champId) dupConstraints.push(where('championshipId', '==', champId));
+
+  const q = query(collection(db, 'drivers'), ...dupConstraints);
   const snap = await getDocs(q);
   const duplicate = snap.docs.find(d => d.id !== editingId);
   if (duplicate) {
@@ -100,12 +107,13 @@ async function saveDriver(data) {
   try {
     if (editingId) {
       const ref = doc(db, 'drivers', editingId);
-      await updateDoc(ref, data);
+      await updateDoc(ref, { ...data, championshipId: champId || null });
       logAudit('update', 'driver', editingId, { label: `${data.firstName} ${data.lastName} #${data.carNumber}` });
       toast('Pilote modifié ✓', 'success');
     } else {
       const newRef = await addDoc(collection(db, 'drivers'), {
         ...data,
+        championshipId: champId || null,
         createdAt: new Date(),
       });
       logAudit('create', 'driver', newRef.id, { label: `${data.firstName} ${data.lastName} #${data.carNumber}` });
