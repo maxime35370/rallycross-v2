@@ -83,19 +83,18 @@ export async function initFirebase() {
     getApps().forEach(app => deleteApp(app));
 
     const app = initializeApp(config);
-    db = getFirestore(app);
 
-    // Activer la persistence offline (cache local pour lecture hors-ligne)
+    // Initialiser Firestore avec cache offline persistent
+    const { initializeFirestore, persistentLocalCache, persistentMultipleTabManager } = await import(
+      'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
+    );
     try {
-      const { enableIndexedDbPersistence } = await import(
-        'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
-      );
-      await enableIndexedDbPersistence(db);
-    } catch (err) {
-      // Deja active dans un autre onglet ou non supporte — pas grave
-      if (err.code !== 'failed-precondition' && err.code !== 'unimplemented') {
-        console.warn('Offline persistence:', err.message);
-      }
+      db = initializeFirestore(app, {
+        localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }),
+      });
+    } catch {
+      // Fallback si deja initialise ou non supporte
+      db = getFirestore(app);
     }
 
     setFirebaseStatus('connected', `Connecté · ${config.projectId}`);
