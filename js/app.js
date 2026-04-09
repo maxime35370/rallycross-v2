@@ -315,6 +315,11 @@ async function loadApp() {
   const { initAuth } = await import('./auth.js');
   await initAuth();
 
+  // Charger le contexte championnat (selecteur global)
+  const { loadChampionships, renderChampionshipSelector } = await import('./context.js');
+  await loadChampionships();
+  renderChampionshipSelector();
+
   // Modules des vues — chargés une seule fois au démarrage
   const { initConfig }   = await import('./config.js');
   const { initDrivers }  = await import('./drivers.js');

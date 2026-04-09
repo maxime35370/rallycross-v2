@@ -47,6 +47,32 @@ ul { list-style: none; }
   cursor: pointer;
 }
 
+/* ═══ Selecteur championnat (header) ═══ */
+.championship-selector {
+  flex-shrink: 1;
+  min-width: 0;
+}
+.champ-selector-select {
+  background: var(--clr-surface);
+  border: 1px solid var(--clr-border-2);
+  border-radius: var(--r-md);
+  color: var(--clr-accent-2);
+  font-family: var(--font-condensed);
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 5px 10px;
+  outline: none;
+  max-width: 220px;
+  text-overflow: ellipsis;
+}
+.champ-selector-select:focus {
+  border-color: var(--clr-accent);
+}
+@media (max-width: 600px) {
+  .championship-selector { display: none !important; }
+}
+
 .brand-flag { font-size: 1.3rem; }
 
 .brand-title {
