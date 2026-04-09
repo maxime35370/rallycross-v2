@@ -44,6 +44,7 @@ ul { list-style: none; }
   align-items: center;
   gap: var(--sp-sm);
   flex-shrink: 0;
+  cursor: pointer;
 }
 
 .brand-flag { font-size: 1.3rem; }

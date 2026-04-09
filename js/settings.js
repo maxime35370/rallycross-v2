@@ -87,6 +87,65 @@ const DEFAULT_CHAMP = {
 };
 
 // ─────────────────────────────────────────────────────────
+// CHAMPS DU REGLEMENT (extraits pour reutilisation)
+// ─────────────────────────────────────────────────────────
+
+const REGULATION_FIELDS = ['categories', 'sessionConfig', 'pointsScale', 'worstResultDrop', 'statusRules'];
+
+function extractRegulation(data) {
+  const reg = {};
+  REGULATION_FIELDS.forEach(k => { if (data[k] !== undefined) reg[k] = JSON.parse(JSON.stringify(data[k])); });
+  return reg;
+}
+
+function applyRegulation(target, regulation) {
+  REGULATION_FIELDS.forEach(k => { if (regulation[k] !== undefined) target[k] = JSON.parse(JSON.stringify(regulation[k])); });
+}
+
+// ─────────────────────────────────────────────────────────
+// HELPERS REGLEMENTS (Firestore)
+// ─────────────────────────────────────────────────────────
+
+async function loadReglements() {
+  if (!db) return [];
+  try {
+    const { collection, getDocs } = await import(
+      'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
+    );
+    const snap = await getDocs(collection(db, 'reglements'));
+    const list = [];
+    snap.forEach(d => list.push({ id: d.id, ...d.data() }));
+    list.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    return list;
+  } catch (e) {
+    console.error('loadReglements:', e);
+    return [];
+  }
+}
+
+async function saveReglement(id, name, data) {
+  if (!db) return null;
+  const { doc, setDoc } = await import(
+    'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
+  );
+  const regId = id || `reg_${Date.now()}`;
+  const payload = { name, ...extractRegulation(data), updatedAt: new Date() };
+  if (!id) payload.createdAt = new Date();
+  await setDoc(doc(db, 'reglements', regId), payload);
+  logAudit(id ? 'update' : 'create', 'reglement', regId, { label: name });
+  return regId;
+}
+
+async function deleteReglement(regId, name) {
+  if (!db) return;
+  const { doc, deleteDoc } = await import(
+    'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
+  );
+  await deleteDoc(doc(db, 'reglements', regId));
+  logAudit('delete', 'reglement', regId, { label: name });
+}
+
+// ─────────────────────────────────────────────────────────
 // ÉTAT LOCAL
 // ─────────────────────────────────────────────────────────
 
@@ -94,6 +153,7 @@ let _editingChamp        = null;   // null = liste | 'new' | id existant
 let _editData            = null;   // copie de travail
 let _activeTab           = 'general';
 let _activePointsSession = 'MQ';
+let _reglements          = [];     // cache des reglements disponibles
 
 // ─────────────────────────────────────────────────────────
 // INIT
@@ -139,6 +199,8 @@ async function renderSettingsList() {
     console.error('Settings – erreur chargement :', e);
   }
 
+  _reglements = await loadReglements();
+
   container.innerHTML = `
     <div class="settings-page">
       <div class="settings-header">
@@ -158,6 +220,38 @@ async function renderSettingsList() {
           : champs.map(c => renderChampCard(c)).join('')
         }
       </div>
+
+      <!-- Section Reglements -->
+      <div class="settings-header" style="margin-top:var(--sp-xl)">
+        <div class="settings-header-left">
+          <h2 class="settings-title">📋 Reglements reutilisables</h2>
+          <span class="settings-count">${_reglements.length} reglement${_reglements.length > 1 ? 's' : ''}</span>
+        </div>
+      </div>
+      <div class="champ-list" id="reg-list">
+        ${_reglements.length === 0
+          ? `<div class="settings-empty" style="padding:var(--sp-lg)">
+               <p class="text-muted" style="font-size:0.88rem">Aucun reglement sauvegarde.<br>
+               Creez un championnat puis utilisez "Sauvegarder comme reglement" dans l'editeur.</p>
+             </div>`
+          : _reglements.map(r => `
+            <div class="champ-card">
+              <div class="champ-card-body">
+                <div class="champ-card-info">
+                  <div class="champ-card-name">📋 ${escHtml(r.name || '—')}</div>
+                  <div class="champ-card-meta">
+                    <span class="champ-card-reg">${(r.categories || []).length} categories</span>
+                  </div>
+                </div>
+                <div class="champ-card-actions">
+                  <button class="btn btn-danger btn-icon reg-delete"
+                    data-id="${r.id}" data-name="${escHtml(r.name)}" title="Supprimer">🗑️</button>
+                </div>
+              </div>
+            </div>
+          `).join('')
+        }
+      </div>
     </div>
   `;
 
@@ -172,6 +266,14 @@ async function renderSettingsList() {
 
   container.querySelectorAll('.champ-card-delete').forEach(btn =>
     btn.addEventListener('click', () => deleteChamp(btn.dataset.id, btn.dataset.name)));
+
+  container.querySelectorAll('.reg-delete').forEach(btn =>
+    btn.addEventListener('click', async () => {
+      if (!window.confirm(`Supprimer le reglement "${btn.dataset.name}" ?`)) return;
+      await deleteReglement(btn.dataset.id, btn.dataset.name);
+      toast('Reglement supprime', 'warning');
+      renderSettingsList();
+    }));
 }
 
 function renderChampCard(c) {
@@ -188,6 +290,7 @@ function renderChampCard(c) {
           <div class="champ-card-meta">
             <span class="champ-card-year">📅 ${c.year}</span>
             ${c.regulation ? `<span class="champ-card-reg">📋 ${escHtml(c.regulation)}</span>` : ''}
+            ${c.reglementId ? `<span class="champ-card-reg" style="color:var(--clr-success)">🔗 Reglement lie</span>` : ''}
             <span class="champ-status ${c.isActive ? 'champ-status--active' : 'champ-status--inactive'}">
               ${c.isActive ? '● Actif' : '○ Inactif'}
             </span>
@@ -257,6 +360,7 @@ function renderEditor() {
       <div class="settings-header">
         <button class="btn btn-secondary" id="btn-back-list">← Retour</button>
         <h2 class="settings-title">${isNew ? '＋ Nouveau championnat' : `✏️ ${escHtml(_editData.name || 'Championnat')}`}</h2>
+        <button class="btn btn-secondary btn-sm" id="btn-save-as-reg">📋 Sauvegarder comme reglement</button>
         <button class="btn btn-primary" id="btn-save-champ">💾 Enregistrer</button>
       </div>
 
@@ -279,6 +383,7 @@ function renderEditor() {
     renderSettingsList();
   });
   document.getElementById('btn-save-champ')?.addEventListener('click', saveChamp);
+  document.getElementById('btn-save-as-reg')?.addEventListener('click', onSaveAsReglement);
 
   document.querySelectorAll('.editor-tab').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -309,6 +414,12 @@ function renderTabContent() {
 // ─────────────────────────────────────────────────────────
 
 function renderTabGeneral() {
+  const regOptions = _reglements.map(r =>
+    `<option value="${r.id}" ${_editData.reglementId === r.id ? 'selected' : ''}>${escHtml(r.name)}</option>`
+  ).join('');
+
+  const linkedReg = _reglements.find(r => r.id === _editData.reglementId);
+
   return `
     <div class="tab-panel">
       <div class="form-row">
@@ -321,17 +432,36 @@ function renderTabGeneral() {
       </div>
       <div class="form-row">
         <div class="form-group">
-          <label class="form-label">Année *</label>
+          <label class="form-label">Annee *</label>
           <input class="form-input" id="f-year" type="number"
             min="2000" max="2099" value="${_editData.year || new Date().getFullYear()}">
         </div>
         <div class="form-group">
-          <label class="form-label">Règlement / Référence</label>
+          <label class="form-label">Reglement / Reference</label>
           <input class="form-input" id="f-regulation" type="text"
             placeholder="ex : FFSA 2026"
             value="${escHtml(_editData.regulation || '')}">
         </div>
       </div>
+
+      <!-- Selecteur de reglement -->
+      <div class="form-group" style="margin-top:var(--sp-md);padding:var(--sp-md);background:var(--clr-bg-3);border-radius:var(--r-lg);border:1px solid var(--clr-border)">
+        <label class="form-label">📋 Charger un reglement existant</label>
+        <div style="display:flex;gap:var(--sp-sm);align-items:center;flex-wrap:wrap">
+          <select class="form-select" id="f-reglement-select" style="flex:1;min-width:200px">
+            <option value="">— Reglement personnalise —</option>
+            ${regOptions}
+          </select>
+          <button class="btn btn-secondary btn-sm" id="f-load-reglement">Charger</button>
+        </div>
+        ${linkedReg ? `<div class="text-muted" style="font-size:0.82rem;margin-top:var(--sp-xs)">
+          Lie au reglement : <strong style="color:var(--clr-accent-2)">${escHtml(linkedReg.name)}</strong>
+          — Les onglets Categories, Sessions et Bareme utilisent ce reglement.
+        </div>` : `<div class="text-muted" style="font-size:0.82rem;margin-top:var(--sp-xs)">
+          Selectionnez un reglement pour pre-remplir les onglets Categories, Sessions et Bareme.
+        </div>`}
+      </div>
+
       <div class="form-group">
         <label class="form-label">Statut</label>
         <label class="settings-toggle">
@@ -655,6 +785,26 @@ function bindTabEvents() {
       const txt = document.getElementById('f-active-text');
       if (txt) txt.textContent = e.target.checked ? 'Actif' : 'Inactif';
     });
+
+    document.getElementById('f-load-reglement')?.addEventListener('click', () => {
+      const select = document.getElementById('f-reglement-select');
+      const regId = select?.value;
+      if (!regId) {
+        _editData.reglementId = null;
+        toast('Reglement personnalise — editez les onglets manuellement', 'info');
+        syncCurrentTabToData();
+        renderEditor();
+        return;
+      }
+      const reg = _reglements.find(r => r.id === regId);
+      if (!reg) return;
+      syncCurrentTabToData();
+      applyRegulation(_editData, reg);
+      _editData.reglementId = regId;
+      _editData.regulation  = reg.name;
+      toast(`Reglement "${reg.name}" charge`, 'success');
+      renderEditor();
+    });
   }
 
   if (_activeTab === 'categories') {
@@ -825,6 +975,29 @@ function syncCurrentTabToData() {
       });
       break;
     }
+  }
+}
+
+// ─────────────────────────────────────────────────────────
+// SAUVEGARDER COMME REGLEMENT
+// ─────────────────────────────────────────────────────────
+
+async function onSaveAsReglement() {
+  syncCurrentTabToData();
+  const defaultName = _editData.regulation || _editData.name || 'Nouveau reglement';
+  const name = window.prompt('Nom du reglement :', defaultName);
+  if (!name) return;
+
+  try {
+    const regId = await saveReglement(_editData.reglementId, name, _editData);
+    _editData.reglementId = regId;
+    _editData.regulation  = name;
+    _reglements = await loadReglements();
+    toast(`Reglement "${name}" sauvegarde`, 'success');
+    renderEditor();
+  } catch (e) {
+    console.error('Save as reglement:', e);
+    toast('Erreur lors de la sauvegarde du reglement', 'error');
   }
 }
 
