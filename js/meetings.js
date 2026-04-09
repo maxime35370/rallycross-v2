@@ -72,18 +72,19 @@ async function loadMeetings() {
 
   if (unsubscribe) unsubscribe();
 
-  const champId = getActiveChampionshipId();
-  const constraints = [
+  // Charger TOUS les meetings de l'annee, filtrage championnat cote client
+  const q = query(
+    collection(db, 'meetings'),
     where('year', '==', filterYear),
-    orderBy('date', 'asc'),
-  ];
-  // Filtrer par championnat si un est selectionne
-  if (champId) constraints.unshift(where('championshipId', '==', champId));
-
-  const q = query(collection(db, 'meetings'), ...constraints);
+    orderBy('date', 'asc')
+  );
 
   unsubscribe = onSnapshot(q, snap => {
-    allMeetings = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const all = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const champId = getActiveChampionshipId();
+    allMeetings = champId
+      ? all.filter(m => m.championshipId === champId || !m.championshipId)
+      : all;
     renderTable();
   }, err => {
     console.error(err);

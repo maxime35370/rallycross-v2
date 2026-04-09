@@ -62,17 +62,22 @@ async function loadDrivers() {
   // Arrêter le listener précédent si existant
   if (unsubscribe) unsubscribe();
 
-  const champId = getActiveChampionshipId();
-  const constraints = [
+  // Charger TOUS les pilotes de l'annee (pas de filtre Firestore par championnat)
+  // Le filtrage par championnat se fait cote client pour aussi montrer
+  // les pilotes sans championshipId (a lier)
+  const q = query(
+    collection(db, 'drivers'),
     where('year', '==', filterYear),
-    orderBy('carNumber', 'asc'),
-  ];
-  if (champId) constraints.unshift(where('championshipId', '==', champId));
-
-  const q = query(collection(db, 'drivers'), ...constraints);
+    orderBy('carNumber', 'asc')
+  );
 
   unsubscribe = onSnapshot(q, snap => {
-    allDrivers = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const all = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const champId = getActiveChampionshipId();
+    // Montrer : pilotes du championnat actif + pilotes sans championnat
+    allDrivers = champId
+      ? all.filter(d => d.championshipId === champId || !d.championshipId)
+      : all;
     renderTable();
   }, err => {
     console.error(err);
