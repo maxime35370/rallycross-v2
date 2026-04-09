@@ -4,7 +4,7 @@
    network-first pour les requetes Firebase.
 ═══════════════════════════════════════════════ */
 
-const CACHE_NAME = 'rx-chrono-v1';
+const CACHE_NAME = 'rx-chrono-v2';
 
 // Assets statiques a mettre en cache lors de l'installation
 const STATIC_ASSETS = [
@@ -24,6 +24,7 @@ const STATIC_ASSETS = [
   '/css/modules/driverProfile.css',
   '/css/modules/engagements.css',
   '/css/modules/spectator.css',
+  '/css/modules/settings.css',
   '/js/app.js',
   '/js/firebase.js',
   '/js/auth.js',
@@ -40,6 +41,9 @@ const STATIC_ASSETS = [
   '/js/stats.js',
   '/js/spectator.js',
   '/js/driverProfile.js',
+  '/js/settings.js',
+  '/js/audit.js',
+  '/js/qrcode.js',
 ];
 
 // ── Installation : pre-cache des assets statiques ──

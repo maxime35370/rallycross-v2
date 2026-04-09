@@ -85,6 +85,19 @@ export async function initFirebase() {
     const app = initializeApp(config);
     db = getFirestore(app);
 
+    // Activer la persistence offline (cache local pour lecture hors-ligne)
+    try {
+      const { enableIndexedDbPersistence } = await import(
+        'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
+      );
+      await enableIndexedDbPersistence(db);
+    } catch (err) {
+      // Deja active dans un autre onglet ou non supporte — pas grave
+      if (err.code !== 'failed-precondition' && err.code !== 'unimplemented') {
+        console.warn('Offline persistence:', err.message);
+      }
+    }
+
     setFirebaseStatus('connected', `Connecté · ${config.projectId}`);
     return true;
 
