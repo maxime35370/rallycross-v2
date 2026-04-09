@@ -561,22 +561,77 @@ function renderRangeRow(catIdx, rangeIdx, range) {
 // ONGLET SESSIONS
 // ─────────────────────────────────────────────────────────
 
+function renderGridEditor(gridPositions, prefix) {
+  const positions = gridPositions || [];
+  const rows = [];
+  for (let i = 0; i < positions.length; i += 2) {
+    const left  = positions[i]     !== undefined ? positions[i]     : '';
+    const right = positions[i + 1] !== undefined ? positions[i + 1] : '';
+    const rowNum = Math.floor(i / 2) + 1;
+    rows.push(
+      '<div class="grid-editor-row">' +
+        '<span class="grid-editor-row-num">R' + rowNum + '</span>' +
+        '<input class="form-input grid-pos-input" type="number" min="1" max="20" ' +
+          'data-prefix="' + prefix + '" data-idx="' + i + '" ' +
+          'value="' + left + '" placeholder="—">' +
+        '<input class="form-input grid-pos-input" type="number" min="1" max="20" ' +
+          'data-prefix="' + prefix + '" data-idx="' + (i + 1) + '" ' +
+          'value="' + right + '" placeholder="—">' +
+      '</div>'
+    );
+  }
+  return rows.join('');
+}
+
+function defaultGrid(size) {
+  return Array.from({ length: size }, (_, i) => i + 1);
+}
+
+function readGridPositions(prefix) {
+  const inputs = document.querySelectorAll('.grid-pos-input[data-prefix="' + prefix + '"]');
+  const positions = [];
+  inputs.forEach(input => {
+    const val = parseInt(input.value);
+    positions.push(isNaN(val) ? null : val);
+  });
+  // Enlever les nulls en fin de tableau
+  while (positions.length > 0 && positions[positions.length - 1] === null) positions.pop();
+  return positions;
+}
+
 function renderTabSessions() {
   const sc = _editData.sessionConfig || {};
+  const ecEnabled = sc.EC?.enabled !== false;
+  const dfCount   = sc.DF?.count ?? 2;
+  const dfGrid    = sc.DF?.gridSize ?? 8;
+  const finGrid   = sc.FIN?.gridSize ?? 8;
+  const dfPositions  = sc.DF?.gridPositions  || defaultGrid(dfGrid);
+  const finPositions = sc.FIN?.gridPositions || defaultGrid(finGrid);
+
   return `
     <div class="tab-panel">
       <div class="session-config-grid">
 
-        <div class="session-config-card">
-          <div class="session-config-label"><span class="badge badge-ec">EC</span> Essais Chronométrés</div>
-          <div class="settings-form-row">
-            <label class="form-label">Tours par session</label>
-            <input class="form-input" id="sc-ec-laps" type="number"
-              min="1" max="30" style="width:70px;text-align:center"
-              value="${sc.EC?.laps ?? 2}">
+        <!-- EC -->
+        <div class="session-config-card ${ecEnabled ? '' : 'session-config-card--disabled'}">
+          <div class="session-config-label" style="display:flex;align-items:center;gap:var(--sp-sm)">
+            <span class="badge badge-ec">EC</span> Essais Chronom\u00e9tr\u00e9s
+            <label class="settings-toggle settings-toggle--sm" style="margin-left:auto">
+              <input type="checkbox" id="sc-ec-enabled" ${ecEnabled ? 'checked' : ''}>
+              <span class="settings-toggle-track"><span class="settings-toggle-thumb"></span></span>
+            </label>
+          </div>
+          <div id="sc-ec-fields" style="${ecEnabled ? '' : 'opacity:0.35;pointer-events:none'}">
+            <div class="settings-form-row">
+              <label class="form-label">Tours par session</label>
+              <input class="form-input" id="sc-ec-laps" type="number"
+                min="1" max="30" style="width:70px;text-align:center"
+                value="${sc.EC?.laps ?? 2}">
+            </div>
           </div>
         </div>
 
+        <!-- MQ -->
         <div class="session-config-card">
           <div class="session-config-label"><span class="badge badge-mq">MQ</span> Manches Qualificatives</div>
           <div class="settings-form-row">
@@ -593,16 +648,37 @@ function renderTabSessions() {
           </div>
         </div>
 
+        <!-- DF -->
         <div class="session-config-card">
           <div class="session-config-label"><span class="badge badge-df">DF</span> Demi-Finales</div>
+          <div class="settings-form-row">
+            <label class="form-label">Nombre de demi-finales</label>
+            <input class="form-input" id="sc-df-count" type="number"
+              min="1" max="4" style="width:70px;text-align:center"
+              value="${dfCount}">
+          </div>
           <div class="settings-form-row">
             <label class="form-label">Tours par manche</label>
             <input class="form-input" id="sc-df-laps" type="number"
               min="1" max="30" style="width:70px;text-align:center"
               value="${sc.DF?.laps ?? 6}">
           </div>
+          <div class="settings-form-row">
+            <label class="form-label">Pilotes par grille</label>
+            <input class="form-input" id="sc-df-grid" type="number"
+              min="2" max="20" style="width:70px;text-align:center"
+              value="${dfGrid}">
+          </div>
+          <div class="grid-editor-section">
+            <label class="form-label">Grille de d\u00e9part DF</label>
+            <p class="text-muted" style="font-size:0.78rem;margin-bottom:var(--sp-xs)">Ordre des positions sur la grille (2 par rang\u00e9e). Le c\u00f4t\u00e9 de la p\u00f4le d\u00e9pend du circuit.</p>
+            <div class="grid-editor" id="grid-editor-df">
+              ${renderGridEditor(dfPositions, 'df')}
+            </div>
+          </div>
         </div>
 
+        <!-- FIN -->
         <div class="session-config-card">
           <div class="session-config-label"><span class="badge badge-fin">FIN</span> Finale</div>
           <div class="settings-form-row">
@@ -611,18 +687,31 @@ function renderTabSessions() {
               min="1" max="30" style="width:70px;text-align:center"
               value="${sc.FIN?.laps ?? 7}">
           </div>
+          <div class="settings-form-row">
+            <label class="form-label">Pilotes par grille</label>
+            <input class="form-input" id="sc-fin-grid" type="number"
+              min="2" max="20" style="width:70px;text-align:center"
+              value="${finGrid}">
+          </div>
+          <div class="grid-editor-section">
+            <label class="form-label">Grille de d\u00e9part Finale</label>
+            <p class="text-muted" style="font-size:0.78rem;margin-bottom:var(--sp-xs)">Ordre des positions sur la grille (2 par rang\u00e9e). Le c\u00f4t\u00e9 de la p\u00f4le d\u00e9pend du circuit.</p>
+            <div class="grid-editor" id="grid-editor-fin">
+              ${renderGridEditor(finPositions, 'fin')}
+            </div>
+          </div>
         </div>
 
       </div>
 
       <div class="session-config-card session-config-card--drop">
-        <div class="session-config-label">🗑️ Déduction de résultats</div>
+        <div class="session-config-label">\ud83d\uddd1\ufe0f D\u00e9duction de r\u00e9sultats</div>
         <div class="settings-form-row">
-          <label class="form-label">Pires résultats ignorés sur la saison</label>
+          <label class="form-label">Pires r\u00e9sultats ignor\u00e9s sur la saison</label>
           <input class="form-input" id="sc-worst-drop" type="number"
             min="0" max="20" style="width:70px;text-align:center"
             value="${_editData.worstResultDrop ?? 0}">
-          <span class="text-muted" style="font-size:0.8rem">0 = aucune déduction</span>
+          <span class="text-muted" style="font-size:0.8rem">0 = aucune d\u00e9duction</span>
         </div>
       </div>
     </div>
@@ -814,6 +903,32 @@ function bindTabEvents() {
     });
   }
 
+  if (_activeTab === 'sessions') {
+    // Toggle EC
+    document.getElementById('sc-ec-enabled')?.addEventListener('change', (e) => {
+      const fields = document.getElementById('sc-ec-fields');
+      if (fields) fields.style.cssText = e.target.checked ? '' : 'opacity:0.35;pointer-events:none';
+    });
+
+    // Regenerer la grille quand on change la taille
+    const rebuildGrid = (prefix, inputId) => {
+      document.getElementById(inputId)?.addEventListener('change', () => {
+        syncCurrentTabToData();
+        const size = parseInt(document.getElementById(inputId)?.value) || 6;
+        const sc = _editData.sessionConfig || {};
+        const key = prefix === 'df' ? 'DF' : 'FIN';
+        sc[key] = sc[key] || {};
+        sc[key].gridSize = size;
+        // Regenerer positions par defaut si la taille change
+        sc[key].gridPositions = defaultGrid(size);
+        const editor = document.getElementById('grid-editor-' + prefix);
+        if (editor) editor.innerHTML = renderGridEditor(sc[key].gridPositions, prefix);
+      });
+    };
+    rebuildGrid('df', 'sc-df-grid');
+    rebuildGrid('fin', 'sc-fin-grid');
+  }
+
   if (_activeTab === 'categories') {
     document.getElementById('btn-add-cat')?.addEventListener('click', () => {
       syncCurrentTabToData();
@@ -943,19 +1058,35 @@ function syncCurrentTabToData() {
       });
       break;
 
-    case 'sessions':
+    case 'sessions': {
       _editData.sessionConfig         = _editData.sessionConfig || {};
       _editData.sessionConfig.EC      = _editData.sessionConfig.EC  || {};
       _editData.sessionConfig.MQ      = _editData.sessionConfig.MQ  || {};
       _editData.sessionConfig.DF      = _editData.sessionConfig.DF  || {};
       _editData.sessionConfig.FIN     = _editData.sessionConfig.FIN || {};
-      _editData.sessionConfig.EC.laps  = parseInt(document.getElementById('sc-ec-laps')?.value)  || 2;
+
+      // EC
+      _editData.sessionConfig.EC.enabled = document.getElementById('sc-ec-enabled')?.checked ?? true;
+      _editData.sessionConfig.EC.laps    = parseInt(document.getElementById('sc-ec-laps')?.value)  || 2;
+
+      // MQ
       _editData.sessionConfig.MQ.count = parseInt(document.getElementById('sc-mq-count')?.value) || 2;
       _editData.sessionConfig.MQ.laps  = parseInt(document.getElementById('sc-mq-laps')?.value)  || 4;
-      _editData.sessionConfig.DF.laps  = parseInt(document.getElementById('sc-df-laps')?.value)  || 6;
-      _editData.sessionConfig.FIN.laps = parseInt(document.getElementById('sc-fin-laps')?.value) || 7;
+
+      // DF
+      _editData.sessionConfig.DF.count    = parseInt(document.getElementById('sc-df-count')?.value) || 2;
+      _editData.sessionConfig.DF.laps     = parseInt(document.getElementById('sc-df-laps')?.value)  || 6;
+      _editData.sessionConfig.DF.gridSize = parseInt(document.getElementById('sc-df-grid')?.value)  || 8;
+      _editData.sessionConfig.DF.gridPositions = readGridPositions('df');
+
+      // FIN
+      _editData.sessionConfig.FIN.laps     = parseInt(document.getElementById('sc-fin-laps')?.value) || 7;
+      _editData.sessionConfig.FIN.gridSize = parseInt(document.getElementById('sc-fin-grid')?.value) || 8;
+      _editData.sessionConfig.FIN.gridPositions = readGridPositions('fin');
+
       _editData.worstResultDrop = parseInt(document.getElementById('sc-worst-drop')?.value) || 0;
       break;
+    }
 
     case 'points': {
       _editData.pointsScale = _editData.pointsScale || {};
