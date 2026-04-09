@@ -1,28 +1,153 @@
 /* ═══════════════════════════════════════════════
    CALC.JS — Calculs partagés (standings + sessions)
-   Élimine le besoin de sauvegarder interimStandings
-   en Firestore. Tout se calcule à la volée.
+   Supporte les reglements dynamiques : si un reglement
+   est passe en parametre, il est utilise. Sinon, le
+   bareme FFSA 2026 par defaut s'applique.
 ═══════════════════════════════════════════════ */
 
 // ─────────────────────────────────────────────────────────
-// BARÈMES
+// BAREME PAR DEFAUT (FFSA 2026) — utilise si aucun reglement
 // ─────────────────────────────────────────────────────────
 
-export function mqPoints(position) {
-  if (position === 1) return 50;
-  if (position === 2) return 45;
-  if (position === 3) return 42;
-  if (position >= 4) return Math.max(0, 44 - position);
-  return 0;
+const DEFAULT_POINTS_SCALE = {
+  MQ: {
+    formula: '44 - position',
+    overrides: { 1: 50, 2: 45, 3: 42 },
+  },
+  DF: {
+    formula: null,
+    overrides: { 1: 10, 2: 8, 3: 6, 4: 5, 5: 4, 6: 3, 7: 2, 8: 1 },
+  },
+  FIN: {
+    formula: null,
+    overrides: { 1: 15, 2: 12, 3: 9, 4: 7, 5: 6, 6: 5, 7: 4, 8: 3 },
+  },
+};
+
+const DEFAULT_STATUS_RULES = {
+  DNF:      { mode: 'engaged_offset', offset: 1 },
+  DNS:      { mode: 'fixed', points: 0 },
+  DSQ_RACE: { mode: 'fixed', points: 0 },
+  DSQ:      { mode: 'fixed', points: 0 },
+};
+
+// ─────────────────────────────────────────────────────────
+// CALCUL DE POINTS GENERIQUE (depuis un pointsScale)
+// ─────────────────────────────────────────────────────────
+
+/**
+ * Evalue une formule de points avec la variable 'position'.
+ * @param {string|null} formula — ex: '44 - position'
+ * @param {number} position
+ * @returns {number|null}
+ */
+function evalFormula(formula, position) {
+  if (!formula || !formula.trim()) return null;
+  try {
+    // eslint-disable-next-line no-new-func
+    const result = Function('position', `"use strict"; return (${formula})`)(position);
+    if (typeof result !== 'number' || !isFinite(result)) return null;
+    return Math.max(0, Math.round(result));
+  } catch {
+    return null;
+  }
 }
 
-export function ecBonusPoints(position) {
+/**
+ * Calcule les points pour une position donnee selon un scale (formula + overrides).
+ * @param {number} position
+ * @param {{ formula?: string|null, overrides?: object }} scale
+ * @returns {number}
+ */
+export function calcPointsFromScale(position, scale) {
+  if (!position || position <= 0) return 0;
+  if (!scale) return 0;
+  const overrides = scale.overrides || {};
+  if (overrides[position] !== undefined) return overrides[position];
+  const computed = evalFormula(scale.formula, position);
+  return computed !== null ? computed : 0;
+}
+
+/**
+ * Calcule les points pour un statut special (DNF, DNS, DSQ, DSQ_RACE).
+ * @param {string} status
+ * @param {string} sessionType — 'MQ', 'DF', 'FIN'
+ * @param {number} totalEngaged
+ * @param {object} [regulation] — reglement optionnel
+ * @returns {number}
+ */
+export function calcStatusPoints(status, sessionType, totalEngaged, regulation) {
+  const rules = regulation?.statusRules || DEFAULT_STATUS_RULES;
+  const scale = (regulation?.pointsScale || DEFAULT_POINTS_SCALE)[sessionType];
+  const rule  = rules[status];
+  if (!rule) return 0;
+
+  if (rule.mode === 'engaged_offset') {
+    return calcPointsFromScale(totalEngaged + (rule.offset || 1), scale);
+  }
+  return rule.points ?? 0;
+}
+
+// ─────────────────────────────────────────────────────────
+// BAREMES (avec support reglement optionnel)
+// ─────────────────────────────────────────────────────────
+
+/**
+ * Points MQ pour une position.
+ * @param {number} position
+ * @param {object} [regulation] — reglement optionnel
+ */
+export function mqPoints(position, regulation) {
+  const scale = (regulation?.pointsScale || DEFAULT_POINTS_SCALE).MQ;
+  return calcPointsFromScale(position, scale);
+}
+
+/**
+ * Points bonus EC (top 5 → 5/4/3/2/1).
+ * @param {number} position
+ * @param {object} [regulation] — reglement optionnel (ecBonus dans pointsScale)
+ */
+export function ecBonusPoints(position, regulation) {
+  // EC bonus : si le reglement a un ecBonus scale, l'utiliser
+  if (regulation?.pointsScale?.EC_BONUS) {
+    return calcPointsFromScale(position, regulation.pointsScale.EC_BONUS);
+  }
+  // Defaut FFSA : top 5 → 6 - position
   if (position <= 5) return 6 - position;
   return 0;
 }
 
-export function interimPoints(position) {
+/**
+ * Points intermediaires (position → bonus classement interim).
+ * @param {number} position
+ * @param {object} [regulation] — reglement optionnel (interimBonus dans pointsScale)
+ */
+export function interimPoints(position, regulation) {
+  if (regulation?.pointsScale?.INTERIM) {
+    return calcPointsFromScale(position, regulation.pointsScale.INTERIM);
+  }
+  // Defaut FFSA : max(0, 17 - position)
   return Math.max(0, 17 - position);
+}
+
+/**
+ * Points DF pour une position.
+ * @param {number} position
+ * @param {object} [regulation]
+ */
+export function dfPoints(position, regulation) {
+  const scale = (regulation?.pointsScale || DEFAULT_POINTS_SCALE).DF;
+  return calcPointsFromScale(position, scale);
+}
+
+/**
+ * Points Finale pour une position.
+ * @param {number} position
+ * @param {object} [regulation]
+ */
+export function finPoints(position, regulation) {
+  const scale = (regulation?.pointsScale || DEFAULT_POINTS_SCALE).FIN;
+  return calcPointsFromScale(position, scale);
 }
 
 // ─────────────────────────────────────────────────────────
@@ -57,7 +182,7 @@ export async function getParticipants(db, sessionId) {
 // CALCUL CLASSEMENT EC
 // ─────────────────────────────────────────────────────────
 
-export async function calcEcStandings(db, sessions) {
+export async function calcEcStandings(db, sessions, regulation) {
   const ecSession = sessions.find(s => s.type === 'EC');
   if (!ecSession) return [];
 
@@ -87,7 +212,7 @@ export async function calcEcStandings(db, sessions) {
   return rows.map(r => {
     const hasTime  = r.ms != null;
     const position = hasTime ? pos++ : null;
-    const bonus    = hasTime ? ecBonusPoints(position) : 0;
+    const bonus    = hasTime ? ecBonusPoints(position, regulation) : 0;
     return { ...r, position, bonusPoints: bonus };
   });
 }
@@ -96,7 +221,7 @@ export async function calcEcStandings(db, sessions) {
 // CALCUL CLASSEMENT MQ (une manche)
 // ─────────────────────────────────────────────────────────
 
-export async function calcMqStandings(db, session) {
+export async function calcMqStandings(db, session, regulation) {
   const results      = await getResults(db, session.id);
   const participants = await getParticipants(db, session.id);
   const resultMap    = {};
@@ -112,7 +237,6 @@ export async function calcMqStandings(db, session) {
   }));
 
   const totalEngaged = rows.length;
-  const lastPoints   = mqPoints(totalEngaged);
 
   const finished = rows.filter(r => r.ms && !r.status).sort((a, b) => a.ms - b.ms);
   const dnf      = rows.filter(r => r.status === 'DNF');
@@ -123,11 +247,11 @@ export async function calcMqStandings(db, session) {
 
   let pos = 1;
   const result = [];
-  finished.forEach(r => result.push({ ...r, position: pos++, points: mqPoints(pos - 1) }));
-  dnf.forEach(r     => result.push({ ...r, position: totalEngaged + 1, points: Math.max(0, lastPoints - 1) }));
-  dsqRace.forEach(r => result.push({ ...r, position: totalEngaged + 3, points: Math.max(0, lastPoints - 3) }));
-  dns.forEach(r     => result.push({ ...r, position: null, points: 0 }));
-  dsq.forEach(r     => result.push({ ...r, position: null, points: 0 }));
+  finished.forEach(r => result.push({ ...r, position: pos++, points: mqPoints(pos - 1, regulation) }));
+  dnf.forEach(r     => result.push({ ...r, position: totalEngaged + 1, points: calcStatusPoints('DNF', 'MQ', totalEngaged, regulation) }));
+  dsqRace.forEach(r => result.push({ ...r, position: totalEngaged + 3, points: calcStatusPoints('DSQ_RACE', 'MQ', totalEngaged, regulation) }));
+  dns.forEach(r     => result.push({ ...r, position: null, points: calcStatusPoints('DNS', 'MQ', totalEngaged, regulation) }));
+  dsq.forEach(r     => result.push({ ...r, position: null, points: calcStatusPoints('DSQ', 'MQ', totalEngaged, regulation) }));
   noResult.forEach(r => result.push({ ...r, position: null, points: null }));
 
   return result;
@@ -135,28 +259,27 @@ export async function calcMqStandings(db, session) {
 
 // ─────────────────────────────────────────────────────────
 // CALCUL CLASSEMENT INTERMÉDIAIRE
-// C'est LA fonction centrale partagée par standings.js,
-// sessions.js et championship.js
 // ─────────────────────────────────────────────────────────
 
 /**
- * @param {object} db       - instance Firestore
- * @param {Array}  sessions - sessions du meeting+catégorie courant
+ * @param {object} db          - instance Firestore
+ * @param {Array}  sessions    - sessions du meeting+catégorie courant
+ * @param {object} [regulation] - reglement optionnel
  * @returns {Array} standings triés avec position et interimPoints
  */
-export async function calcInterimStandings(db, sessions) {
+export async function calcInterimStandings(db, sessions, regulation) {
   const mqSessions = sessions.filter(s => s.type === 'MQ').sort((a, b) => a.num - b.num);
   if (mqSessions.length === 0) return [];
 
   // Points bonus EC
-  const ecStandings = await calcEcStandings(db, sessions);
+  const ecStandings = await calcEcStandings(db, sessions, regulation);
   const ecBonus = {};
   ecStandings.forEach(r => { ecBonus[r.driverId] = r.bonusPoints ?? 0; });
 
   // Collecter tous les pilotes et leurs points MQ
   const driverMap = {};
   for (const mq of mqSessions) {
-    const standings = await calcMqStandings(db, mq);
+    const standings = await calcMqStandings(db, mq, regulation);
     standings.forEach(r => {
       if (!driverMap[r.driverId]) {
         driverMap[r.driverId] = {
@@ -213,7 +336,7 @@ export async function calcInterimStandings(db, sessions) {
       if (!sameAll) pos = i + 1;
     }
     d.position      = pos;
-    d.interimPoints = interimPoints(pos);
+    d.interimPoints = interimPoints(pos, regulation);
   });
 
   return eligible;

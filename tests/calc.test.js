@@ -1,11 +1,14 @@
 import { describe, it, expect } from 'vitest';
-import { mqPoints, ecBonusPoints, interimPoints } from '../js/calc.js';
+import {
+  mqPoints, ecBonusPoints, interimPoints, dfPoints, finPoints,
+  calcPointsFromScale, calcStatusPoints,
+} from '../js/calc.js';
 
 // ─────────────────────────────────────────────────────────
-// mqPoints
+// mqPoints (defaut FFSA 2026)
 // ─────────────────────────────────────────────────────────
 
-describe('mqPoints', () => {
+describe('mqPoints (default)', () => {
   it('returns 50 for position 1', () => {
     expect(mqPoints(1)).toBe(50);
   });
@@ -38,10 +41,10 @@ describe('mqPoints', () => {
 });
 
 // ─────────────────────────────────────────────────────────
-// ecBonusPoints
+// ecBonusPoints (defaut FFSA 2026)
 // ─────────────────────────────────────────────────────────
 
-describe('ecBonusPoints', () => {
+describe('ecBonusPoints (default)', () => {
   it('returns 5 for position 1', () => {
     expect(ecBonusPoints(1)).toBe(5);
   });
@@ -62,10 +65,10 @@ describe('ecBonusPoints', () => {
 });
 
 // ─────────────────────────────────────────────────────────
-// interimPoints
+// interimPoints (defaut FFSA 2026)
 // ─────────────────────────────────────────────────────────
 
-describe('interimPoints', () => {
+describe('interimPoints (default)', () => {
   it('returns 16 for position 1', () => {
     expect(interimPoints(1)).toBe(16);
   });
@@ -85,5 +88,143 @@ describe('interimPoints', () => {
   it('returns 0 for positions > 17', () => {
     expect(interimPoints(18)).toBe(0);
     expect(interimPoints(50)).toBe(0);
+  });
+});
+
+// ─────────────────────────────────────────────────────────
+// dfPoints / finPoints (defaut FFSA 2026)
+// ─────────────────────────────────────────────────────────
+
+describe('dfPoints (default)', () => {
+  it('returns correct DF points', () => {
+    expect(dfPoints(1)).toBe(10);
+    expect(dfPoints(2)).toBe(8);
+    expect(dfPoints(8)).toBe(1);
+    expect(dfPoints(9)).toBe(0);
+  });
+});
+
+describe('finPoints (default)', () => {
+  it('returns correct FIN points', () => {
+    expect(finPoints(1)).toBe(15);
+    expect(finPoints(2)).toBe(12);
+    expect(finPoints(8)).toBe(3);
+    expect(finPoints(9)).toBe(0);
+  });
+});
+
+// ─────────────────────────────────────────────────────────
+// calcPointsFromScale (generique)
+// ─────────────────────────────────────────────────────────
+
+describe('calcPointsFromScale', () => {
+  it('uses overrides when available', () => {
+    const scale = { formula: '100 - position', overrides: { 1: 50, 2: 45 } };
+    expect(calcPointsFromScale(1, scale)).toBe(50);
+    expect(calcPointsFromScale(2, scale)).toBe(45);
+  });
+
+  it('falls back to formula when no override', () => {
+    const scale = { formula: '100 - position', overrides: { 1: 50 } };
+    expect(calcPointsFromScale(3, scale)).toBe(97);
+    expect(calcPointsFromScale(10, scale)).toBe(90);
+  });
+
+  it('returns 0 for invalid position', () => {
+    const scale = { formula: '10 - position', overrides: {} };
+    expect(calcPointsFromScale(0, scale)).toBe(0);
+    expect(calcPointsFromScale(-1, scale)).toBe(0);
+  });
+
+  it('returns 0 for null scale', () => {
+    expect(calcPointsFromScale(1, null)).toBe(0);
+  });
+
+  it('clamps negative formula results to 0', () => {
+    const scale = { formula: '5 - position', overrides: {} };
+    expect(calcPointsFromScale(10, scale)).toBe(0);
+  });
+
+  it('handles override-only scales', () => {
+    const scale = { formula: null, overrides: { 1: 25, 2: 18, 3: 15 } };
+    expect(calcPointsFromScale(1, scale)).toBe(25);
+    expect(calcPointsFromScale(3, scale)).toBe(15);
+    expect(calcPointsFromScale(4, scale)).toBe(0);
+  });
+});
+
+// ─────────────────────────────────────────────────────────
+// calcStatusPoints
+// ─────────────────────────────────────────────────────────
+
+describe('calcStatusPoints', () => {
+  it('returns 0 for DNS with default rules', () => {
+    expect(calcStatusPoints('DNS', 'MQ', 20)).toBe(0);
+  });
+
+  it('returns 0 for DSQ with default rules', () => {
+    expect(calcStatusPoints('DSQ', 'MQ', 20)).toBe(0);
+  });
+
+  it('calculates DNF with engaged_offset (default)', () => {
+    // DNF default: engaged_offset=1 → points at position (totalEngaged + 1)
+    // MQ formula: 44 - position → 44 - 21 = 23
+    expect(calcStatusPoints('DNF', 'MQ', 20)).toBe(23);
+  });
+
+  it('uses custom regulation status rules', () => {
+    const regulation = {
+      pointsScale: {
+        MQ: { formula: '50 - position', overrides: {} },
+      },
+      statusRules: {
+        DNF: { mode: 'fixed', points: 5 },
+        DNS: { mode: 'fixed', points: 0 },
+      },
+    };
+    expect(calcStatusPoints('DNF', 'MQ', 20, regulation)).toBe(5);
+  });
+});
+
+// ─────────────────────────────────────────────────────────
+// Reglement custom (override du defaut)
+// ─────────────────────────────────────────────────────────
+
+describe('custom regulation', () => {
+  const customReg = {
+    pointsScale: {
+      MQ: { formula: '30 - position', overrides: { 1: 60, 2: 50, 3: 45 } },
+      DF: { formula: null, overrides: { 1: 20, 2: 15, 3: 10 } },
+      FIN: { formula: null, overrides: { 1: 30, 2: 25 } },
+    },
+    statusRules: {
+      DNF: { mode: 'fixed', points: 2 },
+      DNS: { mode: 'fixed', points: 0 },
+      DSQ_RACE: { mode: 'fixed', points: 1 },
+      DSQ: { mode: 'fixed', points: 0 },
+    },
+  };
+
+  it('mqPoints uses custom regulation', () => {
+    expect(mqPoints(1, customReg)).toBe(60);
+    expect(mqPoints(2, customReg)).toBe(50);
+    expect(mqPoints(4, customReg)).toBe(26);  // 30 - 4
+  });
+
+  it('dfPoints uses custom regulation', () => {
+    expect(dfPoints(1, customReg)).toBe(20);
+    expect(dfPoints(3, customReg)).toBe(10);
+    expect(dfPoints(4, customReg)).toBe(0);
+  });
+
+  it('finPoints uses custom regulation', () => {
+    expect(finPoints(1, customReg)).toBe(30);
+    expect(finPoints(2, customReg)).toBe(25);
+    expect(finPoints(3, customReg)).toBe(0);
+  });
+
+  it('calcStatusPoints uses custom regulation', () => {
+    expect(calcStatusPoints('DNF', 'MQ', 20, customReg)).toBe(2);
+    expect(calcStatusPoints('DSQ_RACE', 'MQ', 20, customReg)).toBe(1);
   });
 });

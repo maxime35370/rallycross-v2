@@ -7,26 +7,21 @@
 import { db } from './firebase.js';
 import { toast, categoryBadge, sessionBadge, statusBadge } from './app.js';
 import { msToDisplay, escHtml } from './utils.js';
-// ← MODIFIÉ : import des calculs partagés depuis calc.js
-//   Plus besoin de sauvegarder interimStandings en Firestore
-import { calcInterimStandings, calcEcStandings, calcMqStandings } from './calc.js';
+import { calcInterimStandings, calcEcStandings, calcMqStandings, dfPoints, finPoints } from './calc.js';
+import { getChampionshipConfig } from './settings.js';
 
-// ─────────────────────────────────────────────────────────
-// BARÈMES DE POINTS
-// ─────────────────────────────────────────────────────────
-// ← mqPoints, ecBonusPoints, interimPoints SUPPRIMÉS (dans calc.js)
-// ← calcEcStandings, calcMqStandings, calcInterimStandings SUPPRIMÉS (dans calc.js)
+// Baremes de points : desormais dans calc.js avec support reglement dynamique
+// dfPoints et finPoints importes depuis calc.js
 
-/** Points DF : 10/8/6/5/4/3/2/1 */
-const DF_POINTS = [0, 10, 8, 6, 5, 4, 3, 2, 1];
-function dfPoints(position) {
-  return DF_POINTS[position] ?? 0;
-}
+// Reglement actif (charge au demarrage)
+let _activeRegulation = null;
 
-/** Points Finale : 15/12/9/7/6/5/4/3 */
-const FIN_POINTS = [0, 15, 12, 9, 7, 6, 5, 4, 3];
-function finPoints(position) {
-  return FIN_POINTS[position] ?? 0;
+async function loadActiveRegulation() {
+  try {
+    _activeRegulation = await getChampionshipConfig();
+  } catch {
+    _activeRegulation = null;
+  }
 }
 
 // ─────────────────────────────────────────────────────────
@@ -121,7 +116,7 @@ async function calcPhaseStandings(session) {
   const dns         = rows.filter(r => r.status === 'DNS');
   const dsq         = rows.filter(r => r.status === 'DSQ');
   const noResult    = rows.filter(r => !r.ms && !r.status);
-  const ptsFn       = session.type === 'DF' ? dfPoints : finPoints;
+  const ptsFn       = (p) => session.type === 'DF' ? dfPoints(p, _activeRegulation) : finPoints(p, _activeRegulation);
 
   let pos = 1;
   const result = [];
@@ -228,7 +223,7 @@ async function renderTab() {
 
 // ← MODIFIÉ : utilise calcEcStandings(db, allSessions) depuis calc.js
 async function renderEcTab(content) {
-  const standings = await calcEcStandings(db, allSessions);
+  const standings = await calcEcStandings(db, allSessions, _activeRegulation);
   content.innerHTML = `
     <div class="std-header-row">
       <span class="std-table-title">Essais chronométrés</span>
@@ -273,7 +268,7 @@ async function renderMqTab(content) {
 
   let html = '';
   for (const mq of mqSessions) {
-    const standings = await calcMqStandings(db, mq);
+    const standings = await calcMqStandings(db, mq, _activeRegulation);
     html += `
       <div class="std-section">
         <div class="std-section-title">Manche qualificative ${mq.num}</div>
@@ -309,7 +304,7 @@ async function renderMqTab(content) {
 // ← MODIFIÉ : calcul direct via calc.js — plus de bouton Sauvegarder,
 //   plus de checkInterimFreshness, plus de lecture/écriture interimStandings Firestore
 async function renderInterimTab(content) {
-  const standings  = await calcInterimStandings(db, allSessions);
+  const standings  = await calcInterimStandings(db, allSessions, _activeRegulation);
   const mqSessions = allSessions.filter(s => s.type === 'MQ').sort((a, b) => a.num - b.num);
 
   content.innerHTML = `
@@ -452,7 +447,7 @@ async function renderMeetingTab(content) {
   }
 
   // ← MODIFIÉ : calcul direct, plus de lecture Firestore interimStandings
-  const interimStandings = await calcInterimStandings(db, allSessions);
+  const interimStandings = await calcInterimStandings(db, allSessions, _activeRegulation);
   const interimData = interimStandings
     .filter(r => !dfParticipantIds.has(r.driverId) && !finalistIds.has(r.driverId));
 
@@ -704,6 +699,7 @@ function showTabs() {
 export function initStandings() {
   document.addEventListener('viewchange', async e => {
     if (e.detail.view === 'standings') {
+      await loadActiveRegulation();
       renderView();
       await loadMeetings();
       if (selectedMeetingId && selectedCategory) {

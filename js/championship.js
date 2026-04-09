@@ -9,6 +9,9 @@ import { db } from './firebase.js';
 import { toast } from './app.js';
 import { escHtml } from './utils.js';
 import { calcInterimStandings } from './calc.js';
+import { getChampionshipConfig } from './settings.js';
+
+let _activeRegulation = null;
 
 // ─────────────────────────────────────────────────────────
 // ÉTAT LOCAL
@@ -95,7 +98,7 @@ async function getMeetingPoints(meetingId) {
   if (!sessions.length) return [];
 
   // 2. Classement intermédiaire (via calc.js — calcul direct)
-  const interimRows = await calcInterimStandings(db, sessions);
+  const interimRows = await calcInterimStandings(db, sessions, _activeRegulation);
 
   // Map driverId → données pilote + points intermédiaires
   const driverMap = {};
@@ -354,6 +357,7 @@ function bindEvents() {
 export function initChampionship() {
   document.addEventListener('viewchange', async e => {
     if (e.detail.view === 'championship') {
+      try { _activeRegulation = await getChampionshipConfig(); } catch { _activeRegulation = null; }
       renderView();
       await loadMeetings();
     }
