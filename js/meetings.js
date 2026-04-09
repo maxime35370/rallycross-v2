@@ -236,6 +236,7 @@ function renderView() {
     <div class="section-header">
       <h2 class="section-title">📅 <span>Meetings</span></h2>
       <div class="section-actions">
+        <button class="btn btn-secondary btn-sm" id="mtg-assign-champ-btn" title="Associer tous les meetings affiches au championnat actif">🔗 Lier au championnat</button>
         <button class="btn btn-primary" id="mtg-add-btn">＋ Créer un meeting</button>
       </div>
     </div>
@@ -582,9 +583,48 @@ async function onSave() {
 // ÉVÉNEMENTS
 // ─────────────────────────────────────────────────────────
 
+async function assignAllMeetingsToChampionship() {
+  if (!requireAuth()) return;
+  const champId = getActiveChampionshipId();
+  if (!champId) {
+    toast('Selectionnez un championnat dans le header d\'abord', 'error');
+    return;
+  }
+
+  const toUpdate = allMeetings.filter(m => m.championshipId !== champId);
+  if (toUpdate.length === 0) {
+    toast('Tous les meetings sont deja lies a ce championnat', 'info');
+    return;
+  }
+
+  const champ = getActiveChampionship();
+  const champName = champ?.name || champId;
+  if (!window.confirm(`Associer ${toUpdate.length} meeting(s) au championnat "${champName}" ?`)) return;
+
+  const { doc, updateDoc } = await import(
+    'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
+  );
+
+  let count = 0;
+  for (const meeting of toUpdate) {
+    try {
+      await updateDoc(doc(db, 'meetings', meeting.id), { championshipId: champId });
+      count++;
+    } catch (err) {
+      console.error(`Erreur maj meeting ${meeting.id}:`, err);
+    }
+  }
+
+  logAudit('update', 'meeting', 'batch', { label: `${count} meetings lies au championnat "${champName}"` });
+  toast(`${count} meeting(s) associe(s) au championnat`, 'success');
+}
+
 function bindEvents() {
   document.getElementById('mtg-add-btn')
     ?.addEventListener('click', openAdd);
+
+  document.getElementById('mtg-assign-champ-btn')
+    ?.addEventListener('click', assignAllMeetingsToChampionship);
 
   document.getElementById('mtg-modal-close')
     ?.addEventListener('click', closeModal);
