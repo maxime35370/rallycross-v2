@@ -1156,7 +1156,7 @@ async function renderDfFromQf(panel, session) {
       '<span class="ses-pilot-name">' + escHtml(driver.firstName) + ' <strong>' + escHtml(driver.lastName) + '</strong></span>' +
       '<span class="ses-df-pts">' + (driver.qfPosition ? driver.qfPosition + 'e QF' + driver.qfNum : '—') + '</span>' +
       '<span class="ses-df-actions">' +
-      (isAssigned ? '<span style="color:var(--clr-success)">✓</span>' : '') +
+      (isAssigned ? '<span style="color:var(--clr-success)">✓</span> <button class="btn btn-ghost btn-sm ses-df-qf-forfait-btn" data-driver-id="' + driver.driverId + '" title="Declarer forfait">🚫</button> <button class="btn btn-danger btn-sm ses-df-qf-remove-btn" data-driver-id="' + driver.driverId + '">✕</button>' : '') +
       '</span></div>';
   });
 
@@ -1178,6 +1178,55 @@ async function renderDfFromQf(panel, session) {
   panel.innerHTML = html;
 
   document.getElementById('ses-auto-df-inline')?.addEventListener('click', () => autoAssignDemis());
+
+  // Forfait in DF (QF mode): replace with first reserve
+  panel.querySelectorAll('.ses-df-qf-forfait-btn').forEach(function(btn) {
+    btn.addEventListener('click', async function() {
+      const driverId = btn.dataset.driverId;
+      const forfaitDriver = qualified.find(d => d.driverId === driverId);
+      if (!forfaitDriver) return;
+
+      const reserve = reserves[0];
+      const forfaitLabel = forfaitDriver.firstName + ' ' + forfaitDriver.lastName + ' (#' + forfaitDriver.carNumber + ')';
+      const reserveLabel = reserve
+        ? reserve.firstName + ' ' + reserve.lastName + ' (#' + reserve.carNumber + ') — ' + reserve.qfPosition + 'e QF' + reserve.qfNum
+        : 'Aucun remplacant disponible';
+
+      if (!window.confirm('Forfait ' + forfaitLabel + ' ?\n\nRemplacant : ' + reserveLabel + '\n\nContinuer ?')) return;
+
+      // Remove forfait from DF
+      const snap = await fs.getDocs(fs.query(fs.collection(db, 'sessionParticipants'), fs.where('sessionId', '==', session.id), fs.where('driverId', '==', driverId)));
+      if (!snap.empty) {
+        const b = fs.writeBatch(db);
+        snap.docs.forEach(d => b.delete(d.ref));
+        await b.commit();
+      }
+
+      // Remove results too
+      const resSnap = await fs.getDocs(fs.query(fs.collection(db, 'results'), fs.where('sessionId', '==', session.id), fs.where('driverId', '==', driverId)));
+      if (!resSnap.empty) {
+        const b = fs.writeBatch(db);
+        resSnap.docs.forEach(d => b.delete(d.ref));
+        await b.commit();
+      }
+
+      // Add reserve
+      if (reserve) {
+        await addParticipant(session.id, reserve);
+      }
+
+      toast('Forfait declare' + (reserve ? ' — ' + reserve.firstName + ' ' + reserve.lastName + ' entre en grille' : ''), 'success', 4000);
+      renderSessionDetail();
+    });
+  });
+
+  // Remove button
+  panel.querySelectorAll('.ses-df-qf-remove-btn').forEach(function(btn) {
+    btn.addEventListener('click', async function() {
+      await removeParticipant(session.id, btn.dataset.driverId);
+      renderSessionDetail();
+    });
+  });
 }
 
 async function renderDfStandings(panel, session, assignedParticipants) {
