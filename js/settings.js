@@ -25,37 +25,44 @@ const DEFAULT_CHAMP = {
   regulation: 'FFSA 2026',
   isActive:   true,
 
-  // Catégories et plages de numéros — règlement FFSA
+  // Categories et plages de numeros
   categories: [
     { id: 'Supercar',   name: 'Supercar',   freeNumbers: false, carNumberRanges: [{ min: 1,   max: 99  }] },
     { id: 'Super1600',  name: 'Super 1600', freeNumbers: false, carNumberRanges: [{ min: 101, max: 199 }] },
     { id: 'Division 5', name: 'Division 5', freeNumbers: false, carNumberRanges: [{ min: 201, max: 249 }] },
-    { id: 'Féminines',  name: 'Féminines',  freeNumbers: false, carNumberRanges: [{ min: 251, max: 299 }] },
+    { id: 'Feminines',  name: 'Feminines',  freeNumbers: false, carNumberRanges: [{ min: 251, max: 299 }] },
     { id: 'D3',         name: 'D3',         freeNumbers: false, carNumberRanges: [{ min: 301, max: 399 }] },
     { id: 'D4',         name: 'D4',         freeNumbers: false, carNumberRanges: [{ min: 401, max: 499 }] },
   ],
 
-  // Nombre de tours par type de session — règlement FFSA
   sessionConfig: {
-    EC:  { laps: 1 },          // Essais chrono : meilleur tour (1 seul chronométré)
-    MQ:  { laps: 4, count: 4 }, // 4 manches qualificatives de 4 tours
-    DF:  { laps: 6 },           // Demi-finales : 6 tours
-    FIN: { laps: 7 },           // Finale : 7 tours
+    EC:  { enabled: true, laps: 1 },
+    MQ:  { laps: 4, count: 4 },
+    QF:  { enabled: false, count: 4, laps: 4, gridSize: 6,
+           gridLayout: { lanes: 2, rows: 3, positions: { '0-0':1,'0-1':2,'1-0':3,'1-1':4,'2-0':5,'2-1':6 } },
+           distribution: [1,5,9,13,17,21], // positions du classement interim pour QF1 (QF2=+1, QF3=+2, QF4=+3)
+           qualifiedPerQF: 3 },
+    DF:  { count: 2, laps: 6, gridSize: 8,
+           gridLayout: { lanes: 2, rows: 4, positions: { '0-0':1,'0-1':2,'1-0':3,'1-1':4,'2-0':5,'2-1':6,'3-0':7,'3-1':8 } },
+           qualifiedPerDF: 4 },
+    FIN: { laps: 7, gridSize: 8,
+           gridLayout: { lanes: 2, rows: 4, positions: { '0-0':1,'0-1':2,'1-0':3,'1-1':4,'2-0':5,'2-1':6,'3-0':7,'3-1':8 } } },
   },
 
-  // Barème de points — règlement FFSA 2026
-  // MQ : 1er=50, 2e=45, 3e=42, puis 44-position (formule)
-  //      + bonus EC top 5 : +5/+4/+3/+2/+1 (géré dans calc.js, pas ici)
-  // DF  : 10/8/6/5/4/3/2/1
-  // FIN : 15/12/9/7/6/5/4/3
+  // Phases activees : definit le parcours de la competition
+  // FFSA : MQ → DF → FIN (pas de QF)
+  // FIA  : MQ → QF → DF → FIN
+  competitionPhases: ['MQ', 'DF', 'FIN'],
+
+  // Mode de classement du meeting
+  // 'points' : FFSA — points attribues par phase (MQ + interim + DF + FIN)
+  // 'cascade' : FIA — classement final = resultat FIN (top6) + DF (top7-12) + QF (top13-24) + MQ (reste)
+  meetingClassificationMode: 'points',
+
   pointsScale: {
     MQ: {
-      formula:   '44 - position',   // Formule de base pour positions 4+
-      overrides: {                  // Exceptions pour le podium
-        1: 50,
-        2: 45,
-        3: 42,
-      },
+      formula:   '44 - position',
+      overrides: { 1: 50, 2: 45, 3: 42 },
     },
     DF: {
       formula:   null,
@@ -67,37 +74,25 @@ const DEFAULT_CHAMP = {
     },
   },
 
-  worstResultDrop: 0,  // Pas de déduction de pire résultat en FFSA par défaut
+  worstResultDrop: 0,
 
-  // Règles de points pour les statuts spéciaux
-  // mode 'engaged_offset' : points = barème(nbEngagés + offset)
-  //   ex : 35 engagés, offset=1 → DNF reçoit les points de la 36e place
-  // mode 'fixed'          : valeur fixe, indépendante du nombre de pilotes
   statusRules: {
-    DNF: {
-      mode:   'engaged_offset',
-      offset: 1,
-    },
-    DNS: {
-      mode:   'fixed',
-      points: 0,
-    },
-    DSQ_RACE: {
-      mode:   'fixed',
-      points: 0,
-    },
-    DSQ: {
-      mode:   'fixed',
-      points: 0,
-    },
+    DNF: { mode: 'engaged_offset', offset: 1 },
+    DNS: { mode: 'fixed', points: 0 },
+    DSQ_RACE: { mode: 'fixed', points: 0 },
+    DSQ: { mode: 'fixed', points: 0 },
   },
+
+  // Table de repartition des series MQ (nb pilotes → nb series par manche)
+  // Cle = nb pilotes engages, valeur = tableau [R1, R2, R3, ...]
+  seriesTable: null, // null = repartition automatique equitable
 };
 
 // ─────────────────────────────────────────────────────────
 // CHAMPS DU REGLEMENT (extraits pour reutilisation)
 // ─────────────────────────────────────────────────────────
 
-const REGULATION_FIELDS = ['categories', 'sessionConfig', 'pointsScale', 'worstResultDrop', 'statusRules'];
+const REGULATION_FIELDS = ['categories', 'sessionConfig', 'pointsScale', 'worstResultDrop', 'statusRules', 'competitionPhases', 'meetingClassificationMode', 'seriesTable'];
 
 function extractRegulation(data) {
   const reg = {};
@@ -605,13 +600,21 @@ function renderGridEditor(layout, prefix) {
 }
 
 function getNextGridPosition(prefix) {
+  // Limiter au gridSize du champ correspondant
+  var gridSizeInput = document.getElementById('sc-' + prefix + '-grid');
+  var maxPos = parseInt(gridSizeInput?.value) || 30;
+
   var cells = document.querySelectorAll('.grid-cell[data-prefix="' + prefix + '"]');
   var used = new Set();
   cells.forEach(function(btn) {
     var v = parseInt(btn.textContent);
     if (!isNaN(v)) used.add(v);
   });
-  for (var i = 1; i <= 30; i++) {
+
+  // Verifier si on a atteint le max
+  if (used.size >= maxPos) return null;
+
+  for (var i = 1; i <= maxPos; i++) {
     if (!used.has(i)) return i;
   }
   return null;
@@ -695,6 +698,61 @@ function renderTabSessions() {
             <input class="form-input" id="sc-mq-laps" type="number"
               min="1" max="30" style="width:70px;text-align:center"
               value="${sc.MQ?.laps ?? 4}">
+          </div>
+        </div>
+
+        <!-- QF -->
+        <div class="session-config-card ${sc.QF?.enabled ? '' : 'session-config-card--disabled'}">
+          <div class="session-config-label" style="display:flex;align-items:center;gap:var(--sp-sm)">
+            <span class="badge badge-mq" style="background:rgba(255,119,48,0.18);color:#ff7730;border-color:rgba(255,119,48,0.4)">QF</span> Quarts de Finale
+            <label class="settings-toggle settings-toggle--sm" style="margin-left:auto">
+              <input type="checkbox" id="sc-qf-enabled" ${sc.QF?.enabled ? 'checked' : ''}>
+              <span class="settings-toggle-track"><span class="settings-toggle-thumb"></span></span>
+            </label>
+          </div>
+          <div id="sc-qf-fields" style="${sc.QF?.enabled ? '' : 'opacity:0.35;pointer-events:none'}">
+            <div class="settings-form-row">
+              <label class="form-label">Nombre de QF</label>
+              <input class="form-input" id="sc-qf-count" type="number"
+                min="2" max="8" style="width:70px;text-align:center"
+                value="${sc.QF?.count ?? 4}">
+            </div>
+            <div class="settings-form-row">
+              <label class="form-label">Tours par QF</label>
+              <input class="form-input" id="sc-qf-laps" type="number"
+                min="1" max="30" style="width:70px;text-align:center"
+                value="${sc.QF?.laps ?? 4}">
+            </div>
+            <div class="settings-form-row">
+              <label class="form-label">Pilotes par QF</label>
+              <input class="form-input" id="sc-qf-grid" type="number"
+                min="2" max="20" style="width:70px;text-align:center"
+                value="${sc.QF?.gridSize ?? 6}">
+            </div>
+            <div class="settings-form-row">
+              <label class="form-label">Qualifi\u00e9s par QF</label>
+              <input class="form-input" id="sc-qf-qualified" type="number"
+                min="1" max="10" style="width:70px;text-align:center"
+                value="${sc.QF?.qualifiedPerQF ?? 3}">
+            </div>
+            <div class="grid-editor-section">
+              <label class="form-label">Grille de d\u00e9part QF</label>
+              <p class="text-muted" style="font-size:0.78rem;margin-bottom:var(--sp-xs)">Cliquez pour placer les positions. Re-cliquez pour retirer.</p>
+              <div class="settings-form-row" style="margin-bottom:var(--sp-sm)">
+                <label class="form-label">Couloirs</label>
+                <input class="form-input" id="sc-qf-lanes" type="number"
+                  min="2" max="10" style="width:60px;text-align:center"
+                  value="${(sc.QF?.gridLayout?.lanes) || 2}">
+                <label class="form-label" style="margin-left:var(--sp-sm)">Lignes</label>
+                <input class="form-input" id="sc-qf-rows" type="number"
+                  min="1" max="10" style="width:60px;text-align:center"
+                  value="${(sc.QF?.gridLayout?.rows) || 3}">
+                <button class="btn btn-ghost btn-sm" id="sc-qf-rebuild">Regen.</button>
+              </div>
+              <div class="grid-editor" id="grid-editor-qf">
+                ${renderGridEditor(sc.QF?.gridLayout || defaultGridLayout(sc.QF?.gridSize || 6, 2, 3), 'qf')}
+              </div>
+            </div>
           </div>
         </div>
 
@@ -982,9 +1040,18 @@ function bindTabEvents() {
       if (fields) fields.style.cssText = e.target.checked ? '' : 'opacity:0.35;pointer-events:none';
     });
 
-    // Regenerer la grille (bouton ou changement taille)
+    // Toggle QF
+    document.getElementById('sc-qf-enabled')?.addEventListener('change', (e) => {
+      const fields = document.getElementById('sc-qf-fields');
+      if (fields) fields.style.cssText = e.target.checked ? '' : 'opacity:0.35;pointer-events:none';
+      const card = e.target.closest('.session-config-card');
+      if (card) card.classList.toggle('session-config-card--disabled', !e.target.checked);
+    });
+
+    // Regenerer la grille (bouton)
     var rebuildGridFn = function(prefix) {
-      var key = prefix === 'df' ? 'DF' : 'FIN';
+      var keyMap = { df: 'DF', fin: 'FIN', qf: 'QF' };
+      var key = keyMap[prefix] || prefix.toUpperCase();
       var lanes = parseInt(document.getElementById('sc-' + prefix + '-lanes')?.value) || 5;
       var rows  = parseInt(document.getElementById('sc-' + prefix + '-rows')?.value)  || 3;
       var size  = parseInt(document.getElementById('sc-' + prefix + '-grid')?.value)  || 8;
@@ -997,10 +1064,12 @@ function bindTabEvents() {
         bindGridCells(prefix);
       }
     };
+    document.getElementById('sc-qf-rebuild')?.addEventListener('click', function() { rebuildGridFn('qf'); });
     document.getElementById('sc-df-rebuild')?.addEventListener('click', function() { rebuildGridFn('df'); });
     document.getElementById('sc-fin-rebuild')?.addEventListener('click', function() { rebuildGridFn('fin'); });
 
     // Bind clics sur les cellules de grille
+    bindGridCells('qf');
     bindGridCells('df');
     bindGridCells('fin');
   }
@@ -1148,6 +1217,20 @@ function syncCurrentTabToData() {
       // MQ
       _editData.sessionConfig.MQ.count = parseInt(document.getElementById('sc-mq-count')?.value) || 2;
       _editData.sessionConfig.MQ.laps  = parseInt(document.getElementById('sc-mq-laps')?.value)  || 4;
+
+      // QF
+      _editData.sessionConfig.QF      = _editData.sessionConfig.QF  || {};
+      _editData.sessionConfig.QF.enabled      = document.getElementById('sc-qf-enabled')?.checked ?? false;
+      _editData.sessionConfig.QF.count         = parseInt(document.getElementById('sc-qf-count')?.value) || 4;
+      _editData.sessionConfig.QF.laps          = parseInt(document.getElementById('sc-qf-laps')?.value)  || 4;
+      _editData.sessionConfig.QF.gridSize      = parseInt(document.getElementById('sc-qf-grid')?.value)  || 6;
+      _editData.sessionConfig.QF.qualifiedPerQF = parseInt(document.getElementById('sc-qf-qualified')?.value) || 3;
+      _editData.sessionConfig.QF.gridLayout    = readGridLayout('qf');
+
+      // Update competitionPhases
+      _editData.competitionPhases = ['MQ'];
+      if (_editData.sessionConfig.QF.enabled) _editData.competitionPhases.push('QF');
+      _editData.competitionPhases.push('DF', 'FIN');
 
       // DF
       _editData.sessionConfig.DF.count    = parseInt(document.getElementById('sc-df-count')?.value) || 2;

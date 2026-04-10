@@ -142,37 +142,71 @@ async function saveMeeting(data) {
 }
 
 /**
- * Génère les sessions Firestore pour un meeting.
- * Une session par type + par catégorie sélectionnée.
+ * Genere les sessions Firestore pour un meeting.
+ * Respecte le reglement du championnat actif :
+ * - EC : seulement si enabled dans le reglement
+ * - QF : seulement si enabled dans le reglement
+ * - Nombre de MQ, DF, QF : selon le reglement
  */
 async function generateSessions(meetingId, meetingData) {
   const { collection, writeBatch, doc } = await import(
     'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
   );
 
+  // Charger le reglement du championnat actif
+  const champ = getActiveChampionship();
+  const sc = champ?.sessionConfig || {};
+
   const batch = writeBatch(db);
   const sessionsCol = collection(db, 'sessions');
 
-  // Templates actifs selon nbMQ
-  const activeTemplates = SESSION_TEMPLATES.filter(t => {
-    if (t.type === 'MQ') return t.num <= meetingData.nbMQ;
-    return true;
-  });
+  // Construire les templates dynamiquement selon le reglement
+  const templates = [];
+  let order = 0;
 
-  // Créer une session par template × catégorie
+  // EC
+  if (sc.EC?.enabled !== false) {
+    templates.push({ type: 'EC', label: 'Essais chronom\u00e9tr\u00e9s', tours: sc.EC?.laps || 1, order: order++, num: null });
+  }
+
+  // MQ
+  const nbMQ = meetingData.nbMQ || sc.MQ?.count || 4;
+  for (let i = 1; i <= nbMQ; i++) {
+    templates.push({ type: 'MQ', label: 'Manche qualificative ' + i, tours: sc.MQ?.laps || 4, order: order++, num: i });
+  }
+
+  // QF
+  if (sc.QF?.enabled) {
+    const nbQF = sc.QF?.count || 4;
+    for (let i = 1; i <= nbQF; i++) {
+      templates.push({ type: 'QF', label: 'Quart de finale ' + i, tours: sc.QF?.laps || 4, order: order++, num: i });
+    }
+  }
+
+  // DF
+  const nbDF = sc.DF?.count || 2;
+  for (let i = 1; i <= nbDF; i++) {
+    templates.push({ type: 'DF', label: 'Demi-finale ' + i, tours: sc.DF?.laps || 6, order: order++, num: i });
+  }
+
+  // FIN
+  templates.push({ type: 'FIN', label: 'Finale', tours: sc.FIN?.laps || 7, order: order++, num: null });
+
+  // Creer une session par template x categorie
   meetingData.categories.forEach(category => {
-    activeTemplates.forEach(tpl => {
+    templates.forEach(tpl => {
       const ref = doc(sessionsCol);
       batch.set(ref, {
         meetingId,
+        championshipId: meetingData.championshipId || null,
         category,
         type:      tpl.type,
         label:     tpl.label,
         tours:     tpl.tours,
         order:     tpl.order,
-        num:       tpl.num || null,
+        num:       tpl.num,
         year:      meetingData.year,
-        status:    'pending',   // 'pending' | 'open' | 'closed'
+        status:    'pending',
         createdAt: new Date(),
       });
     });
