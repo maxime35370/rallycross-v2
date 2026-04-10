@@ -159,6 +159,7 @@
 }
 .mtg-preview-ec  { background: var(--clr-info-dim);       color: var(--clr-info); }
 .mtg-preview-mq  { background: var(--clr-warning-dim);    color: var(--clr-warning); }
+.mtg-preview-qf  { background: rgba(180,100,255,0.18);    color: #b464ff; }
 .mtg-preview-df  { background: rgba(255,119,48,0.18);     color: #ff7730; }
 .mtg-preview-fin { background: var(--clr-accent-dim);     color: var(--clr-accent); }
 
