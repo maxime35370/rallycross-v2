@@ -958,7 +958,7 @@ async function renderQfStandings(panel, session, assignedParticipants) {
   // Build grid display
   let gridHtml = '';
   if (gridLayout && gridLayout.positions && currentParticipants.length > 0) {
-    const lanes = gridLayout.lanes || 2;
+    const lanes = gridLayout.lanes || 5;
     const rows = gridLayout.rows || 3;
     const positions = gridLayout.positions;
 
@@ -1128,11 +1128,68 @@ async function renderDfFromQf(panel, session) {
 
   const feedingLabels = feedingQfs.map(f => 'QF' + f.qfNum).join(' + ');
 
+  // Detect replacements: drivers in DF session but not in qualified list
+  const qualifiedIds2 = new Set(qualified.map(d => d.driverId));
+  const replacementIds = new Set();
+  currentDfSnap.docs.forEach(d => {
+    if (!qualifiedIds2.has(d.data().driverId)) replacementIds.add(d.data().driverId);
+  });
+
   let html = '<div class="ses-detail-header"><div>' +
     '<div class="ses-detail-label">' + escHtml(session.label) + '</div>' +
     '<div class="ses-detail-meta">' + session.tours + ' tours · ' + currentDfIds.size + ' pilotes assignes</div>' +
     '</div>' +
     '<button class="btn btn-secondary btn-sm" id="ses-auto-df-inline">⚡ Auto DF</button></div>';
+
+  // Forfait notice
+  if (_dfForfaits.size > 0) {
+    html += '<div class="ses-df-notice" style="background:rgba(255,85,0,0.08);border-color:var(--clr-accent)">' +
+      '🚫 ' + _dfForfaits.size + ' forfait(s) declare(s)</div>';
+  }
+
+  // Grid display using gridLayout from regulation
+  const dfGridLayout = champ?.sessionConfig?.DF?.gridLayout;
+  if (dfGridLayout && dfGridLayout.positions && currentDfIds.size > 0) {
+    const gLanes = dfGridLayout.lanes || 5;
+    const gRows = dfGridLayout.rows || 3;
+    const gPositions = dfGridLayout.positions;
+
+    // Sort current participants by MQ ranking for grid assignment
+    const currentParts = currentDfSnap.docs.map(d => d.data());
+    const sortedGridParts = [...currentParts];
+    sortedGridParts.sort((a, b) => (mqRankMap[a.driverId] ?? 9999) - (mqRankMap[b.driverId] ?? 9999));
+
+    const gPosToDriver = {};
+    let gIdx = 0;
+    const gSortedPos = Object.entries(gPositions).sort((a, b) => a[1] - b[1]);
+    for (const [key, posNum] of gSortedPos) {
+      if (gIdx < sortedGridParts.length) gPosToDriver[key] = sortedGridParts[gIdx++];
+    }
+
+    html += '<div class="ses-grid-display"><div class="ses-grid-title">Grille de depart — DF' + session.num + '</div>';
+    html += '<table class="ses-grid-table"><thead><tr><th></th>';
+    for (let c = 0; c < gLanes; c++) html += '<th>C' + (c + 1) + '</th>';
+    html += '</tr></thead><tbody>';
+    for (let r = 0; r < gRows; r++) {
+      html += '<tr><td class="ses-grid-row-label">L' + (r + 1) + '</td>';
+      for (let c = 0; c < gLanes; c++) {
+        const key = r + '-' + c;
+        const driver = gPosToDriver[key];
+        if (driver) {
+          const isReplacement = replacementIds.has(driver.driverId);
+          html += '<td class="ses-grid-cell ses-grid-cell--filled' + (isReplacement ? ' ses-grid-cell--replacement' : '') + '">' +
+            '<span class="ses-grid-num">' + escHtml(driver.carNumber) + '</span>' +
+            '<span class="ses-grid-name">' + escHtml(driver.lastName) + '</span></td>';
+        } else if (gPositions[key]) {
+          html += '<td class="ses-grid-cell ses-grid-cell--empty">(' + gPositions[key] + ')</td>';
+        } else {
+          html += '<td class="ses-grid-cell"></td>';
+        }
+      }
+      html += '</tr>';
+    }
+    html += '</tbody></table></div>';
+  }
 
   // Qualified header
   html += '<div class="ses-df-notice" style="background:rgba(30,215,96,0.08);border-color:var(--clr-success)">' +
@@ -1149,15 +1206,20 @@ async function renderDfFromQf(panel, session) {
     }
     const isAssigned = currentDfIds.has(driver.driverId);
     const isInOtherDf = allDfIds.has(driver.driverId) && !currentDfIds.has(driver.driverId);
-    html += '<div class="ses-df-row ' + (isAssigned ? 'ses-df-row--assigned' : '') + ' ' + (isInOtherDf ? 'ses-df-row--other' : '') + '">' +
-      '<span class="ses-df-pos">' + (i + 1) + '</span>' +
+    const isForfait = _dfForfaits.has(driver.driverId);
+    html += '<div class="ses-df-row ' + (isForfait ? 'ses-df-row--forfait' : '') + ' ' + (isAssigned ? 'ses-df-row--assigned' : '') + ' ' + (isInOtherDf ? 'ses-df-row--other' : '') + '">' +
+      '<span class="ses-df-pos">' + (isForfait ? '—' : (i + 1)) + '</span>' +
       '<span class="ses-df-pill ses-df-pill--1">QF' + driver.qfNum + '</span>' +
       '<span class="ses-pilot-num">' + escHtml(driver.carNumber) + '</span>' +
-      '<span class="ses-pilot-name">' + escHtml(driver.firstName) + ' <strong>' + escHtml(driver.lastName) + '</strong></span>' +
-      '<span class="ses-df-pts">' + (driver.qfPosition ? driver.qfPosition + 'e QF' + driver.qfNum : '—') + '</span>' +
-      '<span class="ses-df-actions">' +
-      (isAssigned ? '<span style="color:var(--clr-success)">✓</span> <button class="btn btn-ghost btn-sm ses-df-qf-forfait-btn" data-driver-id="' + driver.driverId + '" title="Declarer forfait">🚫</button> <button class="btn btn-danger btn-sm ses-df-qf-remove-btn" data-driver-id="' + driver.driverId + '">✕</button>' : '') +
-      '</span></div>';
+      '<span class="ses-pilot-name"' + (isForfait ? ' style="text-decoration:line-through;opacity:0.5"' : '') + '>' + escHtml(driver.firstName) + ' <strong>' + escHtml(driver.lastName) + '</strong></span>' +
+      (isForfait
+        ? '<span style="font-size:0.75rem;color:var(--clr-danger)">🚫 Forfait</span>' +
+          '<span class="ses-df-actions"><button class="btn btn-secondary btn-sm ses-annuler-df-qf-forfait-btn" data-driver-id="' + driver.driverId + '">↩ Annuler</button></span>'
+        : '<span class="ses-df-pts">' + (driver.qfPosition ? driver.qfPosition + 'e QF' + driver.qfNum : '—') + '</span>' +
+          '<span class="ses-df-actions">' +
+          (isAssigned ? '<span style="color:var(--clr-success)">✓</span> <button class="btn btn-ghost btn-sm ses-df-qf-forfait-btn" data-driver-id="' + driver.driverId + '" title="Declarer forfait">🚫</button> <button class="btn btn-danger btn-sm ses-df-qf-remove-btn" data-driver-id="' + driver.driverId + '">✕</button>' : '') +
+          '</span>') +
+      '</div>';
   });
 
   // Reserves
@@ -1165,12 +1227,14 @@ async function renderDfFromQf(panel, session) {
     html += '<div style="margin-top:var(--sp-md);padding:var(--sp-sm) 0;color:var(--clr-text-3);font-size:0.8rem;font-weight:600;text-transform:uppercase;letter-spacing:0.08em">' +
       'Remplacants potentiels — tries par position QF puis classement intermediaire</div>';
     reserves.forEach((driver, i) => {
-      html += '<div class="ses-df-row ses-df-row--reserve">' +
+      const isNowInDf = currentDfIds.has(driver.driverId);
+      html += '<div class="ses-df-row ses-df-row--reserve' + (isNowInDf ? ' ses-df-row--assigned' : '') + '">' +
         '<span class="ses-df-pos">' + (i + 1) + '</span>' +
         '<span class="ses-df-pill ses-df-pill--1">QF' + driver.qfNum + '</span>' +
         '<span class="ses-pilot-num">' + escHtml(driver.carNumber) + '</span>' +
         '<span class="ses-pilot-name">' + escHtml(driver.firstName) + ' <strong>' + escHtml(driver.lastName) + '</strong></span>' +
         '<span class="ses-df-pts">' + (driver.qfPosition || '—') + 'e QF' + driver.qfNum + '</span>' +
+        (isNowInDf ? '<span style="color:var(--clr-success);font-size:0.75rem;font-weight:600">✓ Remplacant</span>' : '') +
         '</div>';
     });
   }
@@ -1194,6 +1258,9 @@ async function renderDfFromQf(panel, session) {
 
       if (!window.confirm('Forfait ' + forfaitLabel + ' ?\n\nRemplacant : ' + reserveLabel + '\n\nContinuer ?')) return;
 
+      // Track forfait visually
+      _dfForfaits.add(driverId);
+
       // Remove forfait from DF
       const snap = await fs.getDocs(fs.query(fs.collection(db, 'sessionParticipants'), fs.where('sessionId', '==', session.id), fs.where('driverId', '==', driverId)));
       if (!snap.empty) {
@@ -1216,6 +1283,17 @@ async function renderDfFromQf(panel, session) {
       }
 
       toast('Forfait declare' + (reserve ? ' — ' + reserve.firstName + ' ' + reserve.lastName + ' entre en grille' : ''), 'success', 4000);
+      renderSessionDetail();
+    });
+  });
+
+  // Annuler forfait DF (QF mode)
+  panel.querySelectorAll('.ses-annuler-df-qf-forfait-btn').forEach(function(btn) {
+    btn.addEventListener('click', async function() {
+      const driverId = btn.dataset.driverId;
+      const driver = qualified.find(d => d.driverId === driverId);
+      _dfForfaits.delete(driverId);
+      toast('Forfait annule — ' + (driver?.firstName || '') + ' ' + (driver?.lastName || '') + ' est de nouveau disponible', 'info', 3000);
       renderSessionDetail();
     });
   });
@@ -1277,6 +1355,55 @@ async function renderDfStandings(panel, session, assignedParticipants) {
   const currentIds = currentDf === 1 ? df1Ids : df2Ids;
   const otherIds   = currentDf === 1 ? df2Ids : df1Ids;
 
+  // Build grid display for current DF using gridLayout
+  let dfGridHtml = '';
+  const dfGridLayout = champ?.sessionConfig?.DF?.gridLayout;
+  if (dfGridLayout && dfGridLayout.positions && currentIds.size > 0) {
+    const gLanes = dfGridLayout.lanes || 5;
+    const gRows = dfGridLayout.rows || 3;
+    const gPositions = dfGridLayout.positions;
+
+    // Get actual participants sorted by MQ ranking
+    const { collection: gc, query: gq, where: gw, getDocs: ggd } = await import(
+      'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
+    );
+    const partSnap = await ggd(gq(gc(db, 'sessionParticipants'), gw('sessionId', '==', session.id)));
+    const currentParts = partSnap.docs.map(d => d.data());
+    const rankMap = {};
+    rawStandings.forEach((r, i) => { rankMap[r.driverId] = i; });
+    const sortedGridParts = [...currentParts].sort((a, b) => (rankMap[a.driverId] ?? 9999) - (rankMap[b.driverId] ?? 9999));
+
+    const gPosToDriver = {};
+    let gIdx = 0;
+    const gSortedPos = Object.entries(gPositions).sort((a, b) => a[1] - b[1]);
+    for (const [key] of gSortedPos) {
+      if (gIdx < sortedGridParts.length) gPosToDriver[key] = sortedGridParts[gIdx++];
+    }
+
+    dfGridHtml = '<div class="ses-grid-display"><div class="ses-grid-title">Grille de depart — DF' + session.num + '</div>';
+    dfGridHtml += '<table class="ses-grid-table"><thead><tr><th></th>';
+    for (let c = 0; c < gLanes; c++) dfGridHtml += '<th>C' + (c + 1) + '</th>';
+    dfGridHtml += '</tr></thead><tbody>';
+    for (let r = 0; r < gRows; r++) {
+      dfGridHtml += '<tr><td class="ses-grid-row-label">L' + (r + 1) + '</td>';
+      for (let c = 0; c < gLanes; c++) {
+        const key = r + '-' + c;
+        const driver = gPosToDriver[key];
+        if (driver) {
+          dfGridHtml += '<td class="ses-grid-cell ses-grid-cell--filled">' +
+            '<span class="ses-grid-num">' + escHtml(driver.carNumber) + '</span>' +
+            '<span class="ses-grid-name">' + escHtml(driver.lastName) + '</span></td>';
+        } else if (gPositions[key]) {
+          dfGridHtml += '<td class="ses-grid-cell ses-grid-cell--empty">(' + gPositions[key] + ')</td>';
+        } else {
+          dfGridHtml += '<td class="ses-grid-cell"></td>';
+        }
+      }
+      dfGridHtml += '</tr>';
+    }
+    dfGridHtml += '</tbody></table></div>';
+  }
+
   panel.innerHTML = `
     <div class="ses-detail-header">
       <div>
@@ -1288,6 +1415,8 @@ async function renderDfStandings(panel, session, assignedParticipants) {
 
     ${!hasRealStandings ? `<div class="ses-df-notice">⚠️ Pas encore assez de résultats MQ.</div>` : ''}
     ${_dfForfaits.size > 0 ? `<div class="ses-df-notice" style="background:rgba(255,85,0,0.08);border-color:var(--clr-accent)">🚫 ${_dfForfaits.size} forfait(s) déclaré(s)</div>` : ''}
+
+    ${dfGridHtml}
 
     <div class="ses-df-standings">
       <div class="ses-df-legend">
@@ -1497,6 +1626,51 @@ async function renderFinaleStandings(panel, session, assignedParticipants) {
       </div>`;
   };
 
+  // Build Finale grid display using gridLayout
+  let finGridHtml = '';
+  const champ3 = getActiveChampionship();
+  const finGridLayout = champ3?.sessionConfig?.FIN?.gridLayout;
+  if (finGridLayout && finGridLayout.positions && assignedParticipants.length > 0) {
+    const gLanes = finGridLayout.lanes || 5;
+    const gRows = finGridLayout.rows || 3;
+    const gPositions = finGridLayout.positions;
+
+    // Sort assigned participants by interim ranking
+    const sortedFinParts = [...assignedParticipants].sort((a, b) =>
+      (interimMap[a.driverId] ?? 999) - (interimMap[b.driverId] ?? 999)
+    );
+
+    const gPosToDriver = {};
+    let gIdx = 0;
+    const gSortedPos = Object.entries(gPositions).sort((a, b) => a[1] - b[1]);
+    for (const [key] of gSortedPos) {
+      if (gIdx < sortedFinParts.length) gPosToDriver[key] = sortedFinParts[gIdx++];
+    }
+
+    finGridHtml = '<div class="ses-grid-display"><div class="ses-grid-title">Grille de depart — Finale</div>';
+    finGridHtml += '<table class="ses-grid-table"><thead><tr><th></th>';
+    for (let c = 0; c < gLanes; c++) finGridHtml += '<th>C' + (c + 1) + '</th>';
+    finGridHtml += '</tr></thead><tbody>';
+    for (let r = 0; r < gRows; r++) {
+      finGridHtml += '<tr><td class="ses-grid-row-label">L' + (r + 1) + '</td>';
+      for (let c = 0; c < gLanes; c++) {
+        const key = r + '-' + c;
+        const driver = gPosToDriver[key];
+        if (driver) {
+          finGridHtml += '<td class="ses-grid-cell ses-grid-cell--filled">' +
+            '<span class="ses-grid-num">' + escHtml(driver.carNumber) + '</span>' +
+            '<span class="ses-grid-name">' + escHtml(driver.lastName) + '</span></td>';
+        } else if (gPositions[key]) {
+          finGridHtml += '<td class="ses-grid-cell ses-grid-cell--empty">(' + gPositions[key] + ')</td>';
+        } else {
+          finGridHtml += '<td class="ses-grid-cell"></td>';
+        }
+      }
+      finGridHtml += '</tr>';
+    }
+    finGridHtml += '</tbody></table></div>';
+  }
+
   panel.innerHTML = `
     <div class="ses-detail-header">
       <div>
@@ -1513,6 +1687,8 @@ async function renderFinaleStandings(panel, session, assignedParticipants) {
       <div class="ses-df-notice" style="background:rgba(255,85,0,0.08);border-color:var(--clr-accent)">
         🚫 ${_finForfaits.size} forfait(s) déclaré(s) pour la Finale
       </div>` : ''}
+
+    ${finGridHtml}
 
     <div class="ses-fin-section-title">
       <span>Qualifi\u00e9s — ${qualPerDF} premiers de chaque \u00bd finale</span>

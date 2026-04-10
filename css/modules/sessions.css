@@ -432,4 +432,17 @@
   white-space: nowrap;
   max-width: 70px;
 }
+
+.ses-grid-cell--replacement {
+  background: rgba(30, 215, 96, 0.15);
+  border-color: var(--clr-success) !important;
+}
+
+.ses-grid-cell--replacement .ses-grid-num {
+  color: var(--clr-success);
+}
+
+.ses-df-row--forfait {
+  opacity: 0.5;
+}
 .eng-group-dot--off { background: var(--clr-text-3); }
