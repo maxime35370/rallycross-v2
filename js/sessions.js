@@ -11,7 +11,7 @@ import { escHtml } from './utils.js';
 import { getChampionshipConfig } from './settings.js';
 import { calcInterimStandings } from './calc.js';
 import { distributeIntoQF, getReserves } from './competition.js';
-import { getActiveChampionship } from './context.js';
+import { getActiveChampionship, getActiveChampionshipId } from './context.js';
 
 // ─────────────────────────────────────────────────────────
 // ÉTAT LOCAL
@@ -37,7 +37,13 @@ let _dfForfaits   = new Set(); // forfaits DF — exclus des remplaçants DF
 let _finForfaits  = new Set(); // forfaits Finale — exclus des remplaçants Finale
 
 const CATEGORIES = ['Supercar', 'Super1600', 'Division 5', 'Féminines', 'D3', 'D4'];
-const SESSION_LABELS = { EC: 'Essais', MQ: 'Qualif.', DF: '½ Finale', FIN: 'Finale' };
+const SESSION_LABELS = { EC: 'Essais', MQ: 'Qualif.', QF: '¼ Finale', DF: '½ Finale', FIN: 'Finale' };
+
+function getChampCategories() {
+  const champ = getActiveChampionship();
+  if (champ?.categories?.length) return champ.categories.map(c => c.id || c.name);
+  return CATEGORIES;
+}
 
 // ─────────────────────────────────────────────────────────
 // FIRESTORE — CHARGEMENT
@@ -55,7 +61,11 @@ async function loadMeetings() {
     orderBy('date', 'asc')
   );
   unsubMeetings = onSnapshot(q, snap => {
-    allMeetings = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const all = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const champId = getActiveChampionshipId();
+    allMeetings = champId
+      ? all.filter(m => m.championshipId === champId || !m.championshipId)
+      : all;
     refreshMeetingSelect();
   });
 }
@@ -586,7 +596,7 @@ function renderView() {
       </select>
       <select class="toolbar-select" id="ses-category">
         <option value="">— Catégorie —</option>
-        ${CATEGORIES.map(c => `<option value="${c}" ${c===selectedCategory?'selected':''}>${escHtml(c)}</option>`).join('')}
+        ${getChampCategories().map(c => `<option value="${c}" ${c===selectedCategory?'selected':''}>${escHtml(c)}</option>`).join('')}
       </select>
     </div>
     <div class="ses-layout" id="ses-layout">
@@ -1151,5 +1161,10 @@ export function initSessions() {
         await loadSessions();
       }
     }
+  });
+
+  // Recharger quand on change de championnat
+  document.addEventListener('championshipchange', () => {
+    loadMeetings();
   });
 }
