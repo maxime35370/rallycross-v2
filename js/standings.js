@@ -356,10 +356,21 @@ async function renderInterimTab(content) {
         </tbody>
       </table>
     </div>
-    ${standings.length > 0 ? `
-      <div class="std-note">
-        ℹ️ Top 16 qualifiés pour les demi-finales · Points intermédiaires attribués aux 16 premiers
-      </div>` : ''}
+    ${standings.length > 0 ? (() => {
+      const champ = getActiveChampionship();
+      const sc = champ?.sessionConfig || {};
+      const hasQF = sc.QF?.enabled;
+      const qfCount = sc.QF?.count || 4;
+      const qfGrid = sc.QF?.gridSize || 6;
+      const dfCount = sc.DF?.count || 2;
+      const dfGrid = sc.DF?.gridSize || 8;
+      if (hasQF) {
+        const totalQF = qfCount * qfGrid;
+        return '<div class="std-note">Top ' + totalQF + ' qualifies pour les ' + qfCount + ' quarts de finale</div>';
+      }
+      const totalDF = dfCount * dfGrid;
+      return '<div class="std-note">Top ' + totalDF + ' qualifies pour les demi-finales</div>';
+    })() : ''}
   `;
 }
 

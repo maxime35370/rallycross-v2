@@ -326,17 +326,63 @@ async function autoAssignDemis() {
   await clearDf(df1.id);
   await clearDf(df2.id);
 
-  // Nombre de pilotes par DF selon le reglement
   const champ = getActiveChampionship();
   const dfGridSize = champ?.sessionConfig?.DF?.gridSize || 8;
   const nbDF = champ?.sessionConfig?.DF?.count || 2;
-  const totalDfSlots = dfGridSize * nbDF;
-
+  const qfEnabled = champ?.sessionConfig?.QF?.enabled;
+  const qualPerQF = champ?.sessionConfig?.QF?.qualifiedPerQF || 3;
   const dfSessions = allSessions.filter(s => s.type === 'DF').sort((a, b) => a.num - b.num);
-  const topN = ranked.slice(0, totalDfSlots);
-  for (let i = 0; i < topN.length; i++) {
-    const dfIdx = i % dfSessions.length;
-    await addParticipant(dfSessions[dfIdx].id, topN[i]);
+
+  const { collection: gc, query: gq, where: gw, getDocs: ggd } = await import(
+    'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
+  );
+
+  if (qfEnabled) {
+    // ── Mode QF → DF : prendre les qualifies des QF ──
+    const qfSessions = allSessions.filter(s => s.type === 'QF').sort((a, b) => a.num - b.num);
+    const qfResults = [];
+    for (const qf of qfSessions) {
+      const partSnap = await ggd(gq(gc(db, 'sessionParticipants'), gw('sessionId', '==', qf.id)));
+      const parts = partSnap.docs.map(d => d.data());
+      const resSnap = await ggd(gq(gc(db, 'results'), gw('sessionId', '==', qf.id)));
+      const resMap = {};
+      resSnap.docs.forEach(d => { resMap[d.data().driverId] = d.data(); });
+      const rows = parts.map(p => ({
+        driverId: p.driverId, carNumber: p.carNumber, firstName: p.firstName, lastName: p.lastName,
+        ms: resMap[p.driverId]?.ms ?? null, status: resMap[p.driverId]?.status ?? null,
+      }));
+      const order = r => r.ms ? r.ms : r.status === 'DNF' ? 9000000 : 9999999;
+      rows.sort((a, b) => order(a) - order(b));
+      qfResults.push(rows);
+    }
+
+    // Repartition QF1+QF3 → DF1, QF2+QF4 → DF2
+    for (let dfIdx = 0; dfIdx < dfSessions.length; dfIdx++) {
+      const qualifiedForThisDf = [];
+      for (let qfIdx = dfIdx; qfIdx < qfResults.length; qfIdx += dfSessions.length) {
+        qualifiedForThisDf.push(...qfResults[qfIdx].slice(0, qualPerQF));
+      }
+      // Trier : 1ers des QF, puis 2emes, puis 3emes — departage par classement MQ
+      qualifiedForThisDf.sort((a, b) => {
+        const posA = qfResults.find(qf => qf.includes(a))?.indexOf(a) ?? 999;
+        const posB = qfResults.find(qf => qf.includes(b))?.indexOf(b) ?? 999;
+        if (posA !== posB) return posA - posB;
+        const rankA = ranked.findIndex(r => r.driverId === a.driverId);
+        const rankB = ranked.findIndex(r => r.driverId === b.driverId);
+        return (rankA >= 0 ? rankA : 9999) - (rankB >= 0 ? rankB : 9999);
+      });
+      for (const driver of qualifiedForThisDf) {
+        await addParticipant(dfSessions[dfIdx].id, driver);
+      }
+    }
+  } else {
+    // ── Mode classique : MQ → DF directement ──
+    const totalDfSlots = dfGridSize * nbDF;
+    const topN = ranked.slice(0, totalDfSlots);
+    for (let i = 0; i < topN.length; i++) {
+      const dfIdx = i % dfSessions.length;
+      await addParticipant(dfSessions[dfIdx].id, topN[i]);
+    }
   }
 
   if (fin && finHasData) {
@@ -708,13 +754,38 @@ async function renderSessionDetail() {
     if (otherDf) otherDfIds = sessionParticipants[otherDf.id] || new Set();
   }
 
+  // QF : exclure les pilotes deja dans un autre QF
+  let otherQfIds = new Set();
+  if (session.type === 'QF') {
+    const otherQfs = allSessions.filter(s => s.type === 'QF' && s.id !== selectedSessionId);
+    for (const qf of otherQfs) {
+      const ids = sessionParticipants[qf.id] || new Set();
+      ids.forEach(id => otherQfIds.add(id));
+    }
+  }
+
   if (session.type === 'DF')  { await renderDfStandings(panel, session, participants); return; }
   if (session.type === 'FIN') { await renderFinaleStandings(panel, session, participants); return; }
 
-  const notAssigned = engagedDrivers.filter(d => {
+  let notAssigned = engagedDrivers.filter(d => {
     const id = d.id || d.driverId;
-    return !participantIds.has(id) && !otherDfIds.has(id);
+    return !participantIds.has(id) && !otherDfIds.has(id) && !otherQfIds.has(id);
   });
+
+  // Pour QF : trier par classement intermediaire MQ
+  if (session.type === 'QF') {
+    try {
+      const ranked = await calcInterimStandings(db, allSessions, _activeRegulation);
+      const rankMap = {};
+      ranked.forEach((r, i) => { rankMap[r.driverId] = i; });
+      notAssigned.sort((a, b) => {
+        const ra = rankMap[a.id || a.driverId] ?? 9999;
+        const rb = rankMap[b.id || b.driverId] ?? 9999;
+        return ra - rb;
+      });
+    } catch { /* fallback: tri par numero */ }
+  }
+
   const isEcOrMq = session.type === 'EC' || session.type === 'MQ';
 
   panel.innerHTML = `
@@ -739,8 +810,9 @@ async function renderSessionDetail() {
     ${notAssigned.length > 0 ? `
       <div class="ses-detail-section">
         <div class="ses-section-title"><span class="eng-group-dot eng-group-dot--off"></span>Non assignés (${notAssigned.length})</div>
-        ${notAssigned.map(d => `
+        ${notAssigned.map((d, idx) => `
           <div class="ses-pilot-row ses-pilot-row--dim">
+            ${session.type === 'QF' ? '<span class="ses-pilot-rank text-muted" style="font-size:0.78rem;min-width:24px">' + (idx + 1) + '</span>' : ''}
             <span class="ses-pilot-num">${escHtml(d.carNumber)}</span>
             <span class="ses-pilot-name">${escHtml(d.firstName)} <strong>${escHtml(d.lastName)}</strong></span>
             <button class="btn btn-secondary btn-sm ses-add-btn" data-driver-id="${d.id || d.driverId}">＋</button>
