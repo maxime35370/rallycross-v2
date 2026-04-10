@@ -777,6 +777,12 @@ function renderTabSessions() {
               min="2" max="20" style="width:70px;text-align:center"
               value="${dfGrid}">
           </div>
+          <div class="settings-form-row">
+            <label class="form-label">Qualifi\u00e9s pour la Finale (par DF)</label>
+            <input class="form-input" id="sc-df-qualified" type="number"
+              min="1" max="10" style="width:70px;text-align:center"
+              value="${sc.DF?.qualifiedPerDF ?? 4}">
+          </div>
           <div class="grid-editor-section">
             <label class="form-label">Grille de d\u00e9part DF</label>
             <p class="text-muted" style="font-size:0.78rem;margin-bottom:var(--sp-xs)">Cliquez sur une case pour placer la position suivante. Re-cliquez pour retirer. Le c\u00f4t\u00e9 de la p\u00f4le d\u00e9pend du circuit.</p>
@@ -1234,9 +1240,10 @@ function syncCurrentTabToData() {
 
       // DF
       _editData.sessionConfig.DF.count    = parseInt(document.getElementById('sc-df-count')?.value) || 2;
-      _editData.sessionConfig.DF.laps     = parseInt(document.getElementById('sc-df-laps')?.value)  || 6;
-      _editData.sessionConfig.DF.gridSize = parseInt(document.getElementById('sc-df-grid')?.value)  || 8;
-      _editData.sessionConfig.DF.gridLayout = readGridLayout('df');
+      _editData.sessionConfig.DF.laps         = parseInt(document.getElementById('sc-df-laps')?.value)  || 6;
+      _editData.sessionConfig.DF.gridSize     = parseInt(document.getElementById('sc-df-grid')?.value)  || 8;
+      _editData.sessionConfig.DF.qualifiedPerDF = parseInt(document.getElementById('sc-df-qualified')?.value) || 4;
+      _editData.sessionConfig.DF.gridLayout   = readGridLayout('df');
 
       // FIN
       _editData.sessionConfig.FIN.laps     = parseInt(document.getElementById('sc-fin-laps')?.value) || 7;
