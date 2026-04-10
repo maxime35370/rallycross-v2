@@ -1039,7 +1039,157 @@ async function renderQfStandings(panel, session, assignedParticipants) {
   });
 }
 
+// ─────────────────────────────────────────────────────────
+// RENDU DF DEPUIS QF — montre les resultats QF groupes par position
+// ─────────────────────────────────────────────────────────
+
+async function renderDfFromQf(panel, session) {
+  const champ = getActiveChampionship();
+  const qualPerQF = champ?.sessionConfig?.QF?.qualifiedPerQF || 3;
+  const dfSessions = allSessions.filter(s => s.type === 'DF').sort((a, b) => a.num - b.num);
+  const qfSessions = allSessions.filter(s => s.type === 'QF').sort((a, b) => a.num - b.num);
+
+  const fs = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
+
+  // Fetch current DF participants
+  const currentDfSnap = await fs.getDocs(fs.query(fs.collection(db, 'sessionParticipants'), fs.where('sessionId', '==', session.id)));
+  const currentDfIds = new Set(currentDfSnap.docs.map(d => d.data().driverId));
+
+  // Fetch all DF participants
+  const allDfIds = new Set();
+  for (const df of dfSessions) {
+    const snap = await fs.getDocs(fs.query(fs.collection(db, 'sessionParticipants'), fs.where('sessionId', '==', df.id)));
+    snap.docs.forEach(d => allDfIds.add(d.data().driverId));
+  }
+
+  // Get QF results
+  const qfResults = [];
+  for (const qf of qfSessions) {
+    const partSnap = await fs.getDocs(fs.query(fs.collection(db, 'sessionParticipants'), fs.where('sessionId', '==', qf.id)));
+    const parts = partSnap.docs.map(d => d.data());
+    const resSnap = await fs.getDocs(fs.query(fs.collection(db, 'results'), fs.where('sessionId', '==', qf.id)));
+    const resMap = {};
+    resSnap.docs.forEach(d => { resMap[d.data().driverId] = d.data(); });
+    const rows = parts.map(p => ({
+      driverId: p.driverId, carNumber: p.carNumber, firstName: p.firstName, lastName: p.lastName,
+      ms: resMap[p.driverId]?.ms ?? null, status: resMap[p.driverId]?.status ?? null,
+      qfNum: qf.num,
+    }));
+    const order = r => r.ms ? r.ms : r.status === 'DNF' ? 9000000 : 9999999;
+    rows.sort((a, b) => order(a) - order(b));
+    // Assign QF position
+    let pos = 1;
+    rows.forEach(r => { r.qfPosition = (r.ms || r.status === 'DNF') ? pos++ : null; });
+    qfResults.push(rows);
+  }
+
+  // MQ ranking for tiebreaking
+  let mqRanking = [];
+  try { mqRanking = await calcInterimStandings(db, allSessions, _activeRegulation); } catch {}
+  const mqRankMap = {};
+  mqRanking.forEach((r, i) => { mqRankMap[r.driverId] = i; });
+
+  // Build qualified list grouped by QF position
+  // For this DF: which QFs feed into it?
+  // DF1 ← QF1+QF3, DF2 ← QF2+QF4
+  const dfIdx = dfSessions.findIndex(d => d.id === session.id);
+  const feedingQfs = [];
+  for (let q = dfIdx; q < qfSessions.length; q += dfSessions.length) {
+    if (qfResults[q]) feedingQfs.push({ qfNum: q + 1, results: qfResults[q] });
+  }
+
+  // Build qualified drivers sorted by QF position then MQ rank
+  const qualified = [];
+  for (let posLevel = 1; posLevel <= qualPerQF; posLevel++) {
+    const driversAtPos = [];
+    for (const fqf of feedingQfs) {
+      const driver = fqf.results.find(r => r.qfPosition === posLevel);
+      if (driver) driversAtPos.push(driver);
+    }
+    // Sort by MQ ranking for tiebreak within same QF position
+    driversAtPos.sort((a, b) => (mqRankMap[a.driverId] ?? 9999) - (mqRankMap[b.driverId] ?? 9999));
+    qualified.push(...driversAtPos);
+  }
+
+  // Reserves: QF drivers not qualified, sorted by QF position then MQ rank
+  const qualifiedIds = new Set(qualified.map(d => d.driverId));
+  const reserves = [];
+  for (const fqf of feedingQfs) {
+    fqf.results.forEach(r => {
+      if (!qualifiedIds.has(r.driverId) && r.qfPosition) {
+        reserves.push(r);
+      }
+    });
+  }
+  reserves.sort((a, b) => {
+    if ((a.qfPosition || 99) !== (b.qfPosition || 99)) return (a.qfPosition || 99) - (b.qfPosition || 99);
+    return (mqRankMap[a.driverId] ?? 9999) - (mqRankMap[b.driverId] ?? 9999);
+  });
+
+  const feedingLabels = feedingQfs.map(f => 'QF' + f.qfNum).join(' + ');
+
+  let html = '<div class="ses-detail-header"><div>' +
+    '<div class="ses-detail-label">' + escHtml(session.label) + '</div>' +
+    '<div class="ses-detail-meta">' + session.tours + ' tours · ' + currentDfIds.size + ' pilotes assignes</div>' +
+    '</div>' +
+    '<button class="btn btn-secondary btn-sm" id="ses-auto-df-inline">⚡ Auto DF</button></div>';
+
+  // Qualified header
+  html += '<div class="ses-df-notice" style="background:rgba(30,215,96,0.08);border-color:var(--clr-success)">' +
+    'Qualifies — ' + qualPerQF + ' premiers de chaque QF (' + feedingLabels + ') · 🚫 = Declarer forfait' +
+    '</div>';
+
+  // Qualified list grouped by position
+  let currentPosLevel = 0;
+  qualified.forEach((driver, i) => {
+    const posLevel = Math.floor(i / feedingQfs.length) + 1;
+    if (posLevel !== currentPosLevel) {
+      currentPosLevel = posLevel;
+      if (posLevel > 1) html += '<div style="border-top:1px solid var(--clr-border);margin:var(--sp-xs) 0"></div>';
+    }
+    const isAssigned = currentDfIds.has(driver.driverId);
+    const isInOtherDf = allDfIds.has(driver.driverId) && !currentDfIds.has(driver.driverId);
+    html += '<div class="ses-df-row ' + (isAssigned ? 'ses-df-row--assigned' : '') + ' ' + (isInOtherDf ? 'ses-df-row--other' : '') + '">' +
+      '<span class="ses-df-pos">' + (i + 1) + '</span>' +
+      '<span class="ses-df-pill ses-df-pill--1">QF' + driver.qfNum + '</span>' +
+      '<span class="ses-pilot-num">' + escHtml(driver.carNumber) + '</span>' +
+      '<span class="ses-pilot-name">' + escHtml(driver.firstName) + ' <strong>' + escHtml(driver.lastName) + '</strong></span>' +
+      '<span class="ses-df-pts">' + (driver.qfPosition ? driver.qfPosition + 'e QF' + driver.qfNum : '—') + '</span>' +
+      '<span class="ses-df-actions">' +
+      (isAssigned ? '<span style="color:var(--clr-success)">✓</span>' : '') +
+      '</span></div>';
+  });
+
+  // Reserves
+  if (reserves.length > 0) {
+    html += '<div style="margin-top:var(--sp-md);padding:var(--sp-sm) 0;color:var(--clr-text-3);font-size:0.8rem;font-weight:600;text-transform:uppercase;letter-spacing:0.08em">' +
+      'Remplacants potentiels — tries par position QF puis classement intermediaire</div>';
+    reserves.forEach((driver, i) => {
+      html += '<div class="ses-df-row ses-df-row--reserve">' +
+        '<span class="ses-df-pos">' + (i + 1) + '</span>' +
+        '<span class="ses-df-pill ses-df-pill--1">QF' + driver.qfNum + '</span>' +
+        '<span class="ses-pilot-num">' + escHtml(driver.carNumber) + '</span>' +
+        '<span class="ses-pilot-name">' + escHtml(driver.firstName) + ' <strong>' + escHtml(driver.lastName) + '</strong></span>' +
+        '<span class="ses-df-pts">' + (driver.qfPosition || '—') + 'e QF' + driver.qfNum + '</span>' +
+        '</div>';
+    });
+  }
+
+  panel.innerHTML = html;
+
+  document.getElementById('ses-auto-df-inline')?.addEventListener('click', () => autoAssignDemis());
+}
+
 async function renderDfStandings(panel, session, assignedParticipants) {
+  const champ = getActiveChampionship();
+  const qfEnabled = champ?.sessionConfig?.QF?.enabled;
+
+  // Si QF actifs, utiliser le rendu specifique QF→DF
+  if (qfEnabled) {
+    await renderDfFromQf(panel, session);
+    return;
+  }
+
   const df1 = allSessions.find(s => s.type === 'DF' && s.num === 1);
   const df2 = allSessions.find(s => s.type === 'DF' && s.num === 2);
 
@@ -1133,7 +1283,7 @@ async function renderDfStandings(panel, session, assignedParticipants) {
       ${reserveStandings.length > 0 ? `
         <div class="ses-df-row ses-df-row--reserve">
           <span style="grid-column:1/-1;color:var(--clr-text-3);font-size:0.8rem;padding:var(--sp-sm) 0">
-            Pilotes 17+ : remplaçants potentiels si forfait
+            Pilotes ${assignedStandings.length + 1}+ : remplaçants potentiels si forfait
           </span>
         </div>
         ${reserveStandings.map((p, i) => `
