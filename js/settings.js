@@ -465,6 +465,14 @@ function renderTabGeneral() {
       </div>
 
       <div class="form-group">
+        <label class="form-label">Mode de classement meeting</label>
+        <select class="form-select" id="f-classification-mode">
+          <option value="points" ${(_editData.meetingClassificationMode || 'points') === 'points' ? 'selected' : ''}>Points (FFSA) — points cumules MQ + DF + FIN</option>
+          <option value="cascade" ${_editData.meetingClassificationMode === 'cascade' ? 'selected' : ''}>Cascade (FIA) — classement par phase (FIN > DF > QF > MQ)</option>
+        </select>
+      </div>
+
+      <div class="form-group">
         <label class="form-label">Statut</label>
         <label class="settings-toggle">
           <input type="checkbox" id="f-active" ${_editData.isActive ? 'checked' : ''}>
@@ -698,6 +706,21 @@ function renderTabSessions() {
             <input class="form-input" id="sc-mq-laps" type="number"
               min="1" max="30" style="width:70px;text-align:center"
               value="${sc.MQ?.laps ?? 4}">
+          </div>
+        </div>
+
+        <!-- Repartition series MQ -->
+        <div class="session-config-card" style="grid-column:1/-1">
+          <div class="session-config-label">📊 R\u00e9partition des s\u00e9ries MQ</div>
+          <p class="text-muted" style="font-size:0.78rem;margin-bottom:var(--sp-sm)">
+            Nombre de pilotes par s\u00e9rie selon le nombre d'engag\u00e9s. Laisser vide = r\u00e9partition automatique \u00e9quitable.
+          </p>
+          <div class="settings-form-row">
+            <label class="form-label">Pilotes par s\u00e9rie (cible)</label>
+            <input class="form-input" id="sc-mq-drivers-per-series" type="number"
+              min="3" max="10" style="width:70px;text-align:center"
+              value="${sc.MQ?.driversPerSeries ?? 5}">
+            <span class="text-muted" style="font-size:0.8rem">Le syst\u00e8me cr\u00e9e autant de s\u00e9ries que n\u00e9cessaire</span>
           </div>
         </div>
 
@@ -1193,6 +1216,7 @@ function syncCurrentTabToData() {
       _editData.year       = parseInt(document.getElementById('f-year')?.value) || new Date().getFullYear();
       _editData.regulation = (document.getElementById('f-regulation')?.value || '').trim();
       _editData.isActive   = document.getElementById('f-active')?.checked ?? true;
+      _editData.meetingClassificationMode = document.getElementById('f-classification-mode')?.value || 'points';
       break;
 
     case 'categories':
@@ -1223,6 +1247,7 @@ function syncCurrentTabToData() {
       // MQ
       _editData.sessionConfig.MQ.count = parseInt(document.getElementById('sc-mq-count')?.value) || 2;
       _editData.sessionConfig.MQ.laps  = parseInt(document.getElementById('sc-mq-laps')?.value)  || 4;
+      _editData.sessionConfig.MQ.driversPerSeries = parseInt(document.getElementById('sc-mq-drivers-per-series')?.value) || 5;
 
       // QF
       _editData.sessionConfig.QF      = _editData.sessionConfig.QF  || {};
