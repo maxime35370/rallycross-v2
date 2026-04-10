@@ -561,42 +561,92 @@ function renderRangeRow(catIdx, rangeIdx, range) {
 // ONGLET SESSIONS
 // ─────────────────────────────────────────────────────────
 
-function renderGridEditor(gridPositions, prefix) {
-  const positions = gridPositions || [];
-  const rows = [];
-  for (let i = 0; i < positions.length; i += 2) {
-    const left  = positions[i]     !== undefined ? positions[i]     : '';
-    const right = positions[i + 1] !== undefined ? positions[i + 1] : '';
-    const rowNum = Math.floor(i / 2) + 1;
-    rows.push(
-      '<div class="grid-editor-row">' +
-        '<span class="grid-editor-row-num">R' + rowNum + '</span>' +
-        '<input class="form-input grid-pos-input" type="number" min="1" max="20" ' +
-          'data-prefix="' + prefix + '" data-idx="' + i + '" ' +
-          'value="' + left + '" placeholder="—">' +
-        '<input class="form-input grid-pos-input" type="number" min="1" max="20" ' +
-          'data-prefix="' + prefix + '" data-idx="' + (i + 1) + '" ' +
-          'value="' + right + '" placeholder="—">' +
-      '</div>'
-    );
+// ─────────────────────────────────────────────────────────
+// EDITEUR DE GRILLE — lignes x couloirs, entierement libre
+// ─────────────────────────────────────────────────────────
+
+function defaultGridLayout(gridSize, lanes, rows) {
+  const positions = {};
+  let pos = 1;
+  for (let r = 0; r < rows && pos <= gridSize; r++) {
+    for (let c = 0; c < lanes && pos <= gridSize; c++) {
+      positions[r + '-' + c] = pos++;
+    }
   }
-  return rows.join('');
+  return { lanes: lanes, rows: rows, positions: positions };
 }
 
-function defaultGrid(size) {
-  return Array.from({ length: size }, (_, i) => i + 1);
+function renderGridEditor(layout, prefix) {
+  const lanes = layout?.lanes || 5;
+  const rows  = layout?.rows  || 3;
+  const pos   = layout?.positions || {};
+
+  var html = '<table class="grid-editor-table"><thead><tr><th></th>';
+  for (var c = 0; c < lanes; c++) {
+    html += '<th>C' + (c + 1) + '</th>';
+  }
+  html += '</tr></thead><tbody>';
+
+  for (var r = 0; r < rows; r++) {
+    html += '<tr><td class="grid-editor-row-label">L' + (r + 1) + '</td>';
+    for (var c2 = 0; c2 < lanes; c2++) {
+      var key = r + '-' + c2;
+      var val = pos[key] || '';
+      var hasVal = val !== '';
+      html += '<td><button class="grid-cell' + (hasVal ? ' grid-cell--filled' : '') + '" ' +
+        'data-prefix="' + prefix + '" data-row="' + r + '" data-col="' + c2 + '">' +
+        (hasVal ? val : '') +
+        '</button></td>';
+    }
+    html += '</tr>';
+  }
+  html += '</tbody></table>';
+  return html;
 }
 
-function readGridPositions(prefix) {
-  const inputs = document.querySelectorAll('.grid-pos-input[data-prefix="' + prefix + '"]');
-  const positions = [];
-  inputs.forEach(input => {
-    const val = parseInt(input.value);
-    positions.push(isNaN(val) ? null : val);
+function getNextGridPosition(prefix) {
+  var cells = document.querySelectorAll('.grid-cell[data-prefix="' + prefix + '"]');
+  var used = new Set();
+  cells.forEach(function(btn) {
+    var v = parseInt(btn.textContent);
+    if (!isNaN(v)) used.add(v);
   });
-  // Enlever les nulls en fin de tableau
-  while (positions.length > 0 && positions[positions.length - 1] === null) positions.pop();
-  return positions;
+  for (var i = 1; i <= 30; i++) {
+    if (!used.has(i)) return i;
+  }
+  return null;
+}
+
+function bindGridCells(prefix) {
+  document.querySelectorAll('.grid-cell[data-prefix="' + prefix + '"]').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      if (btn.textContent.trim()) {
+        btn.textContent = '';
+        btn.classList.remove('grid-cell--filled');
+      } else {
+        var next = getNextGridPosition(prefix);
+        if (next !== null) {
+          btn.textContent = next;
+          btn.classList.add('grid-cell--filled');
+        }
+      }
+    });
+  });
+}
+
+function readGridLayout(prefix) {
+  var lanesInput = document.getElementById('sc-' + prefix + '-lanes');
+  var rowsInput  = document.getElementById('sc-' + prefix + '-rows');
+  var lanes = parseInt(lanesInput?.value) || 5;
+  var rows  = parseInt(rowsInput?.value)  || 3;
+  var positions = {};
+  document.querySelectorAll('.grid-cell[data-prefix="' + prefix + '"]').forEach(function(btn) {
+    var val = parseInt(btn.textContent);
+    if (!isNaN(val)) {
+      positions[btn.dataset.row + '-' + btn.dataset.col] = val;
+    }
+  });
+  return { lanes: lanes, rows: rows, positions: positions };
 }
 
 function renderTabSessions() {
@@ -605,8 +655,8 @@ function renderTabSessions() {
   const dfCount   = sc.DF?.count ?? 2;
   const dfGrid    = sc.DF?.gridSize ?? 8;
   const finGrid   = sc.FIN?.gridSize ?? 8;
-  const dfPositions  = sc.DF?.gridPositions  || defaultGrid(dfGrid);
-  const finPositions = sc.FIN?.gridPositions || defaultGrid(finGrid);
+  const dfLayout  = sc.DF?.gridLayout  || defaultGridLayout(dfGrid, 5, 3);
+  const finLayout = sc.FIN?.gridLayout || defaultGridLayout(finGrid, 5, 3);
 
   return `
     <div class="tab-panel">
@@ -671,9 +721,20 @@ function renderTabSessions() {
           </div>
           <div class="grid-editor-section">
             <label class="form-label">Grille de d\u00e9part DF</label>
-            <p class="text-muted" style="font-size:0.78rem;margin-bottom:var(--sp-xs)">Ordre des positions sur la grille (2 par rang\u00e9e). Le c\u00f4t\u00e9 de la p\u00f4le d\u00e9pend du circuit.</p>
+            <p class="text-muted" style="font-size:0.78rem;margin-bottom:var(--sp-xs)">Cliquez sur une case pour placer la position suivante. Re-cliquez pour retirer. Le c\u00f4t\u00e9 de la p\u00f4le d\u00e9pend du circuit.</p>
+            <div class="settings-form-row" style="margin-bottom:var(--sp-sm)">
+              <label class="form-label">Couloirs</label>
+              <input class="form-input" id="sc-df-lanes" type="number"
+                min="2" max="10" style="width:60px;text-align:center"
+                value="${dfLayout.lanes || 5}">
+              <label class="form-label" style="margin-left:var(--sp-sm)">Lignes</label>
+              <input class="form-input" id="sc-df-rows" type="number"
+                min="1" max="10" style="width:60px;text-align:center"
+                value="${dfLayout.rows || 3}">
+              <button class="btn btn-ghost btn-sm" id="sc-df-rebuild">Regen. grille</button>
+            </div>
             <div class="grid-editor" id="grid-editor-df">
-              ${renderGridEditor(dfPositions, 'df')}
+              ${renderGridEditor(dfLayout, 'df')}
             </div>
           </div>
         </div>
@@ -695,9 +756,20 @@ function renderTabSessions() {
           </div>
           <div class="grid-editor-section">
             <label class="form-label">Grille de d\u00e9part Finale</label>
-            <p class="text-muted" style="font-size:0.78rem;margin-bottom:var(--sp-xs)">Ordre des positions sur la grille (2 par rang\u00e9e). Le c\u00f4t\u00e9 de la p\u00f4le d\u00e9pend du circuit.</p>
+            <p class="text-muted" style="font-size:0.78rem;margin-bottom:var(--sp-xs)">Cliquez sur une case pour placer la position suivante. Re-cliquez pour retirer.</p>
+            <div class="settings-form-row" style="margin-bottom:var(--sp-sm)">
+              <label class="form-label">Couloirs</label>
+              <input class="form-input" id="sc-fin-lanes" type="number"
+                min="2" max="10" style="width:60px;text-align:center"
+                value="${finLayout.lanes || 5}">
+              <label class="form-label" style="margin-left:var(--sp-sm)">Lignes</label>
+              <input class="form-input" id="sc-fin-rows" type="number"
+                min="1" max="10" style="width:60px;text-align:center"
+                value="${finLayout.rows || 3}">
+              <button class="btn btn-ghost btn-sm" id="sc-fin-rebuild">Regen. grille</button>
+            </div>
             <div class="grid-editor" id="grid-editor-fin">
-              ${renderGridEditor(finPositions, 'fin')}
+              ${renderGridEditor(finLayout, 'fin')}
             </div>
           </div>
         </div>
@@ -910,23 +982,27 @@ function bindTabEvents() {
       if (fields) fields.style.cssText = e.target.checked ? '' : 'opacity:0.35;pointer-events:none';
     });
 
-    // Regenerer la grille quand on change la taille
-    const rebuildGrid = (prefix, inputId) => {
-      document.getElementById(inputId)?.addEventListener('change', () => {
-        syncCurrentTabToData();
-        const size = parseInt(document.getElementById(inputId)?.value) || 6;
-        const sc = _editData.sessionConfig || {};
-        const key = prefix === 'df' ? 'DF' : 'FIN';
-        sc[key] = sc[key] || {};
-        sc[key].gridSize = size;
-        // Regenerer positions par defaut si la taille change
-        sc[key].gridPositions = defaultGrid(size);
-        const editor = document.getElementById('grid-editor-' + prefix);
-        if (editor) editor.innerHTML = renderGridEditor(sc[key].gridPositions, prefix);
-      });
+    // Regenerer la grille (bouton ou changement taille)
+    var rebuildGridFn = function(prefix) {
+      var key = prefix === 'df' ? 'DF' : 'FIN';
+      var lanes = parseInt(document.getElementById('sc-' + prefix + '-lanes')?.value) || 5;
+      var rows  = parseInt(document.getElementById('sc-' + prefix + '-rows')?.value)  || 3;
+      var size  = parseInt(document.getElementById('sc-' + prefix + '-grid')?.value)  || 8;
+      var sc = _editData.sessionConfig || {};
+      sc[key] = sc[key] || {};
+      sc[key].gridLayout = defaultGridLayout(size, lanes, rows);
+      var editor = document.getElementById('grid-editor-' + prefix);
+      if (editor) {
+        editor.innerHTML = renderGridEditor(sc[key].gridLayout, prefix);
+        bindGridCells(prefix);
+      }
     };
-    rebuildGrid('df', 'sc-df-grid');
-    rebuildGrid('fin', 'sc-fin-grid');
+    document.getElementById('sc-df-rebuild')?.addEventListener('click', function() { rebuildGridFn('df'); });
+    document.getElementById('sc-fin-rebuild')?.addEventListener('click', function() { rebuildGridFn('fin'); });
+
+    // Bind clics sur les cellules de grille
+    bindGridCells('df');
+    bindGridCells('fin');
   }
 
   if (_activeTab === 'categories') {
@@ -1077,12 +1153,12 @@ function syncCurrentTabToData() {
       _editData.sessionConfig.DF.count    = parseInt(document.getElementById('sc-df-count')?.value) || 2;
       _editData.sessionConfig.DF.laps     = parseInt(document.getElementById('sc-df-laps')?.value)  || 6;
       _editData.sessionConfig.DF.gridSize = parseInt(document.getElementById('sc-df-grid')?.value)  || 8;
-      _editData.sessionConfig.DF.gridPositions = readGridPositions('df');
+      _editData.sessionConfig.DF.gridLayout = readGridLayout('df');
 
       // FIN
       _editData.sessionConfig.FIN.laps     = parseInt(document.getElementById('sc-fin-laps')?.value) || 7;
       _editData.sessionConfig.FIN.gridSize = parseInt(document.getElementById('sc-fin-grid')?.value) || 8;
-      _editData.sessionConfig.FIN.gridPositions = readGridPositions('fin');
+      _editData.sessionConfig.FIN.gridLayout = readGridLayout('fin');
 
       _editData.worstResultDrop = parseInt(document.getElementById('sc-worst-drop')?.value) || 0;
       break;
