@@ -8,6 +8,13 @@ import { toast } from './app.js';
 import { escHtml, CATEGORIES } from './utils.js';
 import { logAudit } from './audit.js';
 import { requireAuth } from './auth.js';
+import { getActiveChampionshipId, getActiveChampionship } from './context.js';
+
+function getChampCategories() {
+  const champ = getActiveChampionship();
+  if (champ?.categories?.length) return champ.categories.map(c => c.id || c.name);
+  return CATEGORIES;
+}
 
 // ─────────────────────────────────────────────────────────
 // ÉTAT LOCAL
@@ -41,7 +48,11 @@ async function loadMeetings() {
     orderBy('date', 'asc')
   );
   unsubMeetings = onSnapshot(q, snap => {
-    allMeetings = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const all = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const champId = getActiveChampionshipId();
+    allMeetings = champId
+      ? all.filter(m => m.championshipId === champId || !m.championshipId)
+      : all;
     refreshMeetingSelect();
   });
 }
@@ -60,7 +71,11 @@ async function loadDrivers() {
     orderBy('carNumber', 'asc')
   );
   unsubDrivers = onSnapshot(q, snap => {
-    allDrivers = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const all = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const champId = getActiveChampionshipId();
+    allDrivers = champId
+      ? all.filter(d => d.championshipId === champId || !d.championshipId)
+      : all;
     renderDriversList();
   });
 }
@@ -246,7 +261,7 @@ function renderView() {
 
       <select class="toolbar-select" id="eng-category">
         <option value="">— Sélectionner une catégorie —</option>
-        ${CATEGORIES.map(c => `
+        ${getChampCategories().map(c => `
           <option value="${c}" ${c === selectedCategory ? 'selected' : ''}>${escHtml(c)}</option>
         `).join('')}
       </select>
@@ -467,5 +482,11 @@ export function initEngagements() {
       if (selectedCategory) loadDrivers();
       if (selectedMeetingId && selectedCategory) loadEngaged();
     }
+  });
+
+  // Recharger quand on change de championnat
+  document.addEventListener('championshipchange', () => {
+    loadMeetings();
+    if (selectedCategory) loadDrivers();
   });
 }
