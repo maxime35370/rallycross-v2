@@ -9,6 +9,7 @@ import { toast, categoryBadge, sessionBadge, statusBadge } from './app.js';
 import { msToDisplay, escHtml } from './utils.js';
 import { calcInterimStandings, calcEcStandings, calcMqStandings, dfPoints, finPoints } from './calc.js';
 import { getChampionshipConfig } from './settings.js';
+import { getActiveChampionship, getActiveChampionshipId } from './context.js';
 
 // Baremes de points : desormais dans calc.js avec support reglement dynamique
 // dfPoints et finPoints importes depuis calc.js
@@ -39,6 +40,12 @@ let selectedCategory  = '';
 let activeTab         = 'interim';
 
 const CATEGORIES = ['Supercar', 'Super1600', 'Division 5', 'Féminines', 'D3', 'D4'];
+
+function getChampCategories() {
+  const champ = getActiveChampionship();
+  if (champ?.categories?.length) return champ.categories.map(c => c.id || c.name);
+  return CATEGORIES;
+}
 
 // ─────────────────────────────────────────────────────────
 // FIRESTORE — HELPERS LOCAUX
@@ -156,7 +163,7 @@ function renderView() {
       </select>
       <select class="toolbar-select" id="std-category">
         <option value="">— Catégorie —</option>
-        ${CATEGORIES.map(c => `<option value="${c}" ${c===selectedCategory?'selected':''}>${escHtml(c)}</option>`).join('')}
+        ${getChampCategories().map(c => `<option value="${c}" ${c===selectedCategory?'selected':''}>${escHtml(c)}</option>`).join('')}
       </select>
     </div>
 
@@ -634,7 +641,9 @@ async function loadMeetings() {
   if (unsubMeetings) unsubMeetings();
   const q = query(collection(db, 'meetings'), where('year', '==', selectedYear), orderBy('date', 'asc'));
   unsubMeetings = onSnapshot(q, snap => {
-    allMeetings = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const all = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const champId = getActiveChampionshipId();
+    allMeetings = champId ? all.filter(m => m.championshipId === champId || !m.championshipId) : all;
     refreshMeetingSelect();
   });
 }
@@ -709,4 +718,5 @@ export function initStandings() {
       }
     }
   });
+  document.addEventListener('championshipchange', () => { loadMeetings(); });
 }

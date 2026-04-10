@@ -10,6 +10,7 @@ import { toast } from './app.js';
 import { escHtml } from './utils.js';
 import { calcInterimStandings } from './calc.js';
 import { getChampionshipConfig } from './settings.js';
+import { getActiveChampionship, getActiveChampionshipId } from './context.js';
 
 let _activeRegulation = null;
 
@@ -24,6 +25,12 @@ let selectedYear     = new Date().getFullYear();
 let selectedCategory = '';
 
 const CATEGORIES = ['Supercar', 'Super1600', 'Division 5', 'Féminines', 'D3', 'D4'];
+
+function getChampCategories() {
+  const champ = getActiveChampionship();
+  if (champ?.categories?.length) return champ.categories.map(c => c.id || c.name);
+  return CATEGORIES;
+}
 
 // ─────────────────────────────────────────────────────────
 // BARÈMES
@@ -219,7 +226,9 @@ async function loadMeetings() {
     orderBy('date', 'asc')
   );
   unsubMeetings = onSnapshot(q, snap => {
-    allMeetings = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const all = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const champId = getActiveChampionshipId();
+    allMeetings = champId ? all.filter(m => m.championshipId === champId || !m.championshipId) : all;
     if (selectedCategory) renderChampionship();
   });
 }
@@ -243,7 +252,7 @@ function renderView() {
       </select>
       <select class="toolbar-select" id="chp-category">
         <option value="">— Catégorie —</option>
-        ${CATEGORIES.map(c => `<option value="${c}" ${c===selectedCategory?'selected':''}>${escHtml(c)}</option>`).join('')}
+        ${getChampCategories().map(c => `<option value="${c}" ${c===selectedCategory?'selected':''}>${escHtml(c)}</option>`).join('')}
       </select>
     </div>
 
@@ -362,4 +371,5 @@ export function initChampionship() {
       await loadMeetings();
     }
   });
+  document.addEventListener('championshipchange', () => { loadMeetings(); });
 }
