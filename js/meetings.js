@@ -335,14 +335,18 @@ function renderView() {
           <div class="form-group">
             <label class="form-label">
               Nombre de manches qualificatives
-              <span class="text-muted">(4 par défaut)</span>
+              <span class="text-muted">(${(() => { const c = getActiveChampionship(); return c?.sessionConfig?.MQ?.count || 4; })()} par defaut)</span>
             </label>
             <div class="mtg-mq-selector" id="mtg-mq-selector">
-              ${NB_MQ_OPTIONS.map(n => `
-                <button type="button" class="mtg-mq-btn ${n === 4 ? 'is-active' : ''}" data-n="${n}">
-                  ${n} MQ
-                </button>
-              `).join('')}
+              ${(() => {
+                const c = getActiveChampionship();
+                const maxMQ = c?.sessionConfig?.MQ?.count || 4;
+                const opts = [];
+                for (let n = 1; n <= maxMQ; n++) {
+                  opts.push('<button type="button" class="mtg-mq-btn ' + (n === maxMQ ? 'is-active' : '') + '" data-n="' + n + '">' + n + ' MQ</button>');
+                }
+                return opts.join('');
+              })()}
             </div>
           </div>
 
@@ -364,12 +368,11 @@ function renderView() {
               <span class="text-muted">(au moins une)</span>
             </label>
             <div class="mtg-cat-grid" id="mtg-cat-grid">
-              ${CATEGORIES.map(cat => `
-                <label class="mtg-cat-checkbox">
-                  <input type="checkbox" value="${cat}" checked>
-                  <span class="mtg-cat-label">${escHtml(cat)}</span>
-                </label>
-              `).join('')}
+              ${(() => {
+                const c = getActiveChampionship();
+                const cats = c?.categories?.length ? c.categories.map(ct => ct.id || ct.name) : CATEGORIES;
+                return cats.map(cat => '<label class="mtg-cat-checkbox"><input type="checkbox" value="' + escHtml(cat) + '" checked><span class="mtg-cat-label">' + escHtml(cat) + '</span></label>').join('');
+              })()}
             </div>
           </div>
 
@@ -451,37 +454,38 @@ function updateSessionsPreview() {
 
   const nbMQ = getSelectedNbMQ();
   const cats = getSelectedCategories();
+  const champ = getActiveChampionship();
+  const sc = champ?.sessionConfig || {};
 
   if (cats.length === 0) {
-    preview.innerHTML = `<span class="text-muted" style="font-size:0.85rem">Sélectionnez au moins une catégorie.</span>`;
+    preview.innerHTML = '<span class="text-muted" style="font-size:0.85rem">Selectionnez au moins une categorie.</span>';
     return;
   }
 
-  const activeTypes = SESSION_TEMPLATES.filter(t =>
-    t.type !== 'MQ' || t.num <= nbMQ
-  );
-  const total = activeTypes.length * cats.length;
+  // Construire la liste des types de sessions selon le reglement
+  const sessionTypes = [];
+  if (sc.EC?.enabled !== false) sessionTypes.push({ type: 'EC', label: 'EC' });
+  for (let i = 1; i <= nbMQ; i++) sessionTypes.push({ type: 'MQ', label: 'MQ' + i });
+  if (sc.QF?.enabled) {
+    const nbQF = sc.QF?.count || 4;
+    for (let i = 1; i <= nbQF; i++) sessionTypes.push({ type: 'QF', label: 'QF' + i });
+  }
+  const nbDF = sc.DF?.count || 2;
+  for (let i = 1; i <= nbDF; i++) sessionTypes.push({ type: 'DF', label: 'DF' + i });
+  sessionTypes.push({ type: 'FIN', label: 'FIN' });
 
-  preview.innerHTML = `
-    <div class="mtg-preview-grid">
-      ${cats.map(cat => `
-        <div class="mtg-preview-cat">
-          <div class="mtg-preview-cat-name">${categoryBadgeSmall(cat)}</div>
-          <div class="mtg-preview-sessions">
-            ${activeTypes.map(t => `
-              <span class="mtg-preview-session mtg-preview-${t.type.toLowerCase()}">
-                ${t.type === 'MQ' ? `MQ${t.num}` : t.type === 'DF' ? `DF${t.num}` : t.type}
-              </span>
-            `).join('')}
-          </div>
-        </div>
-      `).join('')}
-    </div>
-    <div class="mtg-preview-total">
-      Total : <strong>${total} session${total > 1 ? 's' : ''}</strong>
-      (${activeTypes.length} types × ${cats.length} catégorie${cats.length > 1 ? 's' : ''})
-    </div>
-  `;
+  const total = sessionTypes.length * cats.length;
+
+  var rowsHtml = cats.map(function(cat) {
+    var sessionsHtml = sessionTypes.map(function(t) {
+      return '<span class="mtg-preview-session mtg-preview-' + t.type.toLowerCase() + '">' + t.label + '</span>';
+    }).join('');
+    return '<div class="mtg-preview-cat"><div class="mtg-preview-cat-name">' + categoryBadgeSmall(cat) + '</div><div class="mtg-preview-sessions">' + sessionsHtml + '</div></div>';
+  }).join('');
+
+  preview.innerHTML = '<div class="mtg-preview-grid">' + rowsHtml + '</div>' +
+    '<div class="mtg-preview-total">Total : <strong>' + total + ' session' + (total > 1 ? 's' : '') + '</strong>' +
+    ' (' + sessionTypes.length + ' types \u00d7 ' + cats.length + ' cat\u00e9gorie' + (cats.length > 1 ? 's' : '') + ')</div>';
 }
 
 // ─────────────────────────────────────────────────────────
