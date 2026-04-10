@@ -1154,10 +1154,15 @@ async function renderDfFromQf(panel, session) {
     const gRows = dfGridLayout.rows || 3;
     const gPositions = dfGridLayout.positions;
 
-    // Sort current participants by MQ ranking for grid assignment
+    // Sort grid: qualified (non-forfait) in QF order first, replacements at the end
     const currentParts = currentDfSnap.docs.map(d => d.data());
-    const sortedGridParts = [...currentParts];
-    sortedGridParts.sort((a, b) => (mqRankMap[a.driverId] ?? 9999) - (mqRankMap[b.driverId] ?? 9999));
+    const qualifiedInDf = [];
+    qualified.forEach(d => {
+      if (currentDfIds.has(d.driverId) && !_dfForfaits.has(d.driverId)) qualifiedInDf.push(d);
+    });
+    const qualifiedIdSet = new Set(qualifiedInDf.map(d => d.driverId));
+    const replacementsInDf = currentParts.filter(d => !qualifiedIdSet.has(d.driverId));
+    const sortedGridParts = [...qualifiedInDf, ...replacementsInDf];
 
     const gPosToDriver = {};
     let gIdx = 0;
