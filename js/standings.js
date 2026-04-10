@@ -171,6 +171,7 @@ function renderView() {
       <button class="std-tab ${activeTab==='ec'?'is-active':''}"      data-tab="ec">Essais</button>
       <button class="std-tab ${activeTab==='mq'?'is-active':''}"      data-tab="mq">Manches</button>
       <button class="std-tab ${activeTab==='interim'?'is-active':''}" data-tab="interim">Intermédiaire</button>
+      ${allSessions.some(s => s.type === 'QF') ? `<button class="std-tab ${activeTab==='qf'?'is-active':''}" data-tab="qf">¼ Finales</button>` : ''}
       <button class="std-tab ${activeTab==='df'?'is-active':''}"      data-tab="df">½ Finales</button>
       <button class="std-tab ${activeTab==='fin'?'is-active':''}"     data-tab="fin">Finale</button>
       <button class="std-tab ${activeTab==='meeting'?'is-active':''}" data-tab="meeting">🏆 Meeting</button>
@@ -218,6 +219,7 @@ async function renderTab() {
       case 'ec':      await renderEcTab(content);      break;
       case 'mq':      await renderMqTab(content);      break;
       case 'interim': await renderInterimTab(content); break;
+      case 'qf':      await renderQfTab(content);      break;
       case 'df':      await renderDfTab(content);      break;
       case 'fin':     await renderFinTab(content);     break;
       case 'meeting': await renderMeetingTab(content); break;
@@ -372,6 +374,67 @@ async function renderInterimTab(content) {
       return '<div class="std-note">Top ' + totalDF + ' qualifies pour les demi-finales</div>';
     })() : ''}
   `;
+}
+
+// ─────────────────────────────────────────────────────────
+// ONGLET 1/4 FINALES
+// ─────────────────────────────────────────────────────────
+
+async function renderQfTab(content) {
+  const qfSessions = allSessions.filter(s => s.type === 'QF').sort((a, b) => a.num - b.num);
+  if (qfSessions.length === 0) {
+    content.innerHTML = '<div class="std-empty">Pas de quarts de finale pour ce meeting</div>';
+    return;
+  }
+
+  const fs = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
+  let html = '<div class="std-table-title">Quarts de Finale</div>';
+
+  for (const qf of qfSessions) {
+    const partSnap = await fs.getDocs(fs.query(fs.collection(db, 'sessionParticipants'), fs.where('sessionId', '==', qf.id)));
+    const parts = partSnap.docs.map(d => d.data());
+    const resSnap = await fs.getDocs(fs.query(fs.collection(db, 'results'), fs.where('sessionId', '==', qf.id)));
+    const resMap = {};
+    resSnap.docs.forEach(d => { resMap[d.data().driverId] = d.data(); });
+
+    const rows = parts.map(p => ({
+      driverId: p.driverId, carNumber: p.carNumber, firstName: p.firstName, lastName: p.lastName,
+      ms: resMap[p.driverId]?.ms ?? null, status: resMap[p.driverId]?.status ?? null,
+    }));
+
+    const finished = rows.filter(r => r.ms && !r.status).sort((a, b) => a.ms - b.ms);
+    const dnf = rows.filter(r => r.status === 'DNF');
+    const dns = rows.filter(r => r.status === 'DNS');
+    const dsq = rows.filter(r => r.status === 'DSQ' || r.status === 'DSQ_RACE');
+    const noResult = rows.filter(r => !r.ms && !r.status);
+    const sorted = [...finished, ...dnf, ...dsq, ...dns, ...noResult];
+
+    const champ = getActiveChampionship();
+    const qualPerQF = champ?.sessionConfig?.QF?.qualifiedPerQF || 3;
+
+    html += '<div class="std-sub-header" style="margin-top:var(--sp-md)">' + escHtml(qf.label) + ' (' + parts.length + ' pilotes)</div>';
+    html += '<div class="table-wrap" style="margin-bottom:var(--sp-md)"><table><thead><tr>';
+    html += '<th>Pos.</th><th>Pilote</th><th class="center">N\u00b0</th><th class="center">Temps</th><th>Statut</th>';
+    html += '</tr></thead><tbody>';
+
+    let pos = 1;
+    sorted.forEach(r => {
+      const hasTime = r.ms != null;
+      const position = hasTime ? pos++ : null;
+      const isQualified = position !== null && position <= qualPerQF;
+      html += '<tr' + (isQualified ? ' style="background:rgba(30,215,96,0.08)"' : '') + '>';
+      html += '<td class="center">' + (position || '—') + '</td>';
+      html += '<td>' + escHtml(r.firstName) + ' <strong>' + escHtml(r.lastName) + '</strong></td>';
+      html += '<td class="center"><span class="tim-num">' + escHtml(r.carNumber) + '</span></td>';
+      html += '<td class="center">' + (hasTime ? msToDisplay(r.ms) : '—') + '</td>';
+      html += '<td>' + (r.status ? statusBadge(r.status) : '') + '</td>';
+      html += '</tr>';
+    });
+
+    html += '</tbody></table></div>';
+  }
+
+  content.innerHTML = html;
 }
 
 async function renderDfTab(content) {

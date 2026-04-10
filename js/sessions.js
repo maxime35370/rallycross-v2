@@ -35,6 +35,7 @@ let selectedSessionId = '';
 let _dfStandings  = []; // classement complet pour handleForfait DF
 let _dfForfaits   = new Set(); // forfaits DF — exclus des remplaçants DF
 let _finForfaits  = new Set(); // forfaits Finale — exclus des remplaçants Finale
+let _qfForfaits   = new Set(); // forfaits QF — exclus des remplaçants QF
 
 const CATEGORIES = ['Supercar', 'Super1600', 'Division 5', 'Féminines', 'D3', 'D4'];
 const SESSION_LABELS = { EC: 'Essais', MQ: 'Qualif.', QF: '¼ Finale', DF: '½ Finale', FIN: 'Finale' };
@@ -472,6 +473,79 @@ async function autoAssignFinale() {
 }
 
 // ─────────────────────────────────────────────────────────
+// GESTION FORFAIT QF
+// ─────────────────────────────────────────────────────────
+
+async function handleQfForfait(forfaitDriverId) {
+  const qfSessions = allSessions.filter(s => s.type === 'QF').sort((a, b) => a.num - b.num);
+  if (qfSessions.length === 0) return;
+
+  const { collection, query, where, getDocs, writeBatch } = await import(
+    'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
+  );
+
+  // Trouver dans quel QF le pilote est assigne
+  let qfSession = null;
+  for (const qf of qfSessions) {
+    const snap = await getDocs(query(collection(db, 'sessionParticipants'), where('sessionId', '==', qf.id)));
+    const ids = snap.docs.map(d => d.data().driverId);
+    if (ids.includes(forfaitDriverId)) { qfSession = qf; break; }
+  }
+  if (!qfSession) { toast('Pilote non trouve dans les QF', 'error'); return; }
+
+  // Classement MQ pour trouver le suppleant
+  let ranked = [];
+  try { ranked = await calcInterimStandings(db, allSessions, _activeRegulation); } catch {}
+
+  // Tous les pilotes deja dans un QF
+  const allQfIds = new Set();
+  for (const qf of qfSessions) {
+    const ids = sessionParticipants[qf.id] || new Set();
+    ids.forEach(id => allQfIds.add(id));
+  }
+
+  _qfForfaits.add(forfaitDriverId);
+
+  // Premier suppleant = premier du classement MQ non encore en QF et pas forfait
+  const reserve = ranked.find(r =>
+    !allQfIds.has(r.driverId) && !_qfForfaits.has(r.driverId)
+  );
+
+  const forfaitDriver = engagedDrivers.find(d => (d.id || d.driverId) === forfaitDriverId);
+  const forfaitLabel = forfaitDriver ? `${forfaitDriver.firstName} ${forfaitDriver.lastName} (#${forfaitDriver.carNumber})` : forfaitDriverId;
+  const reserveLabel = reserve ? `${reserve.firstName} ${reserve.lastName} (#${reserve.carNumber}) entre en QF${qfSession.num}` : 'Aucun remplacant disponible';
+
+  if (!window.confirm(`Declarer forfait ${forfaitLabel} du QF${qfSession.num} ?\n\n${reserveLabel}\n\nContinuer ?`)) {
+    _qfForfaits.delete(forfaitDriverId);
+    return;
+  }
+
+  // Retirer le forfait du QF
+  const partSnap = await getDocs(query(collection(db, 'sessionParticipants'), where('sessionId', '==', qfSession.id), where('driverId', '==', forfaitDriverId)));
+  if (!partSnap.empty) {
+    const b = writeBatch(db);
+    partSnap.docs.forEach(d => b.delete(d.ref));
+    await b.commit();
+  }
+
+  // Supprimer ses resultats
+  const resSnap = await getDocs(query(collection(db, 'results'), where('sessionId', '==', qfSession.id), where('driverId', '==', forfaitDriverId)));
+  if (!resSnap.empty) {
+    const b = writeBatch(db);
+    resSnap.docs.forEach(d => b.delete(d.ref));
+    await b.commit();
+  }
+
+  // Ajouter le suppleant
+  if (reserve) {
+    await addParticipant(qfSession.id, reserve);
+  }
+
+  toast(`Forfait declare${reserve ? ' — ' + reserve.firstName + ' ' + reserve.lastName + ' entre en grille' : ''}`, 'success', 4000);
+  renderSessionDetail();
+}
+
+// ─────────────────────────────────────────────────────────
 // GESTION FORFAIT DF
 // ─────────────────────────────────────────────────────────
 
@@ -787,6 +861,7 @@ async function renderSessionDetail() {
   }
 
   const isEcOrMq = session.type === 'EC' || session.type === 'MQ';
+  const isQF = session.type === 'QF';
 
   panel.innerHTML = `
     <div class="ses-detail-header">
@@ -804,6 +879,7 @@ async function renderSessionDetail() {
           <div class="ses-pilot-row">
             <span class="ses-pilot-num">${escHtml(p.carNumber)}</span>
             <span class="ses-pilot-name">${escHtml(p.firstName)} <strong>${escHtml(p.lastName)}</strong></span>
+            ${isQF ? `<button class="btn btn-danger btn-sm ses-qf-forfait-btn" data-driver-id="${p.driverId}" title="Declarer forfait">🚫</button>` : ''}
             <button class="btn btn-danger btn-sm ses-remove-btn" data-driver-id="${p.driverId}">✕</button>
           </div>`).join('')}
     </div>
@@ -829,6 +905,10 @@ async function renderSessionDetail() {
       const driver = engagedDrivers.find(d => (d.id || d.driverId) === btn.dataset.driverId);
       if (driver) { await addParticipant(selectedSessionId, driver); renderSessionDetail(); }
     });
+  });
+  // Forfait QF
+  panel.querySelectorAll('.ses-qf-forfait-btn').forEach(btn => {
+    btn.addEventListener('click', () => handleQfForfait(btn.dataset.driverId));
   });
 }
 
