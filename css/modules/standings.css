@@ -88,6 +88,12 @@
   padding: var(--sp-sm) 0;
 }
 
+/* ── Phase badges (cascade mode) ── */
+.std-phase-fin { color: var(--clr-accent-2); font-weight: 700; font-size: 0.78rem; }
+.std-phase-df  { color: var(--clr-success);  font-weight: 600; font-size: 0.78rem; }
+.std-phase-qf  { color: var(--clr-info, #5ba3e6); font-weight: 600; font-size: 0.78rem; }
+.std-phase-mq  { color: var(--clr-text-3);   font-weight: 600; font-size: 0.78rem; }
+
 /* ── Temps chronométré ── */
 .tim-time {
   font-family: var(--font-display);

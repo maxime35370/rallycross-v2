@@ -8,6 +8,7 @@ import { db } from './firebase.js';
 import { toast, categoryBadge, sessionBadge, statusBadge } from './app.js';
 import { msToDisplay, escHtml } from './utils.js';
 import { calcInterimStandings, calcEcStandings, calcMqStandings, dfPoints, finPoints } from './calc.js';
+import { buildMeetingClassification } from './competition.js';
 import { getChampionshipConfig } from './settings.js';
 import { getActiveChampionship, getActiveChampionshipId } from './context.js';
 
@@ -168,13 +169,21 @@ function renderView() {
     </div>
 
     <div class="std-tabs" id="std-tabs" style="display:none">
-      <button class="std-tab ${activeTab==='ec'?'is-active':''}"      data-tab="ec">Essais</button>
-      <button class="std-tab ${activeTab==='mq'?'is-active':''}"      data-tab="mq">Manches</button>
-      <button class="std-tab ${activeTab==='interim'?'is-active':''}" data-tab="interim">Intermédiaire</button>
-      ${allSessions.some(s => s.type === 'QF') ? `<button class="std-tab ${activeTab==='qf'?'is-active':''}" data-tab="qf">¼ Finales</button>` : ''}
-      <button class="std-tab ${activeTab==='df'?'is-active':''}"      data-tab="df">½ Finales</button>
-      <button class="std-tab ${activeTab==='fin'?'is-active':''}"     data-tab="fin">Finale</button>
-      <button class="std-tab ${activeTab==='meeting'?'is-active':''}" data-tab="meeting">🏆 Meeting</button>
+      ${(() => {
+        const ch = getActiveChampionship();
+        const sc = ch?.sessionConfig || {};
+        const ecEnabled = sc.EC?.enabled !== false;
+        const qfEnabled = sc.QF?.enabled;
+        let tabs = '';
+        if (ecEnabled) tabs += `<button class="std-tab ${activeTab==='ec'?'is-active':''}" data-tab="ec">Essais</button>`;
+        tabs += `<button class="std-tab ${activeTab==='mq'?'is-active':''}" data-tab="mq">Manches</button>`;
+        tabs += `<button class="std-tab ${activeTab==='interim'?'is-active':''}" data-tab="interim">Intermédiaire</button>`;
+        if (qfEnabled) tabs += `<button class="std-tab ${activeTab==='qf'?'is-active':''}" data-tab="qf">¼ Finales</button>`;
+        tabs += `<button class="std-tab ${activeTab==='df'?'is-active':''}" data-tab="df">½ Finales</button>`;
+        tabs += `<button class="std-tab ${activeTab==='fin'?'is-active':''}" data-tab="fin">Finale</button>`;
+        tabs += `<button class="std-tab ${activeTab==='meeting'?'is-active':''}" data-tab="meeting">🏆 Meeting</button>`;
+        return tabs;
+      })()}
     </div>
 
     <div id="std-content">
@@ -315,6 +324,8 @@ async function renderMqTab(content) {
 async function renderInterimTab(content) {
   const standings  = await calcInterimStandings(db, allSessions, _activeRegulation);
   const mqSessions = allSessions.filter(s => s.type === 'MQ').sort((a, b) => a.num - b.num);
+  const chI = getActiveChampionship();
+  const ecEnabled = chI?.sessionConfig?.EC?.enabled !== false;
 
   content.innerHTML = `
     <div class="std-header-row">
@@ -327,13 +338,13 @@ async function renderInterimTab(content) {
           <th>Pilote</th>
           <th class="center">N°</th>
           ${mqSessions.map(mq => `<th class="center">MQ${mq.num}</th>`).join('')}
-          <th class="center">EC+</th>
-          <th class="center">Total MQ + EC</th>
+          ${ecEnabled ? '<th class="center">EC+</th>' : ''}
+          <th class="center">Total MQ${ecEnabled ? ' + EC' : ''}</th>
           <th class="center">Pts inter.</th>
         </tr></thead>
         <tbody>
           ${standings.length === 0
-            ? `<tr><td class="table-empty" colspan="${5 + mqSessions.length}">Pas encore assez de résultats (min. 2 MQ par pilote)</td></tr>`
+            ? `<tr><td class="table-empty" colspan="${(ecEnabled ? 5 : 4) + mqSessions.length}">Pas encore assez de résultats (min. 2 MQ par pilote)</td></tr>`
             : standings.map(r => `
               <tr class="${r.position <= 16 ? '' : 'std-row-reserve'}">
                 <td class="center">
@@ -344,9 +355,9 @@ async function renderInterimTab(content) {
                 ${mqSessions.map(mq => `
                   <td class="center">${r.mqPoints[mq.num] !== undefined ? r.mqPoints[mq.num] : '—'}</td>
                 `).join('')}
-                <td class="center">
+                ${ecEnabled ? `<td class="center">
                   ${r.ecBonus > 0 ? `<span class="std-bonus">+${r.ecBonus}</span>` : '—'}
-                </td>
+                </td>` : ''}
                 <td class="center"><strong>${r.totalPoints}</strong></td>
                 <td class="center">
                   ${r.position <= 16
@@ -494,19 +505,27 @@ function renderPhaseTable(title, standings) {
     </div>`;
 }
 
-// ← MODIFIÉ : toutes les lectures Firestore interimStandings remplacées
-//   par calcInterimStandings(db, allSessions) depuis calc.js
 async function renderMeetingTab(content) {
+  const champ = getActiveChampionship();
+  const mode = champ?.meetingClassificationMode || 'points';
+
+  if (mode === 'cascade') {
+    await renderMeetingCascade(content);
+  } else {
+    await renderMeetingPoints(content);
+  }
+}
+
+// ─── Mode POINTS (FFSA) ─────────────────────────────────
+async function renderMeetingPoints(content) {
   const finSession = allSessions.find(s => s.type === 'FIN');
   const dfSessions = allSessions.filter(s => s.type === 'DF').sort((a, b) => a.num - b.num);
+  const champ = getActiveChampionship();
+  const qfEnabled = champ?.sessionConfig?.QF?.enabled;
 
-  // 1. Résultats Finale
   let finStandings = [];
-  if (finSession) {
-    finStandings = await calcPhaseStandings(finSession);
-  }
+  if (finSession) finStandings = await calcPhaseStandings(finSession);
 
-  // 2. Résultats DF (pour pilotes non en finale)
   const finalistIds = new Set(finStandings.map(r => r.driverId));
   let dfRows = [];
   for (const df of dfSessions) {
@@ -520,22 +539,18 @@ async function renderMeetingTab(content) {
     return (a.ms ?? Infinity) - (b.ms ?? Infinity);
   });
 
-  // 3. IDs participants DF
   const dfParticipantIds = new Set();
   for (const df of dfSessions) {
     const parts = await getParticipants(df.id);
     parts.forEach(p => dfParticipantIds.add(p.driverId));
   }
 
-  // ← MODIFIÉ : calcul direct, plus de lecture Firestore interimStandings
   const interimStandings = await calcInterimStandings(db, allSessions, _activeRegulation);
   const interimData = interimStandings
     .filter(r => !dfParticipantIds.has(r.driverId) && !finalistIds.has(r.driverId));
 
-  // Construire le classement complet
   let globalPos = 1;
   const allRows = [];
-
   finStandings.filter(r => r.ms || r.status).forEach(r => {
     allRows.push({ ...r, globalPos: globalPos++, phase: 'FIN' });
   });
@@ -544,26 +559,18 @@ async function renderMeetingTab(content) {
   });
   interimData.forEach(r => {
     allRows.push({
-      driverId:  r.driverId,
-      carNumber: r.carNumber,
-      firstName: r.firstName,
-      lastName:  r.lastName,
-      ms: null, status: null, points: null,
-      globalPos: globalPos++,
-      phase: 'Qualifs',
+      driverId: r.driverId, carNumber: r.carNumber, firstName: r.firstName, lastName: r.lastName,
+      ms: null, status: null, points: null, globalPos: globalPos++, phase: 'Qualifs',
     });
   });
 
   if (allRows.length === 0) {
-    content.innerHTML = `<div class="tim-placeholder"><div class="placeholder-icon">⏳</div><div class="placeholder-title">Pas encore de résultats de finale</div></div>`;
+    content.innerHTML = `<div class="tim-placeholder"><div class="placeholder-icon">⏳</div><div class="placeholder-title">Pas encore de résultats</div></div>`;
     return;
   }
 
-  // ← MODIFIÉ : intMap construit depuis le calcul en mémoire
   const intMap = {};
   interimStandings.forEach(r => { intMap[r.driverId] = r.interimPoints ?? 0; });
-
-  // Points DF par pilote
   const dfPtsMap = {};
   for (const df of dfSessions) {
     const dfStandings = await calcPhaseStandings(df);
@@ -572,53 +579,47 @@ async function renderMeetingTab(content) {
     });
   }
 
-  // Construire globalMap
+  // QF points if enabled
+  const qfPtsMap = {};
+  if (qfEnabled) {
+    const qfSessions = allSessions.filter(s => s.type === 'QF').sort((a, b) => a.num - b.num);
+    for (const qf of qfSessions) {
+      const rows = await calcPhaseStandings(qf);
+      rows.forEach(r => {
+        if (r.points != null) qfPtsMap[r.driverId] = (qfPtsMap[r.driverId] ?? 0) + r.points;
+      });
+    }
+  }
+
   const globalMap = {};
   allRows.forEach(r => {
     if (!globalMap[r.driverId]) {
       globalMap[r.driverId] = {
-        driverId:  r.driverId,
-        carNumber: r.carNumber,
-        firstName: r.firstName,
-        lastName:  r.lastName,
-        interim:   intMap[r.driverId]   ?? 0,
-        df:        dfPtsMap[r.driverId] ?? 0,
-        fin:       r.phase === 'FIN' ? (r.points ?? 0) : 0,
+        driverId: r.driverId, carNumber: r.carNumber, firstName: r.firstName, lastName: r.lastName,
+        interim: intMap[r.driverId] ?? 0, qf: qfPtsMap[r.driverId] ?? 0,
+        df: dfPtsMap[r.driverId] ?? 0, fin: r.phase === 'FIN' ? (r.points ?? 0) : 0,
       };
     } else if (r.phase === 'FIN') {
       globalMap[r.driverId].fin = r.points ?? 0;
     }
   });
-
-  // ← MODIFIÉ : pilotes avec interimPoints mais absents de allRows
-  //   lus depuis le calcul en mémoire (plus de lecture Firestore)
   interimStandings.forEach(r => {
     if (!globalMap[r.driverId]) {
       globalMap[r.driverId] = {
-        driverId:  r.driverId,
-        carNumber: r.carNumber,
-        firstName: r.firstName,
-        lastName:  r.lastName,
-        interim:   r.interimPoints ?? 0,
-        df:        dfPtsMap[r.driverId] ?? 0,
-        fin:       0,
+        driverId: r.driverId, carNumber: r.carNumber, firstName: r.firstName, lastName: r.lastName,
+        interim: r.interimPoints ?? 0, qf: qfPtsMap[r.driverId] ?? 0, df: dfPtsMap[r.driverId] ?? 0, fin: 0,
       };
     }
   });
 
-  // Calculer total et trier
   const meetingRows = Object.values(globalMap).map(d => ({
-    ...d,
-    total: d.interim + d.df + d.fin,
+    ...d, total: d.interim + d.qf + d.df + d.fin,
   })).sort((a, b) => b.total - a.total);
 
   let mPos = 1;
   meetingRows.forEach((d, i) => {
-    if (i > 0 && d.total === meetingRows[i - 1].total) {
-      d.position = meetingRows[i - 1].position;
-    } else {
-      d.position = mPos;
-    }
+    if (i > 0 && d.total === meetingRows[i - 1].total) d.position = meetingRows[i - 1].position;
+    else d.position = mPos;
     mPos = i + 2;
   });
 
@@ -634,6 +635,7 @@ async function renderMeetingTab(content) {
           <th>Pilote</th>
           <th class="center">N°</th>
           <th class="center">Intermédiaire</th>
+          ${qfEnabled ? '<th class="center">¼ Finales</th>' : ''}
           <th class="center">½ Finales</th>
           <th class="center">Finale</th>
           <th class="center chp-total-col">Total</th>
@@ -641,17 +643,14 @@ async function renderMeetingTab(content) {
         <tbody>
           ${meetingRows.map(d => `
             <tr>
-              <td class="center">
-                <span class="${d.position <= 3 ? 'std-pos-top' : ''}">${d.position}</span>
-              </td>
+              <td class="center"><span class="${d.position <= 3 ? 'std-pos-top' : ''}">${d.position}</span></td>
               <td>${escHtml(d.firstName)} <strong>${escHtml(d.lastName)}</strong></td>
               <td class="center"><span class="tim-num">${escHtml(d.carNumber)}</span></td>
               <td class="center">${d.interim > 0 ? d.interim : '<span class="chp-absent">—</span>'}</td>
-              <td class="center">${d.df > 0     ? d.df      : '<span class="chp-absent">—</span>'}</td>
-              <td class="center">${d.fin > 0    ? d.fin     : '<span class="chp-absent">—</span>'}</td>
-              <td class="center chp-total-col">
-                <strong class="chp-total">${d.total}</strong>
-              </td>
+              ${qfEnabled ? `<td class="center">${d.qf > 0 ? d.qf : '<span class="chp-absent">—</span>'}</td>` : ''}
+              <td class="center">${d.df > 0 ? d.df : '<span class="chp-absent">—</span>'}</td>
+              <td class="center">${d.fin > 0 ? d.fin : '<span class="chp-absent">—</span>'}</td>
+              <td class="center chp-total-col"><strong class="chp-total">${d.total}</strong></td>
             </tr>`).join('')}
         </tbody>
       </table>
@@ -662,6 +661,171 @@ async function renderMeetingTab(content) {
     if (meetingRows.length === 0) { toast('Aucun résultat à sauvegarder', 'warning'); return; }
     const btn = document.getElementById('std-save-meeting');
     btn.disabled = true; btn.textContent = '⏳ Sauvegarde…';
+    await saveMeetingStandings(meetingRows);
+    btn.disabled = false; btn.textContent = '✅ Sauvegardé';
+    setTimeout(() => { if (btn) btn.textContent = '💾 Sauvegarder'; }, 2000);
+    toast('Classement du meeting sauvegardé ✓', 'success');
+  });
+}
+
+// ─── Mode CASCADE (FIA) ─────────────────────────────────
+async function renderMeetingCascade(content) {
+  const champ = getActiveChampionship();
+  const sc = champ?.sessionConfig || {};
+  const qfEnabled = sc.QF?.enabled;
+  const qualPerDF = sc.DF?.qualifiedPerDF || 3;
+  const qualPerQF = sc.QF?.qualifiedPerQF || 3;
+  const gridSizeDF = sc.DF?.gridSize || 6;
+  const gridSizeQF = sc.QF?.gridSize || 6;
+
+  const fs = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
+
+  // Fetch all phase results
+  const finSession = allSessions.find(s => s.type === 'FIN');
+  const dfSessions = allSessions.filter(s => s.type === 'DF').sort((a, b) => a.num - b.num);
+  const qfSessions = qfEnabled ? allSessions.filter(s => s.type === 'QF').sort((a, b) => a.num - b.num) : [];
+
+  // Finale results (sorted by position)
+  let finResults = [];
+  if (finSession) {
+    const rows = await calcPhaseStandings(finSession);
+    finResults = rows.filter(r => r.ms || r.status === 'DNF');
+  }
+
+  // DF results per DF session (sorted by position)
+  const dfResults = [];
+  for (const df of dfSessions) {
+    const rows = await calcPhaseStandings(df);
+    // Include all with result (time or DNF)
+    dfResults.push(rows.filter(r => r.ms || r.status === 'DNF'));
+  }
+
+  // QF results per QF session (sorted by position)
+  const qfResults = [];
+  for (const qf of qfSessions) {
+    const partSnap = await fs.getDocs(fs.query(fs.collection(db, 'sessionParticipants'), fs.where('sessionId', '==', qf.id)));
+    const parts = partSnap.docs.map(d => d.data());
+    const resSnap = await fs.getDocs(fs.query(fs.collection(db, 'results'), fs.where('sessionId', '==', qf.id)));
+    const resMap = {};
+    resSnap.docs.forEach(d => { resMap[d.data().driverId] = d.data(); });
+    const rows = parts.map(p => ({
+      driverId: p.driverId, carNumber: p.carNumber, firstName: p.firstName, lastName: p.lastName,
+      ms: resMap[p.driverId]?.ms ?? null, status: resMap[p.driverId]?.status ?? null,
+    }));
+    const order = r => r.ms ? r.ms : r.status === 'DNF' ? 9e6 : 9e9;
+    rows.sort((a, b) => order(a) - order(b));
+    qfResults.push(rows.filter(r => r.ms || r.status === 'DNF'));
+  }
+
+  // Interim MQ ranking
+  const interimRanking = await calcInterimStandings(db, allSessions, _activeRegulation);
+
+  // Detect forfaits: participants in a phase session who have no result
+  const forfaits = { fin: [], df: [], qf: [] };
+
+  // DF forfaits: participants without result
+  for (let i = 0; i < dfSessions.length; i++) {
+    const parts = await getParticipants(dfSessions[i].id);
+    const resultIds = new Set(dfResults[i].map(r => r.driverId));
+    parts.forEach(p => {
+      if (!resultIds.has(p.driverId)) {
+        forfaits.df.push({ ...p, dfNum: i + 1 });
+      }
+    });
+  }
+
+  // FIN forfaits: participants without result
+  if (finSession) {
+    const parts = await getParticipants(finSession.id);
+    const resultIds = new Set(finResults.map(r => r.driverId));
+    parts.forEach(p => {
+      if (!resultIds.has(p.driverId)) {
+        // Find their DF position for tiebreaking
+        let dfPos = 99, dfMs = Infinity;
+        dfResults.forEach(dfRes => {
+          const idx = dfRes.findIndex(r => r.driverId === p.driverId);
+          if (idx >= 0) { dfPos = idx + 1; dfMs = dfRes[idx].ms ?? Infinity; }
+        });
+        forfaits.fin.push({ ...p, dfPosition: dfPos, dfMs });
+      }
+    });
+  }
+
+  // QF forfaits: participants without result
+  for (let i = 0; i < qfSessions.length; i++) {
+    const parts = await getParticipants(qfSessions[i].id);
+    const resultIds = new Set(qfResults[i]?.map(r => r.driverId) || []);
+    parts.forEach(p => {
+      if (!resultIds.has(p.driverId)) {
+        forfaits.qf.push({ ...p, qfNum: i + 1 });
+      }
+    });
+  }
+
+  const ranking = buildMeetingClassification(
+    finResults, dfResults, qfResults, interimRanking,
+    { qualifiedPerDF: qualPerDF, qualifiedPerQF: qualPerQF, gridSizeDF, gridSizeQF },
+    forfaits
+  );
+
+  if (ranking.length === 0) {
+    content.innerHTML = `<div class="tim-placeholder"><div class="placeholder-icon">⏳</div><div class="placeholder-title">Pas encore de résultats</div></div>`;
+    return;
+  }
+
+  // Phase labels
+  const phaseLabel = (r) => {
+    if (r.phase === 'FIN') return r.forfait ? 'FIN (frf)' : 'Finale';
+    if (r.phase === 'DF')  return r.forfait ? 'DF (frf)' : '½ Finale';
+    if (r.phase === 'QF')  return r.forfait ? 'QF (frf)' : '¼ Finale';
+    return 'Qualifs';
+  };
+  const phaseClass = (r) => {
+    if (r.phase === 'FIN') return 'std-phase-fin';
+    if (r.phase === 'DF')  return 'std-phase-df';
+    if (r.phase === 'QF')  return 'std-phase-qf';
+    return 'std-phase-mq';
+  };
+
+  content.innerHTML = `
+    <div class="std-header-row">
+      <span class="std-table-title">Classement Meeting — Cascade</span>
+      <button class="btn btn-primary btn-sm" id="std-save-meeting">💾 Sauvegarder</button>
+    </div>
+    <div class="std-note">Classement par phase : Finale > ½ Finales${qfEnabled ? ' > ¼ Finales' : ''} > Qualifications</div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th class="center" style="width:46px">Pos.</th>
+          <th>Pilote</th>
+          <th class="center">N°</th>
+          <th class="center">Phase</th>
+          <th class="center">Pos. phase</th>
+        </tr></thead>
+        <tbody>
+          ${ranking.map(r => `
+            <tr class="${r.forfait ? 'std-row-reserve' : ''}">
+              <td class="center">
+                <span class="${r.meetingPosition <= 3 ? 'std-pos-top' : ''}">${r.meetingPosition}</span>
+              </td>
+              <td>${escHtml(r.firstName)} <strong>${escHtml(r.lastName)}</strong>${r.forfait ? ' <span style="font-size:0.7rem;color:var(--clr-danger)">frf</span>' : ''}</td>
+              <td class="center"><span class="tim-num">${escHtml(r.carNumber)}</span></td>
+              <td class="center"><span class="${phaseClass(r)}">${phaseLabel(r)}</span></td>
+              <td class="center">${r.phasePosition || r.dfPosition || r.qfPosition || '—'}</td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+
+  document.getElementById('std-save-meeting')?.addEventListener('click', async () => {
+    if (ranking.length === 0) { toast('Aucun résultat à sauvegarder', 'warning'); return; }
+    const btn = document.getElementById('std-save-meeting');
+    btn.disabled = true; btn.textContent = '⏳ Sauvegarde…';
+    const meetingRows = ranking.map(r => ({
+      driverId: r.driverId, carNumber: r.carNumber, firstName: r.firstName, lastName: r.lastName,
+      position: r.meetingPosition, phase: r.phase, total: 0,
+    }));
     await saveMeetingStandings(meetingRows);
     btn.disabled = false; btn.textContent = '✅ Sauvegardé';
     setTimeout(() => { if (btn) btn.textContent = '💾 Sauvegarder'; }, 2000);
