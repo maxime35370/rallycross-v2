@@ -11,6 +11,7 @@ import { toast } from './app.js';
 import { logAudit } from './audit.js';
 import { requireAuth } from './auth.js';
 import { msToDisplay, inputToMs, msToFields, escHtml, parseTimeString } from './utils.js';
+import { getActiveChampionship, getActiveChampionshipId } from './context.js';
 
 // ─────────────────────────────────────────────────────────
 // ÉTAT LOCAL
@@ -30,7 +31,13 @@ let selectedCategory  = '';
 let selectedSessionId = '';
 
 const CATEGORIES = ['Supercar', 'Super1600', 'Division 5', 'Féminines', 'D3', 'D4'];
-const SESSION_LABELS = { EC: 'Essais chronométrés', MQ: 'Manche qualificative', DF: 'Demi-finale', FIN: 'Finale' };
+const SESSION_LABELS = { EC: 'Essais chronométrés', MQ: 'Manche qualificative', QF: 'Quart de finale', DF: 'Demi-finale', FIN: 'Finale' };
+
+function getChampCategories() {
+  const champ = getActiveChampionship();
+  if (champ?.categories?.length) return champ.categories.map(c => c.id || c.name);
+  return CATEGORIES;
+}
 const SPECIAL_STATUSES = ['DNS', 'DNF', 'DSQ', 'DSQ_RACE'];
 
 // ─────────────────────────────────────────────────────────
@@ -49,7 +56,9 @@ async function loadMeetings() {
     orderBy('date', 'asc')
   );
   unsubMeetings = onSnapshot(q, snap => {
-    allMeetings = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const all = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const champId = getActiveChampionshipId();
+    allMeetings = champId ? all.filter(m => m.championshipId === champId || !m.championshipId) : all;
     refreshMeetingSelect();
   });
 }
@@ -344,7 +353,7 @@ function renderView() {
       </select>
       <select class="toolbar-select" id="tim-category">
         <option value="">— Catégorie —</option>
-        ${CATEGORIES.map(c => `<option value="${c}" ${c===selectedCategory?'selected':''}>${escHtml(c)}</option>`).join('')}
+        ${getChampCategories().map(c => `<option value="${c}" ${c===selectedCategory?'selected':''}>${escHtml(c)}</option>`).join('')}
       </select>
       <select class="toolbar-select" id="tim-session" style="min-width:180px">
         <option value="">— Session —</option>
@@ -1217,4 +1226,5 @@ export function initTiming() {
       }
     }
   });
+  document.addEventListener('championshipchange', () => { loadMeetings(); });
 }

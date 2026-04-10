@@ -6,6 +6,7 @@
 
 import { db } from './firebase.js';
 import { msToDisplay, escHtml } from './utils.js';
+import { getActiveChampionship, getActiveChampionshipId } from './context.js';
 
 // ─────────────────────────────────────────────────────────
 // ÉTAT LOCAL
@@ -21,6 +22,12 @@ let unsubResults      = null;
 let _interimRefreshTimer = null;
 
 const CATEGORIES = ['Supercar', 'Super1600', 'Division 5', 'Féminines', 'D3', 'D4'];
+
+function getChampCategories() {
+  const champ = getActiveChampionship();
+  if (champ?.categories?.length) return champ.categories.map(c => c.id || c.name);
+  return CATEGORIES;
+}
 
 // ─────────────────────────────────────────────────────────
 // FIRESTORE
@@ -48,7 +55,9 @@ async function loadMeetings() {
   const snap = await new Promise(res => {
     const unsub = onSnapshot(q, s => { unsub(); res(s); });
   });
-  allMeetings = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  const all = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  const champId = getActiveChampionshipId();
+  allMeetings = champId ? all.filter(m => m.championshipId === champId || !m.championshipId) : all;
   refreshMeetingSelect();
 }
 
@@ -139,7 +148,7 @@ function renderView() {
       </select>
       <select class="toolbar-select" id="spc-category">
         <option value="">— Catégorie —</option>
-        ${CATEGORIES.map(c => `<option value="${c}" ${c===selectedCategory?'selected':''}>${escHtml(c)}</option>`).join('')}
+        ${getChampCategories().map(c => `<option value="${c}" ${c===selectedCategory?'selected':''}>${escHtml(c)}</option>`).join('')}
       </select>
     </div>
 
