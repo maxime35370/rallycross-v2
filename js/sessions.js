@@ -1441,10 +1441,13 @@ async function renderFinaleStandings(panel, session, assignedParticipants) {
   const df1Results = await getDfResults(df1);
   const df2Results = await getDfResults(df2);
 
-  const df1Qualified    = df1Results.filter(r => r.ms || r.status === 'DNF').slice(0, 4);
-  const df2Qualified    = df2Results.filter(r => r.ms || r.status === 'DNF').slice(0, 4);
-  const df1Replacements = df1Results.filter(r => r.ms || r.status === 'DNF').slice(4);
-  const df2Replacements = df2Results.filter(r => r.ms || r.status === 'DNF').slice(4);
+  const champ2 = getActiveChampionship();
+  const qualPerDF = champ2?.sessionConfig?.DF?.qualifiedPerDF || 4;
+
+  const df1Qualified    = df1Results.filter(r => r.ms || r.status === 'DNF').slice(0, qualPerDF);
+  const df2Qualified    = df2Results.filter(r => r.ms || r.status === 'DNF').slice(0, qualPerDF);
+  const df1Replacements = df1Results.filter(r => r.ms || r.status === 'DNF').slice(qualPerDF);
+  const df2Replacements = df2Results.filter(r => r.ms || r.status === 'DNF').slice(qualPerDF);
 
   const maxPairs = Math.max(df1Qualified.length, df2Qualified.length);
   const pairs = [];
@@ -1460,8 +1463,8 @@ async function renderFinaleStandings(panel, session, assignedParticipants) {
 
   // Tous les remplaçants triés par position DF puis classement intermédiaire
   const allReplacements = [
-    ...df1Replacements.map((r, i) => ({ ...r, dfNum: 1, dfPosition: i + 5 })),
-    ...df2Replacements.map((r, i) => ({ ...r, dfNum: 2, dfPosition: i + 5 })),
+    ...df1Replacements.map((r, i) => ({ ...r, dfNum: 1, dfPosition: i + qualPerDF + 1 })),
+    ...df2Replacements.map((r, i) => ({ ...r, dfNum: 2, dfPosition: i + qualPerDF + 1 })),
   ].map(r => ({ ...r, totalMeetingPoints: (r.points ?? 0) + getInterimPoints(r.driverId) }))
    .sort((a, b) => a.dfPosition !== b.dfPosition
      ? a.dfPosition - b.dfPosition
@@ -1512,7 +1515,7 @@ async function renderFinaleStandings(panel, session, assignedParticipants) {
       </div>` : ''}
 
     <div class="ses-fin-section-title">
-      <span>Qualifiés — 4 premiers de chaque ½ finale</span>
+      <span>Qualifi\u00e9s — ${qualPerDF} premiers de chaque \u00bd finale</span>
       <span class="text-muted" style="font-size:0.75rem">🚫 = Déclarer forfait Finale</span>
     </div>
 
