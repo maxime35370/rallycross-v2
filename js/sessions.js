@@ -1640,10 +1640,18 @@ async function renderFinaleStandings(panel, session, assignedParticipants) {
     const gRows = finGridLayout.rows || 3;
     const gPositions = finGridLayout.positions;
 
-    // Sort assigned participants by interim ranking
-    const sortedFinParts = [...assignedParticipants].sort((a, b) =>
-      (interimMap[a.driverId] ?? 999) - (interimMap[b.driverId] ?? 999)
-    );
+    // Sort by DF position (same order as the qualified pairs list):
+    // pair 1 first/second, pair 2 first/second, etc.
+    const sortedFinParts = [];
+    for (const p of pairs) {
+      if (p.first && assignedIds.has(p.first.driverId) && !_finForfaits.has(p.first.driverId)) sortedFinParts.push(p.first);
+      if (p.second && assignedIds.has(p.second.driverId) && !_finForfaits.has(p.second.driverId)) sortedFinParts.push(p.second);
+    }
+    // Add any assigned participant not in pairs (manual additions)
+    const pairIds = new Set(sortedFinParts.map(d => d.driverId));
+    assignedParticipants.forEach(p => {
+      if (!pairIds.has(p.driverId) && !_finForfaits.has(p.driverId)) sortedFinParts.push(p);
+    });
 
     const gPosToDriver = {};
     let gIdx = 0;

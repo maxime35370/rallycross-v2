@@ -175,51 +175,140 @@ export function distributeIntoFIN(dfResults, qualifiedPerDF, interimRanking) {
  * @param {object} config - { qualifiedPerDF, qualifiedPerQF }
  * @returns {Array} classement complet du meeting avec position
  */
-export function buildMeetingClassification(finResults, dfResults, qfResults, interimRanking, config) {
+/**
+ * Classification cascade FIA :
+ * 1. Top N de la Finale (dans l'ordre du resultat)
+ * 2. Elimines des DF par position DF (4es, puis 5es, puis 6es)
+ *    — Departage par position QF, si egal au meilleur temps QF
+ *    — Forfaits DF : traites comme dernier de leur DF (6e), departages par position QF
+ * 3. Elimines des QF par position QF (4es, puis 5es, puis 6es)
+ *    — Departage par classement MQ (interim)
+ *    — Forfaits QF : traites comme dernier de leur QF (6e), departages par MQ
+ * 4. Reste : classement MQ (interim)
+ *
+ * @param {Array} finResults - resultat finale (trie par position)
+ * @param {Array<Array>} dfResults - [df1Results, df2Results] (tries par position chacun)
+ * @param {Array<Array>} qfResults - [qf1Results, qf2Results, ...] (tries par position chacun)
+ * @param {Array} interimRanking - classement MQ
+ * @param {object} config - { qualifiedPerDF, qualifiedPerQF, gridSizeDF, gridSizeQF }
+ * @param {object} [forfaits] - { df: [{driverId, ...}], qf: [{driverId, ...}], fin: [{driverId, ...}] }
+ * @returns {Array} classement complet du meeting
+ */
+export function buildMeetingClassification(finResults, dfResults, qfResults, interimRanking, config, forfaits) {
   const qualPerDF = config?.qualifiedPerDF || 3;
   const qualPerQF = config?.qualifiedPerQF || 3;
+  const gridSizeDF = config?.gridSizeDF || 6;
+  const gridSizeQF = config?.gridSizeQF || 6;
   const ranking = [];
   const placed = new Set();
 
-  // Top : resultat finale
+  // Helpers: build lookup maps
+  const qfPosMap = {};  // driverId → { qfPosition, qfMs }
+  if (qfResults) {
+    qfResults.forEach(qf => {
+      qf.forEach((driver, pos) => {
+        qfPosMap[driver.driverId] = { qfPosition: pos + 1, qfMs: driver.ms ?? Infinity };
+      });
+    });
+  }
+  const interimPosMap = {};
+  if (interimRanking) {
+    interimRanking.forEach((d, i) => { interimPosMap[d.driverId] = i + 1; });
+  }
+
+  // ── 1. Finale results (dans l'ordre) ──
   finResults.forEach((driver, i) => {
     ranking.push({ ...driver, meetingPosition: ranking.length + 1, phase: 'FIN', phasePosition: i + 1 });
     placed.add(driver.driverId);
   });
 
-  // Ensuite : elimines des DF (positions qualPerDF+1 et plus), tries par position DF puis MQ
+  // ── Forfaits Finale : traites comme derniers de Finale ──
+  if (forfaits?.fin?.length) {
+    const finForfaits = forfaits.fin.filter(d => !placed.has(d.driverId));
+    // Departage par position DF, puis temps DF
+    finForfaits.sort((a, b) => {
+      const dfA = a.dfPosition ?? 99, dfB = b.dfPosition ?? 99;
+      if (dfA !== dfB) return dfA - dfB;
+      return (a.dfMs ?? Infinity) - (b.dfMs ?? Infinity);
+    });
+    finForfaits.forEach(d => {
+      ranking.push({ ...d, meetingPosition: ranking.length + 1, phase: 'FIN', phasePosition: finResults.length + 1, forfait: true });
+      placed.add(d.driverId);
+    });
+  }
+
+  // ── 2. Elimines des DF, par position (4es, 5es, 6es, ...) ──
+  // Departage par position QF, si egal au meilleur temps QF
   const dfEliminated = [];
-  dfResults.forEach(df => {
+  dfResults.forEach((df, dfIdx) => {
     df.forEach((driver, pos) => {
       if (pos >= qualPerDF && !placed.has(driver.driverId)) {
-        dfEliminated.push({ ...driver, dfPosition: pos + 1 });
+        dfEliminated.push({ ...driver, dfPosition: pos + 1, dfNum: dfIdx + 1 });
       }
     });
   });
-  sortByPhasePositionThenInterim(dfEliminated, 'dfPosition', interimRanking);
+
+  // Forfaits DF : traites comme dernier (gridSizeDF) de leur DF
+  if (forfaits?.df?.length) {
+    forfaits.df.forEach(d => {
+      if (!placed.has(d.driverId) && !dfEliminated.find(e => e.driverId === d.driverId)) {
+        dfEliminated.push({ ...d, dfPosition: gridSizeDF, dfNum: d.dfNum || 0, forfait: true });
+      }
+    });
+  }
+
+  // Tri : par position DF, puis position QF, puis temps QF
+  dfEliminated.sort((a, b) => {
+    if (a.dfPosition !== b.dfPosition) return a.dfPosition - b.dfPosition;
+    const qfA = qfPosMap[a.driverId]?.qfPosition ?? 99;
+    const qfB = qfPosMap[b.driverId]?.qfPosition ?? 99;
+    if (qfA !== qfB) return qfA - qfB;
+    const msA = qfPosMap[a.driverId]?.qfMs ?? Infinity;
+    const msB = qfPosMap[b.driverId]?.qfMs ?? Infinity;
+    if (msA !== msB) return msA - msB;
+    // Fallback: classement MQ
+    return (interimPosMap[a.driverId] ?? 9999) - (interimPosMap[b.driverId] ?? 9999);
+  });
+
   dfEliminated.forEach(driver => {
     ranking.push({ ...driver, meetingPosition: ranking.length + 1, phase: 'DF' });
     placed.add(driver.driverId);
   });
 
-  // Ensuite : elimines des QF, tries par position QF puis MQ
+  // ── 3. Elimines des QF, par position (4es, 5es, 6es, ...) ──
+  // Departage par classement MQ (interim)
   if (qfResults && qfResults.length > 0) {
     const qfEliminated = [];
-    qfResults.forEach(qf => {
+    qfResults.forEach((qf, qfIdx) => {
       qf.forEach((driver, pos) => {
         if (pos >= qualPerQF && !placed.has(driver.driverId)) {
-          qfEliminated.push({ ...driver, qfPosition: pos + 1 });
+          qfEliminated.push({ ...driver, qfPosition: pos + 1, qfNum: qfIdx + 1 });
         }
       });
     });
-    sortByPhasePositionThenInterim(qfEliminated, 'qfPosition', interimRanking);
+
+    // Forfaits QF : traites comme dernier (gridSizeQF) de leur QF
+    if (forfaits?.qf?.length) {
+      forfaits.qf.forEach(d => {
+        if (!placed.has(d.driverId) && !qfEliminated.find(e => e.driverId === d.driverId)) {
+          qfEliminated.push({ ...d, qfPosition: gridSizeQF, qfNum: d.qfNum || 0, forfait: true });
+        }
+      });
+    }
+
+    // Tri : par position QF, puis classement MQ
+    qfEliminated.sort((a, b) => {
+      if (a.qfPosition !== b.qfPosition) return a.qfPosition - b.qfPosition;
+      return (interimPosMap[a.driverId] ?? 9999) - (interimPosMap[b.driverId] ?? 9999);
+    });
+
     qfEliminated.forEach(driver => {
       ranking.push({ ...driver, meetingPosition: ranking.length + 1, phase: 'QF' });
       placed.add(driver.driverId);
     });
   }
 
-  // Reste : classement MQ
+  // ── 4. Reste : classement MQ ──
   interimRanking.forEach(driver => {
     if (!placed.has(driver.driverId)) {
       ranking.push({ ...driver, meetingPosition: ranking.length + 1, phase: 'MQ' });
