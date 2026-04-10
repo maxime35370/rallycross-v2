@@ -35,6 +35,7 @@ let selectedSessionId = '';
 let _dfStandings  = []; // classement complet pour handleForfait DF
 let _dfForfaits   = new Set(); // forfaits DF — exclus des remplaçants DF
 let _finForfaits  = new Set(); // forfaits Finale — exclus des remplaçants Finale
+let _qfForfaits   = new Set(); // forfaits QF — exclus des remplaçants QF
 
 const CATEGORIES = ['Supercar', 'Super1600', 'Division 5', 'Féminines', 'D3', 'D4'];
 const SESSION_LABELS = { EC: 'Essais', MQ: 'Qualif.', QF: '¼ Finale', DF: '½ Finale', FIN: 'Finale' };
@@ -393,9 +394,9 @@ async function autoAssignDemis() {
       const snap = await fgd2(fq2(fc2(db, col), fw2('sessionId', '==', fin.id)));
       if (!snap.empty) { const b = fwb2(db); snap.docs.forEach(d => b.delete(d.ref)); await b.commit(); }
     }
-    toast(`${top16.length} pilotes répartis en DF1/DF2 ✓ — Finale vidée, relancez Auto Finale`, 'success', 5000);
+    toast('Pilotes repartis en DF — Finale videe, relancez Auto Finale', 'success', 5000);
   } else {
-    toast(`${top16.length} pilotes répartis en DF1/DF2 ✓`, 'success');
+    toast('Pilotes repartis en DF', 'success');
   }
 
   renderSessionList();
@@ -469,6 +470,71 @@ async function autoAssignFinale() {
   }
   for (const d of finalistes) await addParticipant(fin.id, d);
   toast(`${finalistes.length} finalistes assignés ✓`, 'success');
+}
+
+// ─────────────────────────────────────────────────────────
+// GESTION FORFAIT QF
+// ─────────────────────────────────────────────────────────
+
+async function handleQfForfait(forfaitDriverId) {
+  const champ = getActiveChampionship();
+  const qfConfig = champ?.sessionConfig?.QF;
+  const qfSessions = allSessions.filter(s => s.type === 'QF').sort((a, b) => a.num - b.num);
+  if (qfSessions.length === 0) return;
+
+  // Classement MQ
+  let ranked = [];
+  try { ranked = await calcInterimStandings(db, allSessions, _activeRegulation); } catch {}
+  if (ranked.length === 0) { toast('Pas de classement MQ disponible', 'error'); return; }
+
+  const forfaitDriver = ranked.find(r => r.driverId === forfaitDriverId) ||
+    engagedDrivers.find(d => (d.id || d.driverId) === forfaitDriverId);
+  const forfaitLabel = forfaitDriver ? forfaitDriver.firstName + ' ' + forfaitDriver.lastName + ' (#' + forfaitDriver.carNumber + ')' : forfaitDriverId;
+
+  _qfForfaits.add(forfaitDriverId);
+
+  // Recalculer la distribution complete sans les forfaits
+  const nbQF = qfConfig?.count || 4;
+  const gridSize = qfConfig?.gridSize || 6;
+  const totalSlots = nbQF * gridSize;
+
+  // Exclure les forfaits du classement, prendre les N suivants
+  const eligibles = ranked.filter(r => !_qfForfaits.has(r.driverId));
+  const qualifies = eligibles.slice(0, totalSlots);
+
+  // Nouveau suppleant = le dernier ajoute (celui qui prend la place en bas)
+  const newDriver = qualifies[qualifies.length - 1];
+  const reserveLabel = newDriver ? newDriver.firstName + ' ' + newDriver.lastName + ' (#' + newDriver.carNumber + ') entre en grille' : 'Aucun remplacant';
+
+  if (!window.confirm('Forfait ' + forfaitLabel + ' ?\n\nTout le monde remonte d\'une place dans les QF.\n' + reserveLabel + '\n\nLes 4 QF vont etre redistribues. Continuer ?')) {
+    _qfForfaits.delete(forfaitDriverId);
+    return;
+  }
+
+  // Vider tous les QF + DF + FIN
+  const { collection, query, where, getDocs, writeBatch } = await import(
+    'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
+  );
+  for (const s of allSessions.filter(s => ['QF', 'DF', 'FIN'].includes(s.type))) {
+    for (const col of ['sessionParticipants', 'results']) {
+      const snap = await getDocs(query(collection(db, col), where('sessionId', '==', s.id)));
+      if (!snap.empty) { const b = writeBatch(db); snap.docs.forEach(d => b.delete(d.ref)); await b.commit(); }
+    }
+  }
+
+  // Redistribuer les qualifies dans les QF (meme logique que autoAssignQF)
+  const qfs = distributeIntoQF(qualifies, qfConfig);
+  let total = 0;
+  for (let q = 0; q < qfs.length && q < qfSessions.length; q++) {
+    for (const driver of qfs[q]) {
+      await addParticipant(qfSessions[q].id, driver);
+      total++;
+    }
+  }
+
+  toast('Forfait declare — ' + total + ' pilotes redistribues dans ' + nbQF + ' QF', 'success', 5000);
+  renderSessionList();
+  renderSessionDetail();
 }
 
 // ─────────────────────────────────────────────────────────
@@ -787,6 +853,7 @@ async function renderSessionDetail() {
   }
 
   const isEcOrMq = session.type === 'EC' || session.type === 'MQ';
+  const isQF = session.type === 'QF';
 
   panel.innerHTML = `
     <div class="ses-detail-header">
@@ -804,6 +871,7 @@ async function renderSessionDetail() {
           <div class="ses-pilot-row">
             <span class="ses-pilot-num">${escHtml(p.carNumber)}</span>
             <span class="ses-pilot-name">${escHtml(p.firstName)} <strong>${escHtml(p.lastName)}</strong></span>
+            ${isQF ? `<button class="btn btn-danger btn-sm ses-qf-forfait-btn" data-driver-id="${p.driverId}" title="Declarer forfait">🚫</button>` : ''}
             <button class="btn btn-danger btn-sm ses-remove-btn" data-driver-id="${p.driverId}">✕</button>
           </div>`).join('')}
     </div>
@@ -829,6 +897,10 @@ async function renderSessionDetail() {
       const driver = engagedDrivers.find(d => (d.id || d.driverId) === btn.dataset.driverId);
       if (driver) { await addParticipant(selectedSessionId, driver); renderSessionDetail(); }
     });
+  });
+  // Forfait QF
+  panel.querySelectorAll('.ses-qf-forfait-btn').forEach(btn => {
+    btn.addEventListener('click', () => handleQfForfait(btn.dataset.driverId));
   });
 }
 
