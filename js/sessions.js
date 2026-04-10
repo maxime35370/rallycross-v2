@@ -830,6 +830,7 @@ async function renderSessionDetail() {
     }
   }
 
+  if (session.type === 'QF')  { await renderQfStandings(panel, session, participants); return; }
   if (session.type === 'DF')  { await renderDfStandings(panel, session, participants); return; }
   if (session.type === 'FIN') { await renderFinaleStandings(panel, session, participants); return; }
 
@@ -923,6 +924,120 @@ function bindEvents() {
 // ─────────────────────────────────────────────────────────
 // VUE DF
 // ─────────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────
+// RENDU QF — classement + grille + forfait
+// ─────────────────────────────────────────────────────────
+
+async function renderQfStandings(panel, session, assignedParticipants) {
+  const champ = getActiveChampionship();
+  const qfConfig = champ?.sessionConfig?.QF || {};
+  const nbQF = qfConfig.count || 4;
+  const gridSize = qfConfig.gridSize || 6;
+  const gridLayout = qfConfig.gridLayout || null;
+
+  const qfSessions = allSessions.filter(s => s.type === 'QF').sort((a, b) => a.num - b.num);
+
+  // Fetch all QF assignments
+  const fs = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
+  const qfAssignments = {};
+  for (const qf of qfSessions) {
+    const snap = await fs.getDocs(fs.query(fs.collection(db, 'sessionParticipants'), fs.where('sessionId', '==', qf.id)));
+    snap.docs.forEach(d => { qfAssignments[d.data().driverId] = qf.num; });
+  }
+
+  const currentQfIds = new Set();
+  const partSnap = await fs.getDocs(fs.query(fs.collection(db, 'sessionParticipants'), fs.where('sessionId', '==', session.id)));
+  partSnap.docs.forEach(d => currentQfIds.add(d.data().driverId));
+  const currentParticipants = partSnap.docs.map(d => d.data());
+
+  // MQ ranking
+  let ranked = [];
+  try { ranked = await calcInterimStandings(db, allSessions, _activeRegulation); } catch {}
+
+  // Build grid display
+  let gridHtml = '';
+  if (gridLayout && gridLayout.positions && currentParticipants.length > 0) {
+    const lanes = gridLayout.lanes || 2;
+    const rows = gridLayout.rows || 3;
+    const positions = gridLayout.positions;
+
+    // Map position number → driver
+    // Sort participants by their MQ ranking for grid assignment
+    const sortedParts = [...currentParticipants];
+    const rankMap = {};
+    ranked.forEach((r, i) => { rankMap[r.driverId] = i; });
+    sortedParts.sort((a, b) => (rankMap[a.driverId] ?? 9999) - (rankMap[b.driverId] ?? 9999));
+
+    const posToDriver = {};
+    let posIdx = 0;
+    const sortedPositions = Object.entries(positions).sort((a, b) => a[1] - b[1]);
+    for (const [key, posNum] of sortedPositions) {
+      if (posIdx < sortedParts.length) {
+        posToDriver[key] = sortedParts[posIdx++];
+      }
+    }
+
+    gridHtml = '<div class="ses-grid-display"><div class="ses-grid-title">Grille de depart — QF' + session.num + '</div>';
+    gridHtml += '<table class="ses-grid-table"><thead><tr><th></th>';
+    for (let c = 0; c < lanes; c++) gridHtml += '<th>C' + (c + 1) + '</th>';
+    gridHtml += '</tr></thead><tbody>';
+    for (let r = 0; r < rows; r++) {
+      gridHtml += '<tr><td class="ses-grid-row-label">L' + (r + 1) + '</td>';
+      for (let c = 0; c < lanes; c++) {
+        const key = r + '-' + c;
+        const driver = posToDriver[key];
+        if (driver) {
+          gridHtml += '<td class="ses-grid-cell ses-grid-cell--filled">' +
+            '<span class="ses-grid-num">' + escHtml(driver.carNumber) + '</span>' +
+            '<span class="ses-grid-name">' + escHtml(driver.lastName) + '</span></td>';
+        } else if (positions[key]) {
+          gridHtml += '<td class="ses-grid-cell ses-grid-cell--empty">(' + positions[key] + ')</td>';
+        } else {
+          gridHtml += '<td class="ses-grid-cell"></td>';
+        }
+      }
+      gridHtml += '</tr>';
+    }
+    gridHtml += '</tbody></table></div>';
+  }
+
+  // Assigned list with forfait buttons
+  const assignedHtml = currentParticipants.length === 0
+    ? '<div class="ses-empty">Aucun pilote assigne</div>'
+    : currentParticipants.map(p => {
+        const mqPos = ranked.findIndex(r => r.driverId === p.driverId);
+        return '<div class="ses-pilot-row">' +
+          '<span class="ses-pilot-rank text-muted" style="font-size:0.78rem;min-width:24px">' + (mqPos >= 0 ? mqPos + 1 : '—') + '</span>' +
+          '<span class="ses-pilot-num">' + escHtml(p.carNumber) + '</span>' +
+          '<span class="ses-pilot-name">' + escHtml(p.firstName) + ' <strong>' + escHtml(p.lastName) + '</strong></span>' +
+          '<button class="btn btn-danger btn-sm ses-qf-forfait-btn" data-driver-id="' + p.driverId + '" title="Declarer forfait">🚫</button>' +
+          '<button class="btn btn-danger btn-sm ses-remove-btn" data-driver-id="' + p.driverId + '">✕</button>' +
+          '</div>';
+      }).join('');
+
+  panel.innerHTML = '<div class="ses-detail-header"><div>' +
+    '<div class="ses-detail-label">' + escHtml(session.label) + '</div>' +
+    '<div class="ses-detail-meta">' + session.tours + ' tours · ' + currentParticipants.length + ' pilote(s)</div>' +
+    '</div></div>' +
+    (_qfForfaits.size > 0 ? '<div class="ses-df-notice" style="background:rgba(255,85,0,0.08);border-color:var(--clr-accent)">🚫 ' + _qfForfaits.size + ' forfait(s) declare(s) — Auto QF pour reinitialiser</div>' : '') +
+    gridHtml +
+    '<div class="ses-detail-section">' +
+    '<div class="ses-section-title"><span class="eng-group-dot eng-group-dot--on"></span>Assignes (' + currentParticipants.length + ')</div>' +
+    assignedHtml +
+    '</div>';
+
+  // Bind forfait + remove buttons
+  panel.querySelectorAll('.ses-qf-forfait-btn').forEach(function(btn) {
+    btn.addEventListener('click', function() { handleQfForfait(btn.dataset.driverId); });
+  });
+  panel.querySelectorAll('.ses-remove-btn').forEach(function(btn) {
+    btn.addEventListener('click', async function() {
+      await removeParticipant(selectedSessionId, btn.dataset.driverId);
+      renderSessionDetail();
+    });
+  });
+}
 
 async function renderDfStandings(panel, session, assignedParticipants) {
   const df1 = allSessions.find(s => s.type === 'DF' && s.num === 1);

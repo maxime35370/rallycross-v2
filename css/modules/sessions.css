@@ -346,4 +346,90 @@
   display: inline-block;
 }
 .eng-group-dot--on  { background: var(--clr-success); box-shadow: 0 0 6px var(--clr-success); }
+
+/* ════════════════════════════════
+   GRILLE DE DEPART (QF / DF / FIN)
+════════════════════════════════ */
+.ses-grid-display {
+  margin-bottom: var(--sp-lg);
+  padding: var(--sp-md);
+  background: var(--clr-bg-3);
+  border: 1px solid var(--clr-border);
+  border-radius: var(--r-lg);
+}
+
+.ses-grid-title {
+  font-family: var(--font-condensed);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--clr-text-3);
+  margin-bottom: var(--sp-sm);
+  text-align: center;
+}
+
+.ses-grid-table {
+  border-collapse: collapse;
+  margin: 0 auto;
+  width: auto;
+}
+
+.ses-grid-table th {
+  font-family: var(--font-condensed);
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--clr-text-3);
+  padding: 3px 4px;
+  text-align: center;
+  min-width: 60px;
+}
+
+.ses-grid-row-label {
+  font-family: var(--font-condensed);
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: var(--clr-text-3);
+  padding-right: 6px;
+  text-align: center;
+  border: none !important;
+}
+
+.ses-grid-cell {
+  padding: 4px !important;
+  text-align: center;
+  border: none !important;
+}
+
+.ses-grid-cell--filled {
+  background: var(--clr-accent-dim);
+  border: 1px solid var(--clr-accent) !important;
+  border-radius: var(--r-sm);
+  padding: 6px 4px !important;
+}
+
+.ses-grid-cell--empty {
+  color: var(--clr-text-3);
+  font-size: 0.72rem;
+  border: 1px dashed var(--clr-border-2) !important;
+  border-radius: var(--r-sm);
+}
+
+.ses-grid-num {
+  display: block;
+  font-family: var(--font-display);
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--clr-accent);
+}
+
+.ses-grid-name {
+  display: block;
+  font-size: 0.68rem;
+  color: var(--clr-text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 70px;
+}
 .eng-group-dot--off { background: var(--clr-text-3); }
