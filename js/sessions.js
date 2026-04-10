@@ -10,6 +10,8 @@ import { toast } from './app.js';
 import { escHtml } from './utils.js';
 import { getChampionshipConfig } from './settings.js';
 import { calcInterimStandings } from './calc.js';
+import { distributeIntoQF, getReserves } from './competition.js';
+import { getActiveChampionship } from './context.js';
 
 // ─────────────────────────────────────────────────────────
 // ÉTAT LOCAL
@@ -199,6 +201,67 @@ async function autoAssignAll(sessionId) {
   toast(count > 0 ? `${count} pilote(s) assigné(s) ✓` : 'Tous déjà assignés', count > 0 ? 'success' : 'info');
 }
 
+// ─────────────────────────────────────────────────────────
+// AUTO QF — Repartition dans les quarts de finale
+// ─────────────────────────────────────────────────────────
+
+async function autoAssignQF() {
+  const champ = getActiveChampionship();
+  const qfConfig = champ?.sessionConfig?.QF;
+  if (!qfConfig?.enabled) {
+    toast('Les quarts de finale ne sont pas actives dans ce reglement', 'warning');
+    return;
+  }
+
+  const nbQF = qfConfig.count || 4;
+  const qfSessions = allSessions.filter(s => s.type === 'QF').sort((a, b) => a.num - b.num);
+  if (qfSessions.length === 0) {
+    toast('Aucune session QF trouvee — recreez le meeting', 'error');
+    return;
+  }
+
+  // Classement interim
+  let ranked = [];
+  try { ranked = await calcInterimStandings(db, allSessions, _activeRegulation); } catch {}
+  if (ranked.length === 0) {
+    toast('Pas assez de resultats MQ pour les QF', 'warning');
+    return;
+  }
+
+  // Repartir avec competition.js
+  const qfs = distributeIntoQF(ranked, qfConfig);
+
+  if (!window.confirm('Auto QF : repartir ' + ranked.slice(0, nbQF * (qfConfig.gridSize || 6)).length + ' pilotes dans ' + nbQF + ' quarts de finale ?')) return;
+
+  // Vider les QF existants + DF + FIN
+  const { collection, query, where, getDocs, writeBatch } = await import(
+    'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
+  );
+  const clearSession = async (sessionId) => {
+    for (const col of ['sessionParticipants', 'results']) {
+      const snap = await getDocs(query(collection(db, col), where('sessionId', '==', sessionId)));
+      if (!snap.empty) { const b = writeBatch(db); snap.docs.forEach(d => b.delete(d.ref)); await b.commit(); }
+    }
+  };
+
+  // Vider QF + DF + FIN
+  for (const s of allSessions.filter(s => ['QF', 'DF', 'FIN'].includes(s.type))) {
+    await clearSession(s.id);
+  }
+
+  // Assigner les pilotes dans les QF
+  let total = 0;
+  for (let q = 0; q < qfs.length && q < qfSessions.length; q++) {
+    for (const driver of qfs[q]) {
+      await addParticipant(qfSessions[q].id, driver);
+      total++;
+    }
+  }
+
+  toast(total + ' pilotes repartis dans ' + nbQF + ' QF', 'success');
+  renderSessionList();
+}
+
 async function autoAssignDemis() {
   _dfForfaits = new Set();
   await loadEngaged();
@@ -253,9 +316,17 @@ async function autoAssignDemis() {
   await clearDf(df1.id);
   await clearDf(df2.id);
 
-  const top16 = ranked.slice(0, 16);
-  for (let i = 0; i < top16.length; i++) {
-    await addParticipant(i % 2 === 0 ? df1.id : df2.id, top16[i]);
+  // Nombre de pilotes par DF selon le reglement
+  const champ = getActiveChampionship();
+  const dfGridSize = champ?.sessionConfig?.DF?.gridSize || 8;
+  const nbDF = champ?.sessionConfig?.DF?.count || 2;
+  const totalDfSlots = dfGridSize * nbDF;
+
+  const dfSessions = allSessions.filter(s => s.type === 'DF').sort((a, b) => a.num - b.num);
+  const topN = ranked.slice(0, totalDfSlots);
+  for (let i = 0; i < topN.length; i++) {
+    const dfIdx = i % dfSessions.length;
+    await addParticipant(dfSessions[dfIdx].id, topN[i]);
   }
 
   if (fin && finHasData) {
@@ -294,7 +365,11 @@ async function autoAssignFinale() {
     'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
   );
 
-  const getTop4 = async (dfSession) => {
+  // Nombre de qualifies par DF selon le reglement
+  const champ = getActiveChampionship();
+  const qualPerDF = champ?.sessionConfig?.DF?.qualifiedPerDF || 4;
+
+  const getTopN = async (dfSession) => {
     const partSnap = await getDocs(query(collection(db, 'sessionParticipants'), where('sessionId', '==', dfSession.id)));
     const participants = partSnap.docs.map(d => d.data());
     if (participants.length === 0) return [];
@@ -308,16 +383,20 @@ async function autoAssignFinale() {
     if (rows.every(r => !r.ms && !r.status)) return [];
     const order = r => r.ms ? r.ms : r.status === 'DNF' ? 9000000 : r.status === 'DSQ_RACE' ? 9100000 : 9999999;
     rows.sort((a, b) => order(a) - order(b));
-    return rows.filter(r => r.ms || r.status === 'DNF').slice(0, 4);
+    return rows.filter(r => r.ms || r.status === 'DNF').slice(0, qualPerDF);
   };
 
-  const top4df1 = await getTop4(df1);
-  const top4df2 = await getTop4(df2);
-  if (top4df1.length === 0 && top4df2.length === 0) {
+  const dfSessions = allSessions.filter(s => s.type === 'DF').sort((a, b) => a.num - b.num);
+  const allDfQualified = [];
+  for (const df of dfSessions) {
+    const topN = await getTopN(df);
+    allDfQualified.push(...topN);
+  }
+  if (allDfQualified.length === 0) {
     toast('Aucun résultat de DF disponible.', 'warning'); return;
   }
 
-  const finalistes = [...top4df1, ...top4df2];
+  const finalistes = allDfQualified;
   const finResultsSnap = await getDocs(query(collection(db, 'results'), where('sessionId', '==', fin.id)));
   const finPartSnap    = await getDocs(query(collection(db, 'sessionParticipants'), where('sessionId', '==', fin.id)));
   const names = finalistes.map(d => `#${d.carNumber} ${d.lastName}`).join(', ');
@@ -558,6 +637,7 @@ function renderSessionList() {
     <div class="ses-list-header">
       <span class="ses-list-title">Sessions</span>
       <div class="ses-list-actions">
+        ${allSessions.some(s => s.type === 'QF') ? `<button class="btn btn-secondary btn-sm" id="ses-auto-qf-btn">⚡ Auto QF</button>` : ''}
         ${hasDf  ? `<button class="btn btn-secondary btn-sm" id="ses-auto-df-btn">⚡ Auto DF</button>` : ''}
         ${hasFin ? `<button class="btn btn-secondary btn-sm" id="ses-auto-fin-btn">⚡ Auto Finale</button>` : ''}
       </div>
@@ -574,6 +654,7 @@ function renderSessionList() {
     });
   });
 
+  document.getElementById('ses-auto-qf-btn')?.addEventListener('click', e => { e.stopPropagation(); autoAssignQF(); });
   document.getElementById('ses-auto-df-btn')?.addEventListener('click', e => { e.stopPropagation(); autoAssignDemis(); });
   document.getElementById('ses-auto-fin-btn')?.addEventListener('click', e => { e.stopPropagation(); autoAssignFinale(); });
 
