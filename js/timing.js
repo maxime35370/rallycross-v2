@@ -1065,11 +1065,55 @@ async function showStartingGrid(session) {
     let orderedPilots = [...participants];
 
     if (session.type === 'DF') {
-      // ← FIX OPTION 2 : calcul direct, plus de lecture interimStandings Firestore
-      const interim = await calcInterimStandings(db, allSessions);
-      const intMap = {};
-      interim.forEach(r => { intMap[r.driverId] = r.position ?? 99; });
-      orderedPilots.sort((a, b) => (intMap[a.driverId] ?? 99) - (intMap[b.driverId] ?? 99));
+      const champ0 = getActiveChampionship();
+      const qfEnabled = champ0?.sessionConfig?.QF?.enabled;
+
+      if (qfEnabled) {
+        // Mode QF→DF : trier par position QF (qualifies d'abord, remplacants en dernier)
+        const qualPerQF = champ0?.sessionConfig?.QF?.qualifiedPerQF || 3;
+        const dfSessions0 = allSessions.filter(s => s.type === 'DF').sort((a, b) => a.num - b.num);
+        const qfSessions0 = allSessions.filter(s => s.type === 'QF').sort((a, b) => a.num - b.num);
+        const dfIdx0 = dfSessions0.findIndex(d => d.id === session.id);
+
+        // QFs qui alimentent cette DF
+        const feedQfResults = [];
+        for (let q = dfIdx0; q < qfSessions0.length; q += dfSessions0.length) {
+          const qf = qfSessions0[q];
+          if (!qf) continue;
+          const pSnap = await getDocs(query(collection(db, 'sessionParticipants'), where('sessionId', '==', qf.id)));
+          const rSnap = await getDocs(query(collection(db, 'results'), where('sessionId', '==', qf.id)));
+          const rMap = {};
+          rSnap.docs.forEach(d => { rMap[d.data().driverId] = d.data(); });
+          const rows0 = pSnap.docs.map(d => d.data()).map(p => ({
+            driverId: p.driverId, ms: rMap[p.driverId]?.ms ?? null,
+            status: rMap[p.driverId]?.status ?? null,
+          }));
+          const order0 = r => r.ms ? r.ms : r.status === 'DNF' ? 9e6 : 9e9;
+          rows0.sort((a, b) => order0(a) - order0(b));
+          let pos0 = 1;
+          rows0.forEach(r => { r.qfPosition = (r.ms || r.status === 'DNF') ? pos0++ : null; });
+          feedQfResults.push(rows0);
+        }
+
+        // Qualified by QF position level
+        const qfOrder = {};
+        let ord = 0;
+        for (let posLevel = 1; posLevel <= qualPerQF; posLevel++) {
+          for (const qfRes of feedQfResults) {
+            const d = qfRes.find(r => r.qfPosition === posLevel);
+            if (d) qfOrder[d.driverId] = ord++;
+          }
+        }
+
+        // Qualified first, then replacements (anyone not in qfOrder) at the end
+        orderedPilots.sort((a, b) => (qfOrder[a.driverId] ?? 9999) - (qfOrder[b.driverId] ?? 9999));
+      } else {
+        // Mode direct MQ→DF : trier par classement intermediaire
+        const interim = await calcInterimStandings(db, allSessions);
+        const intMap = {};
+        interim.forEach(r => { intMap[r.driverId] = r.position ?? 99; });
+        orderedPilots.sort((a, b) => (intMap[a.driverId] ?? 99) - (intMap[b.driverId] ?? 99));
+      }
     }
 
     if (session.type === 'FIN') {
