@@ -1131,35 +1131,44 @@ async function showStartingGrid(session) {
     const poleSide = meeting?.poleSide || 'droite';
     const poleLabel = poleSide === 'gauche' ? '◀ Côté gauche' : 'Côté droit ▶';
 
-    const assignments = [
-      { ligne: 1, couloir: 1, pole: true  },
-      { ligne: 1, couloir: 3, pole: false },
-      { ligne: 1, couloir: 5, pole: false },
-      { ligne: 2, couloir: 2, pole: false },
-      { ligne: 2, couloir: 4, pole: false },
-      { ligne: 3, couloir: 1, pole: false },
-      { ligne: 3, couloir: 3, pole: false },
-      { ligne: 3, couloir: 5, pole: false },
-    ];
+    // Lire gridLayout depuis le reglement du championnat
+    const champ = getActiveChampionship();
+    const phaseConfig = session.type === 'DF' ? champ?.sessionConfig?.DF : champ?.sessionConfig?.FIN;
+    const gridLayout = phaseConfig?.gridLayout;
+    const lanes = gridLayout?.lanes || 5;
+    const rows  = gridLayout?.rows  || 3;
+    const positions = gridLayout?.positions || {};
 
-    const grid = { 1: [], 2: [], 3: [] };
-    orderedPilots.slice(0, 8).forEach((p, i) => {
+    // Construire les assignments depuis gridLayout
+    const sortedPositions = Object.entries(positions).sort((a, b) => a[1] - b[1]);
+    const assignments = sortedPositions.map(([key, posNum], i) => {
+      const [r, c] = key.split('-').map(Number);
+      return { ligne: r + 1, couloir: c + 1, pole: i === 0 };
+    });
+
+    const grid = {};
+    for (let r = 1; r <= rows; r++) grid[r] = [];
+
+    orderedPilots.slice(0, assignments.length).forEach((p, i) => {
       const a = assignments[i];
       if (a) grid[a.ligne].push({ ...a, pilot: p });
     });
-    [1,2,3].forEach(l => grid[l].sort((a,b) => a.couloir - b.couloir));
+    Object.keys(grid).forEach(l => grid[l].sort((a, b) => a.couloir - b.couloir));
 
     const reverseForDisplay = poleSide === 'droite';
-    if (reverseForDisplay) [1,2,3].forEach(l => grid[l].reverse());
+    if (reverseForDisplay) Object.keys(grid).forEach(l => grid[l].reverse());
 
-    const lineLabels = { 1: '1ère ligne', 2: '2ème ligne', 3: '3ème ligne' };
+    const lineLabels = {};
+    for (let r = 1; r <= rows; r++) {
+      lineLabels[r] = r === 1 ? '1ère ligne' : r + 'ème ligne';
+    }
 
     gridHtml = `
       <div class="grid-note">
         ⭐ Le pilote en pole position choisit librement sa place sur la 1ère ligne
         <span style="margin-left:8px;font-size:0.8rem">${poleLabel}</span>
       </div>
-      ${[1,2,3].map(lineNum => {
+      ${Object.keys(grid).map(Number).sort((a, b) => a - b).map(lineNum => {
         const slots = grid[lineNum];
         if (slots.length === 0) return '';
         return `

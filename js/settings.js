@@ -39,14 +39,14 @@ const DEFAULT_CHAMP = {
     EC:  { enabled: true, laps: 1 },
     MQ:  { laps: 4, count: 4 },
     QF:  { enabled: false, count: 4, laps: 4, gridSize: 6,
-           gridLayout: { lanes: 2, rows: 3, positions: { '0-0':1,'0-1':2,'1-0':3,'1-1':4,'2-0':5,'2-1':6 } },
+           gridLayout: { lanes: 5, rows: 3, positions: { '0-0':1,'0-2':2,'1-1':3,'1-3':4,'2-0':5,'2-2':6 } },
            distribution: [1,5,9,13,17,21], // positions du classement interim pour QF1 (QF2=+1, QF3=+2, QF4=+3)
            qualifiedPerQF: 3 },
     DF:  { count: 2, laps: 6, gridSize: 8,
-           gridLayout: { lanes: 2, rows: 4, positions: { '0-0':1,'0-1':2,'1-0':3,'1-1':4,'2-0':5,'2-1':6,'3-0':7,'3-1':8 } },
+           gridLayout: { lanes: 5, rows: 3, positions: { '0-0':1,'0-2':2,'0-4':3,'1-1':4,'1-3':5,'2-0':6,'2-2':7,'2-4':8 } },
            qualifiedPerDF: 4 },
     FIN: { laps: 7, gridSize: 8,
-           gridLayout: { lanes: 2, rows: 4, positions: { '0-0':1,'0-1':2,'1-0':3,'1-1':4,'2-0':5,'2-1':6,'3-0':7,'3-1':8 } } },
+           gridLayout: { lanes: 5, rows: 3, positions: { '0-0':1,'0-2':2,'0-4':3,'1-1':4,'1-3':5,'2-0':6,'2-2':7,'2-4':8 } } },
   },
 
   // Phases activees : definit le parcours de la competition
