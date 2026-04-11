@@ -14,6 +14,10 @@ const DEFAULT_POINTS_SCALE = {
     formula: '44 - position',
     overrides: { 1: 50, 2: 45, 3: 42 },
   },
+  QF: {
+    formula: null,
+    overrides: { 1: 8, 2: 6, 3: 5, 4: 4, 5: 3, 6: 2 },
+  },
   DF: {
     formula: null,
     overrides: { 1: 10, 2: 8, 3: 6, 4: 5, 5: 4, 6: 3, 7: 2, 8: 1 },
@@ -130,6 +134,17 @@ export function interimPoints(position, regulation) {
   }
   // Defaut FFSA : max(0, 17 - position)
   return Math.max(0, 17 - position);
+}
+
+/**
+ * Points QF pour une position.
+ * @param {number} position
+ * @param {object} [regulation]
+ */
+export function qfPoints(position, regulation) {
+  const scale = (regulation?.pointsScale || DEFAULT_POINTS_SCALE).QF;
+  if (!scale) return 0;
+  return calcPointsFromScale(position, scale);
 }
 
 /**
