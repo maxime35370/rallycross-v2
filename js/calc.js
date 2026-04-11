@@ -123,6 +123,8 @@ export function ecBonusPoints(position, regulation) {
  * @param {object} [regulation] — reglement optionnel (interimBonus dans pointsScale)
  */
 export function interimPoints(position, regulation) {
+  // Si explicitement desactive
+  if (regulation?.interimPointsEnabled === false) return 0;
   if (regulation?.pointsScale?.INTERIM) {
     return calcPointsFromScale(position, regulation.pointsScale.INTERIM);
   }
