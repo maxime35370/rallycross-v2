@@ -92,7 +92,7 @@ const DEFAULT_CHAMP = {
 // CHAMPS DU REGLEMENT (extraits pour reutilisation)
 // ─────────────────────────────────────────────────────────
 
-const REGULATION_FIELDS = ['categories', 'sessionConfig', 'pointsScale', 'worstResultDrop', 'statusRules', 'competitionPhases', 'meetingClassificationMode', 'seriesTable'];
+const REGULATION_FIELDS = ['categories', 'sessionConfig', 'pointsScale', 'worstResultDrop', 'statusRules', 'competitionPhases', 'meetingClassificationMode', 'interimPointsEnabled', 'seriesTable'];
 
 function extractRegulation(data) {
   const reg = {};
@@ -470,6 +470,20 @@ function renderTabGeneral() {
           <option value="points" ${(_editData.meetingClassificationMode || 'points') === 'points' ? 'selected' : ''}>Points (FFSA) — points cumules MQ + DF + FIN</option>
           <option value="cascade" ${_editData.meetingClassificationMode === 'cascade' ? 'selected' : ''}>Cascade (FIA) — classement par phase (FIN > DF > QF > MQ)</option>
         </select>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Points intermediaires pour le championnat</label>
+        <label class="settings-toggle">
+          <input type="checkbox" id="f-interim-points" ${_editData.interimPointsEnabled !== false ? 'checked' : ''}>
+          <span class="settings-toggle-track"><span class="settings-toggle-thumb"></span></span>
+          <span style="font-size:0.9rem;font-weight:500;margin-left:4px">
+            ${_editData.interimPointsEnabled !== false ? 'Actif — points attribues selon le classement intermediaire' : 'Desactive — pas de points intermediaires'}
+          </span>
+        </label>
+        <div class="text-muted" style="font-size:0.78rem;margin-top:4px">
+          Si active, des points sont donnes selon le classement apres les manches qualificatives (bareme configurable dans l'onglet Bareme).
+        </div>
       </div>
 
       <div class="form-group">
@@ -882,7 +896,10 @@ function renderTabSessions() {
 // ─────────────────────────────────────────────────────────
 
 function renderTabPoints() {
-  const SESSION_LABELS = { MQ: 'Manches Qualificatives', DF: 'Demi-Finale', FIN: 'Finale' };
+  const SESSION_LABELS = { MQ: 'Manches Qualificatives' };
+  if (_editData.interimPointsEnabled !== false) SESSION_LABELS.INTERIM = 'Classement Intermediaire';
+  SESSION_LABELS.DF = 'Demi-Finale';
+  SESSION_LABELS.FIN = 'Finale';
   const ps = _editData.pointsScale  || {};
   const sr = _editData.statusRules  || {};
 
@@ -1217,6 +1234,7 @@ function syncCurrentTabToData() {
       _editData.regulation = (document.getElementById('f-regulation')?.value || '').trim();
       _editData.isActive   = document.getElementById('f-active')?.checked ?? true;
       _editData.meetingClassificationMode = document.getElementById('f-classification-mode')?.value || 'points';
+      _editData.interimPointsEnabled = document.getElementById('f-interim-points')?.checked ?? true;
       break;
 
     case 'categories':
