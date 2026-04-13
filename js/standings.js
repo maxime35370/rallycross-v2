@@ -7,7 +7,7 @@
 import { db } from './firebase.js';
 import { toast, categoryBadge, sessionBadge, statusBadge } from './app.js';
 import { msToDisplay, escHtml } from './utils.js';
-import { calcInterimStandings, calcEcStandings, calcMqStandings, dfPoints, finPoints } from './calc.js';
+import { calcInterimStandings, calcEcStandings, calcMqStandings, qfPoints, dfPoints, finPoints } from './calc.js';
 import { buildMeetingClassification } from './competition.js';
 import { getChampionshipConfig } from './settings.js';
 import { getActiveChampionship, getActiveChampionshipId } from './context.js';
@@ -124,7 +124,11 @@ async function calcPhaseStandings(session) {
   const dns         = rows.filter(r => r.status === 'DNS');
   const dsq         = rows.filter(r => r.status === 'DSQ');
   const noResult    = rows.filter(r => !r.ms && !r.status);
-  const ptsFn       = (p) => session.type === 'DF' ? dfPoints(p, _activeRegulation) : finPoints(p, _activeRegulation);
+  const ptsFn = (p) => {
+    if (session.type === 'QF')  return qfPoints(p, _activeRegulation);
+    if (session.type === 'DF')  return dfPoints(p, _activeRegulation);
+    return finPoints(p, _activeRegulation);
+  };
 
   let pos = 1;
   const result = [];

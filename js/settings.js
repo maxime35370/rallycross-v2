@@ -898,6 +898,7 @@ function renderTabSessions() {
 function renderTabPoints() {
   const SESSION_LABELS = { MQ: 'Manches Qualificatives' };
   if (_editData.interimPointsEnabled !== false) SESSION_LABELS.INTERIM = 'Classement Intermediaire';
+  if (_editData.sessionConfig?.QF?.enabled) SESSION_LABELS.QF = 'Quart de Finale';
   SESSION_LABELS.DF = 'Demi-Finale';
   SESSION_LABELS.FIN = 'Finale';
   const ps = _editData.pointsScale  || {};
