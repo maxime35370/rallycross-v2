@@ -362,12 +362,12 @@ function buildMqSeriesGraph(mq, rawResults, poleSide) {
       </div>`;
   }
 
-  // Bornes Y : plus rapide −10 s, plus lent +10 s (10 s de marge de chaque côté)
+  // Bornes Y : plus rapide −2,5 s, plus lent +2,5 s (2,5 s de marge de chaque côté)
   const times = pts.map(p => p.ms);
   const fastest = Math.min(...times);
   const slowest = Math.max(...times);
-  const yMin = Math.max(0, fastest - 10_000);
-  const yMax = slowest + 10_000;
+  const yMin = Math.max(0, fastest - 2_500);
+  const yMax = slowest + 2_500;
   const ySpan = Math.max(1, yMax - yMin);
 
   // Bornes X : 1..maxCouloir
