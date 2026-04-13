@@ -373,38 +373,145 @@ function buildMqSeriesGraph(mq, rawResults, poleSide) {
   // Bornes X : 1..maxCouloir
   const maxCouloir = Math.max(...pts.map(p => p.couloir), 1);
 
-  // Dimensions SVG
-  const W = 720;
-  const H = 360;
-  const padL = 70, padR = 20, padT = 30, padB = 50;
+  // Dimensions SVG — on augmente padR pour laisser la place aux labels à droite
+  const W = 760;
+  const H = 380;
+  const padL = 75, padR = 55, padT = 30, padB = 55;
   const innerW = W - padL - padR;
   const innerH = H - padT - padB;
 
   const reverseX = poleSide === 'droite';
   const xFor = (couloir) => {
-    // Les positions de couloir sont espacées uniformément sur l'axe
     const ratio = maxCouloir === 1 ? 0.5 : (couloir - 1) / (maxCouloir - 1);
     const r = reverseX ? 1 - ratio : ratio;
     return padL + r * innerW;
   };
-  // Axe Y dessiné tel que le temps CROÎT vers le haut (cohérent avec le croquis)
-  // → petit ms (temps rapide) reste en bas du graphique.
+  // Axe Y : petit ms (temps rapide) → bas du graphique.
   const yForTime = (ms) => padT + (1 - (ms - yMin) / ySpan) * innerH;
 
-  // Graduations Y (ticks toutes les 5 s environ, max 6 ticks)
+  // Graduations Y (pas "joli" entre 1s et 2min, max 6 ticks)
   const niceStep = pickTickStep(ySpan, 6);
   const yTicks = [];
   const firstTick = Math.ceil(yMin / niceStep) * niceStep;
   for (let t = firstTick; t <= yMax; t += niceStep) yTicks.push(t);
 
-  // Dots + légende
-  const dotsSvg = pts.map(p => {
-    const color = SERIE_COLORS[(p.serie - 1) % SERIE_COLORS.length];
-    const cx = xFor(p.couloir);
-    const cy = yForTime(p.ms);
-    const tip = `Série ${p.serie} · Couloir ${p.couloir} · #${p.carNumber} ${p.firstName} ${p.lastName} · ${msToDisplay(p.ms)}`;
-    return `<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="6" fill="${color}" stroke="#000" stroke-width="0.5"><title>${escHtml(tip)}</title></circle>`;
+  // Pré-calcul des positions de tous les points
+  const placed = pts.map(p => ({
+    ...p,
+    cx: xFor(p.couloir),
+    cy: yForTime(p.ms),
+    color: SERIE_COLORS[(p.serie - 1) % SERIE_COLORS.length],
+  }));
+
+  // ── POINT 1 : ligne horizontale tiretée au meilleur temps de chaque série
+  const bestBySerie = new Map();
+  placed.forEach(p => {
+    const prev = bestBySerie.get(p.serie);
+    if (!prev || p.ms < prev.ms) bestBySerie.set(p.serie, p);
+  });
+  const bestLinesSvg = [...bestBySerie.entries()].map(([s, best]) => {
+    const y = yForTime(best.ms).toFixed(1);
+    return `<line x1="${padL}" y1="${y}" x2="${W - padR}" y2="${y}"
+      stroke="${best.color}" stroke-width="1" stroke-dasharray="4 4" opacity="0.4"/>`;
   }).join('');
+
+  // ── POINT 4 : polyline par série, reliant les points dans l'ordre visuel
+  //             (gauche → droite) pour montrer l'effet du couloir sur le temps
+  const bySerie = new Map();
+  placed.forEach(p => {
+    if (!bySerie.has(p.serie)) bySerie.set(p.serie, []);
+    bySerie.get(p.serie).push(p);
+  });
+  const connectLinesSvg = [...bySerie.entries()].map(([s, list]) => {
+    if (list.length < 2) return '';
+    const sorted = [...list].sort((a, b) => a.cx - b.cx);
+    const color = SERIE_COLORS[(s - 1) % SERIE_COLORS.length];
+    const d = sorted.map(p => `${p.cx.toFixed(1)},${p.cy.toFixed(1)}`).join(' ');
+    return `<polyline points="${d}" fill="none" stroke="${color}" stroke-width="1.5" opacity="0.55" stroke-linecap="round" stroke-linejoin="round"/>`;
+  }).join('');
+
+  // ── Dots
+  const dotsSvg = placed.map(p => {
+    const tip = `Série ${p.serie} · Couloir ${p.couloir} · #${p.carNumber} ${p.firstName} ${p.lastName} · ${msToDisplay(p.ms)}`;
+    return `<circle cx="${p.cx.toFixed(1)}" cy="${p.cy.toFixed(1)}" r="6" fill="${p.color}" stroke="#000" stroke-width="0.5"><title>${escHtml(tip)}</title></circle>`;
+  }).join('');
+
+  // ── POINT 2 : labels #NNN avec anti-chevauchement
+  // Stratégie :
+  //  1) par couloir, tri par y croissant
+  //  2) alternance côté droit / gauche du point pour réduire la densité
+  //  3) chaque "pile" (droite puis gauche) applique un espacement vertical mini
+  //  4) si le label a été poussé trop loin de son point, on trace une petite
+  //     ligne-guide (leader line)
+  const LABEL_H = 14;      // hauteur de la boîte occupée par un label
+  const LABEL_DX = 10;     // décalage horizontal par rapport au point
+  const LEADER_TOLERANCE = 7;
+  const labels = [];
+  const leaders = [];
+
+  const byCouloir = new Map();
+  placed.forEach((p, i) => {
+    if (!byCouloir.has(p.couloir)) byCouloir.set(p.couloir, []);
+    byCouloir.get(p.couloir).push(i);
+  });
+
+  for (const [, idxs] of byCouloir) {
+    const sorted = idxs.map(i => ({ i, p: placed[i] }))
+      .sort((a, b) => a.p.cy - b.p.cy);
+
+    // Choisir le côté par défaut en fonction de la position X
+    // (droite par défaut, sauf si on est près du bord droit du graphe)
+    const preferLeft = sorted.length && sorted[0].p.cx > (padL + innerW * 0.75);
+    const right = [];
+    const left  = [];
+    sorted.forEach((entry, idx) => {
+      const defaultRight = preferLeft ? (idx % 2 === 1) : (idx % 2 === 0);
+      (defaultRight ? right : left).push(entry);
+    });
+
+    const placeStack = (stack, side) => {
+      if (stack.length === 0) return;
+      const dx = side === 'right' ? LABEL_DX : -LABEL_DX;
+      const anchor = side === 'right' ? 'start' : 'end';
+      let lastY = -Infinity;
+      stack.forEach(entry => {
+        const { p, i } = entry;
+        const natural = p.cy + 4;
+        const yPlaced = Math.max(natural, lastY + LABEL_H);
+        lastY = yPlaced;
+        const labelX = p.cx + dx;
+        labels.push({
+          x: labelX.toFixed(1),
+          y: yPlaced.toFixed(1),
+          anchor,
+          text: `#${p.carNumber}`,
+          color: p.color,
+          pointIdx: i,
+        });
+        // Leader line si le label a bougé notablement par rapport au point
+        if (Math.abs(yPlaced - natural) > LEADER_TOLERANCE) {
+          const leaderX2 = p.cx + dx * 0.55;
+          leaders.push({
+            x1: p.cx.toFixed(1),
+            y1: p.cy.toFixed(1),
+            x2: leaderX2.toFixed(1),
+            y2: (yPlaced - 3).toFixed(1),
+            color: p.color,
+          });
+        }
+      });
+    };
+    placeStack(right, 'right');
+    placeStack(left,  'left');
+  }
+
+  const leadersSvg = leaders.map(l =>
+    `<line x1="${l.x1}" y1="${l.y1}" x2="${l.x2}" y2="${l.y2}" stroke="${l.color}" stroke-width="0.8" opacity="0.5" />`
+  ).join('');
+
+  const labelsSvg = labels.map(l =>
+    `<text x="${l.x}" y="${l.y}" fill="${l.color}" font-size="10" font-weight="700" text-anchor="${l.anchor}" dominant-baseline="middle" style="paint-order:stroke" stroke="#000" stroke-width="2.2" stroke-linejoin="round" stroke-opacity="0.75">${escHtml(l.text)}</text>`
+  ).join('');
 
   // Lignes de grille + ticks Y
   const gridSvg = yTicks.map(t => {
@@ -425,7 +532,7 @@ function buildMqSeriesGraph(mq, rawResults, poleSide) {
   }).join('');
 
   // Légende couleurs par série
-  const seriesSet = [...new Set(pts.map(p => p.serie))].sort((a, b) => a - b);
+  const seriesSet = [...new Set(placed.map(p => p.serie))].sort((a, b) => a - b);
   const legendHtml = seriesSet.map(s => {
     const color = SERIE_COLORS[(s - 1) % SERIE_COLORS.length];
     return `<span class="std-graph-legend-item"><span class="std-graph-legend-dot" style="background:${color}"></span>Série ${s}</span>`;
@@ -447,13 +554,21 @@ function buildMqSeriesGraph(mq, rawResults, poleSide) {
           <!-- Axes -->
           <line x1="${padL}" y1="${padT}" x2="${padL}" y2="${H - padB}" stroke="#666" stroke-width="1" />
           <line x1="${padL}" y1="${H - padB}" x2="${W - padR}" y2="${H - padB}" stroke="#666" stroke-width="1" />
-          <!-- Grille Y + labels -->
+          <!-- Grille Y + labels temps -->
           ${gridSvg}
-          <!-- Ticks X couloirs -->
+          <!-- Grille X (couloirs) -->
           ${xTicksSvg}
+          <!-- Meilleur temps par série (ligne horizontale tiretee) -->
+          ${bestLinesSvg}
+          <!-- Lignes reliant les pilotes d'une meme serie (ordre visuel des couloirs) -->
+          ${connectLinesSvg}
+          <!-- Leader lines (lignes-guides vers les labels deplaces) -->
+          ${leadersSvg}
           <!-- Points -->
           ${dotsSvg}
-          <!-- Labels axes -->
+          <!-- Labels numero de voiture (anti-chevauchement) -->
+          ${labelsSvg}
+          <!-- Titres des axes -->
           <text x="${padL - 50}" y="${padT - 12}" fill="#cfcfcf" font-size="11" font-weight="600">Temps</text>
           <text x="${W - padR}" y="${H - 8}" fill="#cfcfcf" font-size="11" text-anchor="end" font-weight="600">Couloir</text>
         </svg>
