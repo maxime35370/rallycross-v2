@@ -632,6 +632,33 @@ function metaControls(p, session) {
   const r = results[p.driverId] || {};
   const serie   = r.serie   ?? null;
   const couloir = r.couloir ?? null;
+  const { maxCouloir, sizes } = getSeriesStructure(participants.length);
+
+  // Boutons Couloir C1..Cn : groupe à sélection unique.
+  // Un bouton est désactivé si :
+  //   - une série est choisie et le couloir dépasse la taille de la série,
+  //   - un autre pilote de la même série occupe déjà ce couloir.
+  const couloirBtns = Array.from({ length: maxCouloir }, (_, i) => {
+    const c = i + 1;
+    let disabled = false;
+    let reason   = '';
+    if (serie && c > sizes[serie - 1]) {
+      disabled = true;
+      reason = `Série ${serie} : ${sizes[serie - 1]} couloirs max`;
+    }
+    if (!disabled && serie) {
+      const taken = Object.entries(results).find(([dId, rr]) =>
+        dId !== p.driverId && rr.serie === serie && rr.couloir === c
+      );
+      if (taken) {
+        disabled = true;
+        reason = `Couloir ${c} déjà pris dans la série ${serie}`;
+      }
+    }
+    const isActive = couloir === c;
+    return `<button type="button" class="tim-couloir-btn ${isActive ? 'is-active' : ''}" data-driver-id="${p.driverId}" data-couloir="${c}" ${disabled ? 'disabled' : ''} title="${escHtml(reason || `Couloir ${c}`)}">C${c}</button>`;
+  }).join('');
+
   return `
     <div class="tim-meta" data-driver-id="${p.driverId}">
       <div class="tim-meta-item" title="Série de départ (facultatif)">
@@ -640,11 +667,9 @@ function metaControls(p, session) {
         <span class="tim-meta-val tim-serie-val" data-driver-id="${p.driverId}">${serie ?? '—'}</span>
         <button type="button" class="tim-meta-btn tim-serie-up" data-driver-id="${p.driverId}" aria-label="Série +">+</button>
       </div>
-      <div class="tim-meta-item" title="Couloir de départ (facultatif)">
+      <div class="tim-meta-item tim-meta-item--couloir" title="Couloir de départ (facultatif)">
         <span class="tim-meta-label">Couloir</span>
-        <button type="button" class="tim-meta-btn tim-couloir-down" data-driver-id="${p.driverId}" aria-label="Couloir −">−</button>
-        <span class="tim-meta-val tim-couloir-val" data-driver-id="${p.driverId}">${couloir ?? '—'}</span>
-        <button type="button" class="tim-meta-btn tim-couloir-up" data-driver-id="${p.driverId}" aria-label="Couloir +">+</button>
+        <div class="tim-couloir-btns">${couloirBtns}</div>
       </div>
     </div>
   `;
@@ -751,45 +776,57 @@ function bindTimingEvents(session) {
     btn.addEventListener('click', () => onEditResult(btn.dataset.driverId));
   });
 
-  // ── MQ : sélecteurs ± série / couloir ────────────────────
+  // ── MQ : sélecteurs série (± ) / couloir (groupe C1..Cn) ─
   if (session.type === 'MQ') {
-    const bumpMeta = (driverId, field, delta) => {
+    const commitMeta = (driverId, newSerie, newCouloir) => {
       const r = results[driverId] || {};
-      const current = field === 'serie' ? (r.serie ?? 0) : (r.couloir ?? 0);
-      const { nbSeries, maxCouloir } = getSeriesStructure(participants.length);
-      const hardMax = field === 'serie' ? nbSeries : maxCouloir;
-      let next = current + delta;
-      if (next < 0) next = 0;
-      if (next > hardMax) next = hardMax;
-      if (next === current) return;
-
-      const newSerie   = field === 'serie'   ? (next || null) : (r.serie   ?? null);
-      const newCouloir = field === 'couloir' ? (next || null) : (r.couloir ?? null);
-
       const check = validateMeta(driverId, newSerie, newCouloir);
       if (!check.ok) { toast(check.msg, 'error'); return; }
 
-      // Mise à jour optimiste du cache local + affichage avant écriture Firestore
-      results[driverId] = { ...r, serie: newSerie, couloir: newCouloir };
-      const serieEl   = content.querySelector(`.tim-serie-val[data-driver-id="${driverId}"]`);
-      const couloirEl = content.querySelector(`.tim-couloir-val[data-driver-id="${driverId}"]`);
-      if (serieEl)   serieEl.textContent   = newSerie   ?? '—';
-      if (couloirEl) couloirEl.textContent = newCouloir ?? '—';
+      // Si la nouvelle série ne peut plus contenir le couloir actuel, on le dé-sélectionne
+      if (newSerie && newCouloir) {
+        const { sizes } = getSeriesStructure(participants.length);
+        if (newCouloir > sizes[newSerie - 1]) newCouloir = null;
+      }
 
+      results[driverId] = { ...r, serie: newSerie, couloir: newCouloir };
       saveMeta(driverId, newSerie, newCouloir);
+      // Re-render pour mettre à jour les états désactivés des boutons couloir
+      renderTimingTable();
+    };
+
+    const bumpSerie = (driverId, delta) => {
+      const r = results[driverId] || {};
+      const current = r.serie ?? 0;
+      const { nbSeries } = getSeriesStructure(participants.length);
+      let next = current + delta;
+      if (next < 0) next = 0;
+      if (next > nbSeries) next = nbSeries;
+      if (next === current) return;
+      // Si on descend à 0 → dé-sélection, on accepte aussi de vider le couloir
+      const newSerie   = next || null;
+      let   newCouloir = r.couloir ?? null;
+      if (!newSerie) newCouloir = null;
+      commitMeta(driverId, newSerie, newCouloir);
     };
 
     content.querySelectorAll('.tim-serie-up').forEach(btn => {
-      btn.addEventListener('click', () => bumpMeta(btn.dataset.driverId, 'serie', +1));
+      btn.addEventListener('click', () => bumpSerie(btn.dataset.driverId, +1));
     });
     content.querySelectorAll('.tim-serie-down').forEach(btn => {
-      btn.addEventListener('click', () => bumpMeta(btn.dataset.driverId, 'serie', -1));
+      btn.addEventListener('click', () => bumpSerie(btn.dataset.driverId, -1));
     });
-    content.querySelectorAll('.tim-couloir-up').forEach(btn => {
-      btn.addEventListener('click', () => bumpMeta(btn.dataset.driverId, 'couloir', +1));
-    });
-    content.querySelectorAll('.tim-couloir-down').forEach(btn => {
-      btn.addEventListener('click', () => bumpMeta(btn.dataset.driverId, 'couloir', -1));
+
+    content.querySelectorAll('.tim-couloir-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        if (btn.disabled) return;
+        const driverId = btn.dataset.driverId;
+        const c = parseInt(btn.dataset.couloir, 10);
+        const r = results[driverId] || {};
+        // Re-clic sur le bouton actif → dé-sélection
+        const newCouloir = r.couloir === c ? null : c;
+        commitMeta(driverId, r.serie ?? null, newCouloir);
+      });
     });
   }
 
