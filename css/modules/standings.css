@@ -116,6 +116,49 @@
   font-size: 0.72rem;
   color: var(--clr-text-3);
 }
+
+/* Toggle "série fictive agrégée par couloir" */
+.std-graph-agg-toggle {
+  display: inline-flex;
+  gap: 2px;
+  background: var(--clr-bg-3);
+  border: 1px solid var(--clr-border-2);
+  border-radius: var(--r-sm);
+  padding: 2px;
+}
+.std-graph-agg-btn {
+  padding: 3px 10px;
+  background: transparent;
+  border: none;
+  border-radius: calc(var(--r-sm) - 1px);
+  color: var(--clr-text-3);
+  font-family: var(--font-condensed);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: all var(--tr-fast);
+}
+.std-graph-agg-btn:hover:not(.is-active) {
+  color: var(--clr-text);
+}
+.std-graph-agg-btn.is-active {
+  background: var(--clr-accent-dim);
+  color: var(--clr-accent-2);
+}
+
+/* Losange blanc dans la légende pour la série agrégée */
+.std-graph-legend-diamond {
+  width: 10px;
+  height: 10px;
+  background: #f0f0f0;
+  transform: rotate(45deg);
+  display: inline-block;
+}
+.std-graph-legend-item--agg {
+  color: var(--clr-text-2);
+  font-weight: 600;
+}
 .std-mq-graph-legend {
   display: flex;
   flex-wrap: wrap;
