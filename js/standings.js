@@ -328,6 +328,16 @@ async function renderMqTab(content) {
       </div>`;
   }
   content.innerHTML = html;
+  // Binding des toggles "moyenne par couloir" (médiane/moyenne/aucune)
+  content.querySelectorAll('.std-graph-agg-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const mode = btn.dataset.mode;
+      if (!mode || mode === _mqAggMode) return;
+      _mqAggMode = mode;
+      try { localStorage.setItem('rx_mq_agg_mode', mode); } catch {}
+      renderMqTab(content);
+    });
+  });
 }
 
 // ─────────────────────────────────────────────────────────
@@ -338,6 +348,40 @@ const SERIE_COLORS = [
   '#ff453a', '#30d158', '#0a84ff', '#bf5af2', '#ff9f0a',
   '#64d2ff', '#ffd60a', '#ff2d55', '#5e5ce6', '#98989d',
 ];
+
+// Mode d'agrégation "série fictive par couloir" sur le graphique MQ.
+// 'none' | 'median' | 'mean' — preference conservee en localStorage.
+let _mqAggMode = (() => {
+  try { return localStorage.getItem('rx_mq_agg_mode') || 'median'; }
+  catch { return 'median'; }
+})();
+
+function computePerCouloirAggregate(pts, mode) {
+  if (mode === 'none' || pts.length === 0) return [];
+  const byCouloir = new Map();
+  pts.forEach(p => {
+    if (!byCouloir.has(p.couloir)) byCouloir.set(p.couloir, []);
+    byCouloir.get(p.couloir).push(p.ms);
+  });
+  const out = [];
+  for (const [couloir, ms] of byCouloir) {
+    if (ms.length === 0) continue;
+    let value;
+    if (mode === 'median') {
+      const sorted = [...ms].sort((a, b) => a - b);
+      const mid = Math.floor(sorted.length / 2);
+      value = sorted.length % 2
+        ? sorted[mid]
+        : Math.round((sorted[mid - 1] + sorted[mid]) / 2);
+    } else {
+      // 'mean'
+      value = Math.round(ms.reduce((a, b) => a + b, 0) / ms.length);
+    }
+    out.push({ couloir, ms: value, count: ms.length });
+  }
+  out.sort((a, b) => a.couloir - b.couloir);
+  return out;
+}
 
 function buildMqSeriesGraph(mq, rawResults, poleSide) {
   // On ne garde que les pilotes ayant terminé (ms != null et status absent),
@@ -513,6 +557,37 @@ function buildMqSeriesGraph(mq, rawResults, poleSide) {
     `<text x="${l.x}" y="${l.y}" fill="${l.color}" font-size="10" font-weight="700" text-anchor="${l.anchor}" dominant-baseline="middle" style="paint-order:stroke" stroke="#000" stroke-width="2.2" stroke-linejoin="round" stroke-opacity="0.75">${escHtml(l.text)}</text>`
   ).join('');
 
+  // ── Serie fictive : mediane / moyenne par couloir
+  const aggMode = _mqAggMode;
+  const aggPts  = computePerCouloirAggregate(pts, aggMode).map(a => ({
+    ...a,
+    cx: xFor(a.couloir),
+    cy: yForTime(a.ms),
+  }));
+  const aggColor = '#f0f0f0';
+  const aggSize  = 9; // demi-largeur du losange
+
+  const aggLineSvg = aggPts.length >= 2
+    ? `<polyline points="${[...aggPts].sort((a, b) => a.cx - b.cx).map(p => `${p.cx.toFixed(1)},${p.cy.toFixed(1)}`).join(' ')}" fill="none" stroke="${aggColor}" stroke-width="2.5" opacity="0.9" stroke-linecap="round" stroke-linejoin="round" />`
+    : '';
+
+  const aggDotsSvg = aggPts.map(p => {
+    const tip = `${aggMode === 'median' ? 'Médiane' : 'Moyenne'} couloir ${p.couloir} · ${p.count} pilote${p.count > 1 ? 's' : ''} · ${msToDisplay(p.ms)}`;
+    // Losange en polygon (cx, cy) ± aggSize
+    const pts4 = [
+      `${p.cx},${p.cy - aggSize}`,
+      `${p.cx + aggSize},${p.cy}`,
+      `${p.cx},${p.cy + aggSize}`,
+      `${p.cx - aggSize},${p.cy}`,
+    ].join(' ');
+    return `<polygon points="${pts4}" fill="${aggColor}" stroke="#000" stroke-width="0.8"><title>${escHtml(tip)}</title></polygon>`;
+  }).join('');
+
+  // Labels temps à côté des losanges (toujours au-dessus, légèrement décalés)
+  const aggLabelsSvg = aggPts.map(p =>
+    `<text x="${p.cx}" y="${(p.cy - aggSize - 4).toFixed(1)}" fill="${aggColor}" font-size="10" font-weight="700" text-anchor="middle" style="paint-order:stroke" stroke="#000" stroke-width="2.5" stroke-linejoin="round" stroke-opacity="0.9">${escHtml(msToDisplay(p.ms))}</text>`
+  ).join('');
+
   // Lignes de grille + ticks Y
   const gridSvg = yTicks.map(t => {
     const y = yForTime(t).toFixed(1);
@@ -533,22 +608,36 @@ function buildMqSeriesGraph(mq, rawResults, poleSide) {
 
   // Légende couleurs par série
   const seriesSet = [...new Set(placed.map(p => p.serie))].sort((a, b) => a - b);
-  const legendHtml = seriesSet.map(s => {
+  const serieLegendHtml = seriesSet.map(s => {
     const color = SERIE_COLORS[(s - 1) % SERIE_COLORS.length];
     return `<span class="std-graph-legend-item"><span class="std-graph-legend-dot" style="background:${color}"></span>Série ${s}</span>`;
   }).join('');
+  // Entree de legende "serie fictive" quand le mode agrege est actif
+  const aggLegendHtml = aggPts.length > 0
+    ? `<span class="std-graph-legend-item std-graph-legend-item--agg"><span class="std-graph-legend-diamond"></span>${aggMode === 'median' ? 'Médiane' : 'Moyenne'} par couloir</span>`
+    : '';
 
   const arrowHint = reverseX
     ? `<span class="std-graph-hint">◀ 1er virage à droite — couloir 1 à droite</span>`
     : `<span class="std-graph-hint">1er virage à gauche — couloir 1 à gauche ▶</span>`;
 
+  // Toggle médiane / moyenne / aucune
+  const aggToggleHtml = `
+    <div class="std-graph-agg-toggle" title="Série fictive agrégée par couloir">
+      <button class="std-graph-agg-btn ${aggMode === 'none'   ? 'is-active' : ''}" data-mode="none">Aucune</button>
+      <button class="std-graph-agg-btn ${aggMode === 'median' ? 'is-active' : ''}" data-mode="median">Médiane</button>
+      <button class="std-graph-agg-btn ${aggMode === 'mean'   ? 'is-active' : ''}" data-mode="mean">Moyenne</button>
+    </div>
+  `;
+
   return `
     <div class="std-mq-graph">
       <div class="std-mq-graph-head">
         <div class="std-mq-graph-title">Répartition par couloir / série — MQ${mq.num}</div>
+        ${aggToggleHtml}
         ${arrowHint}
       </div>
-      <div class="std-mq-graph-legend">${legendHtml}</div>
+      <div class="std-mq-graph-legend">${serieLegendHtml}${aggLegendHtml}</div>
       <div class="std-mq-graph-svg-wrap">
         <svg viewBox="0 0 ${W} ${H}" class="std-mq-graph-svg" preserveAspectRatio="xMidYMid meet">
           <!-- Axes -->
@@ -568,6 +657,10 @@ function buildMqSeriesGraph(mq, rawResults, poleSide) {
           ${dotsSvg}
           <!-- Labels numero de voiture (anti-chevauchement) -->
           ${labelsSvg}
+          <!-- Serie fictive agregee par couloir (mediane/moyenne) -->
+          ${aggLineSvg}
+          ${aggDotsSvg}
+          ${aggLabelsSvg}
           <!-- Titres des axes -->
           <text x="${padL - 50}" y="${padT - 12}" fill="#cfcfcf" font-size="11" font-weight="600">Temps</text>
           <text x="${W - padR}" y="${H - 8}" fill="#cfcfcf" font-size="11" text-anchor="end" font-weight="600">Couloir</text>
