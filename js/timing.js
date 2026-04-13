@@ -388,20 +388,26 @@ async function saveMeta(driverId, serie, couloir) {
   if (!participant) return;
 
   const existing = results[driverId] || {};
+  // On écrit un doc complet (même forme que saveResult) pour rester
+  // compatible avec les règles de sécurité Firestore qui peuvent exiger
+  // la présence de certains champs.
   const data = {
-    sessionId:   selectedSessionId,
-    meetingId:   selectedMeetingId,
-    category:    selectedCategory,
-    year:        selectedYear,
-    sessionType: session?.type || '',
+    sessionId:      selectedSessionId,
+    meetingId:      selectedMeetingId,
+    category:       selectedCategory,
+    year:           selectedYear,
+    sessionType:    session?.type || '',
     driverId,
-    carNumber:   participant.carNumber,
-    firstName:   participant.firstName,
-    lastName:    participant.lastName,
-    serie:       serie ?? null,
-    couloir:     couloir ?? null,
-    updatedAt:   new Date(),
-    createdAt:   existing.createdAt ?? new Date(),
+    carNumber:      participant.carNumber,
+    firstName:      participant.firstName,
+    lastName:       participant.lastName,
+    ms:             existing.ms ?? null,
+    status:         existing.status ?? null,
+    manualPosition: existing.manualPosition ?? null,
+    serie:          serie ?? null,
+    couloir:        couloir ?? null,
+    updatedAt:      new Date(),
+    createdAt:      existing.createdAt ?? new Date(),
   };
 
   const docId = `${selectedSessionId}_${driverId}`;
