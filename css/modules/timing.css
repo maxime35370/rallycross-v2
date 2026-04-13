@@ -160,6 +160,62 @@
 /* ── Résultat colonne droite ── */
 .tim-result { flex: 1; text-align: right; }
 
+/* ── Méta MQ : sélecteurs série / couloir ── */
+.tim-meta {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+.tim-meta-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px;
+  background: var(--clr-bg-3);
+  border: 1px solid var(--clr-border-2);
+  border-radius: var(--r-sm);
+}
+.tim-meta-label {
+  font-family: var(--font-condensed);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--clr-text-3);
+  margin-right: 2px;
+}
+.tim-meta-btn {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  background: var(--clr-surface-2, var(--clr-surface));
+  border: 1px solid var(--clr-border-2);
+  border-radius: var(--r-sm);
+  color: var(--clr-text-2);
+  font-weight: 700;
+  font-size: 0.9rem;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
+  transition: all var(--tr-fast);
+}
+.tim-meta-btn:hover {
+  border-color: var(--clr-accent);
+  color: var(--clr-accent-2);
+}
+.tim-meta-val {
+  min-width: 18px;
+  text-align: center;
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 0.85rem;
+  color: var(--clr-text);
+}
+
 /* ── Vide / placeholder ── */
 .tim-empty {
   padding: var(--sp-lg);

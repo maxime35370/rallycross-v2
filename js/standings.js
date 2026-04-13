@@ -288,9 +288,15 @@ async function renderMqTab(content) {
     return;
   }
 
+  const meeting = allMeetings.find(m => m.id === selectedMeetingId);
+  const poleSide = meeting?.poleSide || 'droite';
+
   let html = '';
   for (const mq of mqSessions) {
     const standings = await calcMqStandings(db, mq, _activeRegulation);
+    const rawResults = await getResults(mq.id); // pour récupérer serie/couloir non exposés par calcMqStandings
+    const graphHtml  = buildMqSeriesGraph(mq, rawResults, poleSide);
+
     html += `
       <div class="std-section">
         <div class="std-section-title">Manche qualificative ${mq.num}</div>
@@ -318,9 +324,150 @@ async function renderMqTab(content) {
             </tbody>
           </table>
         </div>
+        ${graphHtml}
       </div>`;
   }
   content.innerHTML = html;
+}
+
+// ─────────────────────────────────────────────────────────
+// GRAPHIQUE SÉRIES / COULOIRS (SVG)
+// ─────────────────────────────────────────────────────────
+
+const SERIE_COLORS = [
+  '#ff453a', '#30d158', '#0a84ff', '#bf5af2', '#ff9f0a',
+  '#64d2ff', '#ffd60a', '#ff2d55', '#5e5ce6', '#98989d',
+];
+
+function buildMqSeriesGraph(mq, rawResults, poleSide) {
+  // On ne garde que les pilotes ayant terminé (ms != null et status absent),
+  // et ayant une série + un couloir renseignés.
+  const pts = rawResults
+    .filter(r => r.ms != null && !r.status && r.serie && r.couloir)
+    .map(r => ({
+      driverId: r.driverId,
+      firstName: r.firstName,
+      lastName:  r.lastName,
+      carNumber: r.carNumber,
+      ms: r.ms,
+      serie: Number(r.serie),
+      couloir: Number(r.couloir),
+    }));
+
+  if (pts.length === 0) {
+    return `
+      <div class="std-mq-graph std-mq-graph--empty">
+        <div class="std-mq-graph-title">Répartition par couloir / série</div>
+        <div class="std-mq-graph-empty">Aucune série / couloir renseigné pour cette manche.</div>
+      </div>`;
+  }
+
+  // Bornes Y : plus rapide −10 s, plus lent +10 s (10 s de marge de chaque côté)
+  const times = pts.map(p => p.ms);
+  const fastest = Math.min(...times);
+  const slowest = Math.max(...times);
+  const yMin = Math.max(0, fastest - 10_000);
+  const yMax = slowest + 10_000;
+  const ySpan = Math.max(1, yMax - yMin);
+
+  // Bornes X : 1..maxCouloir
+  const maxCouloir = Math.max(...pts.map(p => p.couloir), 1);
+
+  // Dimensions SVG
+  const W = 720;
+  const H = 360;
+  const padL = 70, padR = 20, padT = 30, padB = 50;
+  const innerW = W - padL - padR;
+  const innerH = H - padT - padB;
+
+  const reverseX = poleSide === 'droite';
+  const xFor = (couloir) => {
+    // Les positions de couloir sont espacées uniformément sur l'axe
+    const ratio = maxCouloir === 1 ? 0.5 : (couloir - 1) / (maxCouloir - 1);
+    const r = reverseX ? 1 - ratio : ratio;
+    return padL + r * innerW;
+  };
+  // Axe Y dessiné tel que le temps CROÎT vers le haut (cohérent avec le croquis)
+  // → petit ms (temps rapide) reste en bas du graphique.
+  const yForTime = (ms) => padT + (1 - (ms - yMin) / ySpan) * innerH;
+
+  // Graduations Y (ticks toutes les 5 s environ, max 6 ticks)
+  const niceStep = pickTickStep(ySpan, 6);
+  const yTicks = [];
+  const firstTick = Math.ceil(yMin / niceStep) * niceStep;
+  for (let t = firstTick; t <= yMax; t += niceStep) yTicks.push(t);
+
+  // Dots + légende
+  const dotsSvg = pts.map(p => {
+    const color = SERIE_COLORS[(p.serie - 1) % SERIE_COLORS.length];
+    const cx = xFor(p.couloir);
+    const cy = yForTime(p.ms);
+    const tip = `Série ${p.serie} · Couloir ${p.couloir} · #${p.carNumber} ${p.firstName} ${p.lastName} · ${msToDisplay(p.ms)}`;
+    return `<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="6" fill="${color}" stroke="#000" stroke-width="0.5"><title>${escHtml(tip)}</title></circle>`;
+  }).join('');
+
+  // Lignes de grille + ticks Y
+  const gridSvg = yTicks.map(t => {
+    const y = yForTime(t).toFixed(1);
+    return `
+      <line x1="${padL}" y1="${y}" x2="${W - padR}" y2="${y}" stroke="rgba(255,255,255,0.06)" />
+      <text x="${padL - 8}" y="${y}" fill="#8a8a8a" font-size="10" text-anchor="end" dominant-baseline="middle">${msToDisplay(t)}</text>
+    `;
+  }).join('');
+
+  // Ticks X (couloirs)
+  const xTicksSvg = Array.from({ length: maxCouloir }, (_, i) => i + 1).map(c => {
+    const x = xFor(c).toFixed(1);
+    return `
+      <line x1="${x}" y1="${padT}" x2="${x}" y2="${H - padB}" stroke="rgba(255,255,255,0.04)" />
+      <text x="${x}" y="${H - padB + 18}" fill="#cfcfcf" font-size="11" text-anchor="middle" font-weight="600">C${c}</text>
+    `;
+  }).join('');
+
+  // Légende couleurs par série
+  const seriesSet = [...new Set(pts.map(p => p.serie))].sort((a, b) => a - b);
+  const legendHtml = seriesSet.map(s => {
+    const color = SERIE_COLORS[(s - 1) % SERIE_COLORS.length];
+    return `<span class="std-graph-legend-item"><span class="std-graph-legend-dot" style="background:${color}"></span>Série ${s}</span>`;
+  }).join('');
+
+  const arrowHint = reverseX
+    ? `<span class="std-graph-hint">◀ 1er virage à droite — couloir 1 à droite</span>`
+    : `<span class="std-graph-hint">1er virage à gauche — couloir 1 à gauche ▶</span>`;
+
+  return `
+    <div class="std-mq-graph">
+      <div class="std-mq-graph-head">
+        <div class="std-mq-graph-title">Répartition par couloir / série — MQ${mq.num}</div>
+        ${arrowHint}
+      </div>
+      <div class="std-mq-graph-legend">${legendHtml}</div>
+      <div class="std-mq-graph-svg-wrap">
+        <svg viewBox="0 0 ${W} ${H}" class="std-mq-graph-svg" preserveAspectRatio="xMidYMid meet">
+          <!-- Axes -->
+          <line x1="${padL}" y1="${padT}" x2="${padL}" y2="${H - padB}" stroke="#666" stroke-width="1" />
+          <line x1="${padL}" y1="${H - padB}" x2="${W - padR}" y2="${H - padB}" stroke="#666" stroke-width="1" />
+          <!-- Grille Y + labels -->
+          ${gridSvg}
+          <!-- Ticks X couloirs -->
+          ${xTicksSvg}
+          <!-- Points -->
+          ${dotsSvg}
+          <!-- Labels axes -->
+          <text x="${padL - 50}" y="${padT - 12}" fill="#cfcfcf" font-size="11" font-weight="600">Temps</text>
+          <text x="${W - padR}" y="${H - 8}" fill="#cfcfcf" font-size="11" text-anchor="end" font-weight="600">Couloir</text>
+        </svg>
+      </div>
+    </div>
+  `;
+}
+
+function pickTickStep(span, target) {
+  // Retourne un pas "joli" en ms (1s, 2s, 5s, 10s, 20s, 30s, 60s…)
+  const candidates = [1000, 2000, 5000, 10_000, 20_000, 30_000, 60_000, 120_000];
+  const rough = span / target;
+  for (const c of candidates) if (c >= rough) return c;
+  return candidates[candidates.length - 1];
 }
 
 // ← MODIFIÉ : calcul direct via calc.js — plus de bouton Sauvegarder,

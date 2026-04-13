@@ -88,6 +88,73 @@
   padding: var(--sp-sm) 0;
 }
 
+/* ── Graphique MQ (séries / couloirs) ── */
+.std-mq-graph {
+  margin-top: var(--sp-md);
+  padding: var(--sp-md);
+  background: var(--clr-surface);
+  border: 1px solid var(--clr-border);
+  border-radius: var(--r-lg);
+}
+.std-mq-graph-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp-sm);
+  flex-wrap: wrap;
+  margin-bottom: var(--sp-xs);
+}
+.std-mq-graph-title {
+  font-family: var(--font-condensed);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--clr-text-2);
+}
+.std-graph-hint {
+  font-size: 0.72rem;
+  color: var(--clr-text-3);
+}
+.std-mq-graph-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-sm);
+  margin-bottom: var(--sp-sm);
+}
+.std-graph-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.78rem;
+  color: var(--clr-text-2);
+}
+.std-graph-legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.std-mq-graph-svg-wrap {
+  width: 100%;
+  overflow-x: auto;
+}
+.std-mq-graph-svg {
+  width: 100%;
+  height: auto;
+  min-width: 480px;
+  display: block;
+}
+.std-mq-graph--empty {
+  opacity: 0.7;
+}
+.std-mq-graph-empty {
+  text-align: center;
+  color: var(--clr-text-3);
+  font-size: 0.85rem;
+  padding: var(--sp-md) 0;
+}
+
 /* ── Phase badges (cascade mode) ── */
 .std-phase-fin { color: var(--clr-accent-2); font-weight: 700; font-size: 0.78rem; }
 .std-phase-df  { color: var(--clr-success);  font-weight: 600; font-size: 0.78rem; }
