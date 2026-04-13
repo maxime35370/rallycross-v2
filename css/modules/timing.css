@@ -216,12 +216,14 @@
   color: var(--clr-text);
 }
 
-/* Groupe de boutons Couloir (C1..Cn, sélection unique) */
+/* Groupes de boutons Série (S1..Sn) et Couloir (C1..Cn), sélection unique */
+.tim-serie-btns,
 .tim-couloir-btns {
   display: inline-flex;
   gap: 3px;
   flex-wrap: wrap;
 }
+.tim-serie-btn,
 .tim-couloir-btn {
   min-width: 28px;
   padding: 3px 6px;
@@ -237,15 +239,18 @@
   transition: all var(--tr-fast);
   line-height: 1.2;
 }
+.tim-serie-btn:hover:not(:disabled),
 .tim-couloir-btn:hover:not(:disabled) {
   border-color: var(--clr-accent);
   color: var(--clr-accent-2);
 }
+.tim-serie-btn.is-active,
 .tim-couloir-btn.is-active {
   background: var(--clr-accent-dim);
   border-color: var(--clr-accent);
   color: var(--clr-accent-2);
 }
+.tim-serie-btn:disabled,
 .tim-couloir-btn:disabled {
   opacity: 0.35;
   cursor: not-allowed;
