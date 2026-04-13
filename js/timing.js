@@ -41,6 +41,50 @@ function getChampCategories() {
 const SPECIAL_STATUSES = ['DNS', 'DNF', 'DSQ', 'DSQ_RACE'];
 
 // ─────────────────────────────────────────────────────────
+// SÉRIES MQ — structure & validation
+// (même algorithme que computeSeries() utilisé par la grille)
+// ─────────────────────────────────────────────────────────
+
+function computeSeriesSizes(n) {
+  if (n <= 0) return [];
+  if (n <= 5) return [n];
+  if (n <= 10) { const first = Math.floor(n / 2); return [first, n - first]; }
+  return [...computeSeriesSizes(n - 5), 5];
+}
+
+function getSeriesStructure(nbParticipants) {
+  const sizes = computeSeriesSizes(nbParticipants);
+  return {
+    nbSeries: sizes.length,
+    sizes,
+    maxCouloir: sizes.length ? Math.max(...sizes) : 0,
+  };
+}
+
+// Vérifie qu'une nouvelle combinaison série/couloir est valide pour un pilote.
+function validateMeta(driverId, newSerie, newCouloir) {
+  // Valeurs à vide (0/null) : toujours OK
+  const { nbSeries, sizes } = getSeriesStructure(participants.length);
+  if (newSerie) {
+    if (newSerie > nbSeries) return { ok: false, msg: `Ce meeting ne compte que ${nbSeries} série${nbSeries>1?'s':''}` };
+    const cap = sizes[newSerie - 1];
+    const countInSerie = Object.entries(results).filter(([dId, r]) =>
+      dId !== driverId && r.serie === newSerie
+    ).length;
+    if (countInSerie >= cap) return { ok: false, msg: `Série ${newSerie} déjà complète (${cap} pilotes max)` };
+  }
+  if (newSerie && newCouloir) {
+    const cap = sizes[newSerie - 1];
+    if (newCouloir > cap) return { ok: false, msg: `Série ${newSerie} : couloir max = ${cap}` };
+    const conflict = Object.entries(results).find(([dId, r]) =>
+      dId !== driverId && r.serie === newSerie && r.couloir === newCouloir
+    );
+    if (conflict) return { ok: false, msg: `Couloir ${newCouloir} déjà pris dans la série ${newSerie}` };
+  }
+  return { ok: true };
+}
+
+// ─────────────────────────────────────────────────────────
 // FIRESTORE — CHARGEMENT
 // ─────────────────────────────────────────────────────────
 
@@ -267,7 +311,15 @@ async function loadResults() {
     results = {};
     snap.docs.forEach(d => {
       const data = d.data();
-      results[data.driverId] = { docId: d.id, ms: data.ms, status: data.status, createdAt: data.createdAt };
+      results[data.driverId] = {
+        docId: d.id,
+        ms: data.ms,
+        status: data.status,
+        createdAt: data.createdAt,
+        manualPosition: data.manualPosition ?? null,
+        serie: data.serie ?? null,
+        couloir: data.couloir ?? null,
+      };
     });
     renderTimingTable();
   });
@@ -281,7 +333,7 @@ async function loadResults() {
 async function saveResult(driverId, ms, status, manualPosition = null) {
   if (!db || !selectedSessionId) return;
   if (!requireAuth()) return;
-  const { collection, doc, setDoc } = await import(
+  const { doc, setDoc } = await import(
     'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
   );
 
@@ -289,6 +341,7 @@ async function saveResult(driverId, ms, status, manualPosition = null) {
   const participant = participants.find(p => p.driverId === driverId);
   if (!participant) return;
 
+  const existing = results[driverId] || {};
   const data = {
     sessionId:      selectedSessionId,
     meetingId:      selectedMeetingId,
@@ -302,20 +355,61 @@ async function saveResult(driverId, ms, status, manualPosition = null) {
     ms:             ms ?? null,
     status:         status || null,
     manualPosition: manualPosition ?? null,
+    // Métadonnées MQ (série / couloir de départ) — préservées si déjà définies
+    serie:          existing.serie ?? null,
+    couloir:        existing.couloir ?? null,
     updatedAt:      new Date(),
     // Conserver la date de création si le document existe déjà
-    createdAt:      results[driverId]?.createdAt ?? new Date(),
+    createdAt:      existing.createdAt ?? new Date(),
   };
 
   // ID déterministe = sessionId_driverId → impossible d'avoir un doublon
   const docId = `${selectedSessionId}_${driverId}`;
 
   try {
-    await setDoc(doc(db, 'results', docId), data);
+    await setDoc(doc(db, 'results', docId), data, { merge: true });
     logAudit('update', 'result', docId, { label: `#${participant.carNumber} ${participant.firstName} ${participant.lastName}`, ms, status: status || null });
   } catch (err) {
     console.error(err);
     toast('Erreur lors de la sauvegarde', 'error');
+  }
+}
+
+// Sauvegarde seule des métadonnées série/couloir (MQ) — ne touche pas au temps
+async function saveMeta(driverId, serie, couloir) {
+  if (!db || !selectedSessionId) return;
+  if (!requireAuth()) return;
+  const { doc, setDoc } = await import(
+    'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
+  );
+
+  const session = allSessions.find(s => s.id === selectedSessionId);
+  const participant = participants.find(p => p.driverId === driverId);
+  if (!participant) return;
+
+  const existing = results[driverId] || {};
+  const data = {
+    sessionId:   selectedSessionId,
+    meetingId:   selectedMeetingId,
+    category:    selectedCategory,
+    year:        selectedYear,
+    sessionType: session?.type || '',
+    driverId,
+    carNumber:   participant.carNumber,
+    firstName:   participant.firstName,
+    lastName:    participant.lastName,
+    serie:       serie ?? null,
+    couloir:     couloir ?? null,
+    updatedAt:   new Date(),
+    createdAt:   existing.createdAt ?? new Date(),
+  };
+
+  const docId = `${selectedSessionId}_${driverId}`;
+  try {
+    await setDoc(doc(db, 'results', docId), data, { merge: true });
+  } catch (err) {
+    console.error(err);
+    toast('Erreur lors de la sauvegarde série/couloir', 'error');
   }
 }
 
@@ -527,6 +621,29 @@ function renderTimingTable() {
 // ROWS PILOTES
 // ─────────────────────────────────────────────────────────
 
+function metaControls(p, session) {
+  if (session.type !== 'MQ') return '';
+  const r = results[p.driverId] || {};
+  const serie   = r.serie   ?? null;
+  const couloir = r.couloir ?? null;
+  return `
+    <div class="tim-meta" data-driver-id="${p.driverId}">
+      <div class="tim-meta-item" title="Série de départ (facultatif)">
+        <span class="tim-meta-label">Série</span>
+        <button type="button" class="tim-meta-btn tim-serie-down" data-driver-id="${p.driverId}" aria-label="Série −">−</button>
+        <span class="tim-meta-val tim-serie-val" data-driver-id="${p.driverId}">${serie ?? '—'}</span>
+        <button type="button" class="tim-meta-btn tim-serie-up" data-driver-id="${p.driverId}" aria-label="Série +">+</button>
+      </div>
+      <div class="tim-meta-item" title="Couloir de départ (facultatif)">
+        <span class="tim-meta-label">Couloir</span>
+        <button type="button" class="tim-meta-btn tim-couloir-down" data-driver-id="${p.driverId}" aria-label="Couloir −">−</button>
+        <span class="tim-meta-val tim-couloir-val" data-driver-id="${p.driverId}">${couloir ?? '—'}</span>
+        <button type="button" class="tim-meta-btn tim-couloir-up" data-driver-id="${p.driverId}" aria-label="Couloir +">+</button>
+      </div>
+    </div>
+  `;
+}
+
 function pilotRowUntimed(p, session) {
   const isDfOrFin = session.type === 'DF' || session.type === 'FIN';
   const maxPos = 8;
@@ -553,6 +670,7 @@ function pilotRowUntimed(p, session) {
           data-driver-id="${p.driverId}" data-field="ms" tabindex="0">
         <button class="btn btn-primary btn-sm tim-save-btn" data-driver-id="${p.driverId}">✓</button>
       </div>
+      ${metaControls(p, session)}
       <div class="tim-status-btns">
         <button class="btn btn-ghost btn-sm tim-status-btn" data-driver-id="${p.driverId}" data-status="DNS">DNS</button>
         <div class="tim-dnf-group">
@@ -584,6 +702,7 @@ function pilotRowTimed(p, index, session) {
       <span class="tim-num">${escHtml(p.carNumber)}</span>
       <span class="tim-name">${escHtml(p.firstName)} <strong>${escHtml(p.lastName)}</strong></span>
       <span class="tim-result">${displayTime}</span>
+      ${metaControls(p, session)}
       <button class="btn btn-ghost btn-sm tim-edit-btn" data-driver-id="${p.driverId}" title="Modifier">✏️</button>
     </div>
   `;
@@ -625,6 +744,48 @@ function bindTimingEvents(session) {
   content.querySelectorAll('.tim-edit-btn').forEach(btn => {
     btn.addEventListener('click', () => onEditResult(btn.dataset.driverId));
   });
+
+  // ── MQ : sélecteurs ± série / couloir ────────────────────
+  if (session.type === 'MQ') {
+    const bumpMeta = (driverId, field, delta) => {
+      const r = results[driverId] || {};
+      const current = field === 'serie' ? (r.serie ?? 0) : (r.couloir ?? 0);
+      const { nbSeries, maxCouloir } = getSeriesStructure(participants.length);
+      const hardMax = field === 'serie' ? nbSeries : maxCouloir;
+      let next = current + delta;
+      if (next < 0) next = 0;
+      if (next > hardMax) next = hardMax;
+      if (next === current) return;
+
+      const newSerie   = field === 'serie'   ? (next || null) : (r.serie   ?? null);
+      const newCouloir = field === 'couloir' ? (next || null) : (r.couloir ?? null);
+
+      const check = validateMeta(driverId, newSerie, newCouloir);
+      if (!check.ok) { toast(check.msg, 'error'); return; }
+
+      // Mise à jour optimiste du cache local + affichage avant écriture Firestore
+      results[driverId] = { ...r, serie: newSerie, couloir: newCouloir };
+      const serieEl   = content.querySelector(`.tim-serie-val[data-driver-id="${driverId}"]`);
+      const couloirEl = content.querySelector(`.tim-couloir-val[data-driver-id="${driverId}"]`);
+      if (serieEl)   serieEl.textContent   = newSerie   ?? '—';
+      if (couloirEl) couloirEl.textContent = newCouloir ?? '—';
+
+      saveMeta(driverId, newSerie, newCouloir);
+    };
+
+    content.querySelectorAll('.tim-serie-up').forEach(btn => {
+      btn.addEventListener('click', () => bumpMeta(btn.dataset.driverId, 'serie', +1));
+    });
+    content.querySelectorAll('.tim-serie-down').forEach(btn => {
+      btn.addEventListener('click', () => bumpMeta(btn.dataset.driverId, 'serie', -1));
+    });
+    content.querySelectorAll('.tim-couloir-up').forEach(btn => {
+      btn.addEventListener('click', () => bumpMeta(btn.dataset.driverId, 'couloir', +1));
+    });
+    content.querySelectorAll('.tim-couloir-down').forEach(btn => {
+      btn.addEventListener('click', () => bumpMeta(btn.dataset.driverId, 'couloir', -1));
+    });
+  }
 
   content.querySelectorAll('.tim-input').forEach(input => {
     input.addEventListener('keydown', e => {
