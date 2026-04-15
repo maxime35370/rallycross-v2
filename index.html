@@ -64,6 +64,7 @@
       <li><a class="menu-item" data-view="home"       href="#">🏠 Accueil</a></li>
       <li class="menu-separator"></li>
       <li class="menu-section">Gestion</li>
+      <li><a class="menu-item" data-view="persons"    href="#">🏃 Fiches Pilotes</a></li>
       <li><a class="menu-item" data-view="drivers"    href="#">👥 Pilotes</a></li>
       <li><a class="menu-item" data-view="meetings"   href="#">📅 Meetings</a></li>
       <li><a class="menu-item" data-view="engagements" href="#">📋 Engagements</a></li>
@@ -106,6 +107,10 @@
         <p class="home-subtitle">Système de chronométrage et gestion de championnat rallycross</p>
       </div>
       <div class="home-grid" id="home-grid">
+        <div class="home-card" data-view="persons">
+          <div class="home-card-icon">🏃</div>
+          <div class="home-card-label">Fiches Pilotes</div>
+        </div>
         <div class="home-card" data-view="drivers">
           <div class="home-card-icon">👥</div>
           <div class="home-card-label">Pilotes</div>
@@ -160,6 +165,15 @@
       <div class="home-alert" id="home-alert" style="display:none">
         <span>⚠️</span>
         <span>Firebase non configuré — <a href="#" data-view="config">Aller à la configuration</a></span>
+      </div>
+    </div>
+
+    <!-- VUE : Fiches Pilotes -->
+    <div class="view" id="view-persons" style="display:none">
+      <div class="view-placeholder">
+        <div class="placeholder-icon">🏃</div>
+        <div class="placeholder-title">Fiches Pilotes</div>
+        <div class="placeholder-desc">Chargement…</div>
       </div>
     </div>
 
