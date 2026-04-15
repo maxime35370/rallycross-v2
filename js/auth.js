@@ -11,7 +11,7 @@ let currentUser = null;
 
 // Vues qui necessitent une authentification (ecriture)
 const PROTECTED_VIEWS = [
-  'drivers', 'meetings', 'engagements', 'sessions', 'timing',
+  'persons', 'drivers', 'meetings', 'engagements', 'sessions', 'timing',
 ];
 
 // Vues en lecture seule (pas besoin d'auth)

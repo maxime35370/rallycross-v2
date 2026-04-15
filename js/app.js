@@ -6,6 +6,7 @@
 // ── Mapping vues → titres ──────────────────────
 const VIEW_TITLES = {
   home:          'Accueil',
+  persons:       'Fiches Pilotes',
   drivers:       'Pilotes',
   meetings:      'Meetings',
   engagements:   'Engagements',
@@ -322,9 +323,11 @@ async function loadApp() {
 
   // Modules des vues — chargés une seule fois au démarrage
   const { initConfig }   = await import('./config.js');
+  const { initPersons }  = await import('./persons.js');
   const { initDrivers }  = await import('./drivers.js');
   const { initMeetings } = await import('./meetings.js');
   initConfig();
+  initPersons();
   initDrivers();
   const { initEngagements } = await import('./engagements.js');
   initMeetings();
