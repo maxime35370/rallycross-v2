@@ -51,8 +51,11 @@ function getCategoryFromNumber(num) {
 // ─────────────────────────────────────────────────────────
 
 let allDrivers   = [];      // tous les pilotes chargés
+let _allPersons  = [];      // fiches pilotes pour le picker
 let unsubscribe  = null;    // listener Firestore
+let _unsubPersons = null;   // listener persons
 let editingId    = null;    // ID du pilote en cours d'édition
+let _selectedPersonId = null; // fiche personne liee
 
 // Filtres actifs
 let filterYear   = new Date().getFullYear();
@@ -96,6 +99,36 @@ async function loadDrivers() {
   });
 }
 
+async function loadPersons() {
+  if (!db) return;
+  const { collection, query, orderBy, onSnapshot } = await import(
+    'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
+  );
+  if (_unsubPersons) _unsubPersons();
+  const q = query(collection(db, 'persons'), orderBy('lastName', 'asc'));
+  _unsubPersons = onSnapshot(q, snap => {
+    _allPersons = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  }, () => {});
+}
+
+async function findOrCreatePerson(firstName, lastName) {
+  const fnLower = firstName.toLowerCase();
+  const lnLower = lastName.toLowerCase();
+  const match = _allPersons.find(p =>
+    (p.firstName || '').toLowerCase() === fnLower &&
+    (p.lastName || '').toLowerCase() === lnLower
+  );
+  if (match) return match.id;
+
+  const { collection, addDoc, serverTimestamp } = await import(
+    'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
+  );
+  const ref = await addDoc(collection(db, 'persons'), {
+    firstName, lastName, createdAt: serverTimestamp(),
+  });
+  return ref.id;
+}
+
 async function saveDriver(data) {
   if (!db) { toast('Firebase non connecté', 'error'); return false; }
   if (!requireAuth()) return false;
@@ -121,15 +154,22 @@ async function saveDriver(data) {
   }
 
   try {
+    // Lier ou creer une fiche personne
+    let personId = _selectedPersonId;
+    if (!personId) {
+      personId = await findOrCreatePerson(data.firstName, data.lastName);
+    }
+
     if (editingId) {
       const ref = doc(db, 'drivers', editingId);
-      await updateDoc(ref, { ...data, championshipId: champId || null });
+      await updateDoc(ref, { ...data, championshipId: champId || null, personId: personId || null });
       logAudit('update', 'driver', editingId, { label: `${data.firstName} ${data.lastName} #${data.carNumber}` });
       toast('Pilote modifié ✓', 'success');
     } else {
       const newRef = await addDoc(collection(db, 'drivers'), {
         ...data,
         championshipId: champId || null,
+        personId: personId || null,
         createdAt: new Date(),
       });
       logAudit('create', 'driver', newRef.id, { label: `${data.firstName} ${data.lastName} #${data.carNumber}` });
@@ -323,6 +363,17 @@ function renderView() {
           <button class="modal-close" id="drv-modal-close">✕</button>
         </div>
         <div class="modal-body">
+          <div class="form-group">
+            <label class="form-label">Fiche pilote</label>
+            <div style="position:relative">
+              <input class="form-input" type="text" id="drv-person-search"
+                placeholder="Rechercher une fiche existante ou taper un nouveau nom..."
+                autocomplete="off">
+              <div id="drv-person-suggestions" class="drv-person-suggestions" style="display:none"></div>
+            </div>
+            <div id="drv-person-selected" style="display:none"></div>
+          </div>
+
           <div class="form-row">
             <div class="form-group">
               <label class="form-label" for="drv-firstname">Prénom *</label>
@@ -398,7 +449,7 @@ function renderTable() {
         <span class="drv-num">${escHtml(d.carNumber)}</span>
       </td>
       <td>
-        <span class="drv-fullname">${escHtml(d.firstName)} <strong>${escHtml(d.lastName)}</strong></span>
+        <span class="drv-fullname">${d.personId ? '<span title="Fiche pilote liee" style="font-size:0.7rem;margin-right:2px">🏃</span>' : ''}${escHtml(d.firstName)} <strong>${escHtml(d.lastName)}</strong></span>
       </td>
       <td>${categoryBadge(d.category)}</td>
       <td class="center text-muted">${escHtml(d.year)}</td>
@@ -431,8 +482,65 @@ function renderTable() {
 // MODAL
 // ─────────────────────────────────────────────────────────
 
+function selectPerson(personId) {
+  _selectedPersonId = personId;
+  const person = _allPersons.find(p => p.id === personId);
+  const sel = document.getElementById('drv-person-selected');
+  const search = document.getElementById('drv-person-search');
+  const sugg = document.getElementById('drv-person-suggestions');
+  if (sugg) sugg.style.display = 'none';
+  if (person && sel) {
+    sel.style.display = 'flex';
+    sel.innerHTML = '<span style="font-size:0.85rem">🏃 <strong>' + escHtml(person.firstName) + ' ' + escHtml(person.lastName) + '</strong>' +
+      (person.licenseNumber ? ' — Lic. ' + escHtml(person.licenseNumber) : '') +
+      '</span> <button class="btn btn-ghost btn-sm" id="drv-person-clear" style="margin-left:auto">✕ Changer</button>';
+    sel.style.cssText = 'display:flex;align-items:center;gap:var(--sp-sm);padding:var(--sp-xs) var(--sp-sm);background:var(--clr-accent-dim);border:1px solid var(--clr-accent);border-radius:var(--r-sm);margin-top:4px';
+    if (search) search.style.display = 'none';
+    document.getElementById('drv-firstname').value = person.firstName || '';
+    document.getElementById('drv-lastname').value = person.lastName || '';
+    document.getElementById('drv-person-clear')?.addEventListener('click', () => clearPersonSelection());
+  }
+}
+
+function clearPersonSelection() {
+  _selectedPersonId = null;
+  const sel = document.getElementById('drv-person-selected');
+  const search = document.getElementById('drv-person-search');
+  if (sel) sel.style.display = 'none';
+  if (search) { search.style.display = ''; search.value = ''; }
+}
+
+function showPersonSuggestions(text) {
+  const sugg = document.getElementById('drv-person-suggestions');
+  if (!sugg || !text || text.length < 2) { if (sugg) sugg.style.display = 'none'; return; }
+  const needle = text.toLowerCase();
+  const matches = _allPersons.filter(p => {
+    const fn = (p.firstName || '').toLowerCase();
+    const ln = (p.lastName || '').toLowerCase();
+    const lic = (p.licenseNumber || '').toLowerCase();
+    return fn.includes(needle) || ln.includes(needle) || (fn + ' ' + ln).includes(needle) || lic.includes(needle);
+  }).slice(0, 8);
+  if (matches.length === 0) {
+    sugg.style.display = 'block';
+    sugg.innerHTML = '<div class="drv-person-sugg-item drv-person-sugg-new">Aucune fiche trouvee — une nouvelle sera creee automatiquement</div>';
+    return;
+  }
+  sugg.style.display = 'block';
+  sugg.innerHTML = matches.map(p =>
+    '<div class="drv-person-sugg-item" data-person-id="' + p.id + '">' +
+    '<strong>' + escHtml(p.firstName) + ' ' + escHtml(p.lastName) + '</strong>' +
+    (p.licenseNumber ? ' <span class="text-muted">— Lic. ' + escHtml(p.licenseNumber) + '</span>' : '') +
+    (p.nationality ? ' <span class="text-muted">(' + escHtml(p.nationality) + ')</span>' : '') +
+    '</div>'
+  ).join('');
+  sugg.querySelectorAll('[data-person-id]').forEach(el => {
+    el.addEventListener('click', () => selectPerson(el.dataset.personId));
+  });
+}
+
 function openAdd() {
   editingId = null;
+  _selectedPersonId = null;
   document.getElementById('drv-modal-title').textContent = 'Ajouter un pilote';
   document.getElementById('drv-firstname').value = '';
   document.getElementById('drv-lastname').value  = '';
@@ -441,9 +549,12 @@ function openAdd() {
   const catSelect = document.getElementById('drv-category-select');
   if (catSelect) catSelect.value = '';
   document.getElementById('drv-year').value      = String(filterYear);
+  clearPersonSelection();
+  const search = document.getElementById('drv-person-search');
+  if (search) { search.value = ''; search.style.display = ''; }
   hideCatPreview();
   document.getElementById('drv-modal').classList.add('is-open');
-  document.getElementById('drv-firstname').focus();
+  document.getElementById('drv-person-search')?.focus();
 }
 
 function openEdit(id) {
@@ -451,6 +562,7 @@ function openEdit(id) {
   if (!driver) return;
 
   editingId = id;
+  _selectedPersonId = driver.personId || null;
   document.getElementById('drv-modal-title').textContent = 'Modifier le pilote';
   document.getElementById('drv-firstname').value = driver.firstName || '';
   document.getElementById('drv-lastname').value  = driver.lastName  || '';
@@ -459,9 +571,17 @@ function openEdit(id) {
   const catSelect = document.getElementById('drv-category-select');
   if (catSelect) catSelect.value = driver.category || '';
   document.getElementById('drv-year').value      = String(driver.year);
+
+  if (_selectedPersonId) {
+    selectPerson(_selectedPersonId);
+  } else {
+    clearPersonSelection();
+    const search = document.getElementById('drv-person-search');
+    if (search) { search.value = ''; search.style.display = ''; }
+  }
+
   showCatPreview(driver.carNumber);
   document.getElementById('drv-modal').classList.add('is-open');
-  document.getElementById('drv-firstname').focus();
 }
 
 function closeModal() {
@@ -810,6 +930,21 @@ function bindEvents() {
   document.getElementById('drv-modal-save')
     ?.addEventListener('click', onSave);
 
+  // Person picker
+  const personSearch = document.getElementById('drv-person-search');
+  if (personSearch) {
+    personSearch.addEventListener('input', () => showPersonSuggestions(personSearch.value));
+    personSearch.addEventListener('blur', () => {
+      setTimeout(() => {
+        const sugg = document.getElementById('drv-person-suggestions');
+        if (sugg) sugg.style.display = 'none';
+      }, 200);
+    });
+    personSearch.addEventListener('focus', () => {
+      if (personSearch.value.length >= 2) showPersonSuggestions(personSearch.value);
+    });
+  }
+
   // Enter dans le formulaire
   ['drv-firstname', 'drv-lastname', 'drv-carnum'].forEach(id => {
     document.getElementById(id)?.addEventListener('keydown', e => {
@@ -872,10 +1007,10 @@ export function initDrivers() {
     if (e.detail.view === 'drivers') {
       renderView();
       loadDrivers();
+      loadPersons();
     }
   });
 
-  // Recharger quand on change de championnat dans le header
   document.addEventListener('championshipchange', () => {
     loadDrivers();
   });

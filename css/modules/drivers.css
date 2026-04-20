@@ -135,4 +135,32 @@
   padding: 3px 0;
 }
 
+/* ── Person picker (suggestions dropdown) ── */
+.drv-person-suggestions {
+  position: absolute;
+  z-index: 100;
+  left: 0; right: 0;
+  top: 100%;
+  max-height: 220px;
+  overflow-y: auto;
+  background: var(--clr-surface);
+  border: 1px solid var(--clr-border);
+  border-radius: var(--r-sm);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+}
+.drv-person-sugg-item {
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 0.88rem;
+  border-bottom: 1px solid var(--clr-border);
+}
+.drv-person-sugg-item:last-child { border-bottom: none; }
+.drv-person-sugg-item:hover { background: var(--clr-accent-dim); }
+.drv-person-sugg-new {
+  color: var(--clr-text-3);
+  font-style: italic;
+  cursor: default;
+}
+.drv-person-sugg-new:hover { background: transparent; }
+
 .text-success { color: var(--clr-success); }
