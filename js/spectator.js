@@ -18,10 +18,41 @@ let selectedCategory  = '';
 let allMeetings       = [];
 let allSessions       = [];
 let unsubResults      = null;
+let _isFullscreen     = false;
 
 let _interimRefreshTimer = null;
 
 const CATEGORIES = ['Supercar', 'Super1600', 'Division 5', 'Féminines', 'D3', 'D4'];
+
+function parseSpectatorParams() {
+  const hash = window.location.hash || '';
+  const qIdx = hash.indexOf('?');
+  if (qIdx < 0) return {};
+  const params = {};
+  hash.substring(qIdx + 1).split('&').forEach(pair => {
+    const [k, v] = pair.split('=');
+    if (k && v) params[decodeURIComponent(k)] = decodeURIComponent(v);
+  });
+  return params;
+}
+
+function applyFullscreen(enable) {
+  _isFullscreen = enable;
+  const header = document.querySelector('.app-header');
+  const menuOverlay = document.getElementById('menu-overlay');
+  const menuDrawer = document.getElementById('menu-drawer');
+  if (enable) {
+    if (header) header.style.display = 'none';
+    if (menuOverlay) menuOverlay.style.display = 'none';
+    if (menuDrawer) menuDrawer.style.display = 'none';
+    document.body.classList.add('spc-fullscreen');
+  } else {
+    if (header) header.style.display = '';
+    if (menuOverlay) menuOverlay.style.display = '';
+    if (menuDrawer) menuDrawer.style.display = '';
+    document.body.classList.remove('spc-fullscreen');
+  }
+}
 
 function getChampCategories() {
   const champ = getActiveChampionship();
@@ -139,7 +170,7 @@ function renderView() {
       </div>
     </div>
 
-    <div class="toolbar" style="flex-wrap:wrap;gap:var(--sp-sm);margin-bottom:var(--sp-md)">
+    <div class="toolbar ${_isFullscreen ? 'spc-toolbar-hidden' : ''}" id="spc-toolbar" style="flex-wrap:wrap;gap:var(--sp-sm);margin-bottom:var(--sp-md)">
       <select class="toolbar-select" id="spc-year">
         ${years.map(y => `<option value="${y}" ${y===selectedYear?'selected':''}>${y}</option>`).join('')}
       </select>
@@ -150,6 +181,7 @@ function renderView() {
         <option value="">— Catégorie —</option>
         ${getChampCategories().map(c => `<option value="${c}" ${c===selectedCategory?'selected':''}>${escHtml(c)}</option>`).join('')}
       </select>
+      <button class="btn btn-ghost btn-sm" id="spc-fullscreen-btn" title="Plein ecran">⛶</button>
     </div>
 
     <div id="spc-content">
@@ -351,6 +383,15 @@ function bindEvents() {
   document.getElementById('spc-category')?.addEventListener('change', async e => {
     selectedCategory = e.target.value;
     await renderContent();
+  });
+
+  document.getElementById('spc-fullscreen-btn')?.addEventListener('click', () => {
+    applyFullscreen(!_isFullscreen);
+    const toolbar = document.getElementById('spc-toolbar');
+    if (toolbar) toolbar.classList.toggle('spc-toolbar-hidden', _isFullscreen);
+    const header = document.querySelector('.spc-header');
+    if (header && _isFullscreen) header.style.padding = 'var(--sp-sm) var(--sp-md)';
+    else if (header) header.style.padding = '';
   });
 }
 
@@ -787,13 +828,36 @@ function startCountdown() {
 export function initSpectator() {
   document.addEventListener('viewchange', async e => {
     if (e.detail.view === 'spectator') {
+      // Parse URL params for deep-linking
+      const params = parseSpectatorParams();
+      if (params.meeting) selectedMeetingId = params.meeting;
+      if (params.category) selectedCategory = params.category;
+      if (params.fullscreen === '1') applyFullscreen(true);
+
       renderView();
       await loadMeetings();
+
+      // Auto-detect year from meeting if deep-linked
+      if (selectedMeetingId && allMeetings.length > 0) {
+        const m = allMeetings.find(x => x.id === selectedMeetingId);
+        if (m?.year && m.year !== selectedYear) {
+          selectedYear = m.year;
+          await loadMeetings();
+        }
+        refreshMeetingSelect();
+        // Sync dropdown
+        const meetSel = document.getElementById('spc-meeting');
+        if (meetSel) meetSel.value = selectedMeetingId;
+        const catSel = document.getElementById('spc-category');
+        if (catSel) catSel.value = selectedCategory;
+      }
+
       startRefresh();
       if (selectedMeetingId && selectedCategory) await renderContent();
     } else {
       stopRefresh();
       stopCarousel();
+      if (_isFullscreen) applyFullscreen(false);
     }
   });
 }
