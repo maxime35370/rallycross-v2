@@ -285,8 +285,9 @@ function init() {
     if (e.key === 'Escape') closeMenu();
   });
 
-  // Vue initiale : lire le hash de l'URL (#spectator, #standings, etc.)
-  const hashView = window.location.hash.replace('#', '');
+  // Vue initiale : lire le hash de l'URL (#spectator?meeting=xxx, #standings, etc.)
+  const hashRaw = window.location.hash.replace('#', '');
+  const hashView = hashRaw.split('?')[0];
   showView(VIEW_TITLES[hashView] ? hashView : 'home');
 
   // Mettre a jour le hash quand on change de vue

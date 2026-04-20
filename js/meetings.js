@@ -8,6 +8,7 @@ import { toast } from './app.js';
 import { escHtml, sanitize, formatDate, CATEGORIES } from './utils.js';
 import { logAudit } from './audit.js';
 import { requireAuth } from './auth.js';
+import { generateQrHtml, getSpectatorMeetingUrl } from './qrcode.js';
 import { getActiveChampionshipId, getActiveChampionship } from './context.js';
 
 // ─────────────────────────────────────────────────────────
@@ -428,6 +429,7 @@ function renderTable() {
         <td class="center text-muted">${nbSessions}</td>
         <td class="center">
           <div style="display:flex;gap:4px;justify-content:center">
+            <button class="btn btn-ghost btn-icon mtg-qr-btn" data-id="${m.id}" data-name="${escHtml(m.location || '?')}" title="QR Live">📺</button>
             <button class="btn btn-ghost btn-icon mtg-edit-btn" data-id="${m.id}" title="Modifier">✏️</button>
             <button class="btn btn-danger btn-icon mtg-del-btn" data-id="${m.id}" title="Supprimer">🗑️</button>
           </div>
@@ -436,6 +438,9 @@ function renderTable() {
     `;
   }).join('');
 
+  document.querySelectorAll('.mtg-qr-btn').forEach(btn =>
+    btn.addEventListener('click', () => showQrLiveModal(btn.dataset.id, btn.dataset.name))
+  );
   document.querySelectorAll('.mtg-edit-btn').forEach(btn =>
     btn.addEventListener('click', () => openEdit(btn.dataset.id))
   );
@@ -529,6 +534,100 @@ function categoryBadgeSmall(cat) {
   };
   const cls = map[cat] || 'badge-d4';
   return `<span class="badge ${cls}">${escHtml(cat)}</span>`;
+}
+
+// ─────────────────────────────────────────────────────────
+// QR LIVE MODAL
+// ─────────────────────────────────────────────────────────
+
+function showQrLiveModal(meetingId, meetingName) {
+  const champ = getActiveChampionship();
+  const categories = champ?.categories?.length
+    ? champ.categories.map(c => c.id || c.name)
+    : ['Supercar', 'Super1600', 'Division 5', 'Féminines', 'D3', 'D4'];
+
+  let modal = document.getElementById('mtg-qr-modal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'mtg-qr-modal';
+    modal.className = 'modal-backdrop';
+    document.body.appendChild(modal);
+  }
+
+  const defaultUrl = getSpectatorMeetingUrl(meetingId, categories[0]);
+  const fullscreenUrl = getSpectatorMeetingUrl(meetingId, categories[0], true);
+
+  modal.innerHTML = `
+    <div class="modal" style="max-width:480px">
+      <div class="modal-header">
+        <span class="modal-title">📺 QR Live — ${escHtml(meetingName)}</span>
+        <button class="modal-close" id="mtg-qr-close">✕</button>
+      </div>
+      <div class="modal-body" style="text-align:center">
+        <div class="form-group" style="text-align:left">
+          <label class="form-label">Categorie</label>
+          <select class="form-select" id="mtg-qr-category">
+            ${categories.map((c, i) => `<option value="${escHtml(c)}" ${i === 0 ? 'selected' : ''}>${escHtml(c)}</option>`).join('')}
+          </select>
+        </div>
+
+        <div id="mtg-qr-code" style="margin:var(--sp-md) 0">
+          ${generateQrHtml(defaultUrl, 220)}
+        </div>
+
+        <div class="form-group" style="text-align:left">
+          <label class="form-label">URL spectateur</label>
+          <div style="display:flex;gap:var(--sp-xs)">
+            <input class="form-input" type="text" id="mtg-qr-url" readonly value="${escHtml(defaultUrl)}" style="font-size:0.78rem">
+            <button class="btn btn-secondary btn-sm" id="mtg-qr-copy" title="Copier">📋</button>
+          </div>
+        </div>
+
+        <div class="form-group" style="text-align:left">
+          <label class="form-label">URL ecran geant (plein ecran)</label>
+          <div style="display:flex;gap:var(--sp-xs)">
+            <input class="form-input" type="text" id="mtg-qr-url-fs" readonly value="${escHtml(fullscreenUrl)}" style="font-size:0.78rem">
+            <button class="btn btn-secondary btn-sm" id="mtg-qr-copy-fs" title="Copier">📋</button>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer" style="justify-content:center;gap:var(--sp-sm)">
+        <button class="btn btn-secondary" id="mtg-qr-print">🖨️ Imprimer QR</button>
+        <button class="btn btn-primary" id="mtg-qr-open">Ouvrir le live</button>
+      </div>
+    </div>
+  `;
+
+  modal.classList.add('is-open');
+
+  // Events
+  document.getElementById('mtg-qr-close')?.addEventListener('click', () => modal.classList.remove('is-open'));
+  modal.addEventListener('click', e => { if (e.target === modal) modal.classList.remove('is-open'); });
+
+  document.getElementById('mtg-qr-category')?.addEventListener('change', () => {
+    const cat = document.getElementById('mtg-qr-category').value;
+    const url = getSpectatorMeetingUrl(meetingId, cat);
+    const urlFs = getSpectatorMeetingUrl(meetingId, cat, true);
+    document.getElementById('mtg-qr-url').value = url;
+    document.getElementById('mtg-qr-url-fs').value = urlFs;
+    document.getElementById('mtg-qr-code').innerHTML = generateQrHtml(url, 220);
+  });
+
+  document.getElementById('mtg-qr-copy')?.addEventListener('click', () => {
+    navigator.clipboard.writeText(document.getElementById('mtg-qr-url').value);
+    toast('URL copiee', 'success', 2000);
+  });
+  document.getElementById('mtg-qr-copy-fs')?.addEventListener('click', () => {
+    navigator.clipboard.writeText(document.getElementById('mtg-qr-url-fs').value);
+    toast('URL ecran geant copiee', 'success', 2000);
+  });
+
+  document.getElementById('mtg-qr-print')?.addEventListener('click', () => window.print());
+
+  document.getElementById('mtg-qr-open')?.addEventListener('click', () => {
+    const url = document.getElementById('mtg-qr-url').value;
+    window.open(url, '_blank');
+  });
 }
 
 // ─────────────────────────────────────────────────────────
