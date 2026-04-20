@@ -9,6 +9,7 @@ import { toast } from './app.js';
 import { escHtml, sanitize } from './utils.js';
 import { logAudit } from './audit.js';
 import { requireAuth } from './auth.js';
+import { showPersonProfile } from './personProfile.js';
 
 // ─────────────────────────────────────────────────────────
 // ETAT LOCAL
@@ -255,12 +256,19 @@ function renderTable() {
       <td class="center">${p.licenseNumber ? escHtml(p.licenseNumber) : '<span class="text-muted">—</span>'}</td>
       <td class="center">${p.nationality ? escHtml(p.nationality) : '<span class="text-muted">—</span>'}</td>
       <td class="center">
+        <button class="btn btn-ghost btn-sm prs-profile-btn" data-id="${p.id}" title="Stats globales">📊</button>
         <button class="btn btn-ghost btn-sm prs-edit-btn" data-id="${p.id}" title="Modifier">✏️</button>
         <button class="btn btn-danger btn-sm prs-delete-btn" data-id="${p.id}" title="Supprimer">🗑️</button>
       </td>
     </tr>
   `).join('');
 
+  tbody.querySelectorAll('.prs-profile-btn').forEach(btn =>
+    btn.addEventListener('click', () => {
+      const p = allPersons.find(x => x.id === btn.dataset.id);
+      if (p) showPersonProfile(p);
+    })
+  );
   tbody.querySelectorAll('.prs-edit-btn').forEach(btn =>
     btn.addEventListener('click', () => openEdit(btn.dataset.id))
   );
