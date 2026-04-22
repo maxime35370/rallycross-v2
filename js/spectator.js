@@ -470,11 +470,18 @@ function renderCarouselSlide() {
 
   if (phase === 'MQ') {
     const hasMq = (_carouselData.mqResults || []).length > 0;
+    const champ0 = getActiveChampionship();
+    const ecEnabled = champ0?.sessionConfig?.EC?.enabled !== false;
+    const hasEcData = ecEnabled && (_carouselData.ecResults || []).filter(r => r.ms).length > 0;
     if (!hasMq) {
-      html = buildStickySlide(
-        (_carouselData.ecResults || []).filter(r => r.ms).sort((a,b) => a.ms - b.ms),
-        '⏱️ Essais chronométrés — Top 10', 'ec', true
-      );
+      if (hasEcData) {
+        html = buildStickySlide(
+          (_carouselData.ecResults || []).filter(r => r.ms).sort((a,b) => a.ms - b.ms),
+          '⏱️ Essais chronométrés — Top 10', 'ec', true
+        );
+      } else {
+        html = '<div class="spc-card"><div class="spc-empty">En attente des premiers resultats...</div></div>';
+      }
     } else if (_carouselSlide === 0) {
       html = buildStickySlide(
         sortResults(_carouselData.mqResults || []),
