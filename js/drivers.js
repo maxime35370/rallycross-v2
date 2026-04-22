@@ -257,8 +257,8 @@ function getActiveCategories() {
       category: c.id || c.name,
       code: (c.id || c.name || '').substring(0, 4).toUpperCase(),
       name: c.name || c.id,
-      min: c.carNumberRanges?.[0]?.min || null,
-      max: c.carNumberRanges?.[0]?.max || null,
+      min: c.freeNumbers ? null : (c.carNumberRanges?.[0]?.min || null),
+      max: c.freeNumbers ? null : (c.carNumberRanges?.[0]?.max || null),
       freeNumbers: c.freeNumbers || false,
     }));
   }
