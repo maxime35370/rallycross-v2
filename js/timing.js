@@ -45,15 +45,24 @@ const SPECIAL_STATUSES = ['DNS', 'DNF', 'DSQ', 'DSQ_RACE'];
 // (même algorithme que computeSeries() utilisé par la grille)
 // ─────────────────────────────────────────────────────────
 
-function computeSeriesSizes(n) {
+function computeSeriesSizes(n, max) {
+  max = max || 5;
   if (n <= 0) return [];
-  if (n <= 5) return [n];
-  if (n <= 10) { const first = Math.floor(n / 2); return [first, n - first]; }
-  return [...computeSeriesSizes(n - 5), 5];
+  if (n <= max) return [n];
+  if (n <= max * 2) { const first = Math.floor(n / 2); return [first, n - first]; }
+  return [...computeSeriesSizes(n - max, max), max];
+}
+
+function getCategoryMaxPerSeries() {
+  const champ = getActiveChampionship();
+  if (!champ?.categories?.length || !selectedCategory) return 5;
+  const cat = champ.categories.find(c => (c.id || c.name) === selectedCategory);
+  return cat?.maxPerSeries || 5;
 }
 
 function getSeriesStructure(nbParticipants) {
-  const sizes = computeSeriesSizes(nbParticipants);
+  const max = getCategoryMaxPerSeries();
+  const sizes = computeSeriesSizes(nbParticipants, max);
   return {
     nbSeries: sizes.length,
     sizes,
@@ -902,8 +911,26 @@ async function onSaveStatus(driverId, status) {
 }
 
 async function onEditResult(driverId) {
-  if (!window.confirm('Remettre ce pilote dans la liste à chronométrer ?')) return;
+  const r = results[driverId];
+  const ms = r?.ms;
+
+  // Supprimer le resultat pour remettre le pilote dans la liste "a chronometrer"
   await clearResult(driverId);
+
+  // Pre-remplir les champs avec l'ancien temps
+  if (ms) {
+    const fields = msToFields(ms);
+    setTimeout(() => {
+      const content = document.getElementById('tim-content');
+      if (!content) return;
+      const minEl = content.querySelector(`.tim-min[data-driver-id="${driverId}"]`);
+      const secEl = content.querySelector(`.tim-sec[data-driver-id="${driverId}"]`);
+      const msEl  = content.querySelector(`.tim-ms[data-driver-id="${driverId}"]`);
+      if (minEl) minEl.value = fields.min;
+      if (secEl) secEl.value = fields.sec;
+      if (msEl)  msEl.value  = fields.mil;
+    }, 100);
+  }
 }
 
 // ─────────────────────────────────────────────────────────
@@ -1235,13 +1262,8 @@ async function showStartingGrid(session) {
   if (session.type === 'MQ') {
     const total = participants.length;
 
-    function computeSeries(n) {
-      if (n <= 5) return [n];
-      if (n <= 10) { const first = Math.floor(n / 2); return [first, n - first]; }
-      return [...computeSeries(n - 5), 5];
-    }
-
-    const seriesSizes = computeSeries(total);
+    const catMax = getCategoryMaxPerSeries();
+    const seriesSizes = computeSeriesSizes(total, catMax);
     const series = [];
     let cursor = 0;
     for (const size of seriesSizes) {

@@ -542,6 +542,12 @@ function renderCatRow(cat, i) {
           <span class="settings-toggle-track"><span class="settings-toggle-thumb"></span></span>
           <span style="font-size:0.8rem;margin-left:4px">N° libres</span>
         </label>
+        <div style="display:flex;align-items:center;gap:4px;flex-shrink:0" title="Nombre max de pilotes par serie en MQ">
+          <label style="font-size:0.78rem;color:var(--clr-text-3)">Max/serie</label>
+          <input class="form-input cat-max-per-series" type="number" min="3" max="10"
+            style="width:56px;padding:4px 6px;text-align:center"
+            value="${cat.maxPerSeries || 5}">
+        </div>
         <button class="btn btn-danger btn-icon cat-remove" data-idx="${i}" title="Supprimer la catégorie">🗑️</button>
       </div>
 
@@ -1244,6 +1250,7 @@ function syncCurrentTabToData() {
         _editData.categories[i].id          = (row.querySelector('[data-field="id"]')?.value || '').trim();
         _editData.categories[i].name        = (row.querySelector('[data-field="name"]')?.value || '').trim();
         _editData.categories[i].freeNumbers = row.querySelector('.cat-free-numbers')?.checked ?? false;
+        _editData.categories[i].maxPerSeries = parseInt(row.querySelector('.cat-max-per-series')?.value) || 5;
         row.querySelectorAll('.range-row').forEach((rr, ri) => {
           if (!_editData.categories[i].carNumberRanges?.[ri]) return;
           _editData.categories[i].carNumberRanges[ri].min = parseInt(rr.querySelector('.range-min')?.value) || 1;
