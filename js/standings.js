@@ -109,12 +109,13 @@ async function calcPhaseStandings(session) {
   results.forEach(r => { resultMap[r.driverId] = r; });
 
   const rows = participants.map(p => ({
-    driverId:  p.driverId,
-    carNumber: p.carNumber,
-    firstName: p.firstName,
-    lastName:  p.lastName,
-    ms:        resultMap[p.driverId]?.ms    ?? null,
-    status:    resultMap[p.driverId]?.status ?? null,
+    driverId:       p.driverId,
+    carNumber:      p.carNumber,
+    firstName:      p.firstName,
+    lastName:       p.lastName,
+    ms:             resultMap[p.driverId]?.ms             ?? null,
+    status:         resultMap[p.driverId]?.status         ?? null,
+    manualPosition: resultMap[p.driverId]?.manualPosition ?? null,
   }));
 
   const finished    = rows.filter(r => r.ms && !r.status).sort((a, b) => a.ms - b.ms);

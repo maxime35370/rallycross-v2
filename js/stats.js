@@ -7,6 +7,7 @@
 import { db } from './firebase.js';
 import { escHtml } from './utils.js';
 import { calcInterimStandings } from './calc.js';
+import { getActiveChampionshipId } from './context.js';
 
 // ─────────────────────────────────────────────────────────
 // ÉTAT
@@ -39,9 +40,12 @@ async function loadMeetings() {
   const { collection, query, where, orderBy, getDocs } = await import(
     'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
   );
+  const champId = getActiveChampionshipId();
+  const constraints = [where('year', '==', selectedYear)];
+  if (champId) constraints.push(where('championshipId', '==', champId));
   const snap = await getDocs(query(
     collection(db, 'meetings'),
-    where('year', '==', selectedYear),
+    ...constraints,
     orderBy('date', 'asc')
   ));
   allMeetings = snap.docs.map(d => ({ id: d.id, ...d.data() }));
@@ -66,16 +70,20 @@ async function calcStats() {
   const DF_PTS  = [0, 10, 8, 6, 5, 4, 3, 2, 1];
   const FIN_PTS = [0, 15, 12, 9, 7, 6, 5, 4, 3];
 
-  // ── Résultats bruts ───────────────────────────────────
-  const allResults = await fsQuery('results', [
-    ['category', '==', selectedCategory],
-    ['year',     '==', selectedYear],
-  ]);
+  // ── Résultats bruts (filtres par championnat via meetingIds) ──
+  const meetingIds = new Set(allMeetings.map(m => m.id));
 
-  const allSessions = await fsQuery('sessions', [
+  const rawResults = await fsQuery('results', [
     ['category', '==', selectedCategory],
     ['year',     '==', selectedYear],
   ]);
+  const allResults = rawResults.filter(r => meetingIds.has(r.meetingId));
+
+  const rawSessions = await fsQuery('sessions', [
+    ['category', '==', selectedCategory],
+    ['year',     '==', selectedYear],
+  ]);
+  const allSessions = rawSessions.filter(s => meetingIds.has(s.meetingId));
   const sessionMap = {};
   allSessions.forEach(s => { sessionMap[s.id] = s; });
 
@@ -612,5 +620,10 @@ export function initStats() {
       await loadMeetings();
       if (selectedCategory) renderStats();
     }
+  });
+
+  document.addEventListener('championshipchange', async () => {
+    allMeetings = [];
+    await loadMeetings();
   });
 }
