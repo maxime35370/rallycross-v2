@@ -74,10 +74,10 @@ async function loadPersonData(personId) {
       const mResults = resultsByMeeting[m.id] || [];
       if (mResults.length === 0) continue;
 
-      let mqTotal = 0, dfTotal = 0, finTotal = 0;
+      let dfTotal = 0, finTotal = 0;
       let finPosition = null;
 
-      // Grouper les resultats du pilote par sessionId
+      // Points DF et FIN : calculer depuis les resultats bruts
       const driverSessionIds = [...new Set(mResults.map(r => r.sessionId))];
 
       for (const sid of driverSessionIds) {
@@ -85,14 +85,13 @@ async function loadPersonData(personId) {
         if (!driverResult) continue;
         const sType = driverResult.sessionType;
 
-        if (sType === 'MQ' || sType === 'DF' || sType === 'FIN') {
-          // Charger TOUS les resultats de cette session pour calculer la position
+        // MQ ne donne PAS de points championnat (sert uniquement au classement intermediaire)
+        if (sType === 'DF' || sType === 'FIN') {
           const allSessionResults = await getDocs(query(collection(db, 'results'), where('sessionId', '==', sid)));
           const allRows = allSessionResults.docs.map(d => d.data());
           const finished = allRows.filter(r => r.ms && !r.status).sort((a, b) => a.ms - b.ms);
           const dnfWithPos = allRows.filter(r => r.status === 'DNF' && r.manualPosition);
 
-          // Trouver la position du pilote
           let driverPos = null;
           const finIdx = finished.findIndex(r => r.driverId === drv.id);
           if (finIdx >= 0) {
@@ -103,7 +102,6 @@ async function loadPersonData(personId) {
           }
 
           if (driverPos !== null) {
-            if (sType === 'MQ')  mqTotal += mqPoints(driverPos, regulation);
             if (sType === 'DF')  dfTotal += dfPoints(driverPos, regulation);
             if (sType === 'FIN') {
               finTotal += finPoints(driverPos, regulation);
@@ -127,7 +125,7 @@ async function loadPersonData(personId) {
         }
       } catch {}
 
-      const total = mqTotal + interimTotal + dfTotal + finTotal;
+      const total = interimTotal + dfTotal + finTotal;
       if (total > 0 || mResults.some(r => r.ms || r.status)) {
         meetingStats.push({
           meetingId: m.id,
