@@ -40,15 +40,15 @@ async function loadMeetings() {
   const { collection, query, where, orderBy, getDocs } = await import(
     'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
   );
-  const champId = getActiveChampionshipId();
-  const constraints = [where('year', '==', selectedYear)];
-  if (champId) constraints.push(where('championshipId', '==', champId));
   const snap = await getDocs(query(
     collection(db, 'meetings'),
-    ...constraints,
+    where('year', '==', selectedYear),
     orderBy('date', 'asc')
   ));
-  allMeetings = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  const all = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  // Filtrer par championnat cote client (evite un index composite Firestore)
+  const champId = getActiveChampionshipId();
+  allMeetings = champId ? all.filter(m => m.championshipId === champId) : all;
   refreshMeetingList();
 }
 
