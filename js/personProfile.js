@@ -74,69 +74,58 @@ async function loadPersonData(personId) {
       const mResults = resultsByMeeting[m.id] || [];
       if (mResults.length === 0) continue;
 
-      // Sessions de ce meeting pour ce pilote
-      const sessionIds = [...new Set(mResults.map(r => r.sessionId))];
-      const sessSnap = await getDocs(query(collection(db, 'sessions'),
-        where('meetingId', '==', m.id), where('category', '==', drv.category)));
-      const allMeetingSessions = sessSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-
-      // Calculer les points par phase
-      let mqTotal = 0, dfTotal = 0, finTotal = 0, interimTotal = 0;
+      let mqTotal = 0, dfTotal = 0, finTotal = 0;
       let finPosition = null;
 
-      // Points MQ : pour chaque MQ, classer tous les participants puis trouver la position du pilote
-      const mqSessions = allMeetingSessions.filter(s => s.type === 'MQ');
-      for (const mqS of mqSessions) {
-        const allMqResults = await getDocs(query(collection(db, 'results'), where('sessionId', '==', mqS.id)));
-        const mqRows = allMqResults.docs.map(d => d.data()).filter(r => r.ms).sort((a, b) => a.ms - b.ms);
-        const pos = mqRows.findIndex(r => r.driverId === drv.id);
-        if (pos >= 0) mqTotal += mqPoints(pos + 1, regulation);
-      }
+      // Grouper les resultats du pilote par sessionId
+      const driverSessionIds = [...new Set(mResults.map(r => r.sessionId))];
 
-      // Points intermediaire
-      try {
-        const interim = await calcInterimStandings(db, allMeetingSessions, regulation);
-        const iRow = interim.find(r => r.driverId === drv.id);
-        if (iRow?.interimPoints) interimTotal = iRow.interimPoints;
-      } catch {}
+      for (const sid of driverSessionIds) {
+        const driverResult = mResults.find(r => r.sessionId === sid);
+        if (!driverResult) continue;
+        const sType = driverResult.sessionType;
 
-      // Points DF
-      const dfSessions = allMeetingSessions.filter(s => s.type === 'DF');
-      for (const dfS of dfSessions) {
-        const allDfResults = await getDocs(query(collection(db, 'results'), where('sessionId', '==', dfS.id)));
-        const dfRows = allDfResults.docs.map(d => d.data());
-        const finished = dfRows.filter(r => r.ms && !r.status).sort((a, b) => a.ms - b.ms);
-        const dnfWithPos = dfRows.filter(r => r.status === 'DNF' && r.manualPosition);
-        const ranked = [...finished];
-        dnfWithPos.forEach(r => ranked.push(r));
-        const pos = finished.findIndex(r => r.driverId === drv.id);
-        if (pos >= 0) {
-          dfTotal += dfPoints(pos + 1, regulation);
-        } else {
-          const dnfRow = dnfWithPos.find(r => r.driverId === drv.id);
-          if (dnfRow?.manualPosition) dfTotal += dfPoints(dnfRow.manualPosition, regulation);
-        }
-      }
+        if (sType === 'MQ' || sType === 'DF' || sType === 'FIN') {
+          // Charger TOUS les resultats de cette session pour calculer la position
+          const allSessionResults = await getDocs(query(collection(db, 'results'), where('sessionId', '==', sid)));
+          const allRows = allSessionResults.docs.map(d => d.data());
+          const finished = allRows.filter(r => r.ms && !r.status).sort((a, b) => a.ms - b.ms);
+          const dnfWithPos = allRows.filter(r => r.status === 'DNF' && r.manualPosition);
 
-      // Points FIN
-      const finS = allMeetingSessions.find(s => s.type === 'FIN');
-      if (finS) {
-        const allFinResults = await getDocs(query(collection(db, 'results'), where('sessionId', '==', finS.id)));
-        const finRows = allFinResults.docs.map(d => d.data());
-        const finished = finRows.filter(r => r.ms && !r.status).sort((a, b) => a.ms - b.ms);
-        const dnfWithPos = finRows.filter(r => r.status === 'DNF' && r.manualPosition);
-        const pos = finished.findIndex(r => r.driverId === drv.id);
-        if (pos >= 0) {
-          finPosition = pos + 1;
-          finTotal += finPoints(pos + 1, regulation);
-        } else {
-          const dnfRow = dnfWithPos.find(r => r.driverId === drv.id);
-          if (dnfRow?.manualPosition) {
-            finPosition = dnfRow.manualPosition;
-            finTotal += finPoints(dnfRow.manualPosition, regulation);
+          // Trouver la position du pilote
+          let driverPos = null;
+          const finIdx = finished.findIndex(r => r.driverId === drv.id);
+          if (finIdx >= 0) {
+            driverPos = finIdx + 1;
+          } else {
+            const dnfRow = dnfWithPos.find(r => r.driverId === drv.id);
+            if (dnfRow?.manualPosition) driverPos = dnfRow.manualPosition;
+          }
+
+          if (driverPos !== null) {
+            if (sType === 'MQ')  mqTotal += mqPoints(driverPos, regulation);
+            if (sType === 'DF')  dfTotal += dfPoints(driverPos, regulation);
+            if (sType === 'FIN') {
+              finTotal += finPoints(driverPos, regulation);
+              finPosition = driverPos;
+            }
           }
         }
       }
+
+      // Points intermediaires
+      let interimTotal = 0;
+      try {
+        // Charger toutes les sessions du meeting (une seule requete simple par meetingId)
+        const sessSnap = await getDocs(query(collection(db, 'sessions'), where('meetingId', '==', m.id)));
+        const meetingSessions = sessSnap.docs.map(d => ({ id: d.id, ...d.data() }))
+          .filter(s => s.category === drv.category);
+        if (meetingSessions.length > 0) {
+          const interim = await calcInterimStandings(db, meetingSessions, regulation);
+          const iRow = interim.find(r => r.driverId === drv.id);
+          if (iRow?.interimPoints) interimTotal = iRow.interimPoints;
+        }
+      } catch {}
 
       const total = mqTotal + interimTotal + dfTotal + finTotal;
       if (total > 0 || mResults.some(r => r.ms || r.status)) {
