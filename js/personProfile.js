@@ -7,6 +7,8 @@
 import { db } from './firebase.js';
 import { escHtml } from './utils.js';
 import { toast, categoryBadge } from './app.js';
+import { mqPoints, qfPoints, dfPoints, finPoints, interimPoints, calcInterimStandings } from './calc.js';
+import { getChampionshipConfig } from './settings.js';
 
 // ─────────────────────────────────────────────────────────
 // CHARGEMENT DES DONNEES
@@ -51,14 +53,6 @@ async function loadPersonData(personId) {
       }
     }
 
-    // Meeting standings sauvegardes
-    const msSnap = await getDocs(query(collection(db, 'meetingStandings'), where('driverId', '==', drv.id)));
-    const msByMeeting = {};
-    msSnap.docs.forEach(d => {
-      const data = d.data();
-      msByMeeting[data.meetingId] = data;
-    });
-
     // Resultats bruts
     const resSnap = await getDocs(query(collection(db, 'results'), where('driverId', '==', drv.id)));
     const resultsByMeeting = {};
@@ -68,21 +62,96 @@ async function loadPersonData(personId) {
       resultsByMeeting[r.meetingId].push(r);
     });
 
-    // Agreger par meeting
-    const meetingStats = meetings.map(m => {
-      const ms = msByMeeting[m.id];
-      const hasFinal = (resultsByMeeting[m.id] || []).some(r => r.sessionType === 'FIN' && (r.ms || r.status));
-      return {
-        meetingId: m.id,
-        meetingDate: m.date || '',
-        meetingName: m.location || '?',
-        finalPosition: ms?.position ?? null,
-        totalPoints: ms?.totalPts ?? ms?.total ?? 0,
-        participated: hasFinal || !!ms,
-      };
-    }).filter(m => m.participated);
+    // Reglement du championnat pour les baremes
+    let regulation = null;
+    if (drv.championshipId) {
+      try { regulation = await getChampionshipConfig(drv.championshipId); } catch {}
+    }
 
-    meetingStats.sort((a, b) => (b.meetingDate || '').localeCompare(a.meetingDate || ''));
+    // Agreger par meeting : calculer les points a la volee
+    const meetingStats = [];
+    for (const m of meetings) {
+      const mResults = resultsByMeeting[m.id] || [];
+      if (mResults.length === 0) continue;
+
+      // Sessions de ce meeting pour ce pilote
+      const sessionIds = [...new Set(mResults.map(r => r.sessionId))];
+      const sessSnap = await getDocs(query(collection(db, 'sessions'),
+        where('meetingId', '==', m.id), where('category', '==', drv.category)));
+      const allMeetingSessions = sessSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+      // Calculer les points par phase
+      let mqTotal = 0, dfTotal = 0, finTotal = 0, interimTotal = 0;
+      let finPosition = null;
+
+      // Points MQ : pour chaque MQ, classer tous les participants puis trouver la position du pilote
+      const mqSessions = allMeetingSessions.filter(s => s.type === 'MQ');
+      for (const mqS of mqSessions) {
+        const allMqResults = await getDocs(query(collection(db, 'results'), where('sessionId', '==', mqS.id)));
+        const mqRows = allMqResults.docs.map(d => d.data()).filter(r => r.ms).sort((a, b) => a.ms - b.ms);
+        const pos = mqRows.findIndex(r => r.driverId === drv.id);
+        if (pos >= 0) mqTotal += mqPoints(pos + 1, regulation);
+      }
+
+      // Points intermediaire
+      try {
+        const interim = await calcInterimStandings(db, allMeetingSessions, regulation);
+        const iRow = interim.find(r => r.driverId === drv.id);
+        if (iRow?.interimPoints) interimTotal = iRow.interimPoints;
+      } catch {}
+
+      // Points DF
+      const dfSessions = allMeetingSessions.filter(s => s.type === 'DF');
+      for (const dfS of dfSessions) {
+        const allDfResults = await getDocs(query(collection(db, 'results'), where('sessionId', '==', dfS.id)));
+        const dfRows = allDfResults.docs.map(d => d.data());
+        const finished = dfRows.filter(r => r.ms && !r.status).sort((a, b) => a.ms - b.ms);
+        const dnfWithPos = dfRows.filter(r => r.status === 'DNF' && r.manualPosition);
+        const ranked = [...finished];
+        dnfWithPos.forEach(r => ranked.push(r));
+        const pos = finished.findIndex(r => r.driverId === drv.id);
+        if (pos >= 0) {
+          dfTotal += dfPoints(pos + 1, regulation);
+        } else {
+          const dnfRow = dnfWithPos.find(r => r.driverId === drv.id);
+          if (dnfRow?.manualPosition) dfTotal += dfPoints(dnfRow.manualPosition, regulation);
+        }
+      }
+
+      // Points FIN
+      const finS = allMeetingSessions.find(s => s.type === 'FIN');
+      if (finS) {
+        const allFinResults = await getDocs(query(collection(db, 'results'), where('sessionId', '==', finS.id)));
+        const finRows = allFinResults.docs.map(d => d.data());
+        const finished = finRows.filter(r => r.ms && !r.status).sort((a, b) => a.ms - b.ms);
+        const dnfWithPos = finRows.filter(r => r.status === 'DNF' && r.manualPosition);
+        const pos = finished.findIndex(r => r.driverId === drv.id);
+        if (pos >= 0) {
+          finPosition = pos + 1;
+          finTotal += finPoints(pos + 1, regulation);
+        } else {
+          const dnfRow = dnfWithPos.find(r => r.driverId === drv.id);
+          if (dnfRow?.manualPosition) {
+            finPosition = dnfRow.manualPosition;
+            finTotal += finPoints(dnfRow.manualPosition, regulation);
+          }
+        }
+      }
+
+      const total = mqTotal + interimTotal + dfTotal + finTotal;
+      if (total > 0 || mResults.some(r => r.ms || r.status)) {
+        meetingStats.push({
+          meetingId: m.id,
+          meetingDate: m.date || '',
+          meetingName: m.location || '?',
+          finalPosition: finPosition,
+          totalPoints: total,
+          participated: true,
+        });
+      }
+    }
+
+    meetingStats.sort((a, b) => (a.meetingDate || '').localeCompare(b.meetingDate || ''));
 
     // Stats du driver
     const wins = meetingStats.filter(m => m.finalPosition === 1).length;
