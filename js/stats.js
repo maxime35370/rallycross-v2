@@ -48,7 +48,7 @@ async function loadMeetings() {
   const all = snap.docs.map(d => ({ id: d.id, ...d.data() }));
   // Filtrer par championnat cote client (evite un index composite Firestore)
   const champId = getActiveChampionshipId();
-  allMeetings = champId ? all.filter(m => m.championshipId === champId) : all;
+  allMeetings = champId ? all.filter(m => m.championshipId === champId || !m.championshipId) : all;
   refreshMeetingList();
 }
 

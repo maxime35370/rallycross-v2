@@ -412,15 +412,22 @@ function renderTable() {
     return;
   }
 
+  const activeChampId = getActiveChampionshipId();
   tbody.innerHTML = allMeetings.map(m => {
     const cats = (m.categories || []).map(c => categoryBadgeSmall(c)).join(' ');
     const nbSessions = SESSION_TEMPLATES.filter(t =>
       t.type !== 'MQ' || (t.num <= (m.nbMQ || 4))
     ).length * (m.categories || []).length;
+    const isLinked = m.championshipId && m.championshipId === activeChampId;
+    const linkBadge = isLinked
+      ? '<span title="Lie au championnat actif" style="color:var(--clr-success);font-size:0.75rem">🔗</span>'
+      : !m.championshipId
+        ? '<span title="Non lie a un championnat" style="color:var(--clr-warning);font-size:0.75rem;cursor:pointer" class="mtg-link-btn" data-id="' + m.id + '">⚠️</span>'
+        : '';
 
     return `
       <tr>
-        <td><span class="mtg-date">${isoToDisplay(m.date)}</span></td>
+        <td><span class="mtg-date">${isoToDisplay(m.date)}</span> ${linkBadge}</td>
         <td><strong>${escHtml(m.location)}</strong></td>
         <td><div class="mtg-cats">${cats}</div></td>
         <td class="center">
@@ -438,6 +445,17 @@ function renderTable() {
     `;
   }).join('');
 
+  document.querySelectorAll('.mtg-link-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const champId = getActiveChampionshipId();
+      const champ = getActiveChampionship();
+      if (!champId) { toast('Selectionnez un championnat d\'abord', 'error'); return; }
+      if (!window.confirm('Lier ce meeting au championnat "' + (champ?.name || champId) + '" ?')) return;
+      const { doc, updateDoc } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
+      await updateDoc(doc(db, 'meetings', btn.dataset.id), { championshipId: champId });
+      toast('Meeting lie au championnat', 'success');
+    });
+  });
   document.querySelectorAll('.mtg-qr-btn').forEach(btn =>
     btn.addEventListener('click', () => showQrLiveModal(btn.dataset.id, btn.dataset.name))
   );

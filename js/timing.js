@@ -436,7 +436,9 @@ async function clearResult(driverId) {
   const { doc, deleteDoc } = await import(
     'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
   );
-  logAudit('delete', 'result', existing.docId, { label: `Temps efface pour pilote ${driverId}` });
+  const p = participants.find(x => x.driverId === driverId);
+  const pLabel = p ? `#${p.carNumber} ${p.firstName} ${p.lastName}` : driverId;
+  logAudit('delete', 'result', existing.docId, { label: `Temps efface pour ${pLabel}` });
   await deleteDoc(doc(db, 'results', existing.docId));
 }
 
