@@ -72,14 +72,22 @@ async function calcPhasePoints(session) {
 
   const ptsFn = session.type === 'DF' ? (p => DF_POINTS[p] ?? 0) : (p => FIN_POINTS[p] ?? 0);
 
-  const finished = participants
-    .map(p => ({ driverId: p.driverId, ms: resultMap[p.driverId]?.ms ?? null, status: resultMap[p.driverId]?.status ?? null }))
-    .filter(r => r.ms && !r.status)
-    .sort((a, b) => a.ms - b.ms);
+  const rows = participants.map(p => ({
+    driverId:       p.driverId,
+    ms:             resultMap[p.driverId]?.ms             ?? null,
+    status:         resultMap[p.driverId]?.status         ?? null,
+    manualPosition: resultMap[p.driverId]?.manualPosition ?? null,
+  }));
+
+  const finished = rows.filter(r => r.ms && !r.status).sort((a, b) => a.ms - b.ms);
 
   const out = {};
   let pos = 1;
   finished.forEach(r => { out[r.driverId] = ptsFn(pos++); });
+
+  // DNF avec position assignée → points de la position
+  rows.filter(r => r.status === 'DNF' && r.manualPosition)
+      .forEach(r => { out[r.driverId] = ptsFn(r.manualPosition); });
 
   // Pilotes avec statut spécial → 0 pts (1 pt DSQ_RACE)
   participants.forEach(p => {
