@@ -567,12 +567,25 @@ async function showSessionsStep({ ctx, provider, config }) {
     return;
   }
 
-  // Pré-filtrer par catégorie si possible
+  // Pré-filtrer par catégorie ET (si possible) par type/num pour suggérer
+  // automatiquement la bonne session distante.
   const matchingCategory = sessions.filter(s =>
     !s.category || (ctx.category && fuzzyMatch(s.category, ctx.category))
   );
-  const useFiltered = matchingCategory.length > 0 && matchingCategory.length < sessions.length;
-  const list = useFiltered ? matchingCategory : sessions;
+  const matchingFull = matchingCategory.filter(s => {
+    if (!s.type || !ctx.session?.type) return false;
+    if (s.type !== ctx.session.type) return false;
+    if (s.num != null && ctx.session.num != null && s.num !== ctx.session.num) return false;
+    return true;
+  });
+
+  // Stratégie : si on a une correspondance exacte type+num+catégorie, on
+  // affiche cette short-list ; sinon on retombe sur le filtre catégorie ;
+  // sinon tout.
+  const useFull     = matchingFull.length > 0 && matchingFull.length < sessions.length;
+  const useCategory = !useFull && matchingCategory.length > 0 && matchingCategory.length < sessions.length;
+  const list = useFull ? matchingFull : useCategory ? matchingCategory : sessions;
+  const useFiltered = useFull || useCategory;
 
   const sessionLabel = ctx.session.type === 'MQ' ? `MQ${ctx.session.num}`
     : ctx.session.type === 'DF' ? `DF${ctx.session.num}`
@@ -625,9 +638,9 @@ async function showSessionsStep({ ctx, provider, config }) {
 
 function formatSessionLabel(s) {
   const parts = [];
-  if (s.type)     parts.push(s.type);
   if (s.category) parts.push(s.category);
   if (s.name)     parts.push(s.name);
+  else if (s.type) parts.push(s.num != null ? `${s.type}${s.num}` : s.type);
   parts.push(`#${s.session_id}`);
   return parts.join(' — ');
 }

@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { parseTimeFlex, parseStatusFlex } from '../js/providers/itsLive.js';
+import {
+  parseTimeFlex,
+  parseStatusFlex,
+  cleanCategoryName,
+  deriveSessionType,
+  deriveSessionNum,
+} from '../js/providers/itsLive.js';
 
 describe('itsLive · parseTimeFlex', () => {
   it('retourne null pour une valeur vide ou nulle', () => {
@@ -88,5 +94,80 @@ describe('itsLive · parseStatusFlex', () => {
   it('retourne null pour un statut inconnu (ex : OK, FINISHED)', () => {
     expect(parseStatusFlex('OK')).toBe(null);
     expect(parseStatusFlex('FINISHED')).toBe(null);
+  });
+});
+
+describe('itsLive · cleanCategoryName', () => {
+  it('retire le préfixe numérique ITS', () => {
+    expect(cleanCategoryName('06 - Supercar')).toBe('Supercar');
+    expect(cleanCategoryName('05 - Super 1600')).toBe('Super 1600');
+    expect(cleanCategoryName('01 - Division 4')).toBe('Division 4');
+    expect(cleanCategoryName('00 - TEST')).toBe('TEST');
+  });
+
+  it('laisse intact un nom sans préfixe', () => {
+    expect(cleanCategoryName('Supercar')).toBe('Supercar');
+    expect(cleanCategoryName('Super 1600')).toBe('Super 1600');
+  });
+
+  it('gère les valeurs vides', () => {
+    expect(cleanCategoryName('')).toBe('');
+    expect(cleanCategoryName(null)).toBe('');
+    expect(cleanCategoryName(undefined)).toBe('');
+  });
+});
+
+describe('itsLive · deriveSessionType', () => {
+  it('reconnaît FIN', () => {
+    expect(deriveSessionType('Finale')).toBe('FIN');
+    expect(deriveSessionType('Finale - Supercar Challenge')).toBe('FIN');
+  });
+
+  it('reconnaît DF', () => {
+    expect(deriveSessionType('Demi-Finale A')).toBe('DF');
+    expect(deriveSessionType('Demi-Finale B')).toBe('DF');
+    expect(deriveSessionType('demi finale a')).toBe('DF');
+  });
+
+  it('reconnaît MQ', () => {
+    expect(deriveSessionType('Manche 1')).toBe('MQ');
+    expect(deriveSessionType('Manche 4')).toBe('MQ');
+  });
+
+  it('reconnaît EC (essais qualificatifs)', () => {
+    expect(deriveSessionType('Essais Qualificatifs')).toBe('EC');
+  });
+
+  it('reconnaît EL (essais libres)', () => {
+    expect(deriveSessionType('Essais Libres 1')).toBe('EL');
+    expect(deriveSessionType('Essais Libres 2')).toBe('EL');
+  });
+
+  it('retourne vide pour les inconnus', () => {
+    expect(deriveSessionType('TEST')).toBe('');
+    expect(deriveSessionType('')).toBe('');
+    expect(deriveSessionType(null)).toBe('');
+  });
+});
+
+describe('itsLive · deriveSessionNum', () => {
+  it('extrait le numéro de manche', () => {
+    expect(deriveSessionNum('Manche 1', 'MQ')).toBe(1);
+    expect(deriveSessionNum('Manche 4', 'MQ')).toBe(4);
+  });
+
+  it('mappe Demi-Finale A → 1, B → 2', () => {
+    expect(deriveSessionNum('Demi-Finale A', 'DF')).toBe(1);
+    expect(deriveSessionNum('Demi-Finale B', 'DF')).toBe(2);
+  });
+
+  it('extrait le numéro des essais libres', () => {
+    expect(deriveSessionNum('Essais Libres 1', 'EL')).toBe(1);
+    expect(deriveSessionNum('Essais Libres 2', 'EL')).toBe(2);
+  });
+
+  it('retourne null pour FIN/EC sans numéro', () => {
+    expect(deriveSessionNum('Finale', 'FIN')).toBe(null);
+    expect(deriveSessionNum('Essais Qualificatifs', 'EC')).toBe(null);
   });
 });
