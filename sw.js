@@ -5,7 +5,7 @@
    Compatible GitHub Pages (sous-dossier) et racine.
 ═══════════════════════════════════════════════ */
 
-const CACHE_NAME = 'rx-chrono-v6';
+const CACHE_NAME = 'rx-chrono-v7';
 
 // Assets relatifs au scope du SW (pas de / en prefixe)
 const ASSET_PATHS = [
@@ -46,6 +46,9 @@ const ASSET_PATHS = [
   'js/qrcode.js',
   'js/context.js',
   'js/competition.js',
+  'js/importTimes.js',
+  'js/providers/index.js',
+  'js/providers/itsLive.js',
 ];
 
 // ── Installation : pre-cache des assets statiques ──

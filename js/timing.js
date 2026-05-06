@@ -576,6 +576,17 @@ function renderTimingTable() {
       }
       photoBtn.onclick = () => triggerPhotoImport(session);
     }
+
+    let liveBtn = document.getElementById('tim-live-btn');
+    if (!liveBtn) {
+      liveBtn = document.createElement('button');
+      liveBtn.id = 'tim-live-btn';
+      liveBtn.className = 'btn btn-secondary btn-sm';
+      liveBtn.textContent = '📡 Live';
+      liveBtn.title = 'Importer les temps depuis le chronométreur live (ITS, …)';
+      banner.appendChild(liveBtn);
+    }
+    liveBtn.onclick = () => triggerLiveImport(session);
   }
 
   const timed   = participants.filter(p => results[p.driverId]?.ms != null || SPECIAL_STATUSES.includes(results[p.driverId]?.status));
@@ -962,6 +973,30 @@ function bindEvents() {
     results = {};
     await loadParticipants();
     await loadResults();
+  });
+}
+
+// ─────────────────────────────────────────────────────────
+// IMPORT LIVE (ITS, …)
+// ─────────────────────────────────────────────────────────
+
+async function triggerLiveImport(session) {
+  if (!session || !selectedMeetingId || !selectedCategory) {
+    toast('Sélectionnez un meeting, une catégorie et une session', 'error');
+    return;
+  }
+  if (participants.length === 0) {
+    toast('Aucun pilote n\'est assigné à cette session', 'warning');
+    return;
+  }
+  const { startImport } = await import('./importTimes.js');
+  await startImport({
+    session,
+    participants,
+    meetingId:      selectedMeetingId,
+    championshipId: getActiveChampionshipId(),
+    category:       selectedCategory,
+    saveResult:     (driverId, ms, status) => saveResult(driverId, ms, status),
   });
 }
 
