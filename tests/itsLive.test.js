@@ -5,6 +5,7 @@ import {
   cleanCategoryName,
   deriveSessionType,
   deriveSessionNum,
+  parseRanking,
 } from '../js/providers/itsLive.js';
 
 describe('itsLive · parseTimeFlex', () => {
@@ -169,5 +170,93 @@ describe('itsLive · deriveSessionNum', () => {
   it('retourne null pour FIN/EC sans numéro', () => {
     expect(deriveSessionNum('Finale', 'FIN')).toBe(null);
     expect(deriveSessionNum('Essais Qualificatifs', 'EC')).toBe(null);
+  });
+});
+
+describe('itsLive · parseRanking', () => {
+  // Réponse API ITS Live réelle (extrait simplifié — Lessay 2026 MQ1 Supercar).
+  const fixture = {
+    boa: [null, 29295, 13474],
+    ranking: [
+      {
+        data_id: 1731,
+        number: '27',
+        pos: 1,
+        total_lap: 4,
+        driver_names: ['DUBOURG Jean Baptiste', '', '', '', '', '', '', '', '', null],
+        best_time: 37794,
+        best_time_lap: 3,
+        lap_time: 43276,
+        time_accuracy: 162154,
+        status: 0,
+      },
+      {
+        data_id: 1732,
+        number: '21',
+        pos: 2,
+        total_lap: 4,
+        driver_names: ['MEUNIER Damien', '', '', '', '', '', '', '', '', null],
+        best_time: 38267,
+        time_accuracy: 164524,
+        status: 0,
+      },
+      {
+        data_id: 1744,
+        number: '77',
+        pos: 14,
+        total_lap: 0,
+        driver_names: ['TOHILL Derek', '', '', '', '', '', '', '', '', null],
+        best_time: null,
+        lap_time: 0,
+        time_accuracy: 4248,
+        gap_first: '4 Tr.',
+        is_last: 1,
+        status: 0,
+      },
+    ],
+  };
+
+  it('extrait le temps total de course depuis time_accuracy (pas best_time)', () => {
+    const rows = parseRanking(fixture);
+    expect(rows[0].carNumber).toBe(27);
+    expect(rows[0].time_ms).toBe(162154);  // 2:42.154 — temps total
+    expect(rows[0].time_ms).not.toBe(37794); // pas le best_time
+    expect(rows[1].time_ms).toBe(164524);
+  });
+
+  it('extrait le nombre de tours dans total_lap', () => {
+    const rows = parseRanking(fixture);
+    expect(rows[0].total_lap).toBe(4);
+    expect(rows[1].total_lap).toBe(4);
+    expect(rows[2].total_lap).toBe(0);
+  });
+
+  it('parse les noms depuis driver_names ("NOM Prenom" → split)', () => {
+    const rows = parseRanking(fixture);
+    expect(rows[0].lastName).toBe('DUBOURG');
+    expect(rows[0].firstName).toBe('Jean Baptiste');
+    expect(rows[1].lastName).toBe('MEUNIER');
+    expect(rows[1].firstName).toBe('Damien');
+  });
+
+  it('renvoie le payload même quand le pilote est DNF (pas de filtrage ici)', () => {
+    const rows = parseRanking(fixture);
+    expect(rows).toHaveLength(3);
+    expect(rows[2].carNumber).toBe(77);
+    expect(rows[2].total_lap).toBe(0);
+  });
+
+  it('gère un payload vide', () => {
+    expect(parseRanking({})).toEqual([]);
+    expect(parseRanking({ ranking: [] })).toEqual([]);
+    expect(parseRanking(null)).toEqual([]);
+  });
+
+  it('priorité firstName/lastName explicites sur driver_names', () => {
+    const rows = parseRanking({
+      ranking: [{ number: '1', firstName: 'Foo', lastName: 'Bar', driver_names: ['BAZ Qux'] }],
+    });
+    expect(rows[0].firstName).toBe('Foo');
+    expect(rows[0].lastName).toBe('Bar');
   });
 });

@@ -676,9 +676,23 @@ async function showRankingStep({ ctx, provider, config, remoteSessionId }) {
     return;
   }
 
+  // DNF auto : si l'API renvoie un nombre de tours inférieur au nombre
+  // requis pour la session locale, on force le statut DNF et on ignore
+  // le temps (qui n'aurait pas de sens pour un pilote qui n'a pas fini).
+  const requiredLaps = Number(ctx.session?.tours) || 0;
+  const annotated = rows.map(r => {
+    const incomplete = requiredLaps > 0
+      && r.total_lap != null
+      && r.total_lap < requiredLaps;
+    if (incomplete) {
+      return { ...r, status: 'DNF', time_ms: null, _autoDnf: true };
+    }
+    return r;
+  });
+
   // Mappage par numéro de voiture
   const byCarNumber = new Map(ctx.participants.map(p => [Number(p.carNumber), p]));
-  const enriched = rows.map(r => {
+  const enriched = annotated.map(r => {
     const local = byCarNumber.get(Number(r.carNumber));
     const importable = !!local && (r.time_ms || r.status);
     return { ...r, local, importable };
@@ -773,7 +787,11 @@ function rankingRowHtml(r, idx) {
     : '<span class="text-muted">—</span>';
 
   const statusCell = r.status
-    ? `<span class="badge badge-${r.status === 'DNF' ? 'dnf' : r.status === 'DNS' ? 'dns' : 'dsq'}">${escHtml(r.status)}</span>`
+    ? `<span class="badge badge-${r.status === 'DNF' ? 'dnf' : r.status === 'DNS' ? 'dns' : 'dsq'}">${escHtml(r.status)}</span>${
+        r._autoDnf
+          ? ` <span class="text-muted" style="font-size:0.72rem" title="Tours incomplets : ${r.total_lap ?? 0} sur ${r.raw?.required_laps ?? '?'}">(tours incomplets)</span>`
+          : ''
+      }`
     : '<span class="text-muted">—</span>';
 
   const checkbox = r.importable
