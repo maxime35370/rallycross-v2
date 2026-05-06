@@ -34,24 +34,74 @@ function commonHeaders() {
 }
 
 // ─────────────────────────────────────────────────────────
+// CHAMPIONNATS CONNUS
+// Liste de cs_id ITS qu'on a déjà rencontrés, pour pré-remplir
+// le dropdown de la modal d'import. Si un cs_id n'est pas dans
+// cette liste, l'utilisateur peut tout de même le saisir
+// manuellement via l'option « Autre… ».
+// ─────────────────────────────────────────────────────────
+
+export const KNOWN_CHAMPIONSHIPS = [
+  { value: 'rallycrossfr', label: 'Championnat de France Rallycross (FFSA)' },
+];
+
+// ─────────────────────────────────────────────────────────
 // SCHÉMA DE CONFIGURATION
-// Permet à l'UI d'afficher dynamiquement les champs requis.
+// Permet à l'UI d'afficher dynamiquement les champs requis,
+// avec dropdowns en cascade : championnat → saison → événement.
 // ─────────────────────────────────────────────────────────
 
 export const configSchema = {
   championship: [
     {
       key: 'cs_id',
-      label: 'Championnat ITS (cs_id)',
-      placeholder: 'rallycrossfr',
-      help: 'Identifiant du championnat dans ITS Live (ex : rallycrossfr).',
+      label: 'Championnat',
+      type: 'select',
       required: true,
+      options: KNOWN_CHAMPIONSHIPS,
+      allowCustom: true,
+      customLabel: 'Autre…',
+      customPlaceholder: 'ex : rallycrossfr',
+      help: 'Identifiant ITS du championnat. Si non listé, choisissez « Autre… » et tapez-le (visible dans l\'URL its-results.com/<cs_id>/...).',
     },
   ],
   meeting: [
-    { key: 'season',   label: 'Saison',   placeholder: '2026',   required: true },
-    { key: 'event_id', label: 'Événement (event_id)', placeholder: 'lessay', required: true,
-      help: 'Identifiant ITS de l\'événement (ex : lessay, loheac, kerlabo).' },
+    {
+      key: 'season',
+      label: 'Saison',
+      type: 'dynamicSelect',
+      required: true,
+      dependsOn: ['cs_id'],
+      placeholder: '— Choisir une saison —',
+      loadOptions: async ({ cs_id }) => {
+        const seasons = await listSeasons(cs_id);
+        return (seasons || []).map(s => ({
+          value: String(s.name),
+          label: String(s.name),
+          raw: s,
+        }));
+      },
+    },
+    {
+      key: 'event_id',
+      label: 'Manche / Événement',
+      type: 'dynamicSelect',
+      required: true,
+      dependsOn: ['cs_id', 'season'],
+      placeholder: '— Choisir un événement —',
+      loadOptions: async ({ cs_id, season }) => {
+        const events = await listEvents(cs_id, season);
+        return (events || []).map(e => {
+          const date = e.begin_date
+            ? new Date(e.begin_date).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' })
+            : '';
+          const parts = [e.name || e.event_id];
+          if (e.location_name && e.location_name !== e.name) parts.push(e.location_name);
+          if (date) parts.push(date);
+          return { value: e.event_id, label: parts.join(' — '), raw: e };
+        });
+      },
+    },
   ],
 };
 

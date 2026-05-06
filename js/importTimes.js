@@ -156,73 +156,93 @@ export async function startImport(ctx) {
 
 // ─────────────────────────────────────────────────────────
 // ÉTAPE 1 — CONFIGURATION DU PROVIDER
+// Sélection en cascade : championnat → saison → événement.
+// Chaque champ peut être :
+//   - text          (input texte simple)
+//   - select        (dropdown avec options statiques + option "Autre…")
+//   - dynamicSelect (dropdown peuplé via loadOptions(deps))
 // ─────────────────────────────────────────────────────────
 
 function showConfigStep({ ctx, provider, champConfig, meetingConfig }) {
   const providers = listProviders();
 
-  const champValues   = champConfig   || {};
-  const meetingValues = meetingConfig || {};
+  const allFields = [
+    ...provider.configSchema.championship.map(f => ({ ...f, scope: 'championship' })),
+    ...provider.configSchema.meeting.map(f => ({ ...f, scope: 'meeting' })),
+  ];
 
-  const fieldsHtml = (scope, values) => provider.configSchema[scope].map(f => `
-    <div class="form-group">
-      <label class="form-label">${escHtml(f.label)}${f.required ? ' *' : ''}</label>
-      <input class="form-input" type="text"
-        data-scope="${scope}" data-key="${escHtml(f.key)}"
-        placeholder="${escHtml(f.placeholder || '')}"
-        value="${escHtml(values?.[f.key] ?? '')}">
-      ${f.help ? `<div class="text-muted" style="font-size:0.78rem;margin-top:4px">${escHtml(f.help)}</div>` : ''}
-    </div>
-  `).join('');
+  // État réactif partagé : chaque champ peut lire / écrire dedans.
+  const state = {
+    values:        { ...(champConfig || {}), ...(meetingConfig || {}) },
+    optionsCache:  {},     // { [key]: { depsKey, options } }
+    loading:       new Set(),
+    errors:        {},
+    customMode:    {},     // { [key]: true } quand l'utilisateur a choisi « Autre… »
+  };
 
-  setBody(`
-    <div style="display:flex;flex-direction:column;gap:var(--sp-md)">
-      <div class="form-group">
-        <label class="form-label">Fournisseur</label>
-        <select class="form-select" id="imp-provider-select" ${providers.length === 1 ? 'disabled' : ''}>
-          ${providers.map(p => `
-            <option value="${p.id}" ${p.id === provider.id ? 'selected' : ''}>${escHtml(p.name)}</option>
-          `).join('')}
-        </select>
-        <div class="text-muted" style="font-size:0.78rem;margin-top:4px">${escHtml(provider.description || '')}</div>
-      </div>
+  // Si une valeur est déjà mémorisée mais pas dans la liste connue,
+  // basculer ce champ en mode custom dès l'ouverture.
+  for (const f of allFields) {
+    if (f.type === 'select' && f.allowCustom) {
+      const cur = state.values[f.key];
+      const known = (f.options || []).some(o => o.value === cur);
+      if (cur && !known) state.customMode[f.key] = true;
+    }
+  }
 
-      <div style="border-top:1px solid var(--clr-border);padding-top:var(--sp-md)">
-        <div class="text-muted" style="font-size:0.82rem;margin-bottom:var(--sp-sm);font-weight:500">
-          Réglages du championnat (mémorisés)
+  function render() {
+    const fieldsHtml = allFields.map(f => renderFieldHtml(f, state)).join('');
+
+    setBody(`
+      <div style="display:flex;flex-direction:column;gap:var(--sp-md)">
+        <div class="form-group">
+          <label class="form-label">Fournisseur</label>
+          <select class="form-select" id="imp-provider-select" ${providers.length === 1 ? 'disabled' : ''}>
+            ${providers.map(p => `
+              <option value="${p.id}" ${p.id === provider.id ? 'selected' : ''}>${escHtml(p.name)}</option>
+            `).join('')}
+          </select>
+          <div class="text-muted" style="font-size:0.78rem;margin-top:4px">${escHtml(provider.description || '')}</div>
         </div>
-        ${fieldsHtml('championship', champValues)}
+        ${fieldsHtml}
       </div>
+    `);
 
-      <div style="border-top:1px solid var(--clr-border);padding-top:var(--sp-md)">
-        <div class="text-muted" style="font-size:0.82rem;margin-bottom:var(--sp-sm);font-weight:500">
-          Identifiants de l'événement (ce meeting)
-        </div>
-        ${fieldsHtml('meeting', meetingValues)}
-      </div>
-    </div>
-  `);
+    setFooter(`
+      <button class="btn btn-secondary" id="imp-cancel">Annuler</button>
+      <button class="btn btn-primary" id="imp-fetch">Suivant : choisir une session →</button>
+    `);
 
-  setFooter(`
-    <button class="btn btn-secondary" id="imp-cancel">Annuler</button>
-    <button class="btn btn-primary" id="imp-fetch">📋 Lister les sessions</button>
-  `);
+    document.getElementById('imp-cancel').addEventListener('click', closeModal);
+    document.getElementById('imp-fetch').addEventListener('click', onSubmit);
 
-  document.getElementById('imp-cancel').addEventListener('click', closeModal);
-  document.getElementById('imp-fetch').addEventListener('click', async () => {
-    const fields = readConfigFields();
-    const missing = checkRequired(provider, fields);
+    bindFieldEvents(allFields, state, render);
+    triggerAsyncLoads(allFields, state, render);
+  }
+
+  async function onSubmit() {
+    const missing = allFields.filter(f => f.required && !state.values[f.key]).map(f => f.label);
     if (missing.length) {
       toast(`Champ(s) manquant(s) : ${missing.join(', ')}`, 'error');
       return;
     }
-    // Mémoriser la config (best-effort, non bloquant)
+
+    // Séparer la config par scope pour la persistence
+    const champFields   = {};
+    const meetingFields = {};
+    for (const f of allFields) {
+      const v = state.values[f.key];
+      if (v == null || v === '') continue;
+      if (f.scope === 'championship') champFields[f.key] = v;
+      else                            meetingFields[f.key] = v;
+    }
+
     try {
       if (ctx.championshipId) {
-        await saveChampionshipConfig(ctx.championshipId, provider.id, fields.championship);
+        await saveChampionshipConfig(ctx.championshipId, provider.id, champFields);
       }
       if (ctx.meetingId) {
-        await saveMeetingConfig(ctx.meetingId, fields.meeting);
+        await saveMeetingConfig(ctx.meetingId, meetingFields);
       }
     } catch (err) {
       console.warn('Sauvegarde config provider échouée :', err);
@@ -231,30 +251,241 @@ function showConfigStep({ ctx, provider, champConfig, meetingConfig }) {
     showSessionsStep({
       ctx,
       provider,
-      config: { ...fields.championship, ...fields.meeting },
+      config: { ...champFields, ...meetingFields },
     });
+  }
+
+  render();
+}
+
+// ─────────────────────────────────────────────────────────
+// RENDU DES CHAMPS DU FORMULAIRE
+// ─────────────────────────────────────────────────────────
+
+function renderFieldHtml(field, state) {
+  const value = state.values[field.key] ?? '';
+  const help  = field.help
+    ? `<div class="text-muted" style="font-size:0.78rem;margin-top:4px">${escHtml(field.help)}</div>`
+    : '';
+  const error = state.errors[field.key]
+    ? `<div class="config-test-error" style="margin-top:6px"><span>⚠️</span><span>${escHtml(state.errors[field.key])}</span></div>`
+    : '';
+  const labelHtml = `<label class="form-label">${escHtml(field.label)}${field.required ? ' *' : ''}</label>`;
+
+  if (field.type === 'select') {
+    const inCustom = !!state.customMode[field.key];
+    const options  = field.options || [];
+
+    if (inCustom) {
+      return `
+        <div class="form-group">
+          ${labelHtml}
+          <div style="display:flex;gap:6px">
+            <input class="form-input" type="text"
+              data-key="${escHtml(field.key)}" data-role="custom-input" style="flex:1"
+              placeholder="${escHtml(field.customPlaceholder || '')}"
+              value="${escHtml(value)}">
+            <button type="button" class="btn btn-secondary btn-sm"
+              data-key="${escHtml(field.key)}" data-role="cancel-custom">↩︎ Liste</button>
+          </div>
+          ${help}${error}
+        </div>
+      `;
+    }
+
+    return `
+      <div class="form-group">
+        ${labelHtml}
+        <select class="form-select" data-key="${escHtml(field.key)}" data-role="select">
+          <option value="">— Choisir —</option>
+          ${options.map(o => `
+            <option value="${escHtml(o.value)}" ${value === o.value ? 'selected' : ''}>${escHtml(o.label)}</option>
+          `).join('')}
+          ${field.allowCustom
+            ? `<option value="__custom__">${escHtml(field.customLabel || 'Autre…')}</option>`
+            : ''}
+        </select>
+        ${help}${error}
+      </div>
+    `;
+  }
+
+  if (field.type === 'dynamicSelect') {
+    const deps      = field.dependsOn || [];
+    const depsReady = deps.every(d => state.values[d]);
+    const cached    = state.optionsCache[field.key];
+    const isLoading = state.loading.has(field.key);
+
+    if (!depsReady) {
+      const missing = deps.filter(d => !state.values[d]).join(', ');
+      return `
+        <div class="form-group">
+          ${labelHtml}
+          <select class="form-select" disabled>
+            <option>— Renseignez d'abord : ${escHtml(missing)} —</option>
+          </select>
+          ${help}
+        </div>
+      `;
+    }
+
+    if (isLoading) {
+      return `
+        <div class="form-group">
+          ${labelHtml}
+          <select class="form-select" disabled>
+            <option>⏳ Chargement…</option>
+          </select>
+          ${help}
+        </div>
+      `;
+    }
+
+    if (state.errors[field.key]) {
+      return `
+        <div class="form-group">
+          ${labelHtml}
+          <select class="form-select" disabled>
+            <option>— Erreur —</option>
+          </select>
+          ${error}
+          <button type="button" class="btn btn-secondary btn-sm"
+            data-key="${escHtml(field.key)}" data-role="retry-load"
+            style="margin-top:6px">↻ Réessayer</button>
+        </div>
+      `;
+    }
+
+    const options = cached?.options || [];
+    if (options.length === 0) {
+      return `
+        <div class="form-group">
+          ${labelHtml}
+          <select class="form-select" disabled>
+            <option>— Aucune option disponible —</option>
+          </select>
+          ${help}
+        </div>
+      `;
+    }
+
+    return `
+      <div class="form-group">
+        ${labelHtml}
+        <select class="form-select" data-key="${escHtml(field.key)}" data-role="dynamic-select">
+          <option value="">${escHtml(field.placeholder || '— Choisir —')}</option>
+          ${options.map(o => `
+            <option value="${escHtml(o.value)}" ${value === o.value ? 'selected' : ''}>${escHtml(o.label)}</option>
+          `).join('')}
+        </select>
+        ${help}
+      </div>
+    `;
+  }
+
+  return `
+    <div class="form-group">
+      ${labelHtml}
+      <input class="form-input" type="text"
+        data-key="${escHtml(field.key)}" data-role="text"
+        placeholder="${escHtml(field.placeholder || '')}"
+        value="${escHtml(value)}">
+      ${help}
+    </div>
+  `;
+}
+
+// ─────────────────────────────────────────────────────────
+// ÉVÉNEMENTS DES CHAMPS
+// Quand un champ change, on invalide les options des champs qui en
+// dépendent (dependsOn) puis on re-render.
+// ─────────────────────────────────────────────────────────
+
+function bindFieldEvents(allFields, state, rerender) {
+  const setValue = (key, value) => {
+    if (state.values[key] === value) return;
+    state.values[key] = value;
+    invalidateDependents(key, allFields, state);
+    rerender();
+  };
+
+  document.querySelectorAll('#imp-modal-body [data-key]').forEach(el => {
+    const key  = el.dataset.key;
+    const role = el.dataset.role;
+
+    if (role === 'select') {
+      el.addEventListener('change', () => {
+        if (el.value === '__custom__') {
+          state.customMode[key] = true;
+          state.values[key] = '';
+          invalidateDependents(key, allFields, state);
+          rerender();
+        } else {
+          setValue(key, el.value);
+        }
+      });
+    } else if (role === 'dynamic-select') {
+      el.addEventListener('change', () => setValue(key, el.value));
+    } else if (role === 'text' || role === 'custom-input') {
+      const commit = () => setValue(key, el.value.trim());
+      el.addEventListener('change', commit);
+      el.addEventListener('blur',   commit);
+    } else if (role === 'cancel-custom') {
+      el.addEventListener('click', () => {
+        state.customMode[key] = false;
+        state.values[key] = '';
+        invalidateDependents(key, allFields, state);
+        rerender();
+      });
+    } else if (role === 'retry-load') {
+      el.addEventListener('click', () => {
+        delete state.errors[key];
+        delete state.optionsCache[key];
+        rerender();
+      });
+    }
   });
 }
 
-function readConfigFields() {
-  const out = { championship: {}, meeting: {} };
-  document.querySelectorAll('#imp-modal-body input[data-scope]').forEach(input => {
-    const scope = input.dataset.scope;
-    const key   = input.dataset.key;
-    const val   = input.value.trim();
-    if (val) out[scope][key] = val;
-  });
-  return out;
+function invalidateDependents(changedKey, allFields, state) {
+  for (const f of allFields) {
+    if (f.type === 'dynamicSelect' && (f.dependsOn || []).includes(changedKey)) {
+      delete state.optionsCache[f.key];
+      delete state.errors[f.key];
+      state.values[f.key] = '';
+      // Cascade : tout ce qui dépendait de f doit aussi tomber
+      invalidateDependents(f.key, allFields, state);
+    }
+  }
 }
 
-function checkRequired(provider, fields) {
-  const missing = [];
-  ['championship', 'meeting'].forEach(scope => {
-    provider.configSchema[scope].forEach(f => {
-      if (f.required && !fields[scope][f.key]) missing.push(f.label);
-    });
-  });
-  return missing;
+function triggerAsyncLoads(allFields, state, rerender) {
+  for (const f of allFields) {
+    if (f.type !== 'dynamicSelect') continue;
+    const deps = f.dependsOn || [];
+    if (!deps.every(d => state.values[d])) continue;
+
+    const depsKey = JSON.stringify(deps.map(d => state.values[d]));
+    const cached  = state.optionsCache[f.key];
+    if (cached?.depsKey === depsKey)  continue;
+    if (state.loading.has(f.key))     continue;
+    if (state.errors[f.key])          continue;
+
+    state.loading.add(f.key);
+    const depsValues = Object.fromEntries(deps.map(d => [d, state.values[d]]));
+
+    f.loadOptions(depsValues)
+      .then(options => {
+        state.optionsCache[f.key] = { depsKey, options: options || [] };
+        state.loading.delete(f.key);
+        rerender();
+      })
+      .catch(err => {
+        state.errors[f.key] = err.message || String(err);
+        state.loading.delete(f.key);
+        rerender();
+      });
+  }
 }
 
 // ─────────────────────────────────────────────────────────
