@@ -263,7 +263,10 @@ export function deriveSessionNum(raceName, type) {
 /**
  * Récupère le classement complet d'une session.
  * Retourne une liste normalisée :
- *   [{ carNumber, time_ms, status, position, firstName, lastName, raw }, ...]
+ *   [{ carNumber, time_ms, total_lap, status, position, firstName, lastName, raw }, ...]
+ *
+ * Le caller doit comparer `total_lap` au nombre de tours requis localement
+ * (ctx.session.tours) pour décider si un pilote est DNF.
  */
 export async function getRanking({ cs_id, season, event_id, session_id }) {
   const data = await apiPost(
@@ -284,8 +287,8 @@ export async function getRanking({ cs_id, season, event_id, session_id }) {
 // PARSING — robuste aux variations de format
 // ─────────────────────────────────────────────────────────
 
-function parseRanking(payload) {
-  const rows = pickFirst(payload, ['rows', 'results', 'entries', 'data', 'ranking', 'Ranking']) || [];
+export function parseRanking(payload) {
+  const rows = pickFirst(payload, ['ranking', 'Ranking', 'rows', 'results', 'entries', 'data']) || [];
   return rows
     .map(extractRow)
     .filter(r => r && r.carNumber != null);
@@ -298,25 +301,47 @@ function extractRow(row) {
   ]);
   if (carNumber == null) return null;
 
+  // Temps total de la course (et non pas le meilleur tour).
+  // Sur l'API ITS Live, le total est exposé via `time_accuracy` en ms.
+  // On garde des fallbacks pour rester compatible avec d'autres formats.
   const rawTime = pickFirst(row, [
+    'time_accuracy', 'timeAccuracy',
     'totalTime_ms', 'totalTimeMs', 'total_time_ms',
     'totalTime', 'total_time',
     'time_ms', 'timeMs',
-    'time', 'best_time', 'bestTime',
-    'gap_total',
+    'time', 'gap_total',
   ]);
   const time_ms = parseTimeFlex(rawTime);
+
+  const rawTotalLap = pickFirst(row, ['total_lap', 'totalLap', 'laps', 'lap_count']);
+  const total_lap = rawTotalLap != null ? Number(rawTotalLap) : null;
 
   const rawStatus = pickFirst(row, ['status', 'state', 'finishStatus', 'finish_status']);
   const status = parseStatusFlex(rawStatus);
 
   const position = pickFirst(row, ['position', 'rank', 'pos', 'rank_position']);
-  const firstName = pickFirst(row, ['firstName', 'first_name', 'firstname', 'prenom']);
-  const lastName  = pickFirst(row, ['lastName',  'last_name',  'lastname',  'nom', 'familyName']);
+
+  // Noms : ITS Live fournit driver_names: ["DUBOURG Jean Baptiste", ...].
+  // Pour les autres formats on prend firstName/lastName séparés.
+  let firstName = pickFirst(row, ['firstName', 'first_name', 'firstname', 'prenom']);
+  let lastName  = pickFirst(row, ['lastName',  'last_name',  'lastname',  'nom', 'familyName']);
+  if ((!firstName && !lastName) && Array.isArray(row.driver_names) && row.driver_names[0]) {
+    const fullName = String(row.driver_names[0]).trim();
+    // Heuristique ITS : "NOM Prénom Composé" — le premier mot est le nom de famille
+    // (uppercase chez ITS), le reste est le prénom.
+    const parts = fullName.split(/\s+/);
+    if (parts.length >= 2) {
+      lastName  = parts[0];
+      firstName = parts.slice(1).join(' ');
+    } else {
+      lastName = fullName;
+    }
+  }
 
   return {
     carNumber: Number(carNumber),
     time_ms,
+    total_lap,
     status,
     position: position != null ? Number(position) : null,
     firstName: firstName || null,
