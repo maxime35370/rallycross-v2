@@ -522,6 +522,12 @@ async function showSessionsStep({ ctx, provider, config }) {
     const triedLines = (debug.triedEndpoints || []).map(t =>
       `<li><code>${escHtml(t.path)}</code> — ${escHtml(t.status)}${t.message ? ' : ' + escHtml(t.message) : ''}</li>`
     ).join('');
+    const publicLink = debug.rawEvent?.its_results_link;
+    const linkHtml = publicLink
+      ? `<div style="margin-top:6px">Page publique des résultats :
+           <a href="${escHtml(publicLink)}" target="_blank" rel="noopener">${escHtml(publicLink)}</a>
+         </div>`
+      : '';
 
     setBody(`
       <div class="config-test-error">
@@ -535,6 +541,7 @@ async function showSessionsStep({ ctx, provider, config }) {
           Causes possibles : événement pas encore commencé,
           identifiants incorrects, ou session non publiée par le chronométreur.
         </div>
+        ${linkHtml}
       </div>
       <details style="margin-top:var(--sp-sm);font-size:0.78rem">
         <summary style="cursor:pointer;user-select:none">🔧 Détails techniques (à copier en cas de support)</summary>
