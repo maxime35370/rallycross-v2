@@ -133,6 +133,9 @@ function errorHtml(msg) {
  * @param {string} ctx.championshipId
  * @param {string} ctx.category
  * @param {Function} ctx.saveResult  — async (driverId, ms, status) => void
+ * @param {Function} [ctx.saveMeta]   — async (driverId, serie, couloir) => void
+ *                                      (utilisé pour les sessions MQ pour
+ *                                      pré-remplir la grille de départ)
  */
 export async function startImport(ctx) {
   if (!requireAuth()) return;
@@ -690,12 +693,17 @@ async function showRankingStep({ ctx, provider, config, remoteSessionId }) {
     return r;
   });
 
+  // Grille de départ (séries + couloirs) — uniquement pour les MQ.
+  const isMQ = ctx.session?.type === 'MQ';
+  const grid = isMQ ? provider.computeGrid?.(rows) || new Map() : new Map();
+
   // Mappage par numéro de voiture
   const byCarNumber = new Map(ctx.participants.map(p => [Number(p.carNumber), p]));
   const enriched = annotated.map(r => {
     const local = byCarNumber.get(Number(r.carNumber));
     const importable = !!local && (r.time_ms || r.status);
-    return { ...r, local, importable };
+    const gridInfo = grid.get(Number(r.carNumber)) || null;
+    return { ...r, local, importable, gridInfo };
   });
 
   const matched   = enriched.filter(r => r.local).length;
@@ -707,6 +715,7 @@ async function showRankingStep({ ctx, provider, config, remoteSessionId }) {
       <strong style="color:var(--clr-success)">${matched}</strong> pilote${matched > 1 ? 's' : ''} reconnu${matched > 1 ? 's' : ''}
       ${unmatched ? ` · <strong style="color:var(--clr-warning)">${unmatched}</strong> non reconnu${unmatched > 1 ? 's' : ''}` : ''}.
       <br>Décochez les lignes que vous ne voulez pas importer. Les temps existants seront écrasés.
+      ${isMQ && grid.size > 0 ? `<br><strong>Grille de départ</strong> (série / couloir) sera également pré-remplie pour les pilotes reconnus.` : ''}
     </div>
     <div class="table-wrap">
       <table>
@@ -716,10 +725,11 @@ async function showRankingStep({ ctx, provider, config, remoteSessionId }) {
           <th>Pilote (RXChrono)</th>
           <th class="right">Temps</th>
           <th class="center">Statut</th>
+          ${isMQ ? '<th class="center">Grille</th>' : ''}
           <th class="center">Importer</th>
         </tr></thead>
         <tbody>
-          ${enriched.map((r, i) => rankingRowHtml(r, i)).join('')}
+          ${enriched.map((r, i) => rankingRowHtml(r, i, { isMQ })).join('')}
         </tbody>
       </table>
     </div>
@@ -747,12 +757,21 @@ async function showRankingStep({ ctx, provider, config, remoteSessionId }) {
 
     let imported = 0;
     let failed   = 0;
+    let gridApplied = 0;
     for (const cb of checks) {
       const idx = parseInt(cb.dataset.idx, 10);
       const r = enriched[idx];
       if (!r?.local) continue;
       try {
         await ctx.saveResult(r.local.driverId, r.time_ms || null, r.status || null);
+        if (isMQ && r.gridInfo && ctx.saveMeta) {
+          try {
+            await ctx.saveMeta(r.local.driverId, r.gridInfo.serie, r.gridInfo.couloir);
+            gridApplied++;
+          } catch (err) {
+            console.error('saveMeta failed for', r, err);
+          }
+        }
         imported++;
       } catch (err) {
         console.error('Import row failed:', r, err);
@@ -761,10 +780,11 @@ async function showRankingStep({ ctx, provider, config, remoteSessionId }) {
     }
 
     closeModal();
+    const gridSuffix = gridApplied > 0 ? ` · grille pré-remplie pour ${gridApplied} pilote${gridApplied > 1 ? 's' : ''}` : '';
     if (failed) {
-      toast(`${imported} temps importé(s), ${failed} échec(s)`, 'warning', 5000);
+      toast(`${imported} temps importé(s), ${failed} échec(s)${gridSuffix}`, 'warning', 5000);
     } else {
-      toast(`${imported} temps importé(s) ✓`, 'success');
+      toast(`${imported} temps importé(s) ✓${gridSuffix}`, 'success');
     }
     logAudit('import', 'results', ctx.session.id, {
       provider: provider.id,
@@ -776,7 +796,7 @@ async function showRankingStep({ ctx, provider, config, remoteSessionId }) {
   });
 }
 
-function rankingRowHtml(r, idx) {
+function rankingRowHtml(r, idx, opts = {}) {
   const remoteName = [r.firstName, r.lastName].filter(Boolean).join(' ');
   const localName  = r.local
     ? `<strong>${escHtml(r.local.firstName || '')} ${escHtml(r.local.lastName || '')}</strong>`
@@ -794,6 +814,12 @@ function rankingRowHtml(r, idx) {
       }`
     : '<span class="text-muted">—</span>';
 
+  const gridCell = opts.isMQ
+    ? r.gridInfo
+      ? `<span class="badge" style="background:rgba(255,140,0,0.15);color:var(--clr-accent)">S${r.gridInfo.serie} · C${r.gridInfo.couloir}</span>`
+      : '<span class="text-muted">—</span>'
+    : '';
+
   const checkbox = r.importable
     ? `<input type="checkbox" class="imp-row-check" data-idx="${idx}" checked
          style="width:18px;height:18px;accent-color:var(--clr-accent)">`
@@ -806,6 +832,7 @@ function rankingRowHtml(r, idx) {
       <td>${localName}</td>
       <td class="right">${timeCell}</td>
       <td class="center">${statusCell}</td>
+      ${opts.isMQ ? `<td class="center">${gridCell}</td>` : ''}
       <td class="center">${checkbox}</td>
     </tr>
   `;

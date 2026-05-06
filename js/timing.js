@@ -997,6 +997,7 @@ async function triggerLiveImport(session) {
     championshipId: getActiveChampionshipId(),
     category:       selectedCategory,
     saveResult:     (driverId, ms, status) => saveResult(driverId, ms, status),
+    saveMeta:       (driverId, serie, couloir) => saveMeta(driverId, serie, couloir),
   });
 }
 

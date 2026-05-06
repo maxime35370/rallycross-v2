@@ -6,6 +6,7 @@ import {
   deriveSessionType,
   deriveSessionNum,
   parseRanking,
+  computeGrid,
 } from '../js/providers/itsLive.js';
 
 describe('itsLive · parseTimeFlex', () => {
@@ -258,5 +259,69 @@ describe('itsLive · parseRanking', () => {
     });
     expect(rows[0].firstName).toBe('Foo');
     expect(rows[0].lastName).toBe('Bar');
+  });
+
+  it('expose cat et starting_pos pour la grille', () => {
+    const rows = parseRanking({
+      ranking: [{ number: '27', cat: 'Série 3', starting_pos: 10 }],
+    });
+    expect(rows[0].cat).toBe('Série 3');
+    expect(rows[0].starting_pos).toBe(10);
+  });
+});
+
+describe('itsLive · computeGrid', () => {
+  // Fixture issue de la vraie réponse Lessay 2026 MQ1 Supercar (extrait)
+  const rows = [
+    { carNumber: 1,  cat: 'Série 1', starting_pos: 1  }, // Jeanney
+    { carNumber: 19, cat: 'Série 1', starting_pos: 2  }, // Lambec
+    { carNumber: 11, cat: 'Série 1', starting_pos: 3  }, // Remaud
+    { carNumber: 10, cat: 'Série 1', starting_pos: 4  }, // Paillardon
+    { carNumber: 4,  cat: 'Série 2', starting_pos: 5  }, // Vincent
+    { carNumber: 60, cat: 'Série 2', starting_pos: 6  }, // Knapick
+    { carNumber: 14, cat: 'Série 2', starting_pos: 7  }, // Moinel
+    { carNumber: 18, cat: 'Série 2', starting_pos: 8  }, // De Ganay
+    { carNumber: 43, cat: 'Série 2', starting_pos: 9  }, // Terroitin
+    { carNumber: 27, cat: 'Série 3', starting_pos: 10 }, // Dubourg
+    { carNumber: 21, cat: 'Série 3', starting_pos: 11 }, // Meunier
+    { carNumber: 17, cat: 'Série 3', starting_pos: 12 }, // Clairay
+    { carNumber: 12, cat: 'Série 3', starting_pos: 13 }, // Le Manac'h
+    { carNumber: 77, cat: 'Série 3', starting_pos: 14 }, // Tohill
+  ];
+
+  it('regroupe par série et numérote les couloirs 1..N selon starting_pos', () => {
+    const grid = computeGrid(rows);
+    expect(grid.get(1)).toEqual({ serie: 1, couloir: 1 });
+    expect(grid.get(10)).toEqual({ serie: 1, couloir: 4 });
+    expect(grid.get(4)).toEqual({ serie: 2, couloir: 1 });
+    expect(grid.get(43)).toEqual({ serie: 2, couloir: 5 });
+    expect(grid.get(27)).toEqual({ serie: 3, couloir: 1 });
+    expect(grid.get(77)).toEqual({ serie: 3, couloir: 5 });
+  });
+
+  it('trie correctement quand starting_pos n\'est pas séquentiel dans cat', () => {
+    const grid = computeGrid([
+      { carNumber: 99, cat: 'Série 1', starting_pos: 14 },
+      { carNumber: 88, cat: 'Série 1', starting_pos: 1  },
+    ]);
+    expect(grid.get(88)).toEqual({ serie: 1, couloir: 1 });
+    expect(grid.get(99)).toEqual({ serie: 1, couloir: 2 });
+  });
+
+  it('ignore les lignes sans cat ou starting_pos', () => {
+    const grid = computeGrid([
+      { carNumber: 1, cat: null, starting_pos: 1 },
+      { carNumber: 2, cat: 'Série 1', starting_pos: null },
+      { carNumber: 3, cat: 'Série 1', starting_pos: 5 },
+    ]);
+    expect(grid.has(1)).toBe(false);
+    expect(grid.has(2)).toBe(false);
+    expect(grid.get(3)).toEqual({ serie: 1, couloir: 1 });
+  });
+
+  it('retourne une Map vide si rows est vide ou nul', () => {
+    expect(computeGrid([]).size).toBe(0);
+    expect(computeGrid(null).size).toBe(0);
+    expect(computeGrid(undefined).size).toBe(0);
   });
 });
