@@ -199,13 +199,22 @@ export async function listSessions(config) {
 
   const result = !rawSessions || rawSessions.length === 0
     ? []
-    : rawSessions.map(s => ({
-        session_id: pickFirst(s, ['session_id', 'sessionId', 'id', 'ssid_session_id']),
-        name:       pickFirst(s, ['name', 'label', 'title', 'description', 'session_name']) || '',
-        category:   pickFirst(s, ['category', 'cat', 'class', 'category_name', 'class_name', 'group', 'group_name']) || '',
-        type:       pickFirst(s, ['type', 'session_type', 'kind', 'phase', 'phase_type']) || '',
-        raw: s,
-      })).filter(s => s.session_id != null);
+    : rawSessions.map(s => {
+        const raceName   = pickFirst(s, ['race_name', 'name', 'label', 'title', 'description', 'session_name']) || '';
+        const folderName = pickFirst(s, ['folder_name', 'category_name', 'category', 'cat', 'class', 'class_name', 'group', 'group_name']) || '';
+        const type       = deriveSessionType(raceName) || pickFirst(s, ['type', 'session_type', 'kind', 'phase', 'phase_type']) || '';
+        return {
+          session_id:  pickFirst(s, ['session_id', 'sessionId', 'id', 'ssid_session_id']),
+          name:        raceName,
+          category:    cleanCategoryName(folderName),
+          type,
+          num:         deriveSessionNum(raceName, type),
+          start_epoch: pickFirst(s, ['start_epoch', 'startEpoch']) || 0,
+          raw: s,
+        };
+      })
+      .filter(s => s.session_id != null)
+      .sort((a, b) => (a.start_epoch || 0) - (b.start_epoch || 0));
 
   if (result.length === 0 && typeof console !== 'undefined' && console.warn) {
     console.warn('[ITS Live] Aucune session trouvée. Réponse brute :', event);
@@ -274,6 +283,57 @@ function looksLikeSession(obj) {
   if (!obj || typeof obj !== 'object') return false;
   return ['session_id', 'sessionId', 'id', 'ssid_session_id']
     .some(k => obj[k] !== undefined && obj[k] !== null);
+}
+
+/**
+ * Nettoie un nom de catégorie ITS comme "06 - Supercar" en "Supercar".
+ * Le préfixe numérique est juste un index de tri côté ITS.
+ */
+export function cleanCategoryName(folderName) {
+  if (!folderName) return '';
+  return String(folderName).replace(/^\s*\d+\s*-\s*/, '').trim();
+}
+
+/**
+ * Déduit le type RXChrono (EC/MQ/DF/FIN) depuis le nom de course ITS.
+ *  - "Essais Libres N"        → EL (informatif, pas importé)
+ *  - "Essais Qualificatifs"   → EC
+ *  - "Manche N"               → MQ (n-ième manche qualificative)
+ *  - "Demi-Finale A/B"        → DF
+ *  - "Finale" / "Finale ..."  → FIN
+ */
+export function deriveSessionType(raceName) {
+  if (!raceName) return '';
+  const s = String(raceName).toLowerCase();
+  if (/finale/.test(s) && !/demi/.test(s))  return 'FIN';
+  if (/demi[-\s]?finale/.test(s))            return 'DF';
+  if (/manche\s*\d/.test(s))                 return 'MQ';
+  if (/essais\s*qualif/.test(s))             return 'EC';
+  if (/essais\s*libres?/.test(s))            return 'EL';
+  return '';
+}
+
+/**
+ * Déduit le numéro de manche depuis le nom de course (pour MQ/DF/EL).
+ * Pour DF : Demi-Finale A → 1, Demi-Finale B → 2.
+ */
+export function deriveSessionNum(raceName, type) {
+  if (!raceName) return null;
+  const s = String(raceName);
+  if (type === 'MQ') {
+    const m = s.match(/manche\s*(\d+)/i);
+    return m ? Number(m[1]) : null;
+  }
+  if (type === 'DF') {
+    if (/demi[-\s]?finale\s*A/i.test(s)) return 1;
+    if (/demi[-\s]?finale\s*B/i.test(s)) return 2;
+    return null;
+  }
+  if (type === 'EL') {
+    const m = s.match(/(\d+)/);
+    return m ? Number(m[1]) : null;
+  }
+  return null;
 }
 
 /**
