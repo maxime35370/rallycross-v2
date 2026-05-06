@@ -509,10 +509,23 @@ async function showSessionsStep({ ctx, provider, config }) {
   }
 
   if (!sessions.length) {
+    const cfgLines = Object.entries(config)
+      .filter(([, v]) => v != null && v !== '')
+      .map(([k, v]) => `<li><code>${escHtml(k)}</code> = <code>${escHtml(String(v))}</code></li>`)
+      .join('');
     setBody(`
       <div class="config-test-error">
         <span>⚠️</span>
-        <span>Aucune session trouvée pour cet événement. Vérifiez les identifiants.</span>
+        <span>Aucune session trouvée pour cet événement.</span>
+      </div>
+      <div class="text-muted" style="font-size:0.82rem;margin-top:var(--sp-sm)">
+        Configuration utilisée :
+        <ul style="margin:4px 0 0 18px;padding:0">${cfgLines}</ul>
+        <div style="margin-top:6px">
+          Causes possibles : événement pas encore commencé,
+          identifiants incorrects, ou session non publiée par le chronométreur.
+          Ouvrez la console (F12) pour voir la réponse brute du serveur.
+        </div>
       </div>
     `);
     setFooter(`<button class="btn btn-secondary" id="imp-back">← Retour</button>`);
