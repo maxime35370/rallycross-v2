@@ -516,18 +516,9 @@ async function showSessionsStep({ ctx, provider, config }) {
 
     const debug = sessions.debug || {};
     const rawJson = (() => {
-      try { return JSON.stringify(debug.rawEvent ?? null, null, 2); }
+      try { return JSON.stringify(debug.response ?? null, null, 2); }
       catch { return '[non sérialisable]'; }
     })();
-    const triedLines = (debug.triedEndpoints || []).map(t =>
-      `<li><code>${escHtml(t.path)}</code> — ${escHtml(t.status)}${t.message ? ' : ' + escHtml(t.message) : ''}</li>`
-    ).join('');
-    const publicLink = debug.rawEvent?.its_results_link;
-    const linkHtml = publicLink
-      ? `<div style="margin-top:6px">Page publique des résultats :
-           <a href="${escHtml(publicLink)}" target="_blank" rel="noopener">${escHtml(publicLink)}</a>
-         </div>`
-      : '';
 
     setBody(`
       <div class="config-test-error">
@@ -541,15 +532,11 @@ async function showSessionsStep({ ctx, provider, config }) {
           Causes possibles : événement pas encore commencé,
           identifiants incorrects, ou session non publiée par le chronométreur.
         </div>
-        ${linkHtml}
       </div>
       <details style="margin-top:var(--sp-sm);font-size:0.78rem">
         <summary style="cursor:pointer;user-select:none">🔧 Détails techniques (à copier en cas de support)</summary>
-        ${triedLines ? `
-          <div style="margin-top:6px">Endpoints tentés :
-            <ul style="margin:4px 0 0 18px;padding:0">${triedLines}</ul>
-          </div>` : ''}
-        <div style="margin-top:6px">Réponse brute de GetEventById :</div>
+        ${debug.endpoint ? `<div style="margin-top:6px">Endpoint appelé : <code>${escHtml(debug.endpoint)}</code></div>` : ''}
+        <div style="margin-top:6px">Réponse brute :</div>
         <pre style="max-height:240px;overflow:auto;background:rgba(0,0,0,0.2);padding:6px;border-radius:4px;white-space:pre-wrap;word-break:break-all;font-family:ui-monospace,monospace;font-size:0.72rem">${escHtml(rawJson)}</pre>
         <button class="btn btn-secondary btn-sm" id="imp-copy-debug" type="button">📋 Copier</button>
       </details>
