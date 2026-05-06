@@ -162,8 +162,9 @@ export async function getEvent({ cs_id, season, event_id }) {
 
 /**
  * Liste les sessions d'un événement.
- * Retourne une liste normalisée :
- *   [{ session_id, name, category, type, raw }, ...]
+ * Retourne un tableau enrichi : `result.debug` contient la réponse brute
+ * et la liste des endpoints tentés (utile pour afficher des détails
+ * techniques quand aucune session n'est trouvée).
  *
  * Le format précis du payload `getEvent` peut varier selon la version de
  * l'API et le championnat. On essaie plusieurs stratégies :
@@ -173,44 +174,71 @@ export async function getEvent({ cs_id, season, event_id }) {
  *     ses sessions inline.
  */
 export async function listSessions(config) {
-  const event = await getEvent(config);
+  const debug = { rawEvent: null, triedEndpoints: [] };
+
+  let event;
+  try {
+    event = await getEvent(config);
+    debug.rawEvent = event;
+  } catch (err) {
+    debug.rawEvent = { error: err.message || String(err) };
+    throw err;
+  }
 
   let rawSessions = findSessionsArray(event);
 
   if (!rawSessions || rawSessions.length === 0) {
-    rawSessions = await tryDedicatedSessionsEndpoints(config);
+    rawSessions = await tryDedicatedSessionsEndpoints(config, debug);
   }
 
-  if (!rawSessions || rawSessions.length === 0) {
-    if (typeof console !== 'undefined' && console.warn) {
-      console.warn('[ITS Live] Aucune session trouvée. Réponse brute :', event);
+  const result = !rawSessions || rawSessions.length === 0
+    ? []
+    : rawSessions.map(s => ({
+        session_id: pickFirst(s, ['session_id', 'sessionId', 'id', 'ssid_session_id']),
+        name:       pickFirst(s, ['name', 'label', 'title', 'description', 'session_name']) || '',
+        category:   pickFirst(s, ['category', 'cat', 'class', 'category_name', 'class_name', 'group', 'group_name']) || '',
+        type:       pickFirst(s, ['type', 'session_type', 'kind', 'phase', 'phase_type']) || '',
+        raw: s,
+      })).filter(s => s.session_id != null);
+
+  if (result.length === 0 && typeof console !== 'undefined' && console.warn) {
+    console.warn('[ITS Live] Aucune session trouvée. Réponse brute :', event);
+    if (debug.triedEndpoints.length) {
+      console.warn('[ITS Live] Endpoints tentés :', debug.triedEndpoints);
     }
-    return [];
   }
 
-  return rawSessions.map(s => ({
-    session_id: pickFirst(s, ['session_id', 'sessionId', 'id', 'ssid_session_id']),
-    name:       pickFirst(s, ['name', 'label', 'title', 'description', 'session_name']) || '',
-    category:   pickFirst(s, ['category', 'cat', 'class', 'category_name', 'class_name', 'group', 'group_name']) || '',
-    type:       pickFirst(s, ['type', 'session_type', 'kind', 'phase', 'phase_type']) || '',
-    raw: s,
-  })).filter(s => s.session_id != null);
+  result.debug = debug;
+  return result;
 }
 
 /**
- * Cherche en profondeur un tableau de sessions dans une réponse JSON.
- * On accepte un tableau dont les éléments ressemblent à des sessions
- * (clés id/session_id/sessionId, et au moins un champ descriptif).
+ * Cherche un tableau de sessions dans une réponse JSON.
+ *  1. Aux clés bien connues au top-level.
+ *  2. Aux clés bien connues dans des wrappers usuels (data, result, event…).
+ *  3. Recherche profonde par heuristique (looksLikeSession).
  */
 function findSessionsArray(payload) {
   if (!payload) return null;
 
-  const direct = pickFirst(payload, [
-    'sessions', 'Sessions', 'sessionList', 'sessions_list',
+  const wellKnown = [
+    'sessions', 'Sessions', 'sessionList', 'sessions_list', 'session_list',
     'phases', 'runs', 'races', 'heats',
-  ]);
-  if (Array.isArray(direct) && direct.length > 0 && looksLikeSession(direct[0])) {
-    return direct;
+  ];
+
+  for (const key of wellKnown) {
+    const arr = payload[key];
+    if (Array.isArray(arr) && arr.length > 0) return arr;
+  }
+
+  for (const wrapper of ['data', 'result', 'event', 'payload', 'response', 'Event']) {
+    const inner = payload[wrapper];
+    if (inner && typeof inner === 'object' && !Array.isArray(inner)) {
+      for (const key of wellKnown) {
+        const arr = inner[key];
+        if (Array.isArray(arr) && arr.length > 0) return arr;
+      }
+    }
   }
 
   // Recherche récursive bornée pour éviter les payloads gigantesques.
@@ -238,17 +266,12 @@ function findSessionsArray(payload) {
 
 function looksLikeSession(obj) {
   if (!obj || typeof obj !== 'object') return false;
-  const hasId = ['session_id', 'sessionId', 'id', 'ssid_session_id']
+  return ['session_id', 'sessionId', 'id', 'ssid_session_id']
     .some(k => obj[k] !== undefined && obj[k] !== null);
-  if (!hasId) return false;
-  const hasDesc = ['name', 'label', 'title', 'description', 'session_name',
-                   'category', 'cat', 'class', 'type', 'session_type', 'kind']
-    .some(k => obj[k] !== undefined && obj[k] !== null && obj[k] !== '');
-  return hasDesc;
 }
 
 /** Essaie quelques endpoints dédiés pour lister les sessions. */
-async function tryDedicatedSessionsEndpoints({ cs_id, season, event_id }) {
+async function tryDedicatedSessionsEndpoints({ cs_id, season, event_id }, debug) {
   const headers = { 'x-block': cs_id };
   const candidates = [
     `/Events/ListSessions/${encodeURIComponent(cs_id)}/${encodeURIComponent(season)}/${encodeURIComponent(event_id)}`,
@@ -259,11 +282,12 @@ async function tryDedicatedSessionsEndpoints({ cs_id, season, event_id }) {
   for (const path of candidates) {
     try {
       const data = await apiGet(path, headers);
-      if (Array.isArray(data) && data.length > 0 && looksLikeSession(data[0])) return data;
+      debug?.triedEndpoints.push({ path, status: 'ok' });
+      if (Array.isArray(data) && data.length > 0) return data;
       const arr = findSessionsArray(data);
       if (arr && arr.length > 0) return arr;
-    } catch {
-      // 404 attendu sur les chemins inexistants — on continue.
+    } catch (err) {
+      debug?.triedEndpoints.push({ path, status: 'error', message: err.message || String(err) });
     }
   }
   return null;

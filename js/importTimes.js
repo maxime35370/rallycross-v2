@@ -513,6 +513,16 @@ async function showSessionsStep({ ctx, provider, config }) {
       .filter(([, v]) => v != null && v !== '')
       .map(([k, v]) => `<li><code>${escHtml(k)}</code> = <code>${escHtml(String(v))}</code></li>`)
       .join('');
+
+    const debug = sessions.debug || {};
+    const rawJson = (() => {
+      try { return JSON.stringify(debug.rawEvent ?? null, null, 2); }
+      catch { return '[non sérialisable]'; }
+    })();
+    const triedLines = (debug.triedEndpoints || []).map(t =>
+      `<li><code>${escHtml(t.path)}</code> — ${escHtml(t.status)}${t.message ? ' : ' + escHtml(t.message) : ''}</li>`
+    ).join('');
+
     setBody(`
       <div class="config-test-error">
         <span>⚠️</span>
@@ -524,12 +534,29 @@ async function showSessionsStep({ ctx, provider, config }) {
         <div style="margin-top:6px">
           Causes possibles : événement pas encore commencé,
           identifiants incorrects, ou session non publiée par le chronométreur.
-          Ouvrez la console (F12) pour voir la réponse brute du serveur.
         </div>
       </div>
+      <details style="margin-top:var(--sp-sm);font-size:0.78rem">
+        <summary style="cursor:pointer;user-select:none">🔧 Détails techniques (à copier en cas de support)</summary>
+        ${triedLines ? `
+          <div style="margin-top:6px">Endpoints tentés :
+            <ul style="margin:4px 0 0 18px;padding:0">${triedLines}</ul>
+          </div>` : ''}
+        <div style="margin-top:6px">Réponse brute de GetEventById :</div>
+        <pre style="max-height:240px;overflow:auto;background:rgba(0,0,0,0.2);padding:6px;border-radius:4px;white-space:pre-wrap;word-break:break-all;font-family:ui-monospace,monospace;font-size:0.72rem">${escHtml(rawJson)}</pre>
+        <button class="btn btn-secondary btn-sm" id="imp-copy-debug" type="button">📋 Copier</button>
+      </details>
     `);
     setFooter(`<button class="btn btn-secondary" id="imp-back">← Retour</button>`);
     document.getElementById('imp-back')?.addEventListener('click', () => startImport(ctx));
+    document.getElementById('imp-copy-debug')?.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(rawJson);
+        toast('Réponse copiée dans le presse-papier', 'success');
+      } catch {
+        toast('Impossible de copier — sélectionnez le texte manuellement', 'error');
+      }
+    });
     return;
   }
 
