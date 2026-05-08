@@ -346,8 +346,51 @@ function extractRow(row) {
     position: position != null ? Number(position) : null,
     firstName: firstName || null,
     lastName:  lastName  || null,
+    // Grille de départ : `cat` = "Série N" (à parser), `starting_pos` =
+    // position globale qualif (1..N). Le couloir au sein de la série est
+    // déduit via computeGrid() côté caller.
+    cat:          pickFirst(row, ['cat', 'class', 'category']) || null,
+    starting_pos: row.starting_pos != null ? Number(row.starting_pos) : null,
     raw: row,
   };
+}
+
+/**
+ * À partir d'une liste de classements ITS (avec `cat` et `starting_pos`),
+ * calcule la grille de départ : pour chaque pilote, la série et le couloir.
+ *
+ * Algo : on regroupe par série (parsée depuis `cat`), puis dans chaque
+ * série on trie par `starting_pos` croissant et on numérote les couloirs
+ * 1..N. Les pilotes sans `cat` ou `starting_pos` valide sont ignorés.
+ *
+ * Retourne une Map<carNumber, { serie, couloir }>.
+ */
+export function computeGrid(rows) {
+  const grid = new Map();
+  if (!Array.isArray(rows) || rows.length === 0) return grid;
+
+  const bySerie = new Map();
+  for (const r of rows) {
+    const serie = parseSerieNumber(r.cat);
+    if (!serie || r.starting_pos == null || r.carNumber == null) continue;
+    if (!bySerie.has(serie)) bySerie.set(serie, []);
+    bySerie.get(serie).push(r);
+  }
+
+  for (const [serie, drivers] of bySerie) {
+    drivers.sort((a, b) => (a.starting_pos || 0) - (b.starting_pos || 0));
+    drivers.forEach((d, idx) => {
+      grid.set(Number(d.carNumber), { serie, couloir: idx + 1 });
+    });
+  }
+
+  return grid;
+}
+
+function parseSerieNumber(cat) {
+  if (!cat) return null;
+  const m = String(cat).match(/(\d+)/);
+  return m ? Number(m[1]) : null;
 }
 
 function pickFirst(obj, keys) {
