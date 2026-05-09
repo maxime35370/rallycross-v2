@@ -160,6 +160,38 @@
 /* ── Résultat colonne droite ── */
 .tim-result { flex: 1; text-align: right; }
 
+/* ── Badges points en direct (MQ uniquement) ── */
+.tim-points {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 8px;
+  font-size: 0.78rem;
+  vertical-align: middle;
+}
+.tim-points-current {
+  color: var(--clr-success);
+  font-weight: 700;
+}
+.tim-points-total {
+  color: var(--clr-text-2);
+  font-weight: 600;
+}
+.tim-points-interim {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  background: rgba(255, 140, 0, 0.15);
+  color: var(--clr-accent);
+  border-radius: var(--r-sm);
+  font-weight: 700;
+  font-size: 0.72rem;
+}
+.tim-points-interim sup {
+  font-size: 0.6rem;
+  margin-left: 1px;
+}
+
 /* ── Méta MQ : sélecteurs série / couloir ── */
 .tim-meta {
   display: flex;
