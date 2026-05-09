@@ -974,12 +974,15 @@ function renderTabPoints() {
           </label>
           <label class="status-rule-card" style="cursor:pointer">
             <div style="display:flex;align-items:center;gap:8px">
-              <input type="radio" name="interim-tiebreaker" value="best_overall_time"
-                ${_editData.interimTiebreaker === 'best_overall_time' ? 'checked' : ''}>
-              <strong>Meilleur temps absolu sur l'ensemble des manches</strong>
+              <input type="radio" name="interim-tiebreaker" value="best_positions_then_time"
+                ${(_editData.interimTiebreaker === 'best_positions_then_time'
+                   || _editData.interimTiebreaker === 'best_overall_time') ? 'checked' : ''}>
+              <strong>Meilleures positions, puis chrono en dernier recours</strong>
             </div>
             <div class="text-muted" style="font-size:0.78rem;margin-top:4px;margin-left:24px">
-              FIA / Euro RX — départage par le meilleur chrono parmi toutes les manches déjà disputées.
+              FIA / Euro RX — on trie les positions de chaque pilote (1ʳᵉ place, 2ᵉ, 3ᵉ…) et on
+              compare une à une. La première différence départage. Si toutes les positions sont
+              identiques, on prend le meilleur chrono sur l'ensemble des manches.
             </div>
           </label>
         </div>

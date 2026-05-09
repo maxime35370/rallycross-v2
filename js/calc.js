@@ -280,32 +280,41 @@ export async function calcMqStandings(db, session, regulation) {
 
 /**
  * Compare deux entrees pilote pour departager un ex aequo de points au
- * classement intermediaire. Utilise les chronos par num de manche (mqMs).
+ * classement intermediaire. Utilise les positions (mqPos) et chronos
+ * (mqMs) collectes par num de manche.
+ *
+ * Modes supportes (regulation.interimTiebreaker) :
+ *  - 'last_manche_time'         : meilleur chrono de la derniere manche
+ *                                 disputee (defaut FFSA). On itere des
+ *                                 nums les plus recents aux plus anciens
+ *                                 et on prend le 1er ou les deux pilotes
+ *                                 ont un chrono.
+ *  - 'best_positions_then_time' : (FIA / Euro RX) on trie les positions
+ *                                 de chaque pilote en ordre croissant
+ *                                 (meilleure d'abord) puis on compare
+ *                                 element par element. Si tout est egal,
+ *                                 fallback sur le meilleur chrono.
+ *  - 'best_overall_time'        : alias (deprecated) de
+ *                                 'best_positions_then_time' pour compat
+ *                                 avec les anciennes configs.
  *
  * Retourne :
  *  - une valeur < 0 si a doit etre devant b
  *  - une valeur > 0 si b doit etre devant a
  *  - 0 si vraiment ex aequo (ou pas de mode tiebreaker actif)
  *
- * @param {{ mqMs: object }} a — pilote A avec mqMs = { numManche -> ms }
- * @param {{ mqMs: object }} b — pilote B
+ * @param {{ mqMs?: object, mqPos?: object }} a — pilote A avec
+ *   mqMs = { numManche -> ms } et mqPos = { numManche -> position }
+ * @param {{ mqMs?: object, mqPos?: object }} b — pilote B
  * @param {object} regulation — peut contenir interimTiebreaker
  * @param {number[]} mqNumsDescending — nums des manches du plus recent
  *                                      au plus ancien (pour 'last_manche_time')
  */
 export function compareInterimTiebreaker(a, b, regulation, mqNumsDescending = []) {
   const mode = regulation?.interimTiebreaker;
-  const aMs = a?.mqMs || {};
-  const bMs = b?.mqMs || {};
+  const aMs  = a?.mqMs  || {};
+  const bMs  = b?.mqMs  || {};
 
-  if (mode === 'best_overall_time') {
-    const aValues = Object.values(aMs).filter(v => v != null && isFinite(v));
-    const bValues = Object.values(bMs).filter(v => v != null && isFinite(v));
-    const aBest = aValues.length ? Math.min(...aValues) : Infinity;
-    const bBest = bValues.length ? Math.min(...bValues) : Infinity;
-    if (aBest === Infinity && bBest === Infinity) return 0;
-    return aBest - bBest;
-  }
   if (mode === 'last_manche_time') {
     for (const n of mqNumsDescending) {
       const at = aMs[n];
@@ -314,6 +323,38 @@ export function compareInterimTiebreaker(a, b, regulation, mqNumsDescending = []
     }
     return 0;
   }
+
+  if (mode === 'best_positions_then_time' || mode === 'best_overall_time') {
+    // 1. Trier les positions de chaque pilote en ordre croissant
+    //    (1ere position = meilleure). Les manches non finies (DNF/DNS/DSQ
+    //    ou non-couru) ont mqPos[n] = null/undefined : on les filtre.
+    const aPositions = Object.values(a?.mqPos || {})
+      .filter(p => p != null && isFinite(p))
+      .sort((x, y) => x - y);
+    const bPositions = Object.values(b?.mqPos || {})
+      .filter(p => p != null && isFinite(p))
+      .sort((x, y) => x - y);
+
+    // 2. Comparer element par element. La 1ere difference departage
+    //    (plus petit = meilleure place = devant). Si un pilote a moins
+    //    de positions, les manquantes sont traitees comme Infinity.
+    const len = Math.max(aPositions.length, bPositions.length);
+    for (let i = 0; i < len; i++) {
+      const ap = aPositions[i] ?? Infinity;
+      const bp = bPositions[i] ?? Infinity;
+      if (ap !== bp) return ap - bp;
+    }
+
+    // 3. Toutes les positions sont egales -> fallback sur le meilleur
+    //    chrono absolu sur les manches deja disputees.
+    const aTimes = Object.values(aMs).filter(v => v != null && isFinite(v));
+    const bTimes = Object.values(bMs).filter(v => v != null && isFinite(v));
+    const aBest = aTimes.length ? Math.min(...aTimes) : Infinity;
+    const bBest = bTimes.length ? Math.min(...bTimes) : Infinity;
+    if (aBest === Infinity && bBest === Infinity) return 0;
+    return aBest - bBest;
+  }
+
   return 0;
 }
 
@@ -380,32 +421,42 @@ export async function calcInterimStandings(db, sessions, regulation) {
   const mqNumsDescending = mqSessions.map(s => s.num).sort((a, b) => b - a);
   const tiebreakerMode   = regulation?.interimTiebreaker;
 
-  // Tri : total desc → MQ du plus récent au plus ancien (points) → chrono
+  // Tri en cas d'egalite de points :
+  //  - Si un mode tiebreaker est defini -> on l'applique directement
+  //    (la regle officielle FFSA est "meilleur chrono dernier MQ", la regle
+  //    FIA est "meilleures positions triees puis chrono").
+  //  - Sinon (vieux championnats sans config tiebreaker) -> on conserve
+  //    l'ancien comportement : comparer les points de chaque manche du
+  //    plus recent au plus ancien.
   eligible.sort((a, b) => {
     if (b.totalPoints !== a.totalPoints) return b.totalPoints - a.totalPoints;
+    if (tiebreakerMode) {
+      return compareInterimTiebreaker(a, b, regulation, mqNumsDescending);
+    }
     for (let n = mqSessions.length; n >= 1; n--) {
       const pa = a.mqPoints[n] ?? -1;
       const pb = b.mqPoints[n] ?? -1;
       if (pb !== pa) return pb - pa;
     }
-    return compareInterimTiebreaker(a, b, regulation, mqNumsDescending);
+    return 0;
   });
 
-  // Positions + points intermédiaires
+  // Positions + points intermédiaires : detection des ex aequo
   let pos = 1;
   eligible.forEach((d, i) => {
     if (i > 0) {
       const prev = eligible[i - 1];
       let sameAll = d.totalPoints === prev.totalPoints;
-      if (sameAll) {
+      if (sameAll && tiebreakerMode) {
+        // Si tiebreaker defini, on s'appuie uniquement sur lui pour
+        // l'ex aequo : sameAll si compareInterimTiebreaker == 0.
+        sameAll = compareInterimTiebreaker(d, prev, regulation, mqNumsDescending) === 0;
+      } else if (sameAll) {
+        // Comportement legacy : ex aequo si tous les points par manche
+        // sont identiques.
         for (let n = mqSessions.length; n >= 1; n--) {
           if ((d.mqPoints[n] ?? -1) !== (prev.mqPoints[n] ?? -1)) { sameAll = false; break; }
         }
-      }
-      // Si meme points/manche mais le tiebreaker chrono les separe, ils
-      // ne sont PAS ex aequo.
-      if (sameAll && tiebreakerMode && compareInterimTiebreaker(d, prev, regulation, mqNumsDescending) !== 0) {
-        sameAll = false;
       }
       if (!sameAll) pos = i + 1;
     }
