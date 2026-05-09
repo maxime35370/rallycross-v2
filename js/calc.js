@@ -275,6 +275,49 @@ export async function calcMqStandings(db, session, regulation) {
 }
 
 // ─────────────────────────────────────────────────────────
+// TIEBREAKER CLASSEMENT INTERMÉDIAIRE
+// ─────────────────────────────────────────────────────────
+
+/**
+ * Compare deux entrees pilote pour departager un ex aequo de points au
+ * classement intermediaire. Utilise les chronos par num de manche (mqMs).
+ *
+ * Retourne :
+ *  - une valeur < 0 si a doit etre devant b
+ *  - une valeur > 0 si b doit etre devant a
+ *  - 0 si vraiment ex aequo (ou pas de mode tiebreaker actif)
+ *
+ * @param {{ mqMs: object }} a — pilote A avec mqMs = { numManche -> ms }
+ * @param {{ mqMs: object }} b — pilote B
+ * @param {object} regulation — peut contenir interimTiebreaker
+ * @param {number[]} mqNumsDescending — nums des manches du plus recent
+ *                                      au plus ancien (pour 'last_manche_time')
+ */
+export function compareInterimTiebreaker(a, b, regulation, mqNumsDescending = []) {
+  const mode = regulation?.interimTiebreaker;
+  const aMs = a?.mqMs || {};
+  const bMs = b?.mqMs || {};
+
+  if (mode === 'best_overall_time') {
+    const aValues = Object.values(aMs).filter(v => v != null && isFinite(v));
+    const bValues = Object.values(bMs).filter(v => v != null && isFinite(v));
+    const aBest = aValues.length ? Math.min(...aValues) : Infinity;
+    const bBest = bValues.length ? Math.min(...bValues) : Infinity;
+    if (aBest === Infinity && bBest === Infinity) return 0;
+    return aBest - bBest;
+  }
+  if (mode === 'last_manche_time') {
+    for (const n of mqNumsDescending) {
+      const at = aMs[n];
+      const bt = bMs[n];
+      if (at != null && bt != null) return at - bt;
+    }
+    return 0;
+  }
+  return 0;
+}
+
+// ─────────────────────────────────────────────────────────
 // CALCUL CLASSEMENT INTERMÉDIAIRE
 // ─────────────────────────────────────────────────────────
 
@@ -293,7 +336,7 @@ export async function calcInterimStandings(db, sessions, regulation) {
   const ecBonus = {};
   ecStandings.forEach(r => { ecBonus[r.driverId] = r.bonusPoints ?? 0; });
 
-  // Collecter tous les pilotes et leurs points MQ
+  // Collecter tous les pilotes et leurs points + chronos MQ
   const driverMap = {};
   for (const mq of mqSessions) {
     const standings = await calcMqStandings(db, mq, regulation);
@@ -306,12 +349,16 @@ export async function calcInterimStandings(db, sessions, regulation) {
           lastName:  r.lastName,
           mqPoints:  {},
           mqPos:     {},
+          mqMs:      {},   // chrono par num de MQ (uniquement si finisseur)
           mqCount:   0,
         };
       }
       if (r.points !== null && r.points !== undefined) {
         driverMap[r.driverId].mqPoints[mq.num] = r.points ?? 0;
         driverMap[r.driverId].mqPos[mq.num]    = r.position;
+        if (r.ms != null && !r.status) {
+          driverMap[r.driverId].mqMs[mq.num] = r.ms;
+        }
         if (r.status !== 'DNS' && r.status !== 'DSQ') {
           driverMap[r.driverId].mqCount++;
         }
@@ -328,7 +375,12 @@ export async function calcInterimStandings(db, sessions, regulation) {
     d.totalPoints   = d.totalMqPoints + d.ecBonus;
   });
 
-  // Tri : total desc → MQ du plus récent au plus ancien
+  // Tiebreaker : nums des manches du plus recent au plus ancien (pour
+  // departager par chrono de la derniere manche le cas echeant).
+  const mqNumsDescending = mqSessions.map(s => s.num).sort((a, b) => b - a);
+  const tiebreakerMode   = regulation?.interimTiebreaker;
+
+  // Tri : total desc → MQ du plus récent au plus ancien (points) → chrono
   eligible.sort((a, b) => {
     if (b.totalPoints !== a.totalPoints) return b.totalPoints - a.totalPoints;
     for (let n = mqSessions.length; n >= 1; n--) {
@@ -336,7 +388,7 @@ export async function calcInterimStandings(db, sessions, regulation) {
       const pb = b.mqPoints[n] ?? -1;
       if (pb !== pa) return pb - pa;
     }
-    return 0;
+    return compareInterimTiebreaker(a, b, regulation, mqNumsDescending);
   });
 
   // Positions + points intermédiaires
@@ -349,6 +401,11 @@ export async function calcInterimStandings(db, sessions, regulation) {
         for (let n = mqSessions.length; n >= 1; n--) {
           if ((d.mqPoints[n] ?? -1) !== (prev.mqPoints[n] ?? -1)) { sameAll = false; break; }
         }
+      }
+      // Si meme points/manche mais le tiebreaker chrono les separe, ils
+      // ne sont PAS ex aequo.
+      if (sameAll && tiebreakerMode && compareInterimTiebreaker(d, prev, regulation, mqNumsDescending) !== 0) {
+        sameAll = false;
       }
       if (!sameAll) pos = i + 1;
     }

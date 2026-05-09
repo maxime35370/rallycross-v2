@@ -83,6 +83,16 @@ const DEFAULT_CHAMP = {
     DSQ: { mode: 'fixed', points: 0 },
   },
 
+  // Departage des ex aequo au classement intermediaire (apres totalisation
+  // des points MQ). Deux modes :
+  //  - 'last_manche_time' : meilleur temps de la DERNIERE manche disputee
+  //                         (defaut FFSA)
+  //  - 'best_overall_time': meilleur temps absolu sur l'ENSEMBLE des
+  //                         manches deja disputees (FIA / Euro RX)
+  // Si non defini, l'ancien comportement est conserve : tri par points
+  // de manche du plus recent au plus ancien (sans utiliser les chronos).
+  interimTiebreaker: 'last_manche_time',
+
   // Table de repartition des series MQ (nb pilotes → nb series par manche)
   // Cle = nb pilotes engages, valeur = tableau [R1, R2, R3, ...]
   seriesTable: null, // null = repartition automatique equitable
@@ -92,7 +102,7 @@ const DEFAULT_CHAMP = {
 // CHAMPS DU REGLEMENT (extraits pour reutilisation)
 // ─────────────────────────────────────────────────────────
 
-const REGULATION_FIELDS = ['categories', 'sessionConfig', 'pointsScale', 'worstResultDrop', 'statusRules', 'competitionPhases', 'meetingClassificationMode', 'interimPointsEnabled', 'seriesTable'];
+const REGULATION_FIELDS = ['categories', 'sessionConfig', 'pointsScale', 'worstResultDrop', 'statusRules', 'competitionPhases', 'meetingClassificationMode', 'interimPointsEnabled', 'seriesTable', 'interimTiebreaker'];
 
 function extractRegulation(data) {
   const reg = {};
@@ -942,6 +952,38 @@ function renderTabPoints() {
           ${renderStatusRule('DSQ',      '⚫ DSQ HC — Disqualifié hors course',       sr.DSQ)}
         </div>
       </div>
+
+      <!-- ── Tiebreaker classement intermédiaire ── -->
+      <div style="margin-top:var(--sp-xl)">
+        <div class="settings-section-header" style="margin-bottom:var(--sp-sm)">
+          <span class="settings-section-title">🏁 Départage des ex æquo (Classement intermédiaire)</span>
+        </div>
+        <p class="text-muted" style="font-size:0.82rem;margin-bottom:var(--sp-md);line-height:1.5">
+          Quand deux pilotes ont le même cumul de points sur les MQ, comment départager ?
+        </p>
+        <div class="status-rules-grid">
+          <label class="status-rule-card" style="cursor:pointer">
+            <div style="display:flex;align-items:center;gap:8px">
+              <input type="radio" name="interim-tiebreaker" value="last_manche_time"
+                ${(_editData.interimTiebreaker || 'last_manche_time') === 'last_manche_time' ? 'checked' : ''}>
+              <strong>Meilleur temps de la dernière manche</strong>
+            </div>
+            <div class="text-muted" style="font-size:0.78rem;margin-top:4px;margin-left:24px">
+              Défaut FFSA — départage par le chrono réalisé sur la manche la plus récente déjà disputée.
+            </div>
+          </label>
+          <label class="status-rule-card" style="cursor:pointer">
+            <div style="display:flex;align-items:center;gap:8px">
+              <input type="radio" name="interim-tiebreaker" value="best_overall_time"
+                ${_editData.interimTiebreaker === 'best_overall_time' ? 'checked' : ''}>
+              <strong>Meilleur temps absolu sur l'ensemble des manches</strong>
+            </div>
+            <div class="text-muted" style="font-size:0.78rem;margin-top:4px;margin-left:24px">
+              FIA / Euro RX — départage par le meilleur chrono parmi toutes les manches déjà disputées.
+            </div>
+          </label>
+        </div>
+      </div>
     </div>
   `;
 }
@@ -1328,6 +1370,10 @@ function syncCurrentTabToData() {
           ? { mode: 'engaged_offset', offset: parseInt(offsetEl?.value ?? 1) || 1 }
           : { mode: 'fixed',          points: parseInt(fixedEl?.value  ?? 0) || 0 };
       });
+
+      // Sync interim tiebreaker (radio bouton)
+      const tbEl = document.querySelector('input[name="interim-tiebreaker"]:checked');
+      if (tbEl) _editData.interimTiebreaker = tbEl.value;
       break;
     }
   }

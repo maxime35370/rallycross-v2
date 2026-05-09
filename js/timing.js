@@ -12,7 +12,7 @@ import { logAudit } from './audit.js';
 import { requireAuth } from './auth.js';
 import { msToDisplay, inputToMs, msToFields, escHtml, parseTimeString } from './utils.js';
 import { getActiveChampionship, getActiveChampionshipId } from './context.js';
-import { mqPoints, calcStatusPoints } from './calc.js';
+import { mqPoints, calcStatusPoints, compareInterimTiebreaker } from './calc.js';
 import { getChampionshipConfig } from './settings.js';
 
 // ─────────────────────────────────────────────────────────
@@ -427,44 +427,71 @@ function computeLivePointsMap() {
   if (!session || session.type !== 'MQ') return out;
 
   // Pre-points : cumul depuis _otherMqResults (sessions deja terminees).
+  // On collecte aussi les chronos par num de manche pour le tiebreaker.
   for (const p of participants) {
-    out[p.driverId] = { prePoints: 0, currentPoints: 0, totalPoints: 0, interimPos: null };
+    out[p.driverId] = {
+      prePoints: 0, currentPoints: 0, totalPoints: 0, interimPos: null,
+      mqMs: {}, // num de manche → ms
+    };
   }
-  for (const [, sessionResults] of Object.entries(_otherMqResults)) {
+  for (const [sessionId, sessionResults] of Object.entries(_otherMqResults)) {
+    const otherSession = allSessions.find(s => s.id === sessionId);
+    const mqNum = otherSession?.num;
     for (const [driverId, r] of Object.entries(sessionResults)) {
       if (!out[driverId]) continue; // pilote pas dans la session courante
       const pts = pointsFromResult({ ...r, driverId }, sessionResults);
       out[driverId].prePoints += pts;
+      if (mqNum != null && r.ms != null && !SPECIAL_STATUSES.includes(r.status)) {
+        out[driverId].mqMs[mqNum] = r.ms;
+      }
     }
   }
 
   // Current points : depuis le `results` en cours (live).
-  // Reconstruit un sessionResults a partir des results pour reutiliser
-  // pointsFromResult.
   const currentSessionResults = {};
   for (const [driverId, r] of Object.entries(results)) {
     currentSessionResults[driverId] = { ...r, driverId };
   }
+  const currentMqNum = session.num;
   for (const [driverId] of Object.entries(currentSessionResults)) {
     if (!out[driverId]) continue;
-    const pts = pointsFromResult(currentSessionResults[driverId], currentSessionResults);
+    const r = currentSessionResults[driverId];
+    const pts = pointsFromResult(r, currentSessionResults);
     out[driverId].currentPoints = pts;
     out[driverId].totalPoints   = out[driverId].prePoints + pts;
+    if (r.ms != null && !SPECIAL_STATUSES.includes(r.status) && currentMqNum != null) {
+      out[driverId].mqMs[currentMqNum] = r.ms;
+    }
   }
 
-  // Position au classement intermediaire : tri par totalPoints desc.
-  // Ex aequo : meme position (FFSA). Le tri-break par chrono est gere
-  // dans calcInterimStandings cote standings ; ici on fait simple.
+  // Position au classement intermediaire : tri par totalPoints desc + tiebreaker.
+  // Reutilise compareInterimTiebreaker (calc.js) pour rester coherent avec
+  // la page Classement.
+  const tiebreakerMode    = _activeRegulation.interimTiebreaker;
+  const allMqNumsDesc     = allSessions
+    .filter(s => s.type === 'MQ')
+    .map(s => s.num)
+    .sort((a, b) => b - a);
+
   const ranked = Object.entries(out)
     .map(([driverId, v]) => ({ driverId, ...v }))
-    .sort((a, b) => b.totalPoints - a.totalPoints);
-  let lastPts = null;
+    .sort((a, b) => {
+      if (b.totalPoints !== a.totalPoints) return b.totalPoints - a.totalPoints;
+      return compareInterimTiebreaker(a, b, _activeRegulation, allMqNumsDesc);
+    });
+
+  let lastDriver = null;
   let lastPos = 0;
   ranked.forEach((d, i) => {
     if (d.totalPoints === 0) return; // pas encore classe
-    const pos = (lastPts != null && d.totalPoints === lastPts) ? lastPos : i + 1;
+    let sameAsPrev = lastDriver != null && d.totalPoints === lastDriver.totalPoints;
+    if (sameAsPrev && tiebreakerMode
+        && compareInterimTiebreaker(d, lastDriver, _activeRegulation, allMqNumsDesc) !== 0) {
+      sameAsPrev = false;
+    }
+    const pos = sameAsPrev ? lastPos : i + 1;
     out[d.driverId].interimPos = pos;
-    lastPts = d.totalPoints;
+    lastDriver = d;
     lastPos = pos;
   });
 
