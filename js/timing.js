@@ -137,9 +137,19 @@ async function loadSessions() {
     where('category',  '==', selectedCategory),
     orderBy('order', 'asc')
   );
-  unsubSessions = onSnapshot(q, snap => {
+  unsubSessions = onSnapshot(q, async snap => {
     allSessions = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     renderSessionSelect();
+    // Quand `allSessions` change (typiquement la 1ere fois apres
+    // l'abonnement), on (re)charge les autres MQ pour le calcul des
+    // points cumules en direct, puis on re-rend la table. Sans ce
+    // retrigger, viewchange peut appeler loadOtherMqResults trop tot
+    // (avant que le snapshot n'ait fire) et `_otherMqResults` reste
+    // vide → cumul affiche = points de la session courante seulement.
+    if (selectedSessionId && allSessions.length > 0) {
+      await loadOtherMqResults();
+      renderTimingTable();
+    }
   });
 }
 
