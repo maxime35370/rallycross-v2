@@ -1384,7 +1384,12 @@ async function saveChamp() {
     await setDoc(doc(db, 'championships', id), payload);
     logAudit(_editingChamp === 'new' ? 'create' : 'update', 'championship', id, { label: _editData.name });
     toast(`✅ "${_editData.name}" enregistré`, 'success');
-    refreshHeaderSelector();
+    await refreshHeaderSelector();
+    // Notifie tous les modules (standings, meetings, etc.) qui maintiennent
+    // un cache de la config championnat afin qu'ils invalident leur etat.
+    document.dispatchEvent(new CustomEvent('championshipchange', {
+      detail: { championshipId: id, championship: { id, ..._editData } },
+    }));
     renderSettingsList();
   } catch (e) {    console.error('Settings – sauvegarde :', e);
     toast('Erreur lors de la sauvegarde', 'error');
