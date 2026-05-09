@@ -129,24 +129,27 @@ async function loadAllParticipants() {
 
 async function addParticipant(sessionId, driver) {
   if (!db) return;
-  const { collection, addDoc, query, where, getDocs } = await import(
+  const { doc, setDoc } = await import(
     'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
   );
   const driverId = driver.id || driver.driverId;
-  const snap = await getDocs(query(
-    collection(db, 'sessionParticipants'),
-    where('sessionId', '==', sessionId),
-    where('driverId',  '==', driverId)
-  ));
-  if (!snap.empty) return;
 
+  // Garde-fou DF : si le pilote est deja dans l'autre demi-finale, on
+  // n'ajoute pas a celle-ci (logique metier inchangee).
   const targetSession = allSessions.find(s => s.id === sessionId);
   if (targetSession?.type === 'DF') {
     const otherDf = allSessions.find(s => s.type === 'DF' && s.id !== sessionId);
     if (otherDf && sessionParticipants[otherDf.id]?.has(driverId)) return;
   }
 
-  await addDoc(collection(db, 'sessionParticipants'), {
+  // ID deterministe : evite tout doublon meme en cas d'appels concurrents
+  // (anciennement addDoc + check getDocs non atomique -> race condition
+  // qui creait des doublons quand l'utilisateur cliquait rapidement
+  // ou quand plusieurs onglets etaient ouverts).
+  // setDoc + merge:true permet d'enregistrer ou de mettre a jour sans
+  // creer de nouveau document.
+  const docId = `${sessionId}_${driverId}`;
+  await setDoc(doc(db, 'sessionParticipants', docId), {
     sessionId,
     meetingId:  selectedMeetingId,
     category:   selectedCategory,
@@ -156,7 +159,7 @@ async function addParticipant(sessionId, driver) {
     firstName:  driver.firstName,
     lastName:   driver.lastName,
     createdAt:  new Date(),
-  });
+  }, { merge: true });
 }
 
 async function removeParticipant(sessionId, driverId) {
