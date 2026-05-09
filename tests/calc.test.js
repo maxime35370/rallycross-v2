@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   mqPoints, ecBonusPoints, interimPoints, dfPoints, finPoints,
-  calcPointsFromScale, calcStatusPoints,
+  calcPointsFromScale, calcStatusPoints, compareInterimTiebreaker,
 } from '../js/calc.js';
 
 // ─────────────────────────────────────────────────────────
@@ -226,5 +226,59 @@ describe('custom regulation', () => {
   it('calcStatusPoints uses custom regulation', () => {
     expect(calcStatusPoints('DNF', 'MQ', 20, customReg)).toBe(2);
     expect(calcStatusPoints('DSQ_RACE', 'MQ', 20, customReg)).toBe(1);
+  });
+});
+
+describe('compareInterimTiebreaker', () => {
+  // Pilote A : MQ1 = 50000ms, MQ2 = 48000ms (best = MQ2)
+  // Pilote B : MQ1 = 49000ms, MQ2 = 49500ms (best = MQ1)
+  const pilotA = { mqMs: { 1: 50000, 2: 48000 } };
+  const pilotB = { mqMs: { 1: 49000, 2: 49500 } };
+
+  it('retourne 0 si aucun mode tiebreaker (defaut FFSA historique)', () => {
+    expect(compareInterimTiebreaker(pilotA, pilotB, {}, [2, 1])).toBe(0);
+    expect(compareInterimTiebreaker(pilotA, pilotB, null, [2, 1])).toBe(0);
+  });
+
+  it('mode best_overall_time : meilleur chrono absolu gagne', () => {
+    const reg = { interimTiebreaker: 'best_overall_time' };
+    // A best = 48000, B best = 49000 -> A gagne (devant)
+    expect(compareInterimTiebreaker(pilotA, pilotB, reg, [2, 1])).toBeLessThan(0);
+    expect(compareInterimTiebreaker(pilotB, pilotA, reg, [2, 1])).toBeGreaterThan(0);
+  });
+
+  it('mode last_manche_time : chrono de la derniere manche dispute compte', () => {
+    const reg = { interimTiebreaker: 'last_manche_time' };
+    // MQ2 (la plus recente) : A = 48000, B = 49500 -> A gagne
+    expect(compareInterimTiebreaker(pilotA, pilotB, reg, [2, 1])).toBeLessThan(0);
+  });
+
+  it('last_manche_time : si la derniere manche manque pour un, on remonte', () => {
+    const reg = { interimTiebreaker: 'last_manche_time' };
+    const a = { mqMs: { 1: 50000 } };           // pas de MQ2
+    const b = { mqMs: { 1: 51000, 2: 48000 } };
+    // MQ2 : A absent → on regarde MQ1 : A=50000, B=51000 → A gagne
+    expect(compareInterimTiebreaker(a, b, reg, [2, 1])).toBeLessThan(0);
+  });
+
+  it('best_overall_time : pilote sans aucun chrono = Infinity (loose)', () => {
+    const reg = { interimTiebreaker: 'best_overall_time' };
+    const a = { mqMs: {} };
+    const b = { mqMs: { 1: 50000 } };
+    // a n'a pas de chrono → Infinity → b gagne (devant)
+    expect(compareInterimTiebreaker(a, b, reg, [1])).toBeGreaterThan(0);
+  });
+
+  it('renvoie 0 si les deux n\'ont aucun chrono', () => {
+    const reg = { interimTiebreaker: 'best_overall_time' };
+    const a = { mqMs: {} };
+    const b = { mqMs: {} };
+    expect(compareInterimTiebreaker(a, b, reg, [1])).toBe(0);
+  });
+
+  it('gere les entrees malformees (null, undefined)', () => {
+    const reg = { interimTiebreaker: 'best_overall_time' };
+    expect(compareInterimTiebreaker(null, null, reg, [1])).toBe(0);
+    expect(compareInterimTiebreaker({}, {}, reg, [1])).toBe(0);
   });
 });
