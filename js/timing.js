@@ -155,7 +155,7 @@ async function loadSessions() {
 
 async function loadParticipants() {
   if (!db || !selectedSessionId) { participants = []; renderTimingTable(); return; }
-  const { collection, query, where, getDocs } = await import(
+  const { collection, query, where, getDocs, deleteDoc } = await import(
     'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
   );
   const q = query(
@@ -163,7 +163,41 @@ async function loadParticipants() {
     where('sessionId', '==', selectedSessionId)
   );
   const snap = await getDocs(q);
-  const raw = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  let raw = snap.docs.map(d => ({ id: d.id, _ref: d.ref, ...d.data() }));
+
+  // Dedupe : nettoie les doublons crees par l'ancienne version de
+  // addParticipant (race condition sur addDoc). On garde le doc avec
+  // l'ID deterministe `${sessionId}_${driverId}` quand il existe, sinon
+  // on garde le plus ancien. Les autres sont supprimes silencieusement
+  // en arriere-plan.
+  const byDriver = new Map();
+  for (const p of raw) {
+    const arr = byDriver.get(p.driverId) || [];
+    arr.push(p);
+    byDriver.set(p.driverId, arr);
+  }
+  const toDelete = [];
+  const kept = [];
+  for (const [driverId, docs] of byDriver) {
+    if (docs.length === 1) { kept.push(docs[0]); continue; }
+    const expectedId = `${selectedSessionId}_${driverId}`;
+    const sorted = docs.slice().sort((a, b) => {
+      if (a.id === expectedId) return -1;
+      if (b.id === expectedId) return 1;
+      const ta = a.createdAt?.toMillis?.() ?? 0;
+      const tb = b.createdAt?.toMillis?.() ?? 0;
+      return ta - tb;
+    });
+    kept.push(sorted[0]);
+    for (let i = 1; i < sorted.length; i++) toDelete.push(sorted[i]);
+  }
+  if (toDelete.length > 0) {
+    console.warn(`[timing] ${toDelete.length} doublon(s) sessionParticipants detecte(s) sur la session ${selectedSessionId}, nettoyage en arriere-plan`);
+    Promise.all(toDelete.map(d => deleteDoc(d._ref).catch(err =>
+      console.warn('[timing] deleteDoc duplicate failed', err)
+    )));
+  }
+  raw = kept.map(({ _ref, ...rest }) => rest);
 
   const session = allSessions.find(s => s.id === selectedSessionId);
   participants = await sortParticipantsForTiming(raw, session);
