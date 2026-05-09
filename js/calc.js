@@ -292,8 +292,11 @@ export async function calcMqStandings(db, session, regulation) {
  *  - 'best_positions_then_time' : (FIA / Euro RX) on trie les positions
  *                                 de chaque pilote en ordre croissant
  *                                 (meilleure d'abord) puis on compare
- *                                 element par element. Si tout est egal,
- *                                 fallback sur le meilleur chrono.
+ *                                 element par element. Si toutes les
+ *                                 positions sont egales, fallback sur
+ *                                 le chrono de la derniere manche
+ *                                 disputee (verifie sur cas reels du
+ *                                 championnat).
  *  - 'best_overall_time'        : alias (deprecated) de
  *                                 'best_positions_then_time' pour compat
  *                                 avec les anciennes configs.
@@ -345,14 +348,17 @@ export function compareInterimTiebreaker(a, b, regulation, mqNumsDescending = []
       if (ap !== bp) return ap - bp;
     }
 
-    // 3. Toutes les positions sont egales -> fallback sur le meilleur
-    //    chrono absolu sur les manches deja disputees.
-    const aTimes = Object.values(aMs).filter(v => v != null && isFinite(v));
-    const bTimes = Object.values(bMs).filter(v => v != null && isFinite(v));
-    const aBest = aTimes.length ? Math.min(...aTimes) : Infinity;
-    const bBest = bTimes.length ? Math.min(...bTimes) : Infinity;
-    if (aBest === Infinity && bBest === Infinity) return 0;
-    return aBest - bBest;
+    // 3. Toutes les positions sont egales → fallback sur le chrono de
+    //    la DERNIERE manche disputee (regle FIA officielle, verifiee
+    //    sur des cas reels du championnat). On itere des nums les plus
+    //    recents aux plus anciens et on prend le 1er ou les deux pilotes
+    //    ont un chrono.
+    for (const n of mqNumsDescending) {
+      const at = aMs[n];
+      const bt = bMs[n];
+      if (at != null && bt != null) return at - bt;
+    }
+    return 0;
   }
 
   return 0;
