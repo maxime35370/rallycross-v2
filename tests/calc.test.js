@@ -265,14 +265,24 @@ describe('compareInterimTiebreaker · best_positions_then_time (FIA / Euro RX)',
     expect(compareInterimTiebreaker(b, a, reg, [3, 2, 1])).toBeLessThan(0);
   });
 
-  it('cas reel Baumanis vs Trepak : positions [3,6] vs [6,9] → Baumanis devant', () => {
+  it('cas reel Baumanis vs Trepak : positions identiques → chrono dernier MQ', () => {
     // Cas reel observe : Baumanis 6e (73 pts) vs Trepak 7e (73 pts).
-    // Baumanis : MQ1 3e (35 pts), MQ2 6e (38 pts) → trie [3, 6]
-    // Trepak   : MQ1 6e (38 pts), MQ2 9e (35 pts) → trie [6, 9]
-    // Pos1 : 3 vs 6 → Baumanis gagne (pas besoin de chrono)
-    const baumanis = { mqPos: { 1: 3, 2: 6 } };
-    const trepak   = { mqPos: { 1: 6, 2: 9 } };
+    // Baumanis : MQ1 9e (35 pts) / 3:23.180, MQ2 6e (38 pts) / 3:22.988
+    // Trepak   : MQ1 6e (38 pts) / 3:20.591, MQ2 9e (35 pts) / 3:24.425
+    // Trie : Baumanis [6, 9], Trepak [6, 9] → identiques → fallback chrono.
+    // Best absolu : Trepak (3:20.591) MAIS Trepak est 7e (derriere) !
+    // Best MQ2 (la plus recente) : Baumanis 3:22.988 < Trepak 3:24.425
+    //   → Baumanis devant Trepak : MATCH avec le classement officiel.
+    const baumanis = {
+      mqPos: { 1: 9, 2: 6 },
+      mqMs:  { 1: 203180, 2: 202988 },
+    };
+    const trepak = {
+      mqPos: { 1: 6, 2: 9 },
+      mqMs:  { 1: 200591, 2: 204425 },
+    };
     expect(compareInterimTiebreaker(baumanis, trepak, reg, [2, 1])).toBeLessThan(0);
+    expect(compareInterimTiebreaker(trepak, baumanis, reg, [2, 1])).toBeGreaterThan(0);
   });
 
   it('A=[1,2,3] vs B=[1,2,4] → A gagne sur la 3e position', () => {
