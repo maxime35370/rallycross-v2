@@ -20,7 +20,14 @@ let _activeRegulation = null;
 
 async function loadActiveRegulation() {
   try {
-    _activeRegulation = await getChampionshipConfig();
+    // On lit le championnat selectionne dans le header (context.js) — pas
+    // celui qui porte le flag `isActive: true` en DB. Ces deux notions sont
+    // distinctes : le flag DB indique la "principale" historique, le
+    // selecteur du header est l'UI courante de l'utilisateur.
+    const champId = getActiveChampionshipId();
+    _activeRegulation = champId
+      ? await getChampionshipConfig(champId)
+      : await getChampionshipConfig();
   } catch {
     _activeRegulation = null;
   }
@@ -1316,5 +1323,14 @@ export function initStandings() {
       }
     }
   });
-  document.addEventListener('championshipchange', () => { loadMeetings(); });
+  document.addEventListener('championshipchange', async () => {
+    // On invalide le regulation cache : changer de championnat (ou le
+    // resauvegarder depuis l'ecran reglages) implique des regles de
+    // points potentiellement differentes.
+    await loadActiveRegulation();
+    await loadMeetings();
+    if (selectedMeetingId && selectedCategory) {
+      renderTab();
+    }
+  });
 }
