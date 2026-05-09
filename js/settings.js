@@ -93,6 +93,15 @@ const DEFAULT_CHAMP = {
   // de manche du plus recent au plus ancien (sans utiliser les chronos).
   interimTiebreaker: 'last_manche_time',
 
+  // Repartition des series MQ pour un nombre N de pilotes engages :
+  //  - 'ffsa'     : maximise les series de taille `max` ; les petites
+  //                 series sont placees en debut. Ex pour 26 pilotes
+  //                 max=5 : [3, 3, 5, 5, 5, 5].
+  //  - 'fia_even' : distribue uniformement avec uniquement les tailles
+  //                 `max` et `max-1`. Plus petites en debut. Ex pour
+  //                 26 pilotes max=5 : [4, 4, 4, 4, 5, 5].
+  seriesDistributionMode: 'ffsa',
+
   // Table de repartition des series MQ (nb pilotes → nb series par manche)
   // Cle = nb pilotes engages, valeur = tableau [R1, R2, R3, ...]
   seriesTable: null, // null = repartition automatique equitable
@@ -102,7 +111,7 @@ const DEFAULT_CHAMP = {
 // CHAMPS DU REGLEMENT (extraits pour reutilisation)
 // ─────────────────────────────────────────────────────────
 
-const REGULATION_FIELDS = ['categories', 'sessionConfig', 'pointsScale', 'worstResultDrop', 'statusRules', 'competitionPhases', 'meetingClassificationMode', 'interimPointsEnabled', 'seriesTable', 'interimTiebreaker'];
+const REGULATION_FIELDS = ['categories', 'sessionConfig', 'pointsScale', 'worstResultDrop', 'statusRules', 'competitionPhases', 'meetingClassificationMode', 'interimPointsEnabled', 'seriesTable', 'interimTiebreaker', 'seriesDistributionMode'];
 
 function extractRegulation(data) {
   const reg = {};
@@ -737,6 +746,19 @@ function renderTabSessions() {
               min="1" max="30" style="width:70px;text-align:center"
               value="${sc.MQ?.laps ?? 4}">
           </div>
+          <div class="settings-form-row" style="display:block;margin-top:var(--sp-sm)">
+            <label class="form-label" style="display:block;margin-bottom:6px">Composition des séries</label>
+            <label style="display:flex;align-items:center;gap:6px;font-size:0.82rem;cursor:pointer;margin-bottom:4px">
+              <input type="radio" name="sc-mq-distribution" value="ffsa"
+                ${(_editData.seriesDistributionMode || 'ffsa') === 'ffsa' ? 'checked' : ''}>
+              <span><strong>FFSA</strong> — séries pleines en priorité (ex 26 pilotes → 3, 3, 5, 5, 5, 5)</span>
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;font-size:0.82rem;cursor:pointer">
+              <input type="radio" name="sc-mq-distribution" value="fia_even"
+                ${_editData.seriesDistributionMode === 'fia_even' ? 'checked' : ''}>
+              <span><strong>FIA / Euro RX</strong> — répartition uniforme, petites séries au début (ex 26 pilotes → 4, 4, 4, 4, 5, 5)</span>
+            </label>
+          </div>
         </div>
 
         <!-- Repartition series MQ -->
@@ -1319,6 +1341,10 @@ function syncCurrentTabToData() {
       _editData.sessionConfig.MQ.count = parseInt(document.getElementById('sc-mq-count')?.value) || 2;
       _editData.sessionConfig.MQ.laps  = parseInt(document.getElementById('sc-mq-laps')?.value)  || 4;
       _editData.sessionConfig.MQ.driversPerSeries = parseInt(document.getElementById('sc-mq-drivers-per-series')?.value) || 5;
+
+      // Mode de composition des series MQ (radio FFSA / FIA)
+      const distEl = document.querySelector('input[name="sc-mq-distribution"]:checked');
+      if (distEl) _editData.seriesDistributionMode = distEl.value;
 
       // QF
       _editData.sessionConfig.QF      = _editData.sessionConfig.QF  || {};
