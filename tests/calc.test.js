@@ -265,17 +265,48 @@ describe('compareInterimTiebreaker · best_positions_then_time (FIA / Euro RX)',
     expect(compareInterimTiebreaker(b, a, reg, [3, 2, 1])).toBeLessThan(0);
   });
 
+  it('cas reel Baumanis vs Trepak : positions [3,6] vs [6,9] → Baumanis devant', () => {
+    // Cas reel observe : Baumanis 6e (73 pts) vs Trepak 7e (73 pts).
+    // Baumanis : MQ1 3e (35 pts), MQ2 6e (38 pts) → trie [3, 6]
+    // Trepak   : MQ1 6e (38 pts), MQ2 9e (35 pts) → trie [6, 9]
+    // Pos1 : 3 vs 6 → Baumanis gagne (pas besoin de chrono)
+    const baumanis = { mqPos: { 1: 3, 2: 6 } };
+    const trepak   = { mqPos: { 1: 6, 2: 9 } };
+    expect(compareInterimTiebreaker(baumanis, trepak, reg, [2, 1])).toBeLessThan(0);
+  });
+
   it('A=[1,2,3] vs B=[1,2,4] → A gagne sur la 3e position', () => {
     const a = { mqPos: { 1: 1, 2: 2, 3: 3 } };
     const b = { mqPos: { 1: 1, 2: 2, 3: 4 } };
     expect(compareInterimTiebreaker(a, b, reg, [3, 2, 1])).toBeLessThan(0);
   });
 
-  it('positions toutes egales → fallback sur le meilleur chrono', () => {
-    const a = { mqPos: { 1: 1, 2: 2 }, mqMs: { 1: 50000, 2: 48000 } };
-    const b = { mqPos: { 1: 1, 2: 2 }, mqMs: { 1: 49000, 2: 49500 } };
-    // Positions identiques [1,2] vs [1,2] → fallback chrono
-    // A best = 48000, B best = 49000 → A gagne
+  it('positions toutes egales → fallback sur chrono de la derniere manche', () => {
+    // Cas reel observe : Jansson 9e vs Baciuska 10e (69 pts chacun).
+    // Tous deux ont [8, 11] (l'un 11e en MQ1 8e en MQ2, l'autre 8e en MQ1
+    // 11e en MQ2). Le classement officiel place Jansson devant Baciuska.
+    // Verification : MQ2 (la plus recente) chrono Jansson = 3:24.071,
+    // Baciuska = 3:26.117 → Jansson gagne (chrono dernier MQ).
+    const jansson  = {
+      mqPos: { 1: 11, 2: 8 },
+      mqMs:  { 1: 203564, 2: 204071 }, // 3:23.564 / 3:24.071
+    };
+    const baciuska = {
+      mqPos: { 1: 8, 2: 11 },
+      mqMs:  { 1: 202451, 2: 206117 }, // 3:22.451 / 3:26.117
+    };
+    // Positions triees identiques [8, 11] vs [8, 11] → fallback chrono
+    // Best absolute serait Baciuska (3:22.451) mais la regle FIA dit
+    // "chrono dernier MQ" → MQ2 : Jansson 204071 < Baciuska 206117
+    // → Jansson devant Baciuska
+    expect(compareInterimTiebreaker(jansson, baciuska, reg, [2, 1])).toBeLessThan(0);
+    expect(compareInterimTiebreaker(baciuska, jansson, reg, [2, 1])).toBeGreaterThan(0);
+  });
+
+  it('fallback chrono : si la derniere manche manque, on remonte', () => {
+    const a = { mqPos: { 1: 1, 2: 2 }, mqMs: { 1: 50000 } };
+    const b = { mqPos: { 1: 1, 2: 2 }, mqMs: { 1: 51000, 2: 49000 } };
+    // Positions tied [1,2] vs [1,2]. MQ2 : A absent → MQ1 : A=50000 < B=51000 → A gagne
     expect(compareInterimTiebreaker(a, b, reg, [2, 1])).toBeLessThan(0);
   });
 
