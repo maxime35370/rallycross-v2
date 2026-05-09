@@ -12,6 +12,8 @@ import { logAudit } from './audit.js';
 import { requireAuth } from './auth.js';
 import { msToDisplay, inputToMs, msToFields, escHtml, parseTimeString } from './utils.js';
 import { getActiveChampionship, getActiveChampionshipId } from './context.js';
+import { mqPoints, calcStatusPoints } from './calc.js';
+import { getChampionshipConfig } from './settings.js';
 
 // ─────────────────────────────────────────────────────────
 // ÉTAT LOCAL
@@ -23,6 +25,13 @@ let participants   = [];
 let results        = {};
 let unsubMeetings  = null;
 let unsubSessions  = null;
+
+// Reglement actif + resultats des AUTRES MQ du meeting/categorie courant.
+// Sert a calculer les points en direct sur la page Chronometrage : badge
+// "+50 pts" pour la session en cours, "(125)" pour le cumul du meeting,
+// et la position au classement intermediaire.
+let _activeRegulation = null;
+let _otherMqResults   = {}; // sessionId -> { driverId -> result }
 let unsubResults   = null;
 
 let selectedYear      = new Date().getFullYear();
@@ -335,6 +344,134 @@ async function loadResults() {
 }
 
 // ─────────────────────────────────────────────────────────
+// POINTS EN DIRECT — chargement reglement + autres MQ du meeting
+// ─────────────────────────────────────────────────────────
+
+async function loadActiveRegulation() {
+  try {
+    const champId = getActiveChampionshipId();
+    _activeRegulation = champId ? await getChampionshipConfig(champId) : null;
+  } catch {
+    _activeRegulation = null;
+  }
+}
+
+/**
+ * Charge les resultats des AUTRES sessions MQ du meeting + categorie
+ * courants (toutes sauf celle selectionnee). Sert a calculer le cumul
+ * de points pour le classement intermediaire en direct.
+ */
+async function loadOtherMqResults() {
+  _otherMqResults = {};
+  if (!db || !selectedSessionId) return;
+  const otherMq = allSessions.filter(s =>
+    s.type === 'MQ' && s.id !== selectedSessionId
+  );
+  if (otherMq.length === 0) return;
+
+  const { collection, query, where, getDocs } = await import(
+    'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
+  );
+  for (const s of otherMq) {
+    try {
+      const snap = await getDocs(query(
+        collection(db, 'results'),
+        where('sessionId', '==', s.id)
+      ));
+      const byDriver = {};
+      snap.docs.forEach(d => {
+        const data = d.data();
+        byDriver[data.driverId] = data;
+      });
+      _otherMqResults[s.id] = byDriver;
+    } catch (err) {
+      console.warn('[timing] loadOtherMqResults failed for', s.id, err);
+    }
+  }
+}
+
+/**
+ * Calcule les points obtenus par un pilote dans une session MQ donnee,
+ * depuis ses resultats (ms ou status) et le classement de la session.
+ */
+function pointsFromResult(result, sessionResults) {
+  if (!result || !_activeRegulation) return 0;
+  const totalEngaged = Object.keys(sessionResults).length;
+  if (result.status) {
+    return calcStatusPoints(result.status, 'MQ', totalEngaged, _activeRegulation);
+  }
+  if (result.ms == null) return 0;
+  // Position : trier les pilotes ayant un ms (sans status DNF/DNS/DSQ),
+  // le plus rapide en 1ere position.
+  const ranked = Object.entries(sessionResults)
+    .filter(([, r]) => r.ms != null && !SPECIAL_STATUSES.includes(r.status))
+    .sort((a, b) => (a[1].ms || Infinity) - (b[1].ms || Infinity));
+  const idx = ranked.findIndex(([dId]) => dId === result.driverId);
+  if (idx < 0) return 0;
+  return mqPoints(idx + 1, _activeRegulation);
+}
+
+/**
+ * Calcule pour chaque pilote :
+ *  - prePoints     : cumul des points sur les autres MQ deja terminees
+ *  - currentPoints : points en direct sur la session selectionnee
+ *  - totalPoints   : prePoints + currentPoints
+ *  - interimPos    : position au classement intermediaire en direct
+ *
+ * Retourne un objet indexe par driverId.
+ */
+function computeLivePointsMap() {
+  const out = {};
+  if (!_activeRegulation) return out;
+  const session = allSessions.find(s => s.id === selectedSessionId);
+  if (!session || session.type !== 'MQ') return out;
+
+  // Pre-points : cumul depuis _otherMqResults (sessions deja terminees).
+  for (const p of participants) {
+    out[p.driverId] = { prePoints: 0, currentPoints: 0, totalPoints: 0, interimPos: null };
+  }
+  for (const [, sessionResults] of Object.entries(_otherMqResults)) {
+    for (const [driverId, r] of Object.entries(sessionResults)) {
+      if (!out[driverId]) continue; // pilote pas dans la session courante
+      const pts = pointsFromResult({ ...r, driverId }, sessionResults);
+      out[driverId].prePoints += pts;
+    }
+  }
+
+  // Current points : depuis le `results` en cours (live).
+  // Reconstruit un sessionResults a partir des results pour reutiliser
+  // pointsFromResult.
+  const currentSessionResults = {};
+  for (const [driverId, r] of Object.entries(results)) {
+    currentSessionResults[driverId] = { ...r, driverId };
+  }
+  for (const [driverId] of Object.entries(currentSessionResults)) {
+    if (!out[driverId]) continue;
+    const pts = pointsFromResult(currentSessionResults[driverId], currentSessionResults);
+    out[driverId].currentPoints = pts;
+    out[driverId].totalPoints   = out[driverId].prePoints + pts;
+  }
+
+  // Position au classement intermediaire : tri par totalPoints desc.
+  // Ex aequo : meme position (FFSA). Le tri-break par chrono est gere
+  // dans calcInterimStandings cote standings ; ici on fait simple.
+  const ranked = Object.entries(out)
+    .map(([driverId, v]) => ({ driverId, ...v }))
+    .sort((a, b) => b.totalPoints - a.totalPoints);
+  let lastPts = null;
+  let lastPos = 0;
+  ranked.forEach((d, i) => {
+    if (d.totalPoints === 0) return; // pas encore classe
+    const pos = (lastPts != null && d.totalPoints === lastPts) ? lastPos : i + 1;
+    out[d.driverId].interimPos = pos;
+    lastPts = d.totalPoints;
+    lastPos = pos;
+  });
+
+  return out;
+}
+
+// ─────────────────────────────────────────────────────────
 // FIRESTORE — SAUVEGARDE
 // ← FIX OPTION 1 : setDoc avec ID déterministe pour éviter les doublons
 // ─────────────────────────────────────────────────────────
@@ -635,7 +772,10 @@ function renderTimingTable() {
         <div class="tim-list" id="tim-timed-list">
           ${sortedTimed.length === 0
             ? `<div class="tim-empty">Aucun temps saisi</div>`
-            : sortedTimed.map((p, i) => pilotRowTimed(p, i, session)).join('')
+            : (() => {
+                const livePoints = computeLivePointsMap();
+                return sortedTimed.map((p, i) => pilotRowTimed(p, i, session, livePoints)).join('');
+              })()
           }
         </div>
       </div>
@@ -750,7 +890,7 @@ function pilotRowUntimed(p, session) {
   `;
 }
 
-function pilotRowTimed(p, index, session) {
+function pilotRowTimed(p, index, session, livePoints) {
   const r = results[p.driverId];
   const isSpecial = SPECIAL_STATUSES.includes(r?.status);
   const isDnfWithPos = r?.status === 'DNF' && r?.manualPosition;
@@ -762,12 +902,23 @@ function pilotRowTimed(p, index, session) {
     ? `<span class="badge ${badgeCls}">${statusLabel}${manualPosLabel}</span>`
     : `<span class="tim-time">${msToDisplay(r?.ms)}</span>`;
 
+  // Badges points (MQ uniquement) : "+50 pts (125) [3e]"
+  const lp = livePoints?.[p.driverId];
+  const showPoints = session.type === 'MQ' && lp && (lp.currentPoints > 0 || lp.totalPoints > 0);
+  const pointsBadges = showPoints
+    ? `<span class="tim-points" title="Points en direct">
+         <span class="tim-points-current">+${lp.currentPoints}</span>
+         <span class="tim-points-total">(${lp.totalPoints})</span>
+         ${lp.interimPos ? `<span class="tim-points-interim">${lp.interimPos}<sup>e</sup></span>` : ''}
+       </span>`
+    : '';
+
   return `
     <div class="tim-row tim-row--timed" data-driver-id="${p.driverId}">
       <span class="tim-pos">${displayPos ?? '—'}</span>
       <span class="tim-num">${escHtml(p.carNumber)}</span>
       <span class="tim-name">${escHtml(p.firstName)} <strong>${escHtml(p.lastName)}</strong></span>
-      <span class="tim-result">${displayTime}</span>
+      <span class="tim-result">${displayTime}${pointsBadges}</span>
       ${metaControls(p, session)}
       <button class="btn btn-ghost btn-sm tim-edit-btn" data-driver-id="${p.driverId}" title="Modifier">✏️</button>
     </div>
@@ -973,6 +1124,7 @@ function bindEvents() {
     results = {};
     await loadParticipants();
     await loadResults();
+    await loadOtherMqResults();
   });
 }
 
@@ -1540,13 +1692,20 @@ export function initTiming() {
   document.addEventListener('viewchange', async e => {
     if (e.detail.view === 'timing') {
       renderView();
+      await loadActiveRegulation();
       await loadMeetings();
       if (selectedMeetingId && selectedCategory) await loadSessions();
       if (selectedSessionId) {
         await loadParticipants();
         await loadResults();
+        await loadOtherMqResults();
       }
     }
   });
-  document.addEventListener('championshipchange', () => { loadMeetings(); });
+  document.addEventListener('championshipchange', async () => {
+    // Le bareme du championnat actif a pu changer (cf settings.js qui dispatche
+    // l'event apres une sauvegarde). On invalide le cache regulation.
+    await loadActiveRegulation();
+    await loadMeetings();
+  });
 }
