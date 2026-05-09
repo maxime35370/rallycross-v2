@@ -229,55 +229,86 @@ describe('custom regulation', () => {
   });
 });
 
-describe('compareInterimTiebreaker', () => {
-  // Pilote A : MQ1 = 50000ms, MQ2 = 48000ms (best = MQ2)
-  // Pilote B : MQ1 = 49000ms, MQ2 = 49500ms (best = MQ1)
+describe('compareInterimTiebreaker · last_manche_time (FFSA)', () => {
   const pilotA = { mqMs: { 1: 50000, 2: 48000 } };
   const pilotB = { mqMs: { 1: 49000, 2: 49500 } };
 
-  it('retourne 0 si aucun mode tiebreaker (defaut FFSA historique)', () => {
+  it('retourne 0 si aucun mode tiebreaker (defaut historique)', () => {
     expect(compareInterimTiebreaker(pilotA, pilotB, {}, [2, 1])).toBe(0);
     expect(compareInterimTiebreaker(pilotA, pilotB, null, [2, 1])).toBe(0);
   });
 
-  it('mode best_overall_time : meilleur chrono absolu gagne', () => {
-    const reg = { interimTiebreaker: 'best_overall_time' };
-    // A best = 48000, B best = 49000 -> A gagne (devant)
-    expect(compareInterimTiebreaker(pilotA, pilotB, reg, [2, 1])).toBeLessThan(0);
-    expect(compareInterimTiebreaker(pilotB, pilotA, reg, [2, 1])).toBeGreaterThan(0);
-  });
-
-  it('mode last_manche_time : chrono de la derniere manche dispute compte', () => {
+  it('chrono de la derniere manche disputee compte', () => {
     const reg = { interimTiebreaker: 'last_manche_time' };
     // MQ2 (la plus recente) : A = 48000, B = 49500 -> A gagne
     expect(compareInterimTiebreaker(pilotA, pilotB, reg, [2, 1])).toBeLessThan(0);
   });
 
-  it('last_manche_time : si la derniere manche manque pour un, on remonte', () => {
+  it('si la derniere manche manque pour un, on remonte aux precedentes', () => {
     const reg = { interimTiebreaker: 'last_manche_time' };
-    const a = { mqMs: { 1: 50000 } };           // pas de MQ2
+    const a = { mqMs: { 1: 50000 } };
     const b = { mqMs: { 1: 51000, 2: 48000 } };
     // MQ2 : A absent → on regarde MQ1 : A=50000, B=51000 → A gagne
     expect(compareInterimTiebreaker(a, b, reg, [2, 1])).toBeLessThan(0);
   });
+});
 
-  it('best_overall_time : pilote sans aucun chrono = Infinity (loose)', () => {
-    const reg = { interimTiebreaker: 'best_overall_time' };
-    const a = { mqMs: {} };
-    const b = { mqMs: { 1: 50000 } };
-    // a n'a pas de chrono → Infinity → b gagne (devant)
-    expect(compareInterimTiebreaker(a, b, reg, [1])).toBeGreaterThan(0);
+describe('compareInterimTiebreaker · best_positions_then_time (FIA / Euro RX)', () => {
+  const reg = { interimTiebreaker: 'best_positions_then_time' };
+
+  it('exemple utilisateur : A=[1,7,8] vs B=[1,6,9] → B gagne sur la 2e meilleure', () => {
+    // Trie ascendant : A=[1,7,8], B=[1,6,9]
+    // Pos1 : 1=1 (tie). Pos2 : A=7 vs B=6 → B gagne
+    const a = { mqPos: { 1: 1, 2: 7, 3: 8 } };
+    const b = { mqPos: { 1: 6, 2: 1, 3: 9 } };
+    expect(compareInterimTiebreaker(a, b, reg, [3, 2, 1])).toBeGreaterThan(0);
+    expect(compareInterimTiebreaker(b, a, reg, [3, 2, 1])).toBeLessThan(0);
   });
 
-  it('renvoie 0 si les deux n\'ont aucun chrono', () => {
-    const reg = { interimTiebreaker: 'best_overall_time' };
-    const a = { mqMs: {} };
-    const b = { mqMs: {} };
+  it('A=[1,2,3] vs B=[1,2,4] → A gagne sur la 3e position', () => {
+    const a = { mqPos: { 1: 1, 2: 2, 3: 3 } };
+    const b = { mqPos: { 1: 1, 2: 2, 3: 4 } };
+    expect(compareInterimTiebreaker(a, b, reg, [3, 2, 1])).toBeLessThan(0);
+  });
+
+  it('positions toutes egales → fallback sur le meilleur chrono', () => {
+    const a = { mqPos: { 1: 1, 2: 2 }, mqMs: { 1: 50000, 2: 48000 } };
+    const b = { mqPos: { 1: 1, 2: 2 }, mqMs: { 1: 49000, 2: 49500 } };
+    // Positions identiques [1,2] vs [1,2] → fallback chrono
+    // A best = 48000, B best = 49000 → A gagne
+    expect(compareInterimTiebreaker(a, b, reg, [2, 1])).toBeLessThan(0);
+  });
+
+  it('un pilote a moins de positions (DNF) → l\'autre gagne sur la position manquante', () => {
+    const a = { mqPos: { 1: 1, 2: 2, 3: 3 } };
+    const b = { mqPos: { 1: 1, 2: 2 } }; // pas de pos en MQ3 (DNF par exemple)
+    // Trie : A=[1,2,3], B=[1,2]
+    // Pos1=1=1, Pos2=2=2, Pos3 : A=3 vs B=Infinity → A gagne
+    expect(compareInterimTiebreaker(a, b, reg, [3, 2, 1])).toBeLessThan(0);
+  });
+
+  it('alias best_overall_time → meme comportement que best_positions_then_time', () => {
+    const aliasReg = { interimTiebreaker: 'best_overall_time' };
+    const a = { mqPos: { 1: 1, 2: 7, 3: 8 } };
+    const b = { mqPos: { 1: 6, 2: 1, 3: 9 } };
+    expect(compareInterimTiebreaker(a, b, aliasReg, [3, 2, 1])).toBeGreaterThan(0);
+  });
+
+  it('aucune position et aucun chrono → 0 (vraiment ex aequo)', () => {
+    const a = { mqPos: {}, mqMs: {} };
+    const b = { mqPos: {}, mqMs: {} };
     expect(compareInterimTiebreaker(a, b, reg, [1])).toBe(0);
   });
 
+  it('ignore les positions null/undefined dans la collecte', () => {
+    const a = { mqPos: { 1: 1, 2: null, 3: 5 } };
+    const b = { mqPos: { 1: 2, 2: 3, 3: null } };
+    // A filtre/trie : [1, 5] ; B filtre/trie : [2, 3]
+    // Pos1 : 1 vs 2 → A gagne
+    expect(compareInterimTiebreaker(a, b, reg, [3, 2, 1])).toBeLessThan(0);
+  });
+
   it('gere les entrees malformees (null, undefined)', () => {
-    const reg = { interimTiebreaker: 'best_overall_time' };
     expect(compareInterimTiebreaker(null, null, reg, [1])).toBe(0);
     expect(compareInterimTiebreaker({}, {}, reg, [1])).toBe(0);
   });

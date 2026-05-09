@@ -401,6 +401,20 @@ async function loadOtherMqResults() {
 }
 
 /**
+ * Calcule la position d'un pilote dans une session MQ depuis le sort
+ * par ms. Retourne null si le pilote n'a pas de chrono valide.
+ */
+function positionFromResult(driverId, sessionResults) {
+  const r = sessionResults[driverId];
+  if (!r || r.ms == null || SPECIAL_STATUSES.includes(r.status)) return null;
+  const ranked = Object.entries(sessionResults)
+    .filter(([, rr]) => rr.ms != null && !SPECIAL_STATUSES.includes(rr.status))
+    .sort((a, b) => (a[1].ms || Infinity) - (b[1].ms || Infinity));
+  const idx = ranked.findIndex(([dId]) => dId === driverId);
+  return idx >= 0 ? idx + 1 : null;
+}
+
+/**
  * Calcule les points obtenus par un pilote dans une session MQ donnee,
  * depuis ses resultats (ms ou status) et le classement de la session.
  */
@@ -411,14 +425,9 @@ function pointsFromResult(result, sessionResults) {
     return calcStatusPoints(result.status, 'MQ', totalEngaged, _activeRegulation);
   }
   if (result.ms == null) return 0;
-  // Position : trier les pilotes ayant un ms (sans status DNF/DNS/DSQ),
-  // le plus rapide en 1ere position.
-  const ranked = Object.entries(sessionResults)
-    .filter(([, r]) => r.ms != null && !SPECIAL_STATUSES.includes(r.status))
-    .sort((a, b) => (a[1].ms || Infinity) - (b[1].ms || Infinity));
-  const idx = ranked.findIndex(([dId]) => dId === result.driverId);
-  if (idx < 0) return 0;
-  return mqPoints(idx + 1, _activeRegulation);
+  const position = positionFromResult(result.driverId, sessionResults);
+  if (!position) return 0;
+  return mqPoints(position, _activeRegulation);
 }
 
 /**
@@ -437,11 +446,13 @@ function computeLivePointsMap() {
   if (!session || session.type !== 'MQ') return out;
 
   // Pre-points : cumul depuis _otherMqResults (sessions deja terminees).
-  // On collecte aussi les chronos par num de manche pour le tiebreaker.
+  // On collecte aussi les positions et chronos par num de manche pour
+  // le tiebreaker du classement intermediaire.
   for (const p of participants) {
     out[p.driverId] = {
       prePoints: 0, currentPoints: 0, totalPoints: 0, interimPos: null,
-      mqMs: {}, // num de manche → ms
+      mqMs:  {}, // num de manche → ms (chrono finisseur)
+      mqPos: {}, // num de manche → position (1, 2, ...) si finisseur
     };
   }
   for (const [sessionId, sessionResults] of Object.entries(_otherMqResults)) {
@@ -453,6 +464,8 @@ function computeLivePointsMap() {
       out[driverId].prePoints += pts;
       if (mqNum != null && r.ms != null && !SPECIAL_STATUSES.includes(r.status)) {
         out[driverId].mqMs[mqNum] = r.ms;
+        const pos = positionFromResult(driverId, sessionResults);
+        if (pos != null) out[driverId].mqPos[mqNum] = pos;
       }
     }
   }
@@ -471,6 +484,8 @@ function computeLivePointsMap() {
     out[driverId].totalPoints   = out[driverId].prePoints + pts;
     if (r.ms != null && !SPECIAL_STATUSES.includes(r.status) && currentMqNum != null) {
       out[driverId].mqMs[currentMqNum] = r.ms;
+      const pos = positionFromResult(driverId, currentSessionResults);
+      if (pos != null) out[driverId].mqPos[currentMqNum] = pos;
     }
   }
 
