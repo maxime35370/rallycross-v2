@@ -421,32 +421,42 @@ export async function calcInterimStandings(db, sessions, regulation) {
   const mqNumsDescending = mqSessions.map(s => s.num).sort((a, b) => b - a);
   const tiebreakerMode   = regulation?.interimTiebreaker;
 
-  // Tri : total desc → MQ du plus récent au plus ancien (points) → chrono
+  // Tri en cas d'egalite de points :
+  //  - Si un mode tiebreaker est defini -> on l'applique directement
+  //    (la regle officielle FFSA est "meilleur chrono dernier MQ", la regle
+  //    FIA est "meilleures positions triees puis chrono").
+  //  - Sinon (vieux championnats sans config tiebreaker) -> on conserve
+  //    l'ancien comportement : comparer les points de chaque manche du
+  //    plus recent au plus ancien.
   eligible.sort((a, b) => {
     if (b.totalPoints !== a.totalPoints) return b.totalPoints - a.totalPoints;
+    if (tiebreakerMode) {
+      return compareInterimTiebreaker(a, b, regulation, mqNumsDescending);
+    }
     for (let n = mqSessions.length; n >= 1; n--) {
       const pa = a.mqPoints[n] ?? -1;
       const pb = b.mqPoints[n] ?? -1;
       if (pb !== pa) return pb - pa;
     }
-    return compareInterimTiebreaker(a, b, regulation, mqNumsDescending);
+    return 0;
   });
 
-  // Positions + points intermédiaires
+  // Positions + points intermédiaires : detection des ex aequo
   let pos = 1;
   eligible.forEach((d, i) => {
     if (i > 0) {
       const prev = eligible[i - 1];
       let sameAll = d.totalPoints === prev.totalPoints;
-      if (sameAll) {
+      if (sameAll && tiebreakerMode) {
+        // Si tiebreaker defini, on s'appuie uniquement sur lui pour
+        // l'ex aequo : sameAll si compareInterimTiebreaker == 0.
+        sameAll = compareInterimTiebreaker(d, prev, regulation, mqNumsDescending) === 0;
+      } else if (sameAll) {
+        // Comportement legacy : ex aequo si tous les points par manche
+        // sont identiques.
         for (let n = mqSessions.length; n >= 1; n--) {
           if ((d.mqPoints[n] ?? -1) !== (prev.mqPoints[n] ?? -1)) { sameAll = false; break; }
         }
-      }
-      // Si meme points/manche mais le tiebreaker chrono les separe, ils
-      // ne sont PAS ex aequo.
-      if (sameAll && tiebreakerMode && compareInterimTiebreaker(d, prev, regulation, mqNumsDescending) !== 0) {
-        sameAll = false;
       }
       if (!sameAll) pos = i + 1;
     }
