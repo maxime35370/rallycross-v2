@@ -1324,6 +1324,42 @@ async function renderDfFromQf(panel, session) {
     });
   }
 
+  // Pilotes engages non assignes a aucun DF.
+  // Cas d'usage : auto-DF en mode MQ direct (saute QF) qui n'a pas tous
+  // les pilotes ; pilotes en QF non-feeding non requalifies ailleurs ;
+  // pilotes manuellement retires des DF ; DNS QF avant que les DF soient
+  // calcules. Permet de les rajouter manuellement a CE DF.
+  const reserveIds = new Set(reserves.map(r => r.driverId));
+  const qualifiedAllIds = new Set(qualified.map(d => d.driverId));
+  const unassignedDf = engagedDrivers
+    .filter(d => {
+      const id = d.id || d.driverId;
+      if (qualifiedAllIds.has(id)) return false;
+      if (reserveIds.has(id)) return false;
+      if (allDfIds.has(id)) return false;
+      return true;
+    })
+    .map(d => {
+      const id = d.id || d.driverId;
+      return { d, id, mqRank: mqRankMap[id] ?? 9999 };
+    })
+    .sort((a, b) => a.mqRank - b.mqRank);
+
+  if (unassignedDf.length > 0) {
+    html += '<div style="margin-top:var(--sp-md);padding:var(--sp-sm) 0;color:var(--clr-text-3);font-size:0.8rem;font-weight:600;text-transform:uppercase;letter-spacing:0.08em">' +
+      'Non assignes a un DF (' + unassignedDf.length + ')</div>';
+    unassignedDf.forEach(({ d, id, mqRank }) => {
+      html += '<div class="ses-df-row ses-df-row--reserve">' +
+        '<span class="ses-df-pos">' + (mqRank < 9999 ? mqRank + 1 : '—') + '</span>' +
+        '<span class="ses-df-pill ses-df-pill--reserve">MQ</span>' +
+        '<span class="ses-pilot-num">' + escHtml(d.carNumber) + '</span>' +
+        '<span class="ses-pilot-name">' + escHtml(d.firstName) + ' <strong>' + escHtml(d.lastName) + '</strong></span>' +
+        '<span class="ses-df-pts">' + (mqRank < 9999 ? (mqRank + 1) + 'e MQ' : '—') + '</span>' +
+        '<span class="ses-df-actions"><button class="btn btn-secondary btn-sm ses-df-add-unassigned-btn" data-driver-id="' + id + '" title="Ajouter a ce DF">＋</button></span>' +
+        '</div>';
+    });
+  }
+
   panel.innerHTML = html;
 
   document.getElementById('ses-auto-df-inline')?.addEventListener('click', () => autoAssignDemis());
@@ -1387,6 +1423,17 @@ async function renderDfFromQf(panel, session) {
   panel.querySelectorAll('.ses-df-qf-remove-btn').forEach(function(btn) {
     btn.addEventListener('click', async function() {
       await removeParticipant(session.id, btn.dataset.driverId);
+      renderSessionDetail();
+    });
+  });
+
+  // Bouton + pour ajouter manuellement un pilote non assigne a ce DF
+  panel.querySelectorAll('.ses-df-add-unassigned-btn').forEach(function(btn) {
+    btn.addEventListener('click', async function() {
+      const id = btn.dataset.driverId;
+      const driver = engagedDrivers.find(d => (d.id || d.driverId) === id);
+      if (!driver) return;
+      await addParticipant(session.id, driver);
       renderSessionDetail();
     });
   });
