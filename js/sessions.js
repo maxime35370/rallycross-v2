@@ -1019,6 +1019,33 @@ async function renderQfStandings(panel, session, assignedParticipants) {
           '</div>';
       }).join('');
 
+  // Pilotes pas (encore) places dans un QF de cette categorie/meeting.
+  // Permet a l'utilisateur d'ajouter manuellement un pilote retire d'un
+  // autre QF (typiquement quand l'auto QF a place quelqu'un qui finalement
+  // ne court pas, donc on le retire et on doit reassigner les autres).
+  // Tries par classement intermediaire (rang MQ) ascendant.
+  const unassigned = engagedDrivers
+    .filter(d => !qfAssignments[d.id || d.driverId])
+    .map(d => {
+      const id = d.id || d.driverId;
+      const mqPos = ranked.findIndex(r => r.driverId === id);
+      return { d, mqPos: mqPos >= 0 ? mqPos : 9999 };
+    })
+    .sort((a, b) => a.mqPos - b.mqPos)
+    .map(({ d, mqPos }) => ({ d, mqPos }));
+
+  const unassignedHtml = unassigned.length === 0
+    ? '<div class="ses-empty text-muted" style="font-size:0.82rem">Tous les pilotes sont deja assignes a un QF</div>'
+    : unassigned.map(({ d, mqPos }) => {
+        const id = d.id || d.driverId;
+        return '<div class="ses-pilot-row ses-pilot-row--dim">' +
+          '<span class="ses-pilot-rank text-muted" style="font-size:0.78rem;min-width:24px">' + (mqPos < 9999 ? mqPos + 1 : '—') + '</span>' +
+          '<span class="ses-pilot-num">' + escHtml(d.carNumber) + '</span>' +
+          '<span class="ses-pilot-name">' + escHtml(d.firstName) + ' <strong>' + escHtml(d.lastName) + '</strong></span>' +
+          '<button class="btn btn-secondary btn-sm ses-qf-add-btn" data-driver-id="' + id + '" title="Ajouter a ce QF">＋</button>' +
+          '</div>';
+      }).join('');
+
   panel.innerHTML = '<div class="ses-detail-header"><div>' +
     '<div class="ses-detail-label">' + escHtml(session.label) + '</div>' +
     '<div class="ses-detail-meta">' + session.tours + ' tours · ' + currentParticipants.length + ' pilote(s)</div>' +
@@ -1028,6 +1055,10 @@ async function renderQfStandings(panel, session, assignedParticipants) {
     '<div class="ses-detail-section">' +
     '<div class="ses-section-title"><span class="eng-group-dot eng-group-dot--on"></span>Assignes (' + currentParticipants.length + ')</div>' +
     assignedHtml +
+    '</div>' +
+    '<div class="ses-detail-section">' +
+    '<div class="ses-section-title"><span class="eng-group-dot eng-group-dot--off"></span>Non assignes a un QF (' + unassigned.length + ')</div>' +
+    unassignedHtml +
     '</div>';
 
   // Bind forfait + remove buttons
@@ -1038,6 +1069,16 @@ async function renderQfStandings(panel, session, assignedParticipants) {
     btn.addEventListener('click', async function() {
       await removeParticipant(selectedSessionId, btn.dataset.driverId);
       renderSessionDetail();
+    });
+  });
+  panel.querySelectorAll('.ses-qf-add-btn').forEach(function(btn) {
+    btn.addEventListener('click', async function() {
+      const id = btn.dataset.driverId;
+      const driver = engagedDrivers.find(d => (d.id || d.driverId) === id);
+      if (driver) {
+        await addParticipant(selectedSessionId, driver);
+        renderSessionDetail();
+      }
     });
   });
 }
