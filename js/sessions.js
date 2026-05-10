@@ -341,7 +341,43 @@ async function autoAssignDemis() {
     'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
   );
 
+  // Determination du mode (QF→DF vs MQ→DF) :
+  // - Champ sans QF active : toujours MQ direct
+  // - Champ avec QF active : demande au cas par cas (la decision peut etre
+  //   prise par categorie en cours de meeting si pas assez de pilotes,
+  //   forfait tardif, etc.)
+  let useQfMode = false;
   if (qfEnabled) {
+    const qfSessionsForCheck = allSessions.filter(s => s.type === 'QF');
+    let qfHasData = false;
+    for (const qf of qfSessionsForCheck) {
+      const partSnap = await ggd(gq(gc(db, 'sessionParticipants'), gw('sessionId', '==', qf.id)));
+      if (!partSnap.empty) { qfHasData = true; break; }
+      const resSnap = await ggd(gq(gc(db, 'results'), gw('sessionId', '==', qf.id)));
+      if (!resSnap.empty) { qfHasData = true; break; }
+    }
+    if (qfHasData) {
+      // QF rempli : demander confirmation - source par defaut = QF.
+      useQfMode = window.confirm(
+        '⚡ Auto DF — Sélection de la source\n\n' +
+        '✅ OK : utiliser les résultats des Quarts de finale (recommandé)\n' +
+        '❌ Annuler : utiliser directement le classement intermédiaire MQ\n' +
+        '          (les QF seront ignorés pour cette répartition)'
+      );
+    } else {
+      // QF non rempli : demander confirmation - source par defaut = MQ direct.
+      const ok = window.confirm(
+        '⚠️ Pas de données dans les Quarts de finale.\n\n' +
+        'Utiliser directement le classement intermédiaire MQ ?\n\n' +
+        '✅ OK : MQ → DF directement (saute les QF pour cette catégorie)\n' +
+        '❌ Annuler : abandonner Auto DF'
+      );
+      if (!ok) return;
+      useQfMode = false;
+    }
+  }
+
+  if (useQfMode) {
     // ── Mode QF → DF : prendre les qualifies des QF ──
     const qfSessions = allSessions.filter(s => s.type === 'QF').sort((a, b) => a.num - b.num);
     const qfResults = [];
