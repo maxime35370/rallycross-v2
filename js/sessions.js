@@ -1324,6 +1324,32 @@ async function renderDfFromQf(panel, session) {
       '</div>';
   });
 
+  // Mode MQ-direct (pas de feeding QF rempli) : la boucle qualified.forEach
+  // ci-dessus n'affiche rien, donc les pilotes deja en grille n'ont aucun
+  // bouton de retrait. On rajoute ici une liste "Pilotes assignes" avec
+  // ✕ pour permettre une correction manuelle (ex: retirer un pilote mal
+  // classe pour le remplacer par un pilote de la section "Non assignes").
+  const isMqDirectMode = qualified.length === 0 && currentDfIds.size > 0;
+  if (isMqDirectMode) {
+    const currentDriversInDf = currentDfSnap.docs.map(d => d.data())
+      .map(d => ({ d, mqRank: mqRankMap[d.driverId] ?? 9999 }))
+      .sort((a, b) => a.mqRank - b.mqRank);
+    html += '<div style="margin-top:var(--sp-md);padding:var(--sp-sm) 0;color:var(--clr-text-3);font-size:0.8rem;font-weight:600;text-transform:uppercase;letter-spacing:0.08em">' +
+      'Pilotes assignes (' + currentDriversInDf.length + ')</div>';
+    currentDriversInDf.forEach(({ d, mqRank }, i) => {
+      const isForfait = _dfForfaits.has(d.driverId);
+      html += '<div class="ses-df-row ses-df-row--assigned' + (isForfait ? ' ses-df-row--forfait' : '') + '">' +
+        '<span class="ses-df-pos">' + (i + 1) + '</span>' +
+        '<span class="ses-df-pill ses-df-pill--reserve">MQ</span>' +
+        '<span class="ses-pilot-num">' + escHtml(d.carNumber) + '</span>' +
+        '<span class="ses-pilot-name"' + (isForfait ? ' style="text-decoration:line-through;opacity:0.5"' : '') + '>' + escHtml(d.firstName) + ' <strong>' + escHtml(d.lastName) + '</strong></span>' +
+        '<span class="ses-df-pts">' + (mqRank < 9999 ? (mqRank + 1) + 'e MQ' : '—') + '</span>' +
+        '<span class="ses-df-actions">' +
+        '<button class="btn btn-danger btn-sm ses-df-qf-remove-btn" data-driver-id="' + d.driverId + '" title="Retirer du DF">✕</button>' +
+        '</span></div>';
+    });
+  }
+
   // Reserves
   if (reserves.length > 0) {
     html += '<div style="margin-top:var(--sp-md);padding:var(--sp-sm) 0;color:var(--clr-text-3);font-size:0.8rem;font-weight:600;text-transform:uppercase;letter-spacing:0.08em">' +
