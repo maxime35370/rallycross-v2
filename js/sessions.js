@@ -326,6 +326,13 @@ async function autoAssignDemis() {
       const snap = await fgd(fq(fc(db, col), fw('sessionId', '==', sessionId)));
       if (!snap.empty) { const b = fwb(db); snap.docs.forEach(d => b.delete(d.ref)); await b.commit(); }
     }
+    // Vider explicitement le cache local pour eviter une race avec
+    // l'event onSnapshot - sans ca le garde-fou de addParticipant
+    // ("ne pas ajouter a un DF si le pilote est dans l'autre") peut
+    // skipper silencieusement un pilote en se basant sur l'ancien
+    // contenu pre-clear (typiquement quand on relance Auto DF apres
+    // un premier run QF→DF qui avait reparti differemment).
+    if (sessionParticipants[sessionId]) sessionParticipants[sessionId].clear();
   };
   await clearDf(df1.id);
   await clearDf(df2.id);
@@ -1242,6 +1249,16 @@ async function renderDfFromQf(panel, session) {
     });
     const qualifiedIdSet = new Set(qualifiedInDf.map(d => d.driverId));
     const replacementsInDf = currentParts.filter(d => !qualifiedIdSet.has(d.driverId));
+    // Trier les remplacants par classement intermediaire MQ ascendant.
+    // Cas critique : mode MQ-direct (qualified vide) → tous les pilotes
+    // sont consideres "replacement", donc ce tri determine l'ordre de
+    // grille. La regle reglementaire est "meilleur classement = position
+    // prioritaire / pole", donc on suit le rang MQ croissant.
+    replacementsInDf.sort((a, b) => {
+      const rankA = mqRankMap[a.driverId] ?? 9999;
+      const rankB = mqRankMap[b.driverId] ?? 9999;
+      return rankA - rankB;
+    });
     const sortedGridParts = [...qualifiedInDf, ...replacementsInDf];
 
     const gPosToDriver = {};
