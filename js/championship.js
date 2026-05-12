@@ -374,10 +374,33 @@ function bindEvents() {
 export function initChampionship() {
   document.addEventListener('viewchange', async e => {
     if (e.detail.view === 'championship') {
-      try { _activeRegulation = await getChampionshipConfig(); } catch { _activeRegulation = null; }
+      // Charger le reglement DU CHAMPIONNAT SELECTIONNE dans le header,
+      // pas celui qui porte le flag isActive en DB. Sinon les calculs
+      // (calcInterimStandings → interimPoints) appliquent une autre
+      // reglementation que celle visible cote utilisateur → bug observe :
+      // les points intermediaires apparaissaient au format FFSA par defaut
+      // (17 - position) meme quand interimPointsEnabled etait desactive
+      // dans le championnat selectionne. Pattern aligne sur sessions.js
+      // / standings.js.
+      try {
+        const champId = getActiveChampionshipId();
+        _activeRegulation = champId
+          ? await getChampionshipConfig(champId)
+          : await getChampionshipConfig();
+      } catch { _activeRegulation = null; }
       renderView();
       await loadMeetings();
     }
   });
-  document.addEventListener('championshipchange', () => { loadMeetings(); });
+  document.addEventListener('championshipchange', async () => {
+    // Idem : recharger le reglement quand l'utilisateur change de
+    // championnat depuis le header.
+    try {
+      const champId = getActiveChampionshipId();
+      _activeRegulation = champId
+        ? await getChampionshipConfig(champId)
+        : await getChampionshipConfig();
+    } catch { _activeRegulation = null; }
+    loadMeetings();
+  });
 }
