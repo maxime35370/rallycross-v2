@@ -521,15 +521,16 @@ function computeLivePointsMap() {
 
   // Phases finales (QF/DF/FIN) : calcul simple "points de la session en cours"
   // sans cumul ni position intermediaire (chaque phase est independante).
-  // Logique alignee sur standings.js:128-152 :
-  //   - finishers (ms != null, pas de status) : points = phasePoints(rang)
-  //   - DNF avec manualPosition : points = phasePoints(manualPosition)
-  //   - DSQ_RACE : 1 point (regle FIA constante)
-  //   - DNF sans pos, DSQ, DNS : 0
+  // Tous les points proviennent du reglement actif :
+  //   - finishers et DNF-avec-position : phasePoints(rang) qui lit
+  //     regulation.pointsScale.[QF|DF|FIN] (formule + overrides)
+  //   - autres statuts (DNF sans pos, DNS, DSQ, DSQ_RACE) :
+  //     calcStatusPoints qui lit regulation.statusRules
   if (['QF', 'DF', 'FIN'].includes(session.type)) {
     const ptsFn = session.type === 'QF' ? qfPoints
                  : session.type === 'DF' ? dfPoints
                  : finPoints;
+    const totalEngaged = participants.length;
     const finished = participants
       .map(p => ({
         driverId: p.driverId,
@@ -548,10 +549,10 @@ function computeLivePointsMap() {
       if (!r?.status) return;
       if (r.status === 'DNF' && r.manualPosition) {
         out[p.driverId] = { currentPoints: ptsFn(r.manualPosition, _activeRegulation) };
-      } else if (r.status === 'DSQ_RACE') {
-        out[p.driverId] = { currentPoints: 1 };
       } else {
-        out[p.driverId] = { currentPoints: 0 };
+        out[p.driverId] = {
+          currentPoints: calcStatusPoints(r.status, session.type, totalEngaged, _activeRegulation),
+        };
       }
     });
     return out;

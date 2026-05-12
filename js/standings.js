@@ -7,7 +7,7 @@
 import { db } from './firebase.js';
 import { toast, categoryBadge, sessionBadge, statusBadge } from './app.js';
 import { msToDisplay, escHtml } from './utils.js';
-import { calcInterimStandings, calcEcStandings, calcMqStandings, qfPoints, dfPoints, finPoints } from './calc.js';
+import { calcInterimStandings, calcEcStandings, calcMqStandings, qfPoints, dfPoints, finPoints, calcStatusPoints } from './calc.js';
 import { buildMeetingClassification } from './competition.js';
 import { getChampionshipConfig } from './settings.js';
 import { getActiveChampionship, getActiveChampionshipId } from './context.js';
@@ -132,11 +132,18 @@ async function calcPhaseStandings(session) {
   const dns         = rows.filter(r => r.status === 'DNS');
   const dsq         = rows.filter(r => r.status === 'DSQ');
   const noResult    = rows.filter(r => !r.ms && !r.status);
+  const totalEngaged = rows.length;
   const ptsFn = (p) => {
     if (session.type === 'QF')  return qfPoints(p, _activeRegulation);
     if (session.type === 'DF')  return dfPoints(p, _activeRegulation);
     return finPoints(p, _activeRegulation);
   };
+  // Tous les statuts speciaux passent par calcStatusPoints qui lit
+  // regulation.statusRules (formula + overrides + mode 'fixed' ou
+  // 'engaged_offset'). Avant : valeurs hardcodees (1 pour DSQ_RACE,
+  // 0 pour DNS/DSQ/DNF-no-pos) - non conformes a un reglement
+  // configurable.
+  const statusPts = (status) => calcStatusPoints(status, session.type, totalEngaged, _activeRegulation);
 
   let pos = 1;
   const result = [];
@@ -145,10 +152,10 @@ async function calcPhaseStandings(session) {
     const p = r.manualPosition;
     result.push({ ...r, position: p, points: ptsFn(p) });
   });
-  dnfNoPos.forEach(r  => result.push({ ...r, position: null, points: 0 }));
-  dsqRace.forEach(r   => result.push({ ...r, position: null, points: 1 }));
-  dns.forEach(r       => result.push({ ...r, position: null, points: 0 }));
-  dsq.forEach(r       => result.push({ ...r, position: null, points: 0 }));
+  dnfNoPos.forEach(r  => result.push({ ...r, position: null, points: statusPts('DNF') }));
+  dsqRace.forEach(r   => result.push({ ...r, position: null, points: statusPts('DSQ_RACE') }));
+  dns.forEach(r       => result.push({ ...r, position: null, points: statusPts('DNS') }));
+  dsq.forEach(r       => result.push({ ...r, position: null, points: statusPts('DSQ') }));
   noResult.forEach(r  => result.push({ ...r, position: null, points: null }));
 
   return result;
