@@ -12,7 +12,7 @@ import { logAudit } from './audit.js';
 import { requireAuth } from './auth.js';
 import { msToDisplay, inputToMs, msToFields, escHtml, parseTimeString } from './utils.js';
 import { getActiveChampionship, getActiveChampionshipId } from './context.js';
-import { mqPoints, calcStatusPoints, compareInterimTiebreaker } from './calc.js';
+import { mqPoints, qfPoints, dfPoints, finPoints, calcStatusPoints, compareInterimTiebreaker } from './calc.js';
 import { getChampionshipConfig } from './settings.js';
 
 // ─────────────────────────────────────────────────────────
@@ -517,7 +517,47 @@ function computeLivePointsMap() {
   const out = {};
   if (!_activeRegulation) return out;
   const session = allSessions.find(s => s.id === selectedSessionId);
-  if (!session || session.type !== 'MQ') return out;
+  if (!session) return out;
+
+  // Phases finales (QF/DF/FIN) : calcul simple "points de la session en cours"
+  // sans cumul ni position intermediaire (chaque phase est independante).
+  // Logique alignee sur standings.js:128-152 :
+  //   - finishers (ms != null, pas de status) : points = phasePoints(rang)
+  //   - DNF avec manualPosition : points = phasePoints(manualPosition)
+  //   - DSQ_RACE : 1 point (regle FIA constante)
+  //   - DNF sans pos, DSQ, DNS : 0
+  if (['QF', 'DF', 'FIN'].includes(session.type)) {
+    const ptsFn = session.type === 'QF' ? qfPoints
+                 : session.type === 'DF' ? dfPoints
+                 : finPoints;
+    const finished = participants
+      .map(p => ({
+        driverId: p.driverId,
+        ms: results[p.driverId]?.ms ?? null,
+        status: results[p.driverId]?.status ?? null,
+      }))
+      .filter(r => r.ms && !r.status)
+      .sort((a, b) => a.ms - b.ms);
+    let pos = 1;
+    finished.forEach(r => {
+      out[r.driverId] = { currentPoints: ptsFn(pos, _activeRegulation) };
+      pos++;
+    });
+    participants.forEach(p => {
+      const r = results[p.driverId];
+      if (!r?.status) return;
+      if (r.status === 'DNF' && r.manualPosition) {
+        out[p.driverId] = { currentPoints: ptsFn(r.manualPosition, _activeRegulation) };
+      } else if (r.status === 'DSQ_RACE') {
+        out[p.driverId] = { currentPoints: 1 };
+      } else {
+        out[p.driverId] = { currentPoints: 0 };
+      }
+    });
+    return out;
+  }
+
+  if (session.type !== 'MQ') return out;
 
   // Pre-points : cumul depuis _otherMqResults (sessions deja terminees).
   // On collecte aussi les positions et chronos par num de manche pour
@@ -1032,16 +1072,33 @@ function pilotRowTimed(p, index, session, livePoints) {
     ? `<span class="badge ${badgeCls}">${statusLabel}${manualPosLabel}</span>`
     : `<span class="tim-time">${msToDisplay(r?.ms)}</span>`;
 
-  // Badges points (MQ uniquement) : "+50 pts (125) [3e]"
+  // Badges points :
+  //  - MQ : "+50 pts (125 cumules) [3e intermediaire]" (cumul + classement live)
+  //  - QF/DF/FIN : "+8 pts" seulement (chaque phase est independante,
+  //    pas de cumul a faire, pas de classement live a montrer en direct)
   const lp = livePoints?.[p.driverId];
-  const showPoints = session.type === 'MQ' && lp && (lp.currentPoints > 0 || lp.totalPoints > 0);
-  const pointsBadges = showPoints
-    ? `<span class="tim-points" title="Points en direct">
+  const isPhase = ['QF', 'DF', 'FIN'].includes(session.type);
+  const showPoints = lp && (
+    (session.type === 'MQ' && (lp.currentPoints > 0 || lp.totalPoints > 0)) ||
+    (isPhase && lp.currentPoints > 0)
+  );
+  let pointsBadges = '';
+  if (showPoints) {
+    if (session.type === 'MQ') {
+      pointsBadges = `<span class="tim-points" title="Points en direct">
          <span class="tim-points-current">+${lp.currentPoints}</span>
          <span class="tim-points-total">(${lp.totalPoints})</span>
          ${lp.interimPos ? `<span class="tim-points-interim">${lp.interimPos}<sup>e</sup></span>` : ''}
-       </span>`
-    : '';
+       </span>`;
+    } else {
+      const phaseLabel = session.type === 'QF' ? 'quart de finale'
+                       : session.type === 'DF' ? 'demi-finale'
+                       : 'finale';
+      pointsBadges = `<span class="tim-points" title="Points obtenus dans cette ${phaseLabel}">
+         <span class="tim-points-current">+${lp.currentPoints}</span>
+       </span>`;
+    }
+  }
 
   return `
     <div class="tim-row tim-row--timed" data-driver-id="${p.driverId}">
