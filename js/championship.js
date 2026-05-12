@@ -8,7 +8,7 @@
 import { db } from './firebase.js';
 import { toast } from './app.js';
 import { escHtml } from './utils.js';
-import { calcInterimStandings } from './calc.js';
+import { calcInterimStandings, dfPoints, finPoints, calcStatusPoints } from './calc.js';
 import { getChampionshipConfig } from './settings.js';
 import { getActiveChampionship, getActiveChampionshipId } from './context.js';
 
@@ -31,13 +31,6 @@ function getChampCategories() {
   if (champ?.categories?.length) return champ.categories.map(c => c.id || c.name);
   return CATEGORIES;
 }
-
-// ─────────────────────────────────────────────────────────
-// BARÈMES
-// ─────────────────────────────────────────────────────────
-
-const DF_POINTS  = [0, 10, 8, 6, 5, 4, 3, 2, 1];
-const FIN_POINTS = [0, 15, 12, 9, 7, 6, 5, 4, 3];
 
 // ─────────────────────────────────────────────────────────
 // FIRESTORE — HELPERS
@@ -70,7 +63,13 @@ async function calcPhasePoints(session) {
   const resultMap    = {};
   results.forEach(r => { resultMap[r.driverId] = r; });
 
-  const ptsFn = session.type === 'DF' ? (p => DF_POINTS[p] ?? 0) : (p => FIN_POINTS[p] ?? 0);
+  // Avant : tables hardcodees DF_POINTS / FIN_POINTS qui ignoraient le
+  // reglement actif. Maintenant : dfPoints/finPoints lisent
+  // _activeRegulation.pointsScale.[DF|FIN] (formule + overrides du
+  // bareme configure). Coherent avec calc.js et standings.js.
+  const ptsFn = session.type === 'DF'
+    ? (p => dfPoints(p, _activeRegulation))
+    : (p => finPoints(p, _activeRegulation));
 
   const rows = participants.map(p => ({
     driverId:       p.driverId,
@@ -89,11 +88,15 @@ async function calcPhasePoints(session) {
   rows.filter(r => r.status === 'DNF' && r.manualPosition)
       .forEach(r => { out[r.driverId] = ptsFn(r.manualPosition); });
 
-  // Pilotes avec statut spécial → 0 pts (1 pt DSQ_RACE)
+  // Pilotes avec statut spécial → calcStatusPoints (respecte
+  // regulation.statusRules : DSQ_RACE, DNS, DSQ, DNF-no-pos)
+  const totalEngaged = participants.length;
   participants.forEach(p => {
     if (out[p.driverId] !== undefined) return;
     const r = resultMap[p.driverId];
-    out[p.driverId] = r?.status === 'DSQ_RACE' ? 1 : 0;
+    out[p.driverId] = r?.status
+      ? calcStatusPoints(r.status, session.type, totalEngaged, _activeRegulation)
+      : 0;
   });
 
   return out; // { driverId → points }

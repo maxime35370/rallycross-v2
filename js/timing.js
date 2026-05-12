@@ -288,7 +288,7 @@ async function sortParticipantsForTiming(raw, session) {
         const meetingSessions = sessSnap.docs.map(d => ({ id: d.id, ...d.data() }));
         if (!meetingSessions.length) continue;
 
-        const interim = await calcInterimStandings(db, meetingSessions);
+        const interim = await calcInterimStandings(db, meetingSessions, _activeRegulation);
         interim.forEach(r => {
           if (!pointsMap[r.driverId]) pointsMap[r.driverId] = 0;
           pointsMap[r.driverId] += r.interimPoints ?? 0;
@@ -1077,11 +1077,16 @@ function pilotRowTimed(p, index, session, livePoints) {
   //  - MQ : "+50 pts (125 cumules) [3e intermediaire]" (cumul + classement live)
   //  - QF/DF/FIN : "+8 pts" seulement (chaque phase est independante,
   //    pas de cumul a faire, pas de classement live a montrer en direct)
+  // Pour QF/DF/FIN on affiche le badge des qu'il y a un resultat (chrono OU
+  // statut), meme avec 0 point (DSQ, DNS, DNF sans pos) : ca rend explicite
+  // pour l'utilisateur que le pilote ne marque rien plutot que de laisser
+  // un vide ambigu. Pour MQ on garde l'ancien comportement (cache si rien
+  // de marque) parce que le cumul prend deja en charge l'affichage continu.
   const lp = livePoints?.[p.driverId];
   const isPhase = ['QF', 'DF', 'FIN'].includes(session.type);
   const showPoints = lp && (
     (session.type === 'MQ' && (lp.currentPoints > 0 || lp.totalPoints > 0)) ||
-    (isPhase && lp.currentPoints > 0)
+    (isPhase && lp.currentPoints != null)
   );
   let pointsBadges = '';
   if (showPoints) {
@@ -1719,7 +1724,7 @@ async function showStartingGrid(session) {
         orderedPilots.sort((a, b) => (qfOrder[a.driverId] ?? 9999) - (qfOrder[b.driverId] ?? 9999));
       } else {
         // Mode direct MQ→DF : trier par classement intermediaire
-        const interim = await calcInterimStandings(db, allSessions);
+        const interim = await calcInterimStandings(db, allSessions, _activeRegulation);
         const intMap = {};
         interim.forEach(r => { intMap[r.driverId] = r.position ?? 99; });
         orderedPilots.sort((a, b) => (intMap[a.driverId] ?? 99) - (intMap[b.driverId] ?? 99));
@@ -1752,7 +1757,7 @@ async function showStartingGrid(session) {
       }
 
       // ← FIX OPTION 2 : calcul direct, plus de lecture interimStandings Firestore
-      const interim = await calcInterimStandings(db, allSessions);
+      const interim = await calcInterimStandings(db, allSessions, _activeRegulation);
       const intPtsMap = {};
       interim.forEach(r => { intPtsMap[r.driverId] = r.interimPoints ?? 0; });
 

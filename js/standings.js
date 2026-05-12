@@ -772,54 +772,58 @@ async function renderQfTab(content) {
     return;
   }
 
-  const fs = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
+  const champ = getActiveChampionship();
+  const qualPerQF = champ?.sessionConfig?.QF?.qualifiedPerQF || 3;
   let html = '<div class="std-table-title">Quarts de Finale</div>';
 
+  // Avant : logique custom qui n'utilisait pas calcPhaseStandings,
+  // donc pas de colonne Points, pas de prise en compte de
+  // manualPosition pour les DNF, et un tri parallele a celui du
+  // chronometrage live. Maintenant aligne sur renderDfTab/renderFinTab
+  // (calcPhaseStandings + renderQfTable) avec en plus le surlignage
+  // 'Qualifies' propre au tableau QF.
   for (const qf of qfSessions) {
-    const partSnap = await fs.getDocs(fs.query(fs.collection(db, 'sessionParticipants'), fs.where('sessionId', '==', qf.id)));
-    const parts = partSnap.docs.map(d => d.data());
-    const resSnap = await fs.getDocs(fs.query(fs.collection(db, 'results'), fs.where('sessionId', '==', qf.id)));
-    const resMap = {};
-    resSnap.docs.forEach(d => { resMap[d.data().driverId] = d.data(); });
-
-    const rows = parts.map(p => ({
-      driverId: p.driverId, carNumber: p.carNumber, firstName: p.firstName, lastName: p.lastName,
-      ms: resMap[p.driverId]?.ms ?? null, status: resMap[p.driverId]?.status ?? null,
-    }));
-
-    const finished = rows.filter(r => r.ms && !r.status).sort((a, b) => a.ms - b.ms);
-    const dnf = rows.filter(r => r.status === 'DNF');
-    const dns = rows.filter(r => r.status === 'DNS');
-    const dsq = rows.filter(r => r.status === 'DSQ' || r.status === 'DSQ_RACE');
-    const noResult = rows.filter(r => !r.ms && !r.status);
-    const sorted = [...finished, ...dnf, ...dsq, ...dns, ...noResult];
-
-    const champ = getActiveChampionship();
-    const qualPerQF = champ?.sessionConfig?.QF?.qualifiedPerQF || 3;
-
-    html += '<div class="std-sub-header" style="margin-top:var(--sp-md)">' + escHtml(qf.label) + ' (' + parts.length + ' pilotes)</div>';
-    html += '<div class="table-wrap" style="margin-bottom:var(--sp-md)"><table><thead><tr>';
-    html += '<th>Pos.</th><th>Pilote</th><th class="center">N\u00b0</th><th class="center">Temps</th><th>Statut</th>';
-    html += '</tr></thead><tbody>';
-
-    let pos = 1;
-    sorted.forEach(r => {
-      const hasTime = r.ms != null;
-      const position = hasTime ? pos++ : null;
-      const isQualified = position !== null && position <= qualPerQF;
-      html += '<tr' + (isQualified ? ' style="background:rgba(30,215,96,0.08)"' : '') + '>';
-      html += '<td class="center">' + (position || '—') + '</td>';
-      html += '<td>' + escHtml(r.firstName) + ' <strong>' + escHtml(r.lastName) + '</strong></td>';
-      html += '<td class="center"><span class="tim-num">' + escHtml(r.carNumber) + '</span></td>';
-      html += '<td class="center">' + (hasTime ? msToDisplay(r.ms) : '—') + '</td>';
-      html += '<td>' + (r.status ? statusBadge(r.status) : '') + '</td>';
-      html += '</tr>';
-    });
-
-    html += '</tbody></table></div>';
+    const standings = await calcPhaseStandings(qf);
+    html += renderQfTable(qf.label, standings, qualPerQF);
   }
 
   content.innerHTML = html;
+}
+
+function renderQfTable(title, standings, qualPerQF) {
+  return `
+    <div class="std-section">
+      <div class="std-sub-header">${escHtml(title)} (${standings.length} pilote${standings.length > 1 ? 's' : ''})</div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr>
+            <th class="center" style="width:50px">Pos.</th>
+            <th>Pilote</th>
+            <th class="center">N°</th>
+            <th class="right">Temps</th>
+            <th class="center">Statut</th>
+            <th class="center">Points</th>
+          </tr></thead>
+          <tbody>
+            ${standings.length === 0
+              ? `<tr><td class="table-empty" colspan="6">Aucun résultat saisi</td></tr>`
+              : standings.map(r => {
+                  const isQualified = r.position !== null && r.position <= qualPerQF;
+                  return `
+                <tr${isQualified ? ' style="background:rgba(30,215,96,0.08)"' : ''}>
+                  <td class="center">${r.position ? `<span class="${isQualified ? 'std-pos-top' : ''}">${r.position}</span>` : '—'}</td>
+                  <td>${escHtml(r.firstName)} <strong>${escHtml(r.lastName)}</strong></td>
+                  <td class="center"><span class="tim-num">${escHtml(r.carNumber)}</span></td>
+                  <td class="right">${r.ms ? `<span class="tim-time">${msToDisplay(r.ms)}</span>` : '—'}</td>
+                  <td class="center">${r.status ? statusBadge(r.status) : ''}</td>
+                  <td class="center"><strong>${r.points !== null ? r.points : '—'}</strong></td>
+                </tr>`;
+                }).join('')
+            }
+          </tbody>
+        </table>
+      </div>
+    </div>`;
 }
 
 async function renderDfTab(content) {
