@@ -1077,11 +1077,16 @@ function pilotRowTimed(p, index, session, livePoints) {
   //  - MQ : "+50 pts (125 cumules) [3e intermediaire]" (cumul + classement live)
   //  - QF/DF/FIN : "+8 pts" seulement (chaque phase est independante,
   //    pas de cumul a faire, pas de classement live a montrer en direct)
+  // Pour QF/DF/FIN on affiche le badge des qu'il y a un resultat (chrono OU
+  // statut), meme avec 0 point (DSQ, DNS, DNF sans pos) : ca rend explicite
+  // pour l'utilisateur que le pilote ne marque rien plutot que de laisser
+  // un vide ambigu. Pour MQ on garde l'ancien comportement (cache si rien
+  // de marque) parce que le cumul prend deja en charge l'affichage continu.
   const lp = livePoints?.[p.driverId];
   const isPhase = ['QF', 'DF', 'FIN'].includes(session.type);
   const showPoints = lp && (
     (session.type === 'MQ' && (lp.currentPoints > 0 || lp.totalPoints > 0)) ||
-    (isPhase && lp.currentPoints > 0)
+    (isPhase && lp.currentPoints != null)
   );
   let pointsBadges = '';
   if (showPoints) {
