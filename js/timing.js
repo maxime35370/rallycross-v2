@@ -288,7 +288,7 @@ async function sortParticipantsForTiming(raw, session) {
         const meetingSessions = sessSnap.docs.map(d => ({ id: d.id, ...d.data() }));
         if (!meetingSessions.length) continue;
 
-        const interim = await calcInterimStandings(db, meetingSessions);
+        const interim = await calcInterimStandings(db, meetingSessions, _activeRegulation);
         interim.forEach(r => {
           if (!pointsMap[r.driverId]) pointsMap[r.driverId] = 0;
           pointsMap[r.driverId] += r.interimPoints ?? 0;
@@ -1719,7 +1719,7 @@ async function showStartingGrid(session) {
         orderedPilots.sort((a, b) => (qfOrder[a.driverId] ?? 9999) - (qfOrder[b.driverId] ?? 9999));
       } else {
         // Mode direct MQ→DF : trier par classement intermediaire
-        const interim = await calcInterimStandings(db, allSessions);
+        const interim = await calcInterimStandings(db, allSessions, _activeRegulation);
         const intMap = {};
         interim.forEach(r => { intMap[r.driverId] = r.position ?? 99; });
         orderedPilots.sort((a, b) => (intMap[a.driverId] ?? 99) - (intMap[b.driverId] ?? 99));
@@ -1752,7 +1752,7 @@ async function showStartingGrid(session) {
       }
 
       // ← FIX OPTION 2 : calcul direct, plus de lecture interimStandings Firestore
-      const interim = await calcInterimStandings(db, allSessions);
+      const interim = await calcInterimStandings(db, allSessions, _activeRegulation);
       const intPtsMap = {};
       interim.forEach(r => { intPtsMap[r.driverId] = r.interimPoints ?? 0; });
 
