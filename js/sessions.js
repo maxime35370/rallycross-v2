@@ -1973,7 +1973,19 @@ async function renderFinaleStandings(panel, session, assignedParticipants) {
 export function initSessions() {
   document.addEventListener('viewchange', async e => {
     if (e.detail.view === 'sessions') {
-      try { _activeRegulation = await getChampionshipConfig(); } catch { _activeRegulation = null; }
+      // Charger le reglement DU CHAMPIONNAT SELECTIONNE dans le header,
+      // pas celui qui porte le flag isActive en DB. Sinon les calculs
+      // (calcInterimStandings, points MQ/DF, etc.) appliquent une autre
+      // reglementation que celle visible cote utilisateur → bug observe :
+      // page Classement et page DF affichaient des rangs MQ differents
+      // pour les memes pilotes (Tuma 12e cote Classement, 13e cote DF).
+      // Pattern aligne sur standings.js:27-30.
+      try {
+        const champId = getActiveChampionshipId();
+        _activeRegulation = champId
+          ? await getChampionshipConfig(champId)
+          : await getChampionshipConfig();
+      } catch { _activeRegulation = null; }
       renderView();
       await loadMeetings();
       if (selectedMeetingId && selectedCategory) {
@@ -1984,7 +1996,17 @@ export function initSessions() {
   });
 
   // Recharger quand on change de championnat
-  document.addEventListener('championshipchange', () => {
+  document.addEventListener('championshipchange', async () => {
+    // Recharger AUSSI le reglement : changement de championnat = potentiellement
+    // changement de tiebreaker, baremes de points, EC config, etc. Sinon les
+    // calculs en cours (calcInterimStandings, points par session) appliquent
+    // la regle du championnat precedemment selectionne.
+    try {
+      const champId = getActiveChampionshipId();
+      _activeRegulation = champId
+        ? await getChampionshipConfig(champId)
+        : await getChampionshipConfig();
+    } catch { _activeRegulation = null; }
     loadMeetings();
   });
 }
