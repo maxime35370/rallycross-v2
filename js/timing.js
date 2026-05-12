@@ -977,10 +977,14 @@ function metaControls(p, session) {
 }
 
 function pilotRowUntimed(p, session) {
-  const isDfOrFin = session.type === 'DF' || session.type === 'FIN';
-  const maxPos = 8;
+  // Le selecteur de position DNF s'applique a toute session ou les
+  // points dependent du rang d'abandon : DF/FIN (cas historique) +
+  // QF (ajoute : selon le bareme, un DNF en 3e position ne rapporte
+  // pas le meme nombre de points qu'un DNF en 5e).
+  const needsDnfPos = session.type === 'DF' || session.type === 'FIN' || session.type === 'QF';
+  const maxPos = participants.length || 8;
 
-  const dnfPositionSelect = isDfOrFin ? `
+  const dnfPositionSelect = needsDnfPos ? `
     <select class="tim-dnf-pos" data-driver-id="${p.driverId}" title="Position à l'abandon (DNF)">
       <option value="">Pos. DNF</option>
       ${Array.from({length: maxPos}, (_, i) => i + 1)
