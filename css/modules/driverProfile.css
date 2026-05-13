@@ -177,6 +177,10 @@
 .dp-pts-row td { background: rgba(255,85,0,0.03); }
 .dp-gap-row td { background: rgba(0,0,0,0.06); }
 .dp-gap-row .dp-td { font-size: 0.75rem; color: var(--clr-text-3); }
+/* Lignes moyennes cumulees au fil du week-end (MQ1, MQ1-2, MQ1-3, MQ1-4) */
+.dp-cum-row td { background: rgba(255,200,0,0.04); font-style: italic; }
+.dp-cum-row .dp-td { font-size: 0.78rem; }
+.dp-cum-row .dp-row-label { font-style: italic; color: var(--clr-text-3); }
 
 /* ── Valeurs ── */
 .dp-pos     { font-family: var(--font-display); font-weight: 700; color: var(--clr-text); font-size: 0.85rem; }
@@ -185,6 +189,10 @@
 .dp-na      { color: var(--clr-text-3); font-size: 0.75rem; }
 .dp-gap     { font-size: 0.75rem; color: var(--clr-text-2); }
 .dp-winner  { color: var(--clr-success); font-size: 0.8rem; }
+/* Ecart 1er : avance (vert) / retard (rouge) / egalite (neutre) */
+.dp-gap-ahead  { color: var(--clr-success); font-weight: 600; }
+.dp-gap-behind { color: var(--clr-danger);  font-weight: 500; }
+.dp-gap-zero   { color: var(--clr-text-2); }
 
 /* ── Colonnes spéciales ── */
 .dp-interim-col {
