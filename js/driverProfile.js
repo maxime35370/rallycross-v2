@@ -257,30 +257,47 @@ function buildMqStats(driverId, mqSessions, resultsMap, partsMap) {
 }
 
 function buildPhaseStats(driverId, sessions, resultsMap, partsMap, ptsArr) {
-  for (const sess of sessions) {
-    const parts = partsMap[sess.id] || [];
-    if (!parts.some(p => p.driverId === driverId)) continue;
+  // Sessions ou le pilote est inscrit. Un meme pilote peut figurer dans
+  // plusieurs DF (ex. reassignation manuelle DF1 -> DF2), avec parfois un
+  // statut "vide" ou DNS dans la DF non disputee. On selectionne la session
+  // ou le pilote a la donnee la plus "reelle" :
+  //  rang 4 = a un chrono finisseur
+  //  rang 3 = DNF classe (manualPosition)
+  //  rang 2 = un statut quelconque (DNS/DSQ/DNF sans pos)
+  //  rang 1 = inscrit sans aucun resultat
+  const candidates = sessions
+    .filter(sess => (partsMap[sess.id] || []).some(p => p.driverId === driverId))
+    .map(sess => {
+      const r = (resultsMap[sess.id] || []).find(x => x.driverId === driverId);
+      let rank = 1;
+      if (r?.ms != null) rank = 4;
+      else if (r?.status === 'DNF' && r?.manualPosition) rank = 3;
+      else if (r?.status) rank = 2;
+      return { sess, rank };
+    })
+    .sort((a, b) => b.rank - a.rank);
 
-    const results   = resultsMap[sess.id] || [];
-    const driverRes = results.find(r => r.driverId === driverId);
-    const { pos: actualPos, gap } = posAndGap(results, driverId);
-    const status    = driverRes?.status ?? null;
-
-    // DNF avec position manuelle (ex. "DNF 6eme") : on conserve la position
-    // pour le bareme et l'affichage — le pilote a quand meme couru et marque
-    // des points en QF/DF/FIN, idem que dans la vue chronometrage.
-    const manualPos = (status === 'DNF' && driverRes?.manualPosition) ? driverRes.manualPosition : null;
-    const pos = actualPos ?? manualPos;
-
-    let pts = null;
-    if (manualPos != null)          pts = ptsArr[manualPos] ?? 0;
-    else if (status === 'DSQ_RACE') pts = 1;
-    else if (status)                pts = 0;
-    else if (pos)                   pts = ptsArr[pos] ?? 0;
-
-    return { pos, pts, gap, status, participated: true };
+  if (candidates.length === 0) {
+    return { pos: null, pts: null, gap: null, status: null, participated: false };
   }
-  return { pos: null, pts: null, gap: null, status: null, participated: false };
+
+  const sess = candidates[0].sess;
+  const results   = resultsMap[sess.id] || [];
+  const driverRes = results.find(r => r.driverId === driverId);
+  const { pos: actualPos, gap } = posAndGap(results, driverId);
+  const status    = driverRes?.status ?? null;
+
+  // DNF avec position manuelle : on conserve la position pour le bareme.
+  const manualPos = (status === 'DNF' && driverRes?.manualPosition) ? driverRes.manualPosition : null;
+  const pos = actualPos ?? manualPos;
+
+  let pts = null;
+  if (manualPos != null)          pts = ptsArr[manualPos] ?? 0;
+  else if (status === 'DSQ_RACE') pts = 1;
+  else if (status)                pts = 0;
+  else if (pos)                   pts = ptsArr[pos] ?? 0;
+
+  return { pos, pts, gap, status, participated: true };
 }
 
 // ─────────────────────────────────────────────────────────
