@@ -486,7 +486,7 @@ function renderTabGeneral() {
       <div class="form-group">
         <label class="form-label">Mode de classement meeting</label>
         <select class="form-select" id="f-classification-mode">
-          <option value="points" ${(_editData.meetingClassificationMode || 'points') === 'points' ? 'selected' : ''}>Points (FFSA) — points cumules MQ + DF + FIN</option>
+          <option value="points" ${(_editData.meetingClassificationMode || 'points') === 'points' ? 'selected' : ''}>Points (FFSA) — points cumulés MQ + QF + DF + FIN</option>
           <option value="cascade" ${_editData.meetingClassificationMode === 'cascade' ? 'selected' : ''}>Cascade (FIA) — classement par phase (FIN > DF > QF > MQ)</option>
         </select>
       </div>
