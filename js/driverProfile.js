@@ -263,13 +263,20 @@ function buildPhaseStats(driverId, sessions, resultsMap, partsMap, ptsArr) {
 
     const results   = resultsMap[sess.id] || [];
     const driverRes = results.find(r => r.driverId === driverId);
-    const { pos, gap } = posAndGap(results, driverId);
+    const { pos: actualPos, gap } = posAndGap(results, driverId);
     const status    = driverRes?.status ?? null;
 
+    // DNF avec position manuelle (ex. "DNF 6eme") : on conserve la position
+    // pour le bareme et l'affichage — le pilote a quand meme couru et marque
+    // des points en QF/DF/FIN, idem que dans la vue chronometrage.
+    const manualPos = (status === 'DNF' && driverRes?.manualPosition) ? driverRes.manualPosition : null;
+    const pos = actualPos ?? manualPos;
+
     let pts = null;
-    if (status === 'DSQ_RACE') pts = 1;
-    else if (status)           pts = 0;
-    else if (pos)              pts = ptsArr[pos] ?? 0;
+    if (manualPos != null)          pts = ptsArr[manualPos] ?? 0;
+    else if (status === 'DSQ_RACE') pts = 1;
+    else if (status)                pts = 0;
+    else if (pos)                   pts = ptsArr[pos] ?? 0;
 
     return { pos, pts, gap, status, participated: true };
   }
