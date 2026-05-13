@@ -27,7 +27,13 @@ const FIN_PTS = [0, 15, 12, 9, 7, 6, 5, 4, 3];
 // ─────────────────────────────────────────────────────────
 
 const fmtPos = pos => pos == null ? '—' : pos === 1 ? '1er' : `${pos}e`;
-const fmtGap = ms  => ms  == null ? '—' : ms === 0 ? '<span class="dp-winner">●</span>' : `+${(ms / 1000).toFixed(3)}s`;
+// Ecart : positif = retard (rouge), negatif = avance (vert), 0 = egalite.
+const fmtGap = ms => {
+  if (ms == null) return '—';
+  if (ms === 0)   return '<span class="dp-gap-zero">0.000s</span>';
+  if (ms < 0)     return `<span class="dp-gap-ahead">−${(Math.abs(ms) / 1000).toFixed(3)}s</span>`;
+  return `<span class="dp-gap-behind">+${(ms / 1000).toFixed(3)}s</span>`;
+};
 const fmtPts = pts => pts == null ? '—' : String(pts);
 
 function fmtAvg(arr, dec = 1, suffix = '') {
@@ -40,7 +46,7 @@ function fmtAvgGap(arr) {
   const v = arr.filter(x => x != null && !isNaN(x));
   if (!v.length) return '—';
   const avg = v.reduce((a, b) => a + b, 0) / v.length;
-  return avg === 0 ? '0.000s' : `+${(avg / 1000).toFixed(3)}s`;
+  return fmtGap(avg);
 }
 
 // ─────────────────────────────────────────────────────────
@@ -55,7 +61,15 @@ function posAndGap(allResults, driverId) {
 
   const finished = allResults.filter(r => r.ms && !r.status).sort((a, b) => a.ms - b.ms);
   const idx = finished.findIndex(r => r.driverId === driverId);
-  const gap = finished[0] ? driverRes.ms - finished[0].ms : null;
+  // Si le pilote est 1er : gap = avance sur le 2e (negatif).
+  // Sinon : gap = retard sur le 1er (positif).
+  // S'il est seul a avoir un temps, gap = null (pas de reference).
+  let gap = null;
+  if (idx === 0) {
+    gap = finished[1] ? driverRes.ms - finished[1].ms : null;
+  } else if (idx > 0) {
+    gap = driverRes.ms - finished[0].ms;
+  }
   return { pos: idx + 1 || null, gap, status: null };
 }
 
@@ -295,6 +309,7 @@ function buildSeasonStats(meetingsData) {
   let mqWins = 0, mqPodiums = 0;
   const intPos = [], intPts = [];
   const dfPos = [], dfPts_a = [], dfGap = [];
+  let dfWins = 0, dfPodiums = 0;
   const finPos = [], finPts_a = [], finGap = [];
   let finWins = 0, finPodiums = 0;
   const totPts = [], totPos = [];
@@ -332,9 +347,14 @@ function buildSeasonStats(meetingsData) {
     if (m.interimStats.pos != null) intPos.push(m.interimStats.pos);
     if (m.interimStats.pts != null) intPts.push(m.interimStats.pts);
  
-    // DF
+    // DF — pos est la position dans la demi du pilote (DF1 ou DF2).
+    // Une victoire en demi = victoire de serie qui compte ici.
     if (m.dfStats.participated) {
-      if (m.dfStats.pos != null) dfPos.push(m.dfStats.pos);
+      if (m.dfStats.pos != null) {
+        dfPos.push(m.dfStats.pos);
+        if (m.dfStats.pos === 1) dfWins++;
+        if (m.dfStats.pos <= 3) dfPodiums++;
+      }
       if (m.dfStats.pts != null) dfPts_a.push(m.dfStats.pts);
       if (m.dfStats.gap != null) dfGap.push(m.dfStats.gap);
     }
@@ -361,7 +381,7 @@ function buildSeasonStats(meetingsData) {
     ec:     { avgPos: avg(ecPos), avgPts: avg(ecPts), avgGap: avg(ecGap) },
     mq:     { avgPos: avg(mqPos), avgPts: avg(mqPts_a), avgGap: avg(mqGap), avgTotalPts: avg(mqTotalPts), wins: mqWins, podiums: mqPodiums },
     intern: { avgPos: avg(intPos), avgPts: avg(intPts) },
-    df:     { avgPos: avg(dfPos), avgPts: avg(dfPts_a), avgGap: avg(dfGap) },
+    df:     { avgPos: avg(dfPos), avgPts: avg(dfPts_a), avgGap: avg(dfGap), wins: dfWins, podiums: dfPodiums },
     fin:    { avgPos: avg(finPos), avgPts: avg(finPts_a), avgGap: avg(finGap), wins: finWins, podiums: finPodiums },
     total:  { avgPts: avg(totPts), avgPos: avg(totPos) },
   };
@@ -458,11 +478,29 @@ function renderTable(meetingsData, s) {
   const tdGap = (ms,  cls = '') => td(fmtGap(ms), cls);
   const tdNA  = (cls = '')      => td('<span class="dp-na">—</span>', cls);
 
+  // Calcul des moyennes cumulees MQ pour un meeting : a la fin de chaque
+  // manche k (1..4), on prend la moyenne sur les manches 1..k disputees
+  // (uniquement celles avec une valeur valide).
+  const cumAvg = (mqStats, getter) => {
+    const out = [];
+    const acc = [];
+    for (const mq of mqStats) {
+      const v = mq.participated ? getter(mq) : null;
+      if (v != null) acc.push(v);
+      out.push(acc.length ? acc.reduce((a, b) => a + b, 0) / acc.length : null);
+    }
+    return out;
+  };
+
   // Lignes par meeting
   const meetingRows = meetingsData.map(m => {
     const date = m.meeting.date
       ? new Date(m.meeting.date).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' })
       : '?';
+
+    const cumPos  = cumAvg(m.mqStats, mq => mq.pos);
+    const cumPts  = cumAvg(m.mqStats, mq => mq.pts);
+    const cumGap  = cumAvg(m.mqStats, mq => mq.gap);
 
     return `
       <tr class="dp-meeting-label">
@@ -498,14 +536,48 @@ function renderTable(meetingsData, s) {
         ${tdGap(m.finStats.gap)}
         ${tdNA('dp-total-col')}
       </tr>
+      <tr class="dp-sub-row dp-cum-row" title="Moyennes cumulees au fil du week-end (manches 1, 1-2, 1-3, 1-4)">
+        <td class="dp-row-label">Moy. cumulée pos.</td>
+        ${tdNA()}
+        ${cumPos.map(v => td(v == null ? '<span class="dp-na">—</span>' : `<span class="dp-pos">${v.toFixed(1)}e</span>`)).join('')}
+        ${tdNA()}
+        ${tdNA('dp-interim-col')}
+        ${tdNA()}
+        ${tdNA()}
+        ${tdNA('dp-total-col')}
+      </tr>
+      <tr class="dp-sub-row dp-cum-row">
+        <td class="dp-row-label">Moy. cumulée pts</td>
+        ${tdNA()}
+        ${cumPts.map(v => td(v == null ? '<span class="dp-na">—</span>' : `<span class="dp-pts-val">${v.toFixed(1)}</span>`)).join('')}
+        ${tdNA()}
+        ${tdNA('dp-interim-col')}
+        ${tdNA()}
+        ${tdNA()}
+        ${tdNA('dp-total-col')}
+      </tr>
+      <tr class="dp-sub-row dp-cum-row">
+        <td class="dp-row-label">Moy. cumulée écart</td>
+        ${tdNA()}
+        ${cumGap.map(v => td(fmtGap(v))).join('')}
+        ${tdNA()}
+        ${tdNA('dp-interim-col')}
+        ${tdNA()}
+        ${tdNA()}
+        ${tdNA('dp-total-col')}
+      </tr>
     `;
   }).join('');
 
   // Lignes synthèse saison
   const fmtP = v => v == null ? '—' : v.toFixed(1) + 'e';
   const fmtA = (v, d = 1) => v == null ? '—' : v.toFixed(d);
-  const fmtG = v => v == null ? '—' : v === 0 ? '0.000s' : `+${(v / 1000).toFixed(3)}s`;
+  // fmtG reutilise fmtGap (couleurs vert/rouge selon signe).
+  const fmtG = v => fmtGap(v);
 
+  // Synthese : une seule colonne MQ qui couvre les 4 sous-colonnes MQ1..MQ4
+  // (colspan=4) car les valeurs moyennes sont identiques pour ces 4 colonnes.
+  const tdMq = (val, cls = '') => `<td class="dp-td center dp-synth-mq ${cls}" colspan="4">${val ?? '—'}</td>`;
   const synthRows = `
     <tr class="dp-synth-label">
       <td colspan="11" class="dp-synth-title">📊 Synthèse saison</td>
@@ -513,7 +585,7 @@ function renderTable(meetingsData, s) {
     <tr class="dp-synth-row">
       <td class="dp-row-label">Moy. position</td>
       ${td(fmtP(s.ec.avgPos))}
-      ${[1,2,3,4].map(() => td(fmtP(s.mq.avgPos))).join('')}
+      ${tdMq(fmtP(s.mq.avgPos))}
       ${tdNA()}
       ${td(fmtP(s.intern.avgPos), 'dp-interim-col')}
       ${td(fmtP(s.df.avgPos))}
@@ -523,7 +595,7 @@ function renderTable(meetingsData, s) {
     <tr class="dp-synth-row">
       <td class="dp-row-label">Moy. points</td>
       ${td(fmtA(s.ec.avgPts))}
-      ${[1,2,3,4].map(() => td(fmtA(s.mq.avgPts))).join('')}
+      ${tdMq(fmtA(s.mq.avgPts))}
       ${td(fmtA(s.mq.avgTotalPts, 0))}
       ${td(fmtA(s.intern.avgPts), 'dp-interim-col')}
       ${td(fmtA(s.df.avgPts))}
@@ -533,7 +605,7 @@ function renderTable(meetingsData, s) {
     <tr class="dp-synth-row">
       <td class="dp-row-label">Moy. écart 1er</td>
       ${td(fmtG(s.ec.avgGap))}
-      ${[1,2,3,4].map(() => td(fmtG(s.mq.avgGap))).join('')}
+      ${tdMq(fmtG(s.mq.avgGap))}
       ${tdNA()}
       ${tdNA('dp-interim-col')}
       ${td(fmtG(s.df.avgGap))}
@@ -543,20 +615,20 @@ function renderTable(meetingsData, s) {
     <tr class="dp-synth-row">
       <td class="dp-row-label">Victoires</td>
       ${tdNA()}
-      ${[1,2,3,4].map(() => td(s.mq.wins)).join('')}
+      ${tdMq(s.mq.wins)}
       ${tdNA()}
       ${tdNA('dp-interim-col')}
-      ${tdNA()}
+      ${td(s.df.wins)}
       ${td(s.fin.wins)}
       ${tdNA('dp-total-col')}
     </tr>
     <tr class="dp-synth-row">
       <td class="dp-row-label">Podiums</td>
       ${tdNA()}
-      ${[1,2,3,4].map(() => td(s.mq.podiums)).join('')}
+      ${tdMq(s.mq.podiums)}
       ${tdNA()}
       ${tdNA('dp-interim-col')}
-      ${tdNA()}
+      ${td(s.df.podiums)}
       ${td(s.fin.podiums)}
       ${tdNA('dp-total-col')}
     </tr>
