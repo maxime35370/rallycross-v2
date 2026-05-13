@@ -12,7 +12,7 @@ import { logAudit } from './audit.js';
 import { requireAuth } from './auth.js';
 import { msToDisplay, inputToMs, msToFields, escHtml, parseTimeString } from './utils.js';
 import { getActiveChampionship, getActiveChampionshipId } from './context.js';
-import { mqPoints, qfPoints, dfPoints, finPoints, calcStatusPoints, compareInterimTiebreaker } from './calc.js';
+import { mqPoints, qfPoints, dfPoints, finPoints, ecBonusPoints, calcStatusPoints, compareInterimTiebreaker } from './calc.js';
 import { getChampionshipConfig } from './settings.js';
 
 // ─────────────────────────────────────────────────────────
@@ -558,6 +558,26 @@ function computeLivePointsMap() {
     return out;
   }
 
+  // Essais chronometres : bonus top 5 sur le meilleur temps.
+  // Seuls les pilotes avec un chrono (et sans statut special) sont classes,
+  // tries du plus rapide au plus lent. ecBonusPoints applique le bareme
+  // EC_BONUS du reglement, ou par defaut FFSA (5/4/3/2/1 pour le top 5).
+  if (session.type === 'EC') {
+    const finished = participants
+      .map(p => ({
+        driverId: p.driverId,
+        ms: results[p.driverId]?.ms ?? null,
+        status: results[p.driverId]?.status ?? null,
+      }))
+      .filter(r => r.ms != null && !SPECIAL_STATUSES.includes(r.status))
+      .sort((a, b) => a.ms - b.ms);
+    finished.forEach((r, i) => {
+      const pts = ecBonusPoints(i + 1, _activeRegulation);
+      if (pts > 0) out[r.driverId] = { currentPoints: pts };
+    });
+    return out;
+  }
+
   if (session.type !== 'MQ') return out;
 
   // Pre-points : cumul depuis _otherMqResults (sessions deja terminees).
@@ -1086,7 +1106,8 @@ function pilotRowTimed(p, index, session, livePoints) {
   const isPhase = ['QF', 'DF', 'FIN'].includes(session.type);
   const showPoints = lp && (
     (session.type === 'MQ' && (lp.currentPoints > 0 || lp.totalPoints > 0)) ||
-    (isPhase && lp.currentPoints != null)
+    (isPhase && lp.currentPoints != null) ||
+    (session.type === 'EC' && lp.currentPoints > 0)
   );
   let pointsBadges = '';
   if (showPoints) {
@@ -1095,6 +1116,10 @@ function pilotRowTimed(p, index, session, livePoints) {
          <span class="tim-points-current">+${lp.currentPoints}</span>
          <span class="tim-points-total">(${lp.totalPoints})</span>
          ${lp.interimPos ? `<span class="tim-points-interim">${lp.interimPos}<sup>e</sup></span>` : ''}
+       </span>`;
+    } else if (session.type === 'EC') {
+      pointsBadges = `<span class="tim-points" title="Bonus top 5 des essais chronometres">
+         <span class="tim-points-current">+${lp.currentPoints}</span>
        </span>`;
     } else {
       const phaseLabel = session.type === 'QF' ? 'quart de finale'
