@@ -32,6 +32,7 @@ let unsubSessions  = null;
 // et la position au classement intermediaire.
 let _activeRegulation = null;
 let _otherMqResults   = {}; // sessionId -> { driverId -> result }
+let _ecResults        = {}; // driverId -> result (session EC du meeting)
 let unsubResults   = null;
 
 let selectedYear      = new Date().getFullYear();
@@ -188,6 +189,7 @@ async function loadSessions() {
     // vide → cumul affiche = points de la session courante seulement.
     if (selectedSessionId && allSessions.length > 0) {
       await loadOtherMqResults();
+      await loadEcResults();
       renderTimingTable();
     }
   });
@@ -475,6 +477,55 @@ async function loadOtherMqResults() {
 }
 
 /**
+ * Charge les resultats de la session EC (essais chronometres) du meeting +
+ * categorie courants. Sert a inclure le bonus EC dans le cumul affiche sur
+ * la page Chronometrage des manches qualificatives : le classement
+ * intermediaire officiel compte points MQ + bonus EC. S'il n'y a pas d'EC
+ * dans ce championnat, _ecResults reste vide → aucun bonus ajoute.
+ */
+async function loadEcResults() {
+  _ecResults = {};
+  if (!db) return;
+  const ecSession = allSessions.find(s => s.type === 'EC');
+  if (!ecSession) return;
+  const { collection, query, where, getDocs } = await import(
+    'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
+  );
+  try {
+    const snap = await getDocs(query(
+      collection(db, 'results'),
+      where('sessionId', '==', ecSession.id)
+    ));
+    snap.docs.forEach(d => {
+      const data = d.data();
+      _ecResults[data.driverId] = data;
+    });
+  } catch (err) {
+    console.warn('[timing] loadEcResults failed', err);
+  }
+}
+
+/**
+ * Calcule le bonus EC par pilote depuis _ecResults : tri par meilleur chrono
+ * croissant (statuts speciaux exclus), puis ecBonusPoints() applique le
+ * bareme EC_BONUS du reglement (defaut FFSA top 5 : 5/4/3/2/1).
+ * Retourne { driverId -> bonus }. Vide s'il n'y a pas de session EC.
+ */
+function computeEcBonusMap() {
+  const out = {};
+  if (!_activeRegulation) return out;
+  const finished = Object.entries(_ecResults)
+    .map(([driverId, r]) => ({ driverId, ms: r.ms ?? null, status: r.status ?? null }))
+    .filter(r => r.ms != null && !SPECIAL_STATUSES.includes(r.status))
+    .sort((a, b) => a.ms - b.ms);
+  finished.forEach((r, i) => {
+    const pts = ecBonusPoints(i + 1, _activeRegulation);
+    if (pts > 0) out[r.driverId] = pts;
+  });
+  return out;
+}
+
+/**
  * Calcule la position d'un pilote dans une session MQ depuis le sort
  * par ms. Retourne null si le pilote n'a pas de chrono valide.
  */
@@ -585,11 +636,21 @@ function computeLivePointsMap() {
   // le tiebreaker du classement intermediaire.
   for (const p of participants) {
     out[p.driverId] = {
-      prePoints: 0, currentPoints: 0, totalPoints: 0, interimPos: null,
+      prePoints: 0, currentPoints: 0, ecPoints: 0, totalPoints: 0, interimPos: null,
+      hasMq: false, // a au moins un resultat MQ (manche courante ou anterieure)
       mqMs:  {}, // num de manche → ms (chrono finisseur)
       mqPos: {}, // num de manche → position (1, 2, ...) si finisseur
     };
   }
+
+  // Bonus EC : si le meeting a une session EC, le bonus compte dans le cumul
+  // affiche (le classement intermediaire officiel = points MQ + bonus EC).
+  // Cf. calcInterimStandings() dans calc.js.
+  const ecBonusMap = computeEcBonusMap();
+  for (const driverId of Object.keys(out)) {
+    out[driverId].ecPoints = ecBonusMap[driverId] ?? 0;
+  }
+
   for (const [sessionId, sessionResults] of Object.entries(_otherMqResults)) {
     const otherSession = allSessions.find(s => s.id === sessionId);
     const mqNum = otherSession?.num;
@@ -597,6 +658,7 @@ function computeLivePointsMap() {
       if (!out[driverId]) continue; // pilote pas dans la session courante
       const pts = pointsFromResult({ ...r, driverId }, sessionResults);
       out[driverId].prePoints += pts;
+      out[driverId].hasMq = true;
       if (mqNum != null && r.ms != null && !SPECIAL_STATUSES.includes(r.status)) {
         out[driverId].mqMs[mqNum] = r.ms;
         const pos = positionFromResult(driverId, sessionResults);
@@ -616,12 +678,20 @@ function computeLivePointsMap() {
     const r = currentSessionResults[driverId];
     const pts = pointsFromResult(r, currentSessionResults);
     out[driverId].currentPoints = pts;
-    out[driverId].totalPoints   = out[driverId].prePoints + pts;
+    out[driverId].hasMq = true;
     if (r.ms != null && !SPECIAL_STATUSES.includes(r.status) && currentMqNum != null) {
       out[driverId].mqMs[currentMqNum] = r.ms;
       const pos = positionFromResult(driverId, currentSessionResults);
       if (pos != null) out[driverId].mqPos[currentMqNum] = pos;
     }
+  }
+
+  // Total = points MQ anterieurs + MQ courante + bonus EC. Le bonus EC n'est
+  // ajoute que si le pilote a deja un resultat MQ : un pilote qui n'aurait
+  // que ses essais chrono ne doit pas etre classe a l'intermediaire.
+  for (const driverId of Object.keys(out)) {
+    const v = out[driverId];
+    v.totalPoints = v.prePoints + v.currentPoints + (v.hasMq ? v.ecPoints : 0);
   }
 
   // Position au classement intermediaire : tri par totalPoints desc + tiebreaker.
@@ -1112,7 +1182,12 @@ function pilotRowTimed(p, index, session, livePoints) {
   let pointsBadges = '';
   if (showPoints) {
     if (session.type === 'MQ') {
-      pointsBadges = `<span class="tim-points" title="Points en direct">
+      // Tooltip : detaille la composition du cumul si un bonus EC s'y ajoute.
+      const mqCumul = lp.prePoints + lp.currentPoints;
+      const tip = lp.ecPoints > 0
+        ? `Cumul intermediaire : ${mqCumul} pts manches + ${lp.ecPoints} bonus essais chrono = ${lp.totalPoints}`
+        : 'Points en direct (cumul intermediaire)';
+      pointsBadges = `<span class="tim-points" title="${tip}">
          <span class="tim-points-current">+${lp.currentPoints}</span>
          <span class="tim-points-total">(${lp.totalPoints})</span>
          ${lp.interimPos ? `<span class="tim-points-interim">${lp.interimPos}<sup>e</sup></span>` : ''}
@@ -1343,6 +1418,7 @@ function bindEvents() {
     await loadParticipants();
     await loadResults();
     await loadOtherMqResults();
+    await loadEcResults();
   });
 }
 
@@ -1918,6 +1994,7 @@ export function initTiming() {
         await loadParticipants();
         await loadResults();
         await loadOtherMqResults();
+        await loadEcResults();
       }
     }
   });
