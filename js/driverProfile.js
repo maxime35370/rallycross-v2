@@ -19,6 +19,18 @@ function mqPts(pos) {
   if (pos >= 4)  return Math.max(0, 44 - pos);
   return 0;
 }
+// Inverse de mqPts : retourne la "place equivalente" pour un nombre de points
+// donne. Utilise quand un pilote a un statut (DNF, DSQ_RACE...) qui lui donne
+// des points mais pas de classement reel. La place equivalente permet de le
+// compter dans la moyenne de position au lieu de l'exclure.
+function mqPosFromPts(pts) {
+  if (pts == null || pts <= 0) return null;
+  if (pts >= 50) return 1;
+  if (pts === 45) return 2;
+  if (pts === 42) return 3;
+  if (pts >= 1 && pts <= 40) return 44 - pts;
+  return null; // 41..44 : gap dans le bareme, pas d'inverse exact
+}
 const DF_PTS  = [0, 10, 8, 6, 5, 4, 3, 2, 1];
 const FIN_PTS = [0, 15, 12, 9, 7, 6, 5, 4, 3];
 
@@ -224,11 +236,11 @@ function buildMqStats(driverId, mqSessions, resultsMap, partsMap) {
   const stats = [];
   for (let i = 0; i < 4; i++) {
     const mq = mqSessions[i];
-    if (!mq) { stats.push({ num: i + 1, pos: null, pts: null, gap: null, participated: false, status: null }); continue; }
+    if (!mq) { stats.push({ num: i + 1, pos: null, posForAvg: null, pts: null, gap: null, participated: false, status: null }); continue; }
 
     const parts = partsMap[mq.id] || [];
     if (!parts.some(p => p.driverId === driverId)) {
-      stats.push({ num: mq.num, pos: null, pts: null, gap: null, participated: false, status: null });
+      stats.push({ num: mq.num, pos: null, posForAvg: null, pts: null, gap: null, participated: false, status: null });
       continue;
     }
 
@@ -251,7 +263,13 @@ function buildMqStats(driverId, mqSessions, resultsMap, partsMap) {
       pts = mqPts(pos);
     }
 
-    stats.push({ num: mq.num, pos, pts, gap, participated: true, status });
+    // posForAvg = position utilisee pour calculer les moyennes (cumulee meeting
+    // et synthese saison). Pour un finisseur, c'est sa position reelle. Pour
+    // un DNF/DSQ-EC classe en marquant des points, on utilise la place equi-
+    // valente (inverse du bareme) pour ne pas l'exclure de la moyenne.
+    const posForAvg = pos ?? mqPosFromPts(pts);
+
+    stats.push({ num: mq.num, pos, posForAvg, pts, gap, participated: true, status });
   }
   return stats;
 }
@@ -357,11 +375,12 @@ function buildSeasonStats(meetingsData) {
       for (const mq of m.mqStats) {
         if (!mq.participated) continue;
         if (mq.pts === null) continue; // ← MODIFIÉ : ignorer si pas de résultat réel
-        if (mq.pos != null) {
-          mqPos.push(mq.pos);
-          if (mq.pos === 1) mqWins++;
-          if (mq.pos <= 3) mqPodiums++;
-        }
+        // Moy. position : on prend posForAvg (inclut la place equivalente
+        // d'un DNF qui marque des points) pour ne pas exclure les DNF
+        // classes. Les victoires/podiums restent bases sur la vraie position.
+        if (mq.posForAvg != null) mqPos.push(mq.posForAvg);
+        if (mq.pos === 1) mqWins++;
+        if (mq.pos != null && mq.pos <= 3) mqPodiums++;
         if (mq.pts != null) mqPts_a.push(mq.pts);
         if (mq.gap != null) mqGap.push(mq.gap);
       }
@@ -522,7 +541,9 @@ function renderTable(meetingsData, s) {
       ? new Date(m.meeting.date).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' })
       : '?';
 
-    const cumPos  = cumAvg(m.mqStats, mq => mq.pos);
+    // Moy. cumulee de position : on prend posForAvg (qui inclut la place
+    // equivalente d'un DNF qui a marque des points) pour ne pas l'exclure.
+    const cumPos  = cumAvg(m.mqStats, mq => mq.posForAvg);
     const cumPts  = cumAvg(m.mqStats, mq => mq.pts);
     const cumGap  = cumAvg(m.mqStats, mq => mq.gap);
 
