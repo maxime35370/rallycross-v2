@@ -31,6 +31,7 @@ function mqPosFromPts(pts) {
   if (pts >= 1 && pts <= 40) return 44 - pts;
   return null; // 41..44 : gap dans le bareme, pas d'inverse exact
 }
+const QF_PTS  = [0, 8, 6, 5, 4, 3, 2];
 const DF_PTS  = [0, 10, 8, 6, 5, 4, 3, 2, 1];
 const FIN_PTS = [0, 15, 12, 9, 7, 6, 5, 4, 3];
 
@@ -191,6 +192,13 @@ function buildMeetingStats(driverId, meeting, sessions, resultsMap, partsMap, my
     ? { pos: myInterim.position, pts: myInterim.interimPoints }
     : { pos: null, pts: null };
 
+  // QF (¼ de finale) — uniquement si le championnat en a (sessions QF
+  // presentes dans le meeting). buildPhaseStats renvoie participated:false
+  // si le pilote n'y figure pas, qfStats reste alors neutre.
+  const qfSessions = sessions.filter(s => s.type === 'QF').sort((a, b) => a.num - b.num);
+  const hasQf      = qfSessions.length > 0;
+  const qfStats    = buildPhaseStats(driverId, qfSessions, resultsMap, partsMap, QF_PTS);
+
   // DF
   const dfSessions = sessions.filter(s => s.type === 'DF').sort((a, b) => a.num - b.num);
   const dfStats    = buildPhaseStats(driverId, dfSessions, resultsMap, partsMap, DF_PTS);
@@ -199,7 +207,8 @@ function buildMeetingStats(driverId, meeting, sessions, resultsMap, partsMap, my
   const finSess  = sessions.find(s => s.type === 'FIN');
   const finStats = buildPhaseStats(driverId, finSess ? [finSess] : [], resultsMap, partsMap, FIN_PTS);
 
-  const totalMeetingPts = (interimStats.pts ?? 0) + (dfStats.pts ?? 0) + (finStats.pts ?? 0);
+  const totalMeetingPts = (interimStats.pts ?? 0) + (qfStats.pts ?? 0)
+                        + (dfStats.pts ?? 0) + (finStats.pts ?? 0);
 
   return {
     meeting,
@@ -207,6 +216,8 @@ function buildMeetingStats(driverId, meeting, sessions, resultsMap, partsMap, my
     mqStats,
     totalMQPts,
     interimStats,
+    hasQf,
+    qfStats,
     dfStats,
     finStats,
     totalMeetingPts,
@@ -347,25 +358,30 @@ function phasePointsByDriver(sessions, resultsMap, partsMap, ptsArr) {
 
 /**
  * Calcule la position de chaque pilote au classement du meeting :
- * total = points intermediaires + points DF + points FIN, puis tri
- * decroissant avec gestion des ex aequo. Renvoie { driverId -> position }.
- * Remplace l'ancienne lecture de la collection meetingStandings (qui
- * exigeait un clic manuel sur "Sauvegarder").
+ * total = points intermediaires + points QF + points DF + points FIN,
+ * puis tri decroissant avec gestion des ex aequo. Renvoie
+ * { driverId -> position }. Les QF ne comptent que si le championnat en
+ * a (sessions QF presentes). Remplace l'ancienne lecture de la collection
+ * meetingStandings (qui exigeait un clic manuel sur "Sauvegarder").
  */
 function computeMeetingPositions(sessions, resultsMap, partsMap, interim) {
+  const qfSessions  = sessions.filter(s => s.type === 'QF');
   const dfSessions  = sessions.filter(s => s.type === 'DF');
   const finSessions = sessions.filter(s => s.type === 'FIN');
+  const qfPts  = phasePointsByDriver(qfSessions,  resultsMap, partsMap, QF_PTS);
   const dfPts  = phasePointsByDriver(dfSessions,  resultsMap, partsMap, DF_PTS);
   const finPts = phasePointsByDriver(finSessions, resultsMap, partsMap, FIN_PTS);
   const interimPts = {};
   (interim || []).forEach(r => { interimPts[r.driverId] = r.interimPoints ?? 0; });
 
   const ids = new Set([
-    ...Object.keys(interimPts), ...Object.keys(dfPts), ...Object.keys(finPts),
+    ...Object.keys(interimPts), ...Object.keys(qfPts),
+    ...Object.keys(dfPts), ...Object.keys(finPts),
   ]);
   const totals = [...ids].map(driverId => ({
     driverId,
-    total: (interimPts[driverId] ?? 0) + (dfPts[driverId] ?? 0) + (finPts[driverId] ?? 0),
+    total: (interimPts[driverId] ?? 0) + (qfPts[driverId] ?? 0)
+         + (dfPts[driverId] ?? 0) + (finPts[driverId] ?? 0),
   }));
   // Meeting pas encore couru (personne n'a marque) → aucune position.
   if (totals.every(t => t.total === 0)) return {};
@@ -398,6 +414,7 @@ function calcReg(meetingsData) {
   };
   for (const m of meetingsData) {
     m.mqStats.forEach(mq => { if (mq.participated) count(mq.status); });
+    if (m.qfStats.participated)  count(m.qfStats.status);
     if (m.dfStats.participated)  count(m.dfStats.status);
     if (m.finStats.participated) count(m.finStats.status);
   }
@@ -413,6 +430,8 @@ function buildSeasonStats(meetingsData) {
   const mqPos = [], mqPts_a = [], mqGap = [], mqTotalPts = [];
   let mqWins = 0, mqPodiums = 0;
   const intPos = [], intPts = [];
+  const qfPos = [], qfPts_a = [], qfGap = [];
+  let qfWins = 0, qfPodiums = 0;
   const dfPos = [], dfPts_a = [], dfGap = [];
   let dfWins = 0, dfPodiums = 0;
   const finPos = [], finPts_a = [], finGap = [];
@@ -452,7 +471,19 @@ function buildSeasonStats(meetingsData) {
     // Intermédiaire — OK car pos/pts null si pas calculé
     if (m.interimStats.pos != null) intPos.push(m.interimStats.pos);
     if (m.interimStats.pts != null) intPts.push(m.interimStats.pts);
- 
+
+    // QF — pos est la position dans le quart du pilote. Une victoire de
+    // quart = victoire de serie, comptee comme pour la DF.
+    if (m.qfStats.participated) {
+      if (m.qfStats.pos != null) {
+        qfPos.push(m.qfStats.pos);
+        if (m.qfStats.pos === 1) qfWins++;
+        if (m.qfStats.pos <= 3) qfPodiums++;
+      }
+      if (m.qfStats.pts != null) qfPts_a.push(m.qfStats.pts);
+      if (m.qfStats.gap != null) qfGap.push(m.qfStats.gap);
+    }
+
     // DF — pos est la position dans la demi du pilote (DF1 ou DF2).
     // Une victoire en demi = victoire de serie qui compte ici.
     if (m.dfStats.participated) {
@@ -487,6 +518,7 @@ function buildSeasonStats(meetingsData) {
     ec:     { avgPos: avg(ecPos), avgPts: avg(ecPts), avgGap: avg(ecGap) },
     mq:     { avgPos: avg(mqPos), avgPts: avg(mqPts_a), avgGap: avg(mqGap), avgTotalPts: avg(mqTotalPts), wins: mqWins, podiums: mqPodiums },
     intern: { avgPos: avg(intPos), avgPts: avg(intPts) },
+    qf:     { avgPos: avg(qfPos), avgPts: avg(qfPts_a), avgGap: avg(qfGap), wins: qfWins, podiums: qfPodiums },
     df:     { avgPos: avg(dfPos), avgPts: avg(dfPts_a), avgGap: avg(dfGap), wins: dfWins, podiums: dfPodiums },
     fin:    { avgPos: avg(finPos), avgPts: avg(finPts_a), avgGap: avg(finGap), wins: finWins, podiums: finPodiums },
     total:  { avgPts: avg(totPts), avgPos: avg(totPos) },
@@ -584,6 +616,12 @@ function renderTable(meetingsData, s) {
   const tdGap = (ms,  cls = '') => td(fmtGap(ms), cls);
   const tdNA  = (cls = '')      => td('<span class="dp-na">—</span>', cls);
 
+  // Colonne ¼ Finale : affichee seulement si au moins un meeting du pilote
+  // a des sessions QF (championnat de type FIA). Sinon le tableau garde
+  // ses 11 colonnes habituelles.
+  const hasQF    = meetingsData.some(m => m.hasQf);
+  const colCount = hasQF ? 12 : 11;
+
   // Calcul des moyennes cumulees MQ pour un meeting : a la fin de chaque
   // manche k (1..4), on prend la moyenne sur les manches 1..k disputees
   // (uniquement celles avec une valeur valide).
@@ -612,7 +650,7 @@ function renderTable(meetingsData, s) {
 
     return `
       <tr class="dp-meeting-label">
-        <td colspan="11" class="dp-meeting-title">📅 ${date} — ${escHtml(m.meeting.location || '?')}</td>
+        <td colspan="${colCount}" class="dp-meeting-title">📅 ${date} — ${escHtml(m.meeting.location || '?')}</td>
       </tr>
       <tr class="dp-sub-row dp-pos-row">
         <td class="dp-row-label">Position</td>
@@ -620,6 +658,7 @@ function renderTable(meetingsData, s) {
         ${m.mqStats.map(mq => tdPos(mq.pos)).join('')}
         ${tdNA()}
         ${tdPos(m.interimStats.pos, 'dp-interim-col')}
+        ${hasQF ? tdPos(m.qfStats.pos) : ''}
         ${tdPos(m.dfStats.pos)}
         ${tdPos(m.finStats.pos)}
         ${tdPos(m.meetingPosition, 'dp-total-col')}
@@ -630,6 +669,7 @@ function renderTable(meetingsData, s) {
         ${m.mqStats.map(mq => tdPts(mq.pts)).join('')}
         ${td(`<strong>${m.totalMQPts}</strong>`)}
         ${tdPts(m.interimStats.pts, 'dp-interim-col')}
+        ${hasQF ? tdPts(m.qfStats.pts) : ''}
         ${tdPts(m.dfStats.pts)}
         ${tdPts(m.finStats.pts)}
         ${td(`<strong class="dp-total-pts">${m.totalMeetingPts}</strong>`, 'dp-total-col')}
@@ -640,6 +680,7 @@ function renderTable(meetingsData, s) {
         ${m.mqStats.map(mq => tdGap(mq.gap)).join('')}
         ${tdNA()}
         ${tdNA('dp-interim-col')}
+        ${hasQF ? tdGap(m.qfStats.gap) : ''}
         ${tdGap(m.dfStats.gap)}
         ${tdGap(m.finStats.gap)}
         ${tdNA('dp-total-col')}
@@ -650,6 +691,7 @@ function renderTable(meetingsData, s) {
         ${cumPos.map(v => td(v == null ? '<span class="dp-na">—</span>' : `<span class="dp-pos">${v.toFixed(1)}e</span>`)).join('')}
         ${tdNA()}
         ${tdNA('dp-interim-col')}
+        ${hasQF ? tdNA() : ''}
         ${tdNA()}
         ${tdNA()}
         ${tdNA('dp-total-col')}
@@ -660,6 +702,7 @@ function renderTable(meetingsData, s) {
         ${cumPts.map(v => td(v == null ? '<span class="dp-na">—</span>' : `<span class="dp-pts-val">${v.toFixed(1)}</span>`)).join('')}
         ${tdNA()}
         ${tdNA('dp-interim-col')}
+        ${hasQF ? tdNA() : ''}
         ${tdNA()}
         ${tdNA()}
         ${tdNA('dp-total-col')}
@@ -670,6 +713,7 @@ function renderTable(meetingsData, s) {
         ${cumGap.map(v => td(fmtGap(v))).join('')}
         ${tdNA()}
         ${tdNA('dp-interim-col')}
+        ${hasQF ? tdNA() : ''}
         ${tdNA()}
         ${tdNA()}
         ${tdNA('dp-total-col')}
@@ -688,7 +732,7 @@ function renderTable(meetingsData, s) {
   const tdMq = (val, cls = '') => `<td class="dp-td center dp-synth-mq ${cls}" colspan="4">${val ?? '—'}</td>`;
   const synthRows = `
     <tr class="dp-synth-label">
-      <td colspan="11" class="dp-synth-title">📊 Synthèse saison</td>
+      <td colspan="${colCount}" class="dp-synth-title">📊 Synthèse saison</td>
     </tr>
     <tr class="dp-synth-row">
       <td class="dp-row-label">Moy. position</td>
@@ -696,6 +740,7 @@ function renderTable(meetingsData, s) {
       ${tdMq(fmtP(s.mq.avgPos))}
       ${tdNA()}
       ${td(fmtP(s.intern.avgPos), 'dp-interim-col')}
+      ${hasQF ? td(fmtP(s.qf.avgPos)) : ''}
       ${td(fmtP(s.df.avgPos))}
       ${td(fmtP(s.fin.avgPos))}
       ${td(fmtP(s.total.avgPos), 'dp-total-col')}
@@ -706,6 +751,7 @@ function renderTable(meetingsData, s) {
       ${tdMq(fmtA(s.mq.avgPts))}
       ${td(fmtA(s.mq.avgTotalPts, 0))}
       ${td(fmtA(s.intern.avgPts), 'dp-interim-col')}
+      ${hasQF ? td(fmtA(s.qf.avgPts)) : ''}
       ${td(fmtA(s.df.avgPts))}
       ${td(fmtA(s.fin.avgPts))}
       ${td(fmtA(s.total.avgPts, 0), 'dp-total-col')}
@@ -716,6 +762,7 @@ function renderTable(meetingsData, s) {
       ${tdMq(fmtG(s.mq.avgGap))}
       ${tdNA()}
       ${tdNA('dp-interim-col')}
+      ${hasQF ? td(fmtG(s.qf.avgGap)) : ''}
       ${td(fmtG(s.df.avgGap))}
       ${td(fmtG(s.fin.avgGap))}
       ${tdNA('dp-total-col')}
@@ -726,6 +773,7 @@ function renderTable(meetingsData, s) {
       ${tdMq(s.mq.wins)}
       ${tdNA()}
       ${tdNA('dp-interim-col')}
+      ${hasQF ? td(s.qf.wins) : ''}
       ${td(s.df.wins)}
       ${td(s.fin.wins)}
       ${tdNA('dp-total-col')}
@@ -736,6 +784,7 @@ function renderTable(meetingsData, s) {
       ${tdMq(s.mq.podiums)}
       ${tdNA()}
       ${tdNA('dp-interim-col')}
+      ${hasQF ? td(s.qf.podiums) : ''}
       ${td(s.df.podiums)}
       ${td(s.fin.podiums)}
       ${tdNA('dp-total-col')}
@@ -754,6 +803,7 @@ function renderTable(meetingsData, s) {
           <th class="center">MQ4</th>
           <th class="center">Total MQ</th>
           <th class="center dp-interim-col">Intermédiaire</th>
+          ${hasQF ? '<th class="center">¼ Finale</th>' : ''}
           <th class="center">½ Finale</th>
           <th class="center">Finale</th>
           <th class="center dp-total-col">Total meeting</th>
