@@ -443,15 +443,25 @@ async function loadActiveRegulation() {
 }
 
 /**
- * Charge les resultats des AUTRES sessions MQ du meeting + categorie
- * courants (toutes sauf celle selectionnee). Sert a calculer le cumul
- * de points pour le classement intermediaire en direct.
+ * Charge les resultats des manches MQ PRECEDENTES (num strictement
+ * inferieur a la manche courante) du meeting + categorie courants. Sert
+ * a calculer le cumul intermediaire en direct : a la manche N, le cumul
+ * affiche = EC + MQ1..MQN.
+ *
+ * On exclut volontairement les manches suivantes (num superieur) : meme
+ * si leurs resultats existent deja (consultation a posteriori d'une
+ * manche apres avoir saisi les suivantes), ils ne doivent pas entrer
+ * dans le cumul intermediaire de la manche courante — sinon on verrait
+ * directement le total final au lieu de l'evolution manche par manche.
  */
 async function loadOtherMqResults() {
   _otherMqResults = {};
   if (!db || !selectedSessionId) return;
+  const currentSession = allSessions.find(s => s.id === selectedSessionId);
+  const currentNum = currentSession?.num;
   const otherMq = allSessions.filter(s =>
-    s.type === 'MQ' && s.id !== selectedSessionId
+    s.type === 'MQ' && s.id !== selectedSessionId &&
+    currentNum != null && s.num != null && s.num < currentNum
   );
   if (otherMq.length === 0) return;
 
