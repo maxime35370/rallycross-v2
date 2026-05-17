@@ -317,12 +317,27 @@ export function compareInterimTiebreaker(a, b, regulation, mqNumsDescending = []
   const mode = regulation?.interimTiebreaker;
   const aMs  = a?.mqMs  || {};
   const bMs  = b?.mqMs  || {};
+  const aPos = a?.mqPos || {};
+  const bPos = b?.mqPos || {};
 
   if (mode === 'last_manche_time') {
+    // Departage au RESULTAT de la manche la plus recente : on compare la
+    // place obtenue (mqPos), pas le chrono brut. Un finisseur a une place
+    // 1..N ; un pilote classe DNF a la place engaged+1, donc derriere tous
+    // les finisseurs de cette manche. Ainsi un abandon en derniere manche
+    // place le pilote derriere ceux qui l'ont terminee, sans remonter
+    // (a tort) aux manches precedentes ou il aurait pu etre plus rapide.
+    // On ne remonte d'une manche que si les deux pilotes ont exactement la
+    // meme place (ex. tous deux DNF la meme manche) ou aucun resultat.
     for (const n of mqNumsDescending) {
-      const at = aMs[n];
-      const bt = bMs[n];
-      if (at != null && bt != null) return at - bt;
+      const ap = aPos[n];
+      const bp = bPos[n];
+      const aHas = ap != null;
+      const bHas = bp != null;
+      if (!aHas && !bHas) continue;            // ni l'un ni l'autre classe
+      if (aHas !== bHas) return aHas ? -1 : 1;  // un classe, l'autre non
+      if (ap !== bp) return ap - bp;            // place plus basse = devant
+      // places identiques → manche precedente
     }
     return 0;
   }
