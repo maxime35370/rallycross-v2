@@ -5,7 +5,7 @@
 ═══════════════════════════════════════════════ */
 
 import { db } from './firebase.js';
-import { toast, categoryBadge, sessionBadge, statusBadge } from './app.js';
+import { categoryBadge, sessionBadge, statusBadge } from './app.js';
 import { msToDisplay, escHtml } from './utils.js';
 import { calcInterimStandings, calcEcStandings, calcMqStandings, qfPoints, dfPoints, finPoints, calcStatusPoints } from './calc.js';
 import { buildMeetingClassification } from './competition.js';
@@ -1004,7 +1004,6 @@ async function renderMeetingPoints(content) {
   content.innerHTML = `
     <div class="std-header-row">
       <span class="std-table-title">Classement complet du meeting</span>
-      <button class="btn btn-primary btn-sm" id="std-save-meeting">💾 Sauvegarder</button>
     </div>
     <div class="table-wrap">
       <table>
@@ -1034,16 +1033,6 @@ async function renderMeetingPoints(content) {
       </table>
     </div>
   `;
-
-  document.getElementById('std-save-meeting')?.addEventListener('click', async () => {
-    if (meetingRows.length === 0) { toast('Aucun résultat à sauvegarder', 'warning'); return; }
-    const btn = document.getElementById('std-save-meeting');
-    btn.disabled = true; btn.textContent = '⏳ Sauvegarde…';
-    await saveMeetingStandings(meetingRows);
-    btn.disabled = false; btn.textContent = '✅ Sauvegardé';
-    setTimeout(() => { if (btn) btn.textContent = '💾 Sauvegarder'; }, 2000);
-    toast('Classement du meeting sauvegardé ✓', 'success');
-  });
 }
 
 // ─── Mode CASCADE (FIA) ─────────────────────────────────
@@ -1168,7 +1157,6 @@ async function renderMeetingCascade(content) {
   content.innerHTML = `
     <div class="std-header-row">
       <span class="std-table-title">Classement Meeting — Cascade</span>
-      <button class="btn btn-primary btn-sm" id="std-save-meeting">💾 Sauvegarder</button>
     </div>
     <div class="std-note">Classement par phase : Finale > ½ Finales${qfEnabled ? ' > ¼ Finales' : ''} > Qualifications</div>
     <div class="table-wrap">
@@ -1196,53 +1184,6 @@ async function renderMeetingCascade(content) {
     </div>
   `;
 
-  document.getElementById('std-save-meeting')?.addEventListener('click', async () => {
-    if (ranking.length === 0) { toast('Aucun résultat à sauvegarder', 'warning'); return; }
-    const btn = document.getElementById('std-save-meeting');
-    btn.disabled = true; btn.textContent = '⏳ Sauvegarde…';
-    const meetingRows = ranking.map(r => ({
-      driverId: r.driverId, carNumber: r.carNumber, firstName: r.firstName, lastName: r.lastName,
-      position: r.meetingPosition, phase: r.phase, total: 0,
-    }));
-    await saveMeetingStandings(meetingRows);
-    btn.disabled = false; btn.textContent = '✅ Sauvegardé';
-    setTimeout(() => { if (btn) btn.textContent = '💾 Sauvegarder'; }, 2000);
-    toast('Classement du meeting sauvegardé ✓', 'success');
-  });
-}
-
-async function saveMeetingStandings(rows) {
-  const { collection, addDoc, query, where, getDocs, writeBatch } = await import(
-    'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
-  );
-  const snap = await getDocs(query(
-    collection(db, 'meetingStandings'),
-    where('meetingId', '==', selectedMeetingId),
-    where('category',  '==', selectedCategory)
-  ));
-  if (!snap.empty) {
-    const batch = writeBatch(db);
-    snap.docs.forEach(d => batch.delete(d.ref));
-    await batch.commit();
-  }
-  const col = collection(db, 'meetingStandings');
-  for (const d of rows) {
-    await addDoc(col, {
-      meetingId:  selectedMeetingId,
-      category:   selectedCategory,
-      year:       selectedYear,
-      driverId:   d.driverId,
-      carNumber:  d.carNumber,
-      firstName:  d.firstName,
-      lastName:   d.lastName,
-      position:   d.position,
-      interimPts: d.interim,
-      dfPts:      d.df,
-      finalePts:  d.fin,
-      totalPts:   d.total,
-      updatedAt:  new Date(),
-    });
-  }
 }
 
 // ─────────────────────────────────────────────────────────

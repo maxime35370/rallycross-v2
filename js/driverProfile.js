@@ -125,20 +125,7 @@ async function loadData(driver) {
   }
   meetings.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
 
-  // 3. Meeting standings (positions finales sauvegardées)
-  const mStandSnap = await getDocs(query(
-    collection(db, 'meetingStandings'),
-    where('driverId', '==', driver.id),
-    where('year',     '==', driver.year),
-    where('category', '==', driver.category)
-  ));
-  const mStandMap = {};
-  mStandSnap.docs.forEach(d => {
-    const data = d.data();
-    mStandMap[data.meetingId] = data.position;
-  });
-
-  // 4. Pour chaque meeting : sessions + résultats
+  // 3. Pour chaque meeting : sessions + résultats
   const meetingsData = [];
 
   for (const meeting of meetings) {
@@ -165,14 +152,19 @@ async function loadData(driver) {
 
     // Classement intermédiaire (calc.js, sans lecture Firestore interimStandings)
     let myInterim = null;
+    let interim = [];
     try {
-      const interim = await calcInterimStandings(db, sessions);
+      interim = await calcInterimStandings(db, sessions);
       myInterim = interim.find(r => r.driverId === driver.id) || null;
     } catch {}
 
+    // Position au classement du meeting : calculee a la volee (interim + DF
+    // + FIN), plus de lecture de meetingStandings — voir computeMeetingPositions.
+    const meetingPositions = computeMeetingPositions(sessions, resultsMap, partsMap, interim);
+
     const mStats = buildMeetingStats(
       driver.id, meeting, sessions, resultsMap, partsMap,
-      myInterim, mStandMap[meeting.id] ?? null
+      myInterim, meetingPositions[driver.id] ?? null
     );
     meetingsData.push(mStats);
   }
@@ -316,6 +308,77 @@ function buildPhaseStats(driverId, sessions, resultsMap, partsMap, ptsArr) {
   else if (pos)                   pts = ptsArr[pos] ?? 0;
 
   return { pos, pts, gap, status, participated: true };
+}
+
+// ─────────────────────────────────────────────────────────
+// CLASSEMENT DU MEETING (calcule a la volee)
+// ─────────────────────────────────────────────────────────
+
+/**
+ * Points marques par chaque pilote sur une phase (toutes les sessions DF,
+ * ou la session FIN). Renvoie { driverId -> points }. Memes regles que
+ * buildPhaseStats : finisseurs classes au chrono, DNF avec position
+ * manuelle au bareme de cette position, DSQ_RACE = 1, autres statuts = 0.
+ */
+function phasePointsByDriver(sessions, resultsMap, partsMap, ptsArr) {
+  const out = {};
+  for (const sess of sessions) {
+    const results = resultsMap[sess.id] || [];
+    const parts   = partsMap[sess.id]  || [];
+    const resByDriver = {};
+    results.forEach(r => { resByDriver[r.driverId] = r; });
+    const rows = parts.map(p => ({
+      driverId:       p.driverId,
+      ms:             resByDriver[p.driverId]?.ms             ?? null,
+      status:         resByDriver[p.driverId]?.status         ?? null,
+      manualPosition: resByDriver[p.driverId]?.manualPosition ?? null,
+    }));
+    rows.filter(r => r.ms && !r.status)
+        .sort((a, b) => a.ms - b.ms)
+        .forEach((r, i) => { out[r.driverId] = ptsArr[i + 1] ?? 0; });
+    rows.forEach(r => {
+      if (r.status === 'DNF' && r.manualPosition) out[r.driverId] = ptsArr[r.manualPosition] ?? 0;
+      else if (r.status === 'DSQ_RACE')           out[r.driverId] = 1;
+      else if (r.status && !(r.driverId in out))  out[r.driverId] = 0;
+    });
+  }
+  return out;
+}
+
+/**
+ * Calcule la position de chaque pilote au classement du meeting :
+ * total = points intermediaires + points DF + points FIN, puis tri
+ * decroissant avec gestion des ex aequo. Renvoie { driverId -> position }.
+ * Remplace l'ancienne lecture de la collection meetingStandings (qui
+ * exigeait un clic manuel sur "Sauvegarder").
+ */
+function computeMeetingPositions(sessions, resultsMap, partsMap, interim) {
+  const dfSessions  = sessions.filter(s => s.type === 'DF');
+  const finSessions = sessions.filter(s => s.type === 'FIN');
+  const dfPts  = phasePointsByDriver(dfSessions,  resultsMap, partsMap, DF_PTS);
+  const finPts = phasePointsByDriver(finSessions, resultsMap, partsMap, FIN_PTS);
+  const interimPts = {};
+  (interim || []).forEach(r => { interimPts[r.driverId] = r.interimPoints ?? 0; });
+
+  const ids = new Set([
+    ...Object.keys(interimPts), ...Object.keys(dfPts), ...Object.keys(finPts),
+  ]);
+  const totals = [...ids].map(driverId => ({
+    driverId,
+    total: (interimPts[driverId] ?? 0) + (dfPts[driverId] ?? 0) + (finPts[driverId] ?? 0),
+  }));
+  // Meeting pas encore couru (personne n'a marque) → aucune position.
+  if (totals.every(t => t.total === 0)) return {};
+
+  totals.sort((a, b) => b.total - a.total);
+  const out = {};
+  totals.forEach((d, i) => {
+    d.position = (i > 0 && d.total === totals[i - 1].total)
+      ? totals[i - 1].position
+      : i + 1;
+    out[d.driverId] = d.position;
+  });
+  return out;
 }
 
 // ─────────────────────────────────────────────────────────
