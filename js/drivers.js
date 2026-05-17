@@ -691,12 +691,11 @@ async function showDeleteConfirmModal(driver) {
   );
 
   // ── Récupérer toutes les données liées ────────────────
-  const [engSnap, partSnap, resSnap, interimSnap, meetingSnap] = await Promise.all([
+  const [engSnap, partSnap, resSnap, interimSnap] = await Promise.all([
     getDocs(query(collection(db, 'engagements'),        where('driverId', '==', driver.id))),
     getDocs(query(collection(db, 'sessionParticipants'),where('driverId', '==', driver.id))),
     getDocs(query(collection(db, 'results'),            where('driverId', '==', driver.id))),
     getDocs(query(collection(db, 'interimStandings'),   where('driverId', '==', driver.id))),
-    getDocs(query(collection(db, 'meetingStandings'),   where('driverId', '==', driver.id))),
   ]);
 
   const engagements  = engSnap.docs.map(d => d.data());
@@ -790,16 +789,14 @@ async function showDeleteConfirmModal(driver) {
 
   // Impacts sur les classements
   const hasInterim  = !interimSnap.empty;
-  const hasMeeting  = !meetingSnap.empty;
   const hasTimes    = results.length > 0;
 
-  const impactHtml = (hasInterim || hasMeeting || hasTimes) ? `
+  const impactHtml = (hasInterim || hasTimes) ? `
     <div class="drv-del-impact">
       <div class="drv-del-impact-title">⚠️ Impacts sur les classements</div>
-      ${hasTimes ? `<div class="drv-del-impact-row">🔄 Les points MQ et le classement intermédiaire devront être recalculés et re-sauvegardés</div>` : ''}
+      ${hasTimes ? `<div class="drv-del-impact-row">🔄 Les points MQ et le classement intermédiaire seront recalculés automatiquement</div>` : ''}
       ${hasInterim ? `<div class="drv-del-impact-row">🔄 La répartition DF1/DF2 (Auto DF) devra être relancée</div>` : ''}
-      ${hasMeeting ? `<div class="drv-del-impact-row">🔄 Le classement du meeting devra être re-sauvegardé</div>` : ''}
-      ${(hasInterim || hasMeeting) ? `<div class="drv-del-impact-row">🔄 Vérifier les qualifiés Finale et les remplaçants</div>` : ''}
+      ${hasInterim ? `<div class="drv-del-impact-row">🔄 Vérifier les qualifiés Finale et les remplaçants</div>` : ''}
     </div>
   ` : '';
 
