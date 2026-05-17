@@ -230,25 +230,43 @@ describe('custom regulation', () => {
 });
 
 describe('compareInterimTiebreaker · last_manche_time (FFSA)', () => {
-  const pilotA = { mqMs: { 1: 50000, 2: 48000 } };
-  const pilotB = { mqMs: { 1: 49000, 2: 49500 } };
-
   it('retourne 0 si aucun mode tiebreaker (defaut historique)', () => {
-    expect(compareInterimTiebreaker(pilotA, pilotB, {}, [2, 1])).toBe(0);
-    expect(compareInterimTiebreaker(pilotA, pilotB, null, [2, 1])).toBe(0);
+    const a = { mqPos: { 1: 4, 2: 3 } };
+    const b = { mqPos: { 1: 3, 2: 5 } };
+    expect(compareInterimTiebreaker(a, b, {}, [2, 1])).toBe(0);
+    expect(compareInterimTiebreaker(a, b, null, [2, 1])).toBe(0);
   });
 
-  it('chrono de la derniere manche disputee compte', () => {
+  it('place de la derniere manche disputee departage', () => {
     const reg = { interimTiebreaker: 'last_manche_time' };
-    // MQ2 (la plus recente) : A = 48000, B = 49500 -> A gagne
-    expect(compareInterimTiebreaker(pilotA, pilotB, reg, [2, 1])).toBeLessThan(0);
+    // MQ2 (la plus recente) : A = 3e, B = 5e -> A devant
+    const a = { mqPos: { 1: 8, 2: 3 } };
+    const b = { mqPos: { 1: 2, 2: 5 } };
+    expect(compareInterimTiebreaker(a, b, reg, [2, 1])).toBeLessThan(0);
   });
 
-  it('si la derniere manche manque pour un, on remonte aux precedentes', () => {
+  it('un DNF en derniere manche reste derriere un finisseur de cette manche', () => {
     const reg = { interimTiebreaker: 'last_manche_time' };
-    const a = { mqMs: { 1: 50000 } };
-    const b = { mqMs: { 1: 51000, 2: 48000 } };
-    // MQ2 : A absent → on regarde MQ1 : A=50000, B=51000 → A gagne
+    // MQ2 : A finisseur 5e, B classe DNF (place engaged+1 = 20).
+    // Meme si B etait meilleur en MQ1, A passe devant grace a sa MQ2 finie.
+    const a = { mqPos: { 1: 8, 2: 5 } };
+    const b = { mqPos: { 1: 2, 2: 20 } };
+    expect(compareInterimTiebreaker(a, b, reg, [2, 1])).toBeLessThan(0);
+    expect(compareInterimTiebreaker(b, a, reg, [2, 1])).toBeGreaterThan(0);
+  });
+
+  it('si la derniere manche est ex aequo, on remonte a la precedente', () => {
+    const reg = { interimTiebreaker: 'last_manche_time' };
+    // MQ2 : A et B tous deux DNF (place 20) -> on regarde MQ1
+    const a = { mqPos: { 1: 4, 2: 20 } };
+    const b = { mqPos: { 1: 9, 2: 20 } };
+    expect(compareInterimTiebreaker(a, b, reg, [2, 1])).toBeLessThan(0);
+  });
+
+  it('un pilote classe passe devant un pilote sans resultat sur la manche', () => {
+    const reg = { interimTiebreaker: 'last_manche_time' };
+    const a = { mqPos: { 1: 5, 2: 7 } };
+    const b = { mqPos: { 1: 3 } }; // pas de resultat MQ2
     expect(compareInterimTiebreaker(a, b, reg, [2, 1])).toBeLessThan(0);
   });
 });

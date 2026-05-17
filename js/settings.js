@@ -988,10 +988,10 @@ function renderTabPoints() {
             <div style="display:flex;align-items:center;gap:8px">
               <input type="radio" name="interim-tiebreaker" value="last_manche_time"
                 ${(_editData.interimTiebreaker || 'last_manche_time') === 'last_manche_time' ? 'checked' : ''}>
-              <strong>Meilleur temps de la dernière manche</strong>
+              <strong>Meilleur résultat de la dernière manche</strong>
             </div>
             <div class="text-muted" style="font-size:0.78rem;margin-top:4px;margin-left:24px">
-              Défaut FFSA — départage par le chrono réalisé sur la manche la plus récente déjà disputée.
+              Défaut FFSA — départage par la place obtenue sur la manche la plus récente disputée. Un pilote qui abandonne cette manche passe derrière ceux qui la terminent ; on ne remonte à la manche précédente qu'en cas d'ex æquo strict.
             </div>
           </label>
           <label class="status-rule-card" style="cursor:pointer">

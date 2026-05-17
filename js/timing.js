@@ -1419,6 +1419,11 @@ function bindEvents() {
     await loadResults();
     await loadOtherMqResults();
     await loadEcResults();
+    // Re-rendu une fois les manches precedentes + EC charges : sinon, en
+    // mode consultation (la MQ a deja tous ses resultats), le seul rendu
+    // declenche par le snapshot results aurait pu courir avant la fin de
+    // loadOtherMqResults → cumul affiche = points de la manche seule.
+    renderTimingTable();
   });
 }
 
@@ -1995,6 +2000,7 @@ export function initTiming() {
         await loadResults();
         await loadOtherMqResults();
         await loadEcResults();
+        renderTimingTable();
       }
     }
   });
