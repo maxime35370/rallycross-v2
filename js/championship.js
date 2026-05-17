@@ -8,7 +8,7 @@
 import { db } from './firebase.js';
 import { toast } from './app.js';
 import { escHtml } from './utils.js';
-import { calcInterimStandings, dfPoints, finPoints, calcStatusPoints } from './calc.js';
+import { calcInterimStandings, qfPoints, dfPoints, finPoints, calcStatusPoints } from './calc.js';
 import { getChampionshipConfig } from './settings.js';
 import { getActiveChampionship, getActiveChampionshipId } from './context.js';
 
@@ -64,12 +64,12 @@ async function calcPhasePoints(session) {
   results.forEach(r => { resultMap[r.driverId] = r; });
 
   // Avant : tables hardcodees DF_POINTS / FIN_POINTS qui ignoraient le
-  // reglement actif. Maintenant : dfPoints/finPoints lisent
-  // _activeRegulation.pointsScale.[DF|FIN] (formule + overrides du
+  // reglement actif. Maintenant : qfPoints/dfPoints/finPoints lisent
+  // _activeRegulation.pointsScale.[QF|DF|FIN] (formule + overrides du
   // bareme configure). Coherent avec calc.js et standings.js.
-  const ptsFn = session.type === 'DF'
-    ? (p => dfPoints(p, _activeRegulation))
-    : (p => finPoints(p, _activeRegulation));
+  const ptsFn = session.type === 'DF' ? (p => dfPoints(p, _activeRegulation))
+              : session.type === 'QF' ? (p => qfPoints(p, _activeRegulation))
+              : (p => finPoints(p, _activeRegulation));
 
   const rows = participants.map(p => ({
     driverId:       p.driverId,
@@ -127,54 +127,59 @@ async function getMeetingPoints(meetingId) {
       firstName: r.firstName,
       lastName:  r.lastName,
       interim:   r.interimPoints ?? 0,
+      qf:        0,
       df:        0,
       fin:       0,
     };
   });
 
-  // 3. Points DF
+  const blankRow = (p) => ({
+    driverId:  p.driverId,
+    carNumber: p.carNumber,
+    firstName: p.firstName,
+    lastName:  p.lastName,
+    interim: 0, qf: 0, df: 0, fin: 0,
+  });
+
+  // 3. Points QF (¼ de finale) — championnats de type FIA uniquement.
+  //    S'il n'y a pas de session QF, qf reste a 0.
+  const qfSessions = sessions.filter(s => s.type === 'QF');
+  for (const qf of qfSessions) {
+    const ptsMap = await calcPhasePoints(qf);
+    const parts  = await fsGetParticipants(qf.id);
+    parts.forEach(p => {
+      if (!driverMap[p.driverId]) driverMap[p.driverId] = blankRow(p);
+      driverMap[p.driverId].qf += ptsMap[p.driverId] ?? 0;
+    });
+  }
+
+  // 4. Points DF
   const dfSessions = sessions.filter(s => s.type === 'DF');
   for (const df of dfSessions) {
     const ptsMap = await calcPhasePoints(df);
     const parts  = await fsGetParticipants(df.id);
     parts.forEach(p => {
-      if (!driverMap[p.driverId]) {
-        driverMap[p.driverId] = {
-          driverId:  p.driverId,
-          carNumber: p.carNumber,
-          firstName: p.firstName,
-          lastName:  p.lastName,
-          interim: 0, df: 0, fin: 0,
-        };
-      }
+      if (!driverMap[p.driverId]) driverMap[p.driverId] = blankRow(p);
       driverMap[p.driverId].df += ptsMap[p.driverId] ?? 0;
     });
   }
 
-  // 4. Points Finale
+  // 5. Points Finale
   const finSession = sessions.find(s => s.type === 'FIN');
   if (finSession) {
     const ptsMap = await calcPhasePoints(finSession);
     const parts  = await fsGetParticipants(finSession.id);
     parts.forEach(p => {
-      if (!driverMap[p.driverId]) {
-        driverMap[p.driverId] = {
-          driverId:  p.driverId,
-          carNumber: p.carNumber,
-          firstName: p.firstName,
-          lastName:  p.lastName,
-          interim: 0, df: 0, fin: 0,
-        };
-      }
+      if (!driverMap[p.driverId]) driverMap[p.driverId] = blankRow(p);
       driverMap[p.driverId].fin = ptsMap[p.driverId] ?? 0;
     });
   }
 
-  // 5. Calculer le total et retourner
+  // 6. Calculer le total et retourner
   return Object.values(driverMap).map(d => ({
     ...d,
-    total: d.interim + d.df + d.fin,
-  })).filter(d => d.interim > 0 || d.df > 0 || d.fin > 0); // exclure pilotes sans aucun point
+    total: d.interim + d.qf + d.df + d.fin,
+  })).filter(d => d.interim > 0 || d.qf > 0 || d.df > 0 || d.fin > 0); // exclure pilotes sans aucun point
 }
 
 // ─────────────────────────────────────────────────────────
@@ -303,6 +308,9 @@ async function renderChampionship() {
       return;
     }
 
+    // Le bareme par meeting inclut les ¼ de finale si le championnat en a.
+    const hasQF = getActiveChampionship()?.sessionConfig?.QF?.enabled === true;
+
     const meetingHeaders = allMeetings.map(m => {
       const d = m.date ? new Date(m.date).toLocaleDateString('fr-FR', { day:'2-digit', month:'2-digit' }) : '?';
       return `<th class="center chp-meeting-col" title="${escHtml(m.location)}">${d}<br><span class="chp-loc">${escHtml(m.location?.split(' ')[0] || '?')}</span></th>`;
@@ -342,7 +350,7 @@ async function renderChampionship() {
         </table>
       </div>
       <div class="chp-legend">
-        <span>Points / meeting = intermédiaire + ½ finale + finale</span>
+        <span>Points / meeting = intermédiaire${hasQF ? ' + ¼ finale' : ''} + ½ finale + finale</span>
         <span>·</span>
         <span>${allMeetings.length} meeting${allMeetings.length > 1 ? 's' : ''} · ${standings.length} pilote${standings.length > 1 ? 's' : ''}</span>
       </div>
