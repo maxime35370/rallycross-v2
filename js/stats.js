@@ -67,6 +67,7 @@ function calcMqPoints(pos, total) {
 async function calcStats() {
   if (!selectedCategory || allMeetings.length === 0) return null;
 
+  const QF_PTS  = [0, 8, 6, 5, 4, 3, 2];
   const DF_PTS  = [0, 10, 8, 6, 5, 4, 3, 2, 1];
   const FIN_PTS = [0, 15, 12, 9, 7, 6, 5, 4, 3];
 
@@ -102,7 +103,7 @@ async function calcStats() {
     }
     if (!pilots[r.driverId].meetings[r.meetingId]) {
       pilots[r.driverId].meetings[r.meetingId] = {
-        ec: null, mq: [], interim: null, df: [], fin: null, total: null,
+        ec: null, mq: [], interim: null, qf: [], df: [], fin: null, total: null,
       };
     }
     return pilots[r.driverId].meetings[r.meetingId];
@@ -131,6 +132,24 @@ async function calcStats() {
     res.filter(r => !r.ms).forEach(r => {
       const m = ensurePilot(r);
       m.mq.push({ position: null, points: 0, status: r.status, sessionNum: session?.num });
+    });
+  });
+
+  // ── QF (¼ de finale) — championnats de type FIA ───────
+  const qfBySession = {};
+  allResults.filter(r => r.sessionType === 'QF').forEach(r => {
+    if (!qfBySession[r.sessionId]) qfBySession[r.sessionId] = [];
+    qfBySession[r.sessionId].push(r);
+  });
+  Object.entries(qfBySession).forEach(([sid, res]) => {
+    const sorted = res.filter(r => r.ms).sort((a, b) => a.ms - b.ms);
+    sorted.forEach((r, i) => {
+      const m = ensurePilot(r);
+      m.qf.push({ position: i + 1, points: QF_PTS[i + 1] || 0 });
+    });
+    res.filter(r => r.status === 'DNF' && r.manualPosition).forEach(r => {
+      const m = ensurePilot(r);
+      m.qf.push({ position: r.manualPosition, points: QF_PTS[r.manualPosition] || 0 });
     });
   });
 
@@ -180,7 +199,7 @@ async function calcStats() {
         if (!pilots[r.driverId]) return;
         if (!pilots[r.driverId].meetings[meeting.id]) {
           pilots[r.driverId].meetings[meeting.id] = {
-            ec: null, mq: [], interim: null, df: [], fin: null, total: null,
+            ec: null, mq: [], interim: null, qf: [], df: [], fin: null, total: null,
           };
         }
         pilots[r.driverId].meetings[meeting.id].interim = {
@@ -196,9 +215,10 @@ async function calcStats() {
   Object.values(pilots).forEach(p => {
     Object.entries(p.meetings).forEach(([meetingId, m]) => {
       const interimPts = m.interim?.interimPoints ?? 0;
+      const qfPts      = m.qf.reduce((s, r) => s + r.points, 0);
       const dfPts      = m.df.reduce((s, r) => s + r.points, 0);
       const finPts     = m.fin?.points ?? 0;
-      const totalPts   = interimPts + dfPts + finPts;
+      const totalPts   = interimPts + qfPts + dfPts + finPts;
       const hasRealResults = m.mq.some(mq => mq.points !== null);
       m.total = hasRealResults ? { totalPts } : null;
     });
