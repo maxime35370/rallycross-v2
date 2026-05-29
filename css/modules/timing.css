@@ -195,12 +195,12 @@
 /* ── Méta MQ : sélecteurs série / couloir ── */
 .tim-meta {
   display: flex;
+  flex-direction: column;  /* Série puis Couloir empiles : chacun prend une ligne complete, les boutons ne sont jamais coupes a droite */
   gap: 6px;
   flex-shrink: 0;
-  flex-wrap: wrap;
 }
 .tim-meta-item {
-  display: inline-flex;
+  display: flex;  /* prend toute la largeur disponible (Couloir = ligne entiere) */
   align-items: center;
   gap: 4px;
   padding: 3px 6px;
@@ -248,12 +248,15 @@
   color: var(--clr-text);
 }
 
-/* Groupes de boutons Série (S1..Sn) et Couloir (C1..Cn), sélection unique */
+/* Groupes de boutons Série (S1..Sn) et Couloir (C1..Cn), sélection unique.
+   flex:1 + flex-wrap : le groupe prend la largeur dispo dans le tim-meta-item
+   et passe a la ligne quand il y a trop de boutons (ex. 7 couloirs). */
 .tim-serie-btns,
 .tim-couloir-btns {
-  display: inline-flex;
-  gap: 3px;
+  display: flex;
+  flex: 1;
   flex-wrap: wrap;
+  gap: 3px;
 }
 .tim-serie-btn,
 .tim-couloir-btn {
