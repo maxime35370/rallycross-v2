@@ -459,10 +459,8 @@ async function autoAssignFinale() {
   // Reset forfaits Finale à chaque Auto Finale
   _finForfaits = new Set();
 
-  const df1 = allSessions.find(s => s.type === 'DF' && s.num === 1);
-  const df2 = allSessions.find(s => s.type === 'DF' && s.num === 2);
   const fin = allSessions.find(s => s.type === 'FIN');
-  if (!df1 || !df2 || !fin) { toast('Sessions introuvables', 'error'); return; }
+  if (!fin) { toast('Session Finale introuvable', 'error'); return; }
 
   const { collection, query, where, getDocs, writeBatch } = await import(
     'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
@@ -470,7 +468,8 @@ async function autoAssignFinale() {
 
   // Nombre de qualifies par DF selon le reglement
   const champ = getActiveChampionship();
-  const qualPerDF = champ?.sessionConfig?.DF?.qualifiedPerDF || 4;
+  const qualPerDF   = champ?.sessionConfig?.DF?.qualifiedPerDF || 4;
+  const finGridSize = champ?.sessionConfig?.FIN?.gridSize     || 8;
 
   const getTopN = async (dfSession) => {
     const partSnap = await getDocs(query(collection(db, 'sessionParticipants'), where('sessionId', '==', dfSession.id)));
@@ -489,25 +488,41 @@ async function autoAssignFinale() {
     return rows.filter(r => r.ms || r.status === 'DNF').slice(0, qualPerDF);
   };
 
+  // Mode normal : top-N de chaque DF. Pour les categories a petit effectif
+  // sans demi-finales (typiquement 6-8 pilotes), on bascule sur le classement
+  // intermediaire — top-N (taille de la grille Finale) du classement
+  // intermediaire.
   const dfSessions = allSessions.filter(s => s.type === 'DF').sort((a, b) => a.num - b.num);
-  const allDfQualified = [];
+  let finalistes = [];
+  let sourceLabel = 'DF';
   for (const df of dfSessions) {
     const topN = await getTopN(df);
-    allDfQualified.push(...topN);
+    finalistes.push(...topN);
   }
-  if (allDfQualified.length === 0) {
-    toast('Aucun résultat de DF disponible.', 'warning'); return;
+  if (finalistes.length === 0) {
+    let interim = [];
+    try { interim = await calcInterimStandings(db, allSessions, _activeRegulation); } catch {}
+    if (interim.length === 0) {
+      toast('Aucun résultat de DF ni de classement intermédiaire disponible.', 'warning');
+      return;
+    }
+    finalistes = interim.slice(0, finGridSize).map(r => ({
+      driverId:  r.driverId,
+      carNumber: r.carNumber,
+      firstName: r.firstName,
+      lastName:  r.lastName,
+    }));
+    sourceLabel = 'classement intermédiaire';
   }
 
-  const finalistes = allDfQualified;
   const finResultsSnap = await getDocs(query(collection(db, 'results'), where('sessionId', '==', fin.id)));
   const finPartSnap    = await getDocs(query(collection(db, 'sessionParticipants'), where('sessionId', '==', fin.id)));
   const names = finalistes.map(d => `#${d.carNumber} ${d.lastName}`).join(', ');
 
   if (!finResultsSnap.empty) {
-    if (!window.confirm(`⚠️ Des temps existent en Finale !\n${finResultsSnap.size} résultat(s) seront supprimés.\n\nRemplacer par :\n${names}\n\nContinuer ?`)) return;
+    if (!window.confirm(`⚠️ Des temps existent en Finale !\n${finResultsSnap.size} résultat(s) seront supprimés.\n\nRemplacer par (${sourceLabel}) :\n${names}\n\nContinuer ?`)) return;
   } else if (!finPartSnap.empty) {
-    if (!window.confirm(`⚡ Auto Finale va assigner :\n${names}\n\nContinuer ?`)) return;
+    if (!window.confirm(`⚡ Auto Finale va assigner (${sourceLabel}) :\n${names}\n\nContinuer ?`)) return;
   }
 
   for (const col of ['sessionParticipants', 'results']) {
@@ -1745,6 +1760,10 @@ async function renderFinaleStandings(panel, session, assignedParticipants) {
   const df1Results = await getDfResults(df1);
   const df2Results = await getDfResults(df2);
 
+  // Categories a petit effectif : pas de demi-finale, on construit la grille
+  // Finale a partir du classement intermediaire directement.
+  const noDfMode = df1Results.length === 0 && df2Results.length === 0;
+
   const champ2 = getActiveChampionship();
   const qualPerDF = champ2?.sessionConfig?.DF?.qualifiedPerDF || 4;
 
@@ -1790,6 +1809,29 @@ async function renderFinaleStandings(panel, session, assignedParticipants) {
           ${escHtml(d.firstName)} <strong>${escHtml(d.lastName)}</strong>
         </span>
         ${interimPos && interimPos < 999 ? `<span class="ses-fin-interim">${interimPos}ème</span>` : ''}
+        ${isAssigned && !isForfait ? '<span class="ses-df-check">✓</span>' : ''}
+        ${isForfait ? `<span style="font-size:0.75rem;color:var(--clr-danger)">🚫 Forfait</span>` : ''}
+        ${!isAssigned && !isForfait ? `
+          <button class="btn btn-primary btn-sm ses-df-action" data-action="add" data-driver-id="${d.driverId}" data-df="fin">＋</button>
+        ` : isAssigned && !isForfait ? `
+          <button class="btn btn-ghost btn-sm ses-fin-forfait-btn" data-driver-id="${d.driverId}" title="Déclarer forfait pour la Finale">🚫</button>
+          <button class="btn btn-danger btn-sm ses-df-action" data-action="remove-fin" data-driver-id="${d.driverId}">✕</button>
+        ` : ''}
+      </div>`;
+  };
+
+  // Variante de pilotCard sans pastille DF, utilisee quand on construit la
+  // Finale a partir du classement intermediaire (categorie sans demi-finale).
+  const interimPilotCard = (d) => {
+    if (!d) return `<div class="ses-fin-empty">—</div>`;
+    const isAssigned = assignedIds.has(d.driverId);
+    const isForfait  = _finForfaits.has(d.driverId);
+    return `
+      <div class="ses-fin-pilot ${isAssigned && !isForfait ? 'ses-fin-pilot--assigned' : ''}" ${isForfait ? 'style="opacity:0.4"' : ''}>
+        <span class="ses-pilot-num">${escHtml(d.carNumber)}</span>
+        <span class="ses-pilot-name" ${isForfait ? 'style="text-decoration:line-through"' : ''}>
+          ${escHtml(d.firstName)} <strong>${escHtml(d.lastName)}</strong>
+        </span>
         ${isAssigned && !isForfait ? '<span class="ses-df-check">✓</span>' : ''}
         ${isForfait ? `<span style="font-size:0.75rem;color:var(--clr-danger)">🚫 Forfait</span>` : ''}
         ${!isAssigned && !isForfait ? `
@@ -1863,8 +1905,12 @@ async function renderFinaleStandings(panel, session, assignedParticipants) {
       <button class="btn btn-primary btn-sm" id="ses-auto-fin-btn2">⚡ Auto Finale</button>
     </div>
 
-    ${df1Results.length === 0 && df2Results.length === 0 ? `
-      <div class="ses-df-notice">⚠️ Aucun résultat de DF. Chronométrez les DF d'abord.</div>` : ''}
+    ${noDfMode && interimCalc.length === 0 ? `
+      <div class="ses-df-notice">⚠️ Aucun résultat MQ encore. Chronométrez les manches qualificatives.</div>` : ''}
+    ${noDfMode && interimCalc.length > 0 ? `
+      <div class="ses-df-notice" style="background:rgba(0,150,255,0.08);border-color:var(--clr-info, #4aa)">
+        ℹ️ Pas de demi-finale pour cette catégorie (effectif réduit). Sélectionnez les finalistes depuis le classement intermédiaire ci-dessous.
+      </div>` : ''}
 
     ${_finForfaits.size > 0 ? `
       <div class="ses-df-notice" style="background:rgba(255,85,0,0.08);border-color:var(--clr-accent)">
@@ -1873,19 +1919,32 @@ async function renderFinaleStandings(panel, session, assignedParticipants) {
 
     ${finGridHtml}
 
-    <div class="ses-fin-section-title">
-      <span>Qualifi\u00e9s — ${qualPerDF} premiers de chaque \u00bd finale</span>
-      <span class="text-muted" style="font-size:0.75rem">🚫 = Déclarer forfait Finale</span>
-    </div>
+    ${noDfMode && interimCalc.length > 0 ? `
+      <div class="ses-fin-section-title">
+        <span>Classement intermédiaire — sélectionnez les finalistes</span>
+        <span class="text-muted" style="font-size:0.75rem">🚫 = Déclarer forfait Finale</span>
+      </div>
+      ${interimCalc.map(d => `
+        <div class="ses-fin-pair">
+          <span class="ses-fin-rank">${d.position ?? '—'}</span>
+          <div class="ses-fin-pair-pilots">${interimPilotCard(d)}</div>
+          <span class="ses-fin-total-pts">${d.interimPoints ?? 0} pts</span>
+        </div>`).join('')}
+    ` : `
+      <div class="ses-fin-section-title">
+        <span>Qualifi\u00e9s — ${qualPerDF} premiers de chaque \u00bd finale</span>
+        <span class="text-muted" style="font-size:0.75rem">🚫 = Déclarer forfait Finale</span>
+      </div>
 
-    ${pairs.map(p => `
-      <div class="ses-fin-pair">
-        <span class="ses-fin-rank">${p.rank}</span>
-        <div class="ses-fin-pair-pilots">
-          ${pilotCard(p.first,  p.first  === df1Qualified[p.rank-1] || (!df2Qualified[p.rank-1] && p.first) ? 1 : 2)}
-          ${p.second ? pilotCard(p.second, p.second === df2Qualified[p.rank-1] || (!df1Qualified[p.rank-1] && p.second) ? 2 : 1) : ''}
-        </div>
-      </div>`).join('')}
+      ${pairs.map(p => `
+        <div class="ses-fin-pair">
+          <span class="ses-fin-rank">${p.rank}</span>
+          <div class="ses-fin-pair-pilots">
+            ${pilotCard(p.first,  p.first  === df1Qualified[p.rank-1] || (!df2Qualified[p.rank-1] && p.first) ? 1 : 2)}
+            ${p.second ? pilotCard(p.second, p.second === df2Qualified[p.rank-1] || (!df1Qualified[p.rank-1] && p.second) ? 2 : 1) : ''}
+          </div>
+        </div>`).join('')}
+    `}
 
     ${allReplacements.length > 0 ? `
       <div class="ses-fin-section-title" style="margin-top:var(--sp-lg)">
@@ -1955,7 +2014,9 @@ async function renderFinaleStandings(panel, session, assignedParticipants) {
       const fin      = allSessions.find(s => s.type === 'FIN');
       if (!fin) return;
       if (action === 'add') {
-        const driver = [...df1Results, ...df2Results].find(d => d.driverId === driverId);
+        // Recherche dans les resultats DF + le classement intermediaire (pour
+        // les categories a petit effectif sans demi-finale).
+        const driver = [...df1Results, ...df2Results, ...interimCalc].find(d => d.driverId === driverId);
         if (driver) await addParticipant(fin.id, driver);
       } else if (action === 'remove-fin') {
         await removeParticipant(fin.id, driverId);
