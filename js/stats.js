@@ -256,6 +256,13 @@ async function calcStats() {
     const interimPosMoy   = interimMeetings.length > 0 ? +(interimMeetings.reduce((s, m) => s + m.interim.position, 0) / interimMeetings.length).toFixed(1) : null;
     const interimPtsMoy   = interimMeetings.length > 0 ? +(interimPtsTotal / interimMeetings.length).toFixed(1) : null;
 
+    // QF (¼ de finale) — championnats de type FIA uniquement
+    const allQf     = meetings.flatMap(m => m.qf);
+    const qfWithPos = allQf.filter(r => r.position !== null);
+    const qfPosMoy  = qfWithPos.length > 0 ? +(qfWithPos.reduce((s, r) => s + r.position, 0) / qfWithPos.length).toFixed(1) : null;
+    const qfPtsMoy  = qfWithPos.length > 0 ? +(qfWithPos.reduce((s, r) => s + r.points, 0) / qfWithPos.length).toFixed(1) : null;
+    const nbQf      = meetings.filter(m => m.qf.length > 0).length;
+
     // DF
     const allDf     = meetings.flatMap(m => m.df);
     const dfWithPos = allDf.filter(r => r.position !== null);
@@ -280,6 +287,7 @@ async function calcStats() {
 
     // Taux qualification
     const nbMeetingsParticipated = meetings.filter(m => m.mq.some(mq => mq.points !== null)).length;
+    const tauxQf  = nbMeetingsParticipated > 0 ? Math.round(nbQf / nbMeetingsParticipated * 100) : 0;
     const tauxDf  = nbMeetingsParticipated > 0 ? Math.round(nbDf / nbMeetingsParticipated * 100) : 0;
     const tauxFin = nbMeetingsParticipated > 0 ? Math.round(finMeetings.length / nbMeetingsParticipated * 100) : 0;
 
@@ -296,11 +304,12 @@ async function calcStats() {
       nbMq: allMqResults.length,
       mqPtsMoy, mqPosMoy,
       interimPtsTotal, interimPtsMoy, interimPosMoy,
+      nbQf, qfPosMoy, qfPtsMoy,
       nbDf, dfPosMoy, dfPtsMoy,
       nbFin: finMeetings.length, finPosMoy, finPtsMoy,
       phaseFinaleMoy,
       totalSum, totalMoy,
-      tauxDf, tauxFin,
+      tauxQf, tauxDf, tauxFin,
       progression,
     };
   })
@@ -449,6 +458,25 @@ async function renderStats() {
         </div>
       </div>
 
+      ${_activeRegulation?.sessionConfig?.QF?.enabled === true ? `
+      <!-- QF -->
+      <div class="sta-section">
+        <div class="sta-section-title">⚡ ¼ de finales</div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr>
+              <th>Pilote</th><th class="center">N°</th>
+              <th class="center" data-sort="nbQf">Nb QF ↕</th>
+              <th class="center" data-sort="tauxQf">Taux qualif. ↕</th>
+              <th class="center" data-sort="qfPosMoy">Moy. place ↕</th>
+              <th class="center" data-sort="qfPtsMoy">Moy. pts ↕</th>
+            </tr></thead>
+            <tbody>${renderQfRows(stats)}</tbody>
+          </table>
+        </div>
+      </div>
+      ` : ''}
+
       <!-- DF -->
       <div class="sta-section">
         <div class="sta-section-title">⚡ Demi-finales</div>
@@ -535,6 +563,8 @@ function bindSortHeaders() {
         'nbMq': renderMqRows,              'mqPtsMoy': renderMqRows,    'mqPosMoy': renderMqRows,
         'nbMeetings': renderInterimRows,   'interimPtsTotal': renderInterimRows,
         'interimPtsMoy': renderInterimRows,'interimPosMoy': renderInterimRows,
+        'nbQf': renderQfRows,              'tauxQf': renderQfRows,
+        'qfPosMoy': renderQfRows,          'qfPtsMoy': renderQfRows,
         'nbDf': renderDfRows,              'tauxDf': renderDfRows,
         'dfPosMoy': renderDfRows,          'dfPtsMoy': renderDfRows,
         'nbFin': renderFinRows,            'tauxFin': renderFinRows,
@@ -596,6 +626,18 @@ function renderInterimRows(stats) {
       <td class="center"><span class="sta-pts">${p.interimPtsTotal}</span></td>
       <td class="center"><span class="sta-moy">${p.interimPtsMoy ?? '—'}</span></td>
       <td class="center"><span class="sta-moy">${p.interimPosMoy ?? '—'}</span></td>
+    </tr>`).join('');
+}
+
+function renderQfRows(stats) {
+  return stats.map(p => `
+    <tr>
+      <td>${escHtml(p.firstName)} <strong>${escHtml(p.lastName)}</strong></td>
+      <td class="center"><span class="tim-num">${escHtml(p.carNumber)}</span></td>
+      <td class="center">${p.nbQf}</td>
+      <td class="center"><span class="sta-taux ${p.tauxQf>=75?'sta-taux--high':p.tauxQf>=50?'sta-taux--mid':'sta-taux--low'}">${p.tauxQf}%</span></td>
+      <td class="center"><span class="sta-moy">${p.qfPosMoy ?? '—'}</span></td>
+      <td class="center"><span class="sta-pts">${p.qfPtsMoy ?? '—'}</span></td>
     </tr>`).join('');
 }
 
