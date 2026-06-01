@@ -458,7 +458,7 @@ async function renderStats() {
         </div>
       </div>
 
-      ${_activeRegulation?.sessionConfig?.QF?.enabled === true ? `
+      ${stats.some(p => p.nbQf > 0) ? `
       <!-- QF -->
       <div class="sta-section">
         <div class="sta-section-title">⚡ ¼ de finales</div>
