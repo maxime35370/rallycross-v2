@@ -6,8 +6,9 @@
 
 import { db } from './firebase.js';
 import { escHtml } from './utils.js';
-import { calcInterimStandings } from './calc.js';
+import { calcInterimStandings, mqPoints, qfPoints, dfPoints, finPoints } from './calc.js';
 import { getActiveChampionship, getActiveChampionshipId } from './context.js';
+import { getChampionshipConfig } from './settings.js';
 
 // ─────────────────────────────────────────────────────────
 // ÉTAT
@@ -17,6 +18,12 @@ let selectedYear     = new Date().getFullYear();
 let selectedCategory = '';
 let allMeetings      = [];
 let sortState        = { table: null, key: null, asc: false };
+
+// Reglement actif (charge depuis le championnat selectionne). Sert a
+// utiliser les memes baremes que la page Championnat / Classement (sinon
+// stats.js retombait sur les baremes FFSA hardcodes meme pour un
+// championnat Euro RX/FIA).
+let _activeRegulation = null;
 
 const CATEGORIES = ['Supercar', 'Super1600', 'Division 5', 'Féminines', 'D3', 'D4'];
 
@@ -64,20 +71,16 @@ async function loadMeetings() {
 // CALCUL STATISTIQUES
 // ─────────────────────────────────────────────────────────
 
-function calcMqPoints(pos, total) {
-  if (pos === 1) return 50;
-  if (pos === 2) return 45;
-  if (pos === 3) return 42;
-  if (pos >= 4)  return Math.max(0, 44 - pos);
-  return 0;
-}
-
 async function calcStats() {
   if (!selectedCategory || allMeetings.length === 0) return null;
 
-  const QF_PTS  = [0, 8, 6, 5, 4, 3, 2];
-  const DF_PTS  = [0, 10, 8, 6, 5, 4, 3, 2, 1];
-  const FIN_PTS = [0, 15, 12, 9, 7, 6, 5, 4, 3];
+  // Baremes lus depuis le reglement actif (idem championship.js /
+  // standings.js). Si aucun reglement n'est charge, les fonctions de
+  // calc.js retombent sur les defauts FFSA — meme comportement qu'avant.
+  const mqPts  = pos => mqPoints (pos, _activeRegulation);
+  const qfPts  = pos => qfPoints (pos, _activeRegulation);
+  const dfPts  = pos => dfPoints (pos, _activeRegulation);
+  const finPts = pos => finPoints(pos, _activeRegulation);
 
   // ── Résultats bruts (filtres par championnat via meetingIds) ──
   const meetingIds = new Set(allMeetings.map(m => m.id));
@@ -135,7 +138,7 @@ async function calcStats() {
     const sorted = res.filter(r => r.ms).sort((a, b) => a.ms - b.ms);
     sorted.forEach((r, i) => {
       const m = ensurePilot(r);
-      m.mq.push({ position: i + 1, points: calcMqPoints(i + 1, res.length), sessionNum: session.num });
+      m.mq.push({ position: i + 1, points: mqPts(i + 1), sessionNum: session.num });
     });
     res.filter(r => !r.ms).forEach(r => {
       const m = ensurePilot(r);
@@ -153,11 +156,11 @@ async function calcStats() {
     const sorted = res.filter(r => r.ms).sort((a, b) => a.ms - b.ms);
     sorted.forEach((r, i) => {
       const m = ensurePilot(r);
-      m.qf.push({ position: i + 1, points: QF_PTS[i + 1] || 0 });
+      m.qf.push({ position: i + 1, points: qfPts(i + 1) });
     });
     res.filter(r => r.status === 'DNF' && r.manualPosition).forEach(r => {
       const m = ensurePilot(r);
-      m.qf.push({ position: r.manualPosition, points: QF_PTS[r.manualPosition] || 0 });
+      m.qf.push({ position: r.manualPosition, points: qfPts(r.manualPosition) });
     });
   });
 
@@ -171,11 +174,11 @@ async function calcStats() {
     const sorted = res.filter(r => r.ms).sort((a, b) => a.ms - b.ms);
     sorted.forEach((r, i) => {
       const m = ensurePilot(r);
-      m.df.push({ position: i + 1, points: DF_PTS[i + 1] || 0 });
+      m.df.push({ position: i + 1, points: dfPts(i + 1) });
     });
     res.filter(r => r.status === 'DNF' && r.manualPosition).forEach(r => {
       const m = ensurePilot(r);
-      m.df.push({ position: r.manualPosition, points: DF_PTS[r.manualPosition] || 0 });
+      m.df.push({ position: r.manualPosition, points: dfPts(r.manualPosition) });
     });
   });
 
@@ -189,11 +192,11 @@ async function calcStats() {
     const sorted = res.filter(r => r.ms).sort((a, b) => a.ms - b.ms);
     sorted.forEach((r, i) => {
       const m = ensurePilot(r);
-      m.fin = { position: i + 1, points: FIN_PTS[i + 1] || 0 };
+      m.fin = { position: i + 1, points: finPts(i + 1) };
     });
     res.filter(r => r.status === 'DNF' && r.manualPosition).forEach(r => {
       const m = ensurePilot(r);
-      m.fin = { position: r.manualPosition, points: FIN_PTS[r.manualPosition] || 0 };
+      m.fin = { position: r.manualPosition, points: finPts(r.manualPosition) };
     });
   });
 
@@ -202,7 +205,7 @@ async function calcStats() {
     const meetingSessions = allSessions.filter(s => s.meetingId === meeting.id);
     if (!meetingSessions.length) continue;
     try {
-      const interim = await calcInterimStandings(db, meetingSessions);
+      const interim = await calcInterimStandings(db, meetingSessions, _activeRegulation);
       interim.forEach(r => {
         if (!pilots[r.driverId]) return;
         if (!pilots[r.driverId].meetings[meeting.id]) {
@@ -641,9 +644,19 @@ function bindEvents() {
 // INIT
 // ─────────────────────────────────────────────────────────
 
+async function loadActiveRegulation() {
+  try {
+    const champId = getActiveChampionshipId();
+    _activeRegulation = champId
+      ? await getChampionshipConfig(champId)
+      : await getChampionshipConfig();
+  } catch { _activeRegulation = null; }
+}
+
 export function initStats() {
   document.addEventListener('viewchange', async e => {
     if (e.detail.view === 'stats') {
+      await loadActiveRegulation();
       renderView();
       await loadMeetings();
       if (selectedCategory) renderStats();
@@ -654,6 +667,8 @@ export function initStats() {
     // Reset de la categorie si elle n'appartient pas au nouveau championnat
     // (ex. on passe de FFSA "Super1600" a Euro RX "RX1"). Re-rendre le
     // toolbar pour mettre a jour la liste des categories disponibles.
+    // Recharge aussi le reglement actif pour appliquer les bons baremes.
+    await loadActiveRegulation();
     const champCats = getChampCategories();
     if (selectedCategory && !champCats.includes(selectedCategory)) {
       selectedCategory = '';
