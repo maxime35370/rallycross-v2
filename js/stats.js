@@ -7,7 +7,7 @@
 import { db } from './firebase.js';
 import { escHtml } from './utils.js';
 import { calcInterimStandings } from './calc.js';
-import { getActiveChampionshipId } from './context.js';
+import { getActiveChampionship, getActiveChampionshipId } from './context.js';
 
 // ─────────────────────────────────────────────────────────
 // ÉTAT
@@ -19,6 +19,14 @@ let allMeetings      = [];
 let sortState        = { table: null, key: null, asc: false };
 
 const CATEGORIES = ['Supercar', 'Super1600', 'Division 5', 'Féminines', 'D3', 'D4'];
+
+// Categories du championnat actif. Fallback sur la liste par defaut si
+// aucun championnat n'est selectionne ou s'il n'en definit pas.
+function getChampCategories() {
+  const champ = getActiveChampionship();
+  if (champ?.categories?.length) return champ.categories.map(c => c.id || c.name);
+  return CATEGORIES;
+}
 
 // ─────────────────────────────────────────────────────────
 // FIRESTORE
@@ -316,7 +324,7 @@ function renderView() {
       </select>
       <select class="toolbar-select" id="sta-category">
         <option value="">— Catégorie —</option>
-        ${CATEGORIES.map(c => `<option value="${c}" ${c===selectedCategory?'selected':''}>${escHtml(c)}</option>`).join('')}
+        ${getChampCategories().map(c => `<option value="${c}" ${c===selectedCategory?'selected':''}>${escHtml(c)}</option>`).join('')}
       </select>
     </div>
 
@@ -643,7 +651,16 @@ export function initStats() {
   });
 
   document.addEventListener('championshipchange', async () => {
+    // Reset de la categorie si elle n'appartient pas au nouveau championnat
+    // (ex. on passe de FFSA "Super1600" a Euro RX "RX1"). Re-rendre le
+    // toolbar pour mettre a jour la liste des categories disponibles.
+    const champCats = getChampCategories();
+    if (selectedCategory && !champCats.includes(selectedCategory)) {
+      selectedCategory = '';
+    }
     allMeetings = [];
+    renderView();
     await loadMeetings();
+    if (selectedCategory) renderStats();
   });
 }
