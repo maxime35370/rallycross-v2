@@ -299,6 +299,39 @@ export async function getMqRank(session, regulation) {
   return out;
 }
 
+/**
+ * Classement d'une phase (QF / DF / FIN) EN DIRECT : finishers triés par chrono +
+ * pilotes en statut, avec les points de la phase (barème du règlement). Réplique
+ * fidèle de championship.js (calcPhasePoints) + affichage façon getMqRank.
+ * Le nombre d'engagés (pour les statuts) = nombre de participants à la session.
+ */
+export async function getPhaseRank(session, regulation) {
+  const results      = await getResults(session.id);
+  const totalEngaged = (await getParticipants(session.id)).length || results.length;
+  const ptsFn = session.type === 'DF' ? (p => dfPoints(p, regulation))
+              : session.type === 'QF' ? (p => qfPoints(p, regulation))
+              : (p => finPoints(p, regulation));
+  const fin = results.filter(r => r.ms != null && !r.status).sort((a, b) => a.ms - b.ms);
+  const lead = fin[0]?.ms ?? 0;
+  const out = fin.map((r, i) => ({
+    driverId: r.driverId, position: i + 1, carNumber: r.carNumber, lastName: r.lastName,
+    value: i === 0 ? msToDisplay(r.ms) : '+' + ((r.ms - lead) / 1000).toFixed(1),
+    points: ptsFn(i + 1),
+  }));
+  results.filter(r => r.status)
+    .sort((a, b) => (STATUS_ORDER[a.status] || 9) - (STATUS_ORDER[b.status] || 9))
+    .forEach(r => out.push({
+      driverId: r.driverId, position: null, carNumber: r.carNumber, lastName: r.lastName,
+      value: STATUS_LABEL[r.status] || r.status,
+      // DNF avec position manuelle → points de cette position, sinon points de statut
+      points: r.status === 'DNF' && r.manualPosition
+        ? ptsFn(r.manualPosition)
+        : calcStatusPoints(r.status, session.type, totalEngaged, regulation),
+      status: r.status,
+    }));
+  return out;
+}
+
 /** Récupère le gridLayout du règlement pour un type de session. */
 export function getGridLayout(regulation, sessionType) {
   return regulation?.sessionConfig?.[sessionType]?.gridLayout
