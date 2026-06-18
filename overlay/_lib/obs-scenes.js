@@ -83,7 +83,7 @@ export function renderDashboard(d) {
   };
   const interimPanel = max => stdPanel('Classement intermédiaire', d.interimSub, d.interim, r => r.totalPoints ?? 0, max);
   const champPanel   = max => stdPanel('Championnat', d.champSub, d.champ, r => r.grandTotal ?? 0, max);
-  const meetingPanel = ()  => stdPanel('Classement du meeting', d.meetingSub, d.meeting, r => r.total ?? 0, 6);
+  const meetingPanel = max => stdPanel('Classement du meeting', d.meetingSub, d.meeting, r => r.total ?? 0, max);
 
   const header = `
     <div class="dash-top">
@@ -101,7 +101,8 @@ export function renderDashboard(d) {
     body = `<div class="dash-body finale">
         ${racePanel}
         ${interimPanel(20)}
-        <div class="dright">${meetingPanel()}${champPanel(7)}</div>
+        ${meetingPanel(20)}
+        ${champPanel(20)}
       </div>`;
   } else if (threeCol) {
     body = `<div class="dash-body cols3">

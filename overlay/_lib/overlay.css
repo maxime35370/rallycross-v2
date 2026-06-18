@@ -111,10 +111,10 @@ body.transparent{background:transparent}
 .dash .dpanel.dense .row .val{font-size:20px}
 .dash .dpanel.dense .evo{font-size:15px}
 .dash .dpanel.dense .row.finalist{box-shadow:inset 3px 0 0 #38a0ff}
-/* phases finales : 3 colonnes (course | intermédiaire | championnat, +meeting en finale) */
-.dash-body.finale,.dash-body.cols3{grid-template-columns:1.12fr 1fr 1fr}
-.dash-body.finale .dright{gap:20px}
-.dash-body.finale .dright .dpanel{flex:1 1 0}
+/* QF/DF : 3 colonnes pleine hauteur (course | intermédiaire | championnat) */
+.dash-body.cols3{grid-template-columns:1.12fr 1fr 1fr}
+/* finale : 4 colonnes pleine hauteur (finale | intermédiaire | meeting | championnat) */
+.dash-body.finale{grid-template-columns:1.22fr 1fr 1fr 1fr;gap:20px}
 
 /* ============ SCÈNE SESSION (essais/manche : à passer | classement | intermédiaire) ============ */
 .sess-body{flex:1;display:grid;gap:18px;padding:18px 36px 24px;min-height:0}
