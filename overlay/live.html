@@ -37,6 +37,7 @@
   let unsubResults = null;    // listener live des résultats de la session courante
   let champTimer = null;
   let cdTimer = null;         // ticker du compte à rebours (écran d'attente)
+  let sessTimer = null;       // effacement différé de la surbrillance (dernier de la manche)
   let lastControl = null;
   let champRows = [];         // classement championnat (rafraîchi périodiquement)
 
@@ -71,6 +72,7 @@
     if (unsubResults) { unsubResults(); unsubResults = null; }
     if (champTimer)   { clearInterval(champTimer); champTimer = null; }
     if (cdTimer)      { clearInterval(cdTimer); cdTimer = null; }
+    if (sessTimer)    { clearTimeout(sessTimer); sessTimer = null; }
 
     // Écran d'attente : indépendant du meeting/catégorie + compte à rebours
     if (ctrl.scene === 'intermission') {
@@ -100,23 +102,33 @@
     // dès qu'un chrono/statut apparaît dans results.
     if (ctrl.scene === 'grid' && ['EC', 'MQ'].includes(ctrl.sessionType) && session) {
       const order = await getGridOrder(session, sessions, reg, await meetingsOf(reg));
-      let prevIds = null;     // baseline des pilotes déjà classés (null = 1er rendu, pas de flash)
+      let prevIds = null;     // baseline des pilotes déjà classés (null = 1er rendu)
       let prevPos = {};       // positions intermédiaires du rendu précédent
+      let lastAddedId = null; // pilote en surbrillance (reste jusqu'à la saisie suivante)
+      let lastResults = [];   // derniers résultats reçus (pour re-render différé)
       const renderSess = async (results) => {
+        if (results) lastResults = results;
         const resMap = {};
-        (results || []).forEach(r => { resMap[r.driverId] = r; });
+        lastResults.forEach(r => { resMap[r.driverId] = r; });
         const hasRun = id => !!(resMap[id] && (resMap[id].ms != null || resMap[id].status));
         const rank = ctrl.sessionType === 'EC'
           ? await getEcRank(sessions, reg).catch(() => [])
           : await getMqRank(session, reg).catch(() => []);
-        // pilote(s) qui viennent d'entrer au classement → flash
         const curIds = new Set(rank.map(r => r.driverId).filter(Boolean));
-        if (prevIds) rank.forEach(r => { if (r.driverId && !prevIds.has(r.driverId)) r.justAdded = true; });
+        // nouveau classé → on garde EN SURBRILLANCE le dernier ajouté
+        if (prevIds) {
+          const newcomers = [...curIds].filter(id => !prevIds.has(id));
+          if (newcomers.length) {
+            lastAddedId = newcomers[newcomers.length - 1];
+            if (sessTimer) { clearTimeout(sessTimer); sessTimer = null; }
+          }
+        }
+        rank.forEach(r => { if (r.driverId && r.driverId === lastAddedId) r.justAdded = true; });
+        const todo = order.filter(o => !hasRun(o.driverId)).map((o, i) => ({ pos: i + 1, carNumber: o.carNumber, lastName: o.lastName }));
         const data = {
           mode: ctrl.sessionType === 'EC' ? 'ec' : 'mq',
           headerText: ctrl.headerText, sessionLabel: `${sLabel} · ${ctrl.category}`,
-          todo: order.filter(o => !hasRun(o.driverId)).map((o, i) => ({ pos: i + 1, carNumber: o.carNumber, lastName: o.lastName })),
-          rank,
+          todo, rank,
         };
         if (ctrl.sessionType !== 'EC') {
           const interim = (await getInterim(ctrl.meetingId, ctrl.category, reg).catch(() => []))
@@ -126,11 +138,16 @@
             const pp = prevPos[r.driverId];
             r.delta = pp == null ? 'new' : (pp - r.position); // >0 = places gagnées
           });
+          interim.forEach(r => { if (r.driverId === lastAddedId) r.justAdded = true; });
           prevPos = {}; interim.forEach(r => { prevPos[r.driverId] = r.position; });
           data.interim = interim;
         }
         root.innerHTML = renderScene('session', data);
         prevIds = curIds;
+        // dernier de la manche (plus personne à passer) → effacer la surbrillance après 10 s
+        if (lastAddedId && todo.length === 0 && !sessTimer) {
+          sessTimer = setTimeout(() => { lastAddedId = null; sessTimer = null; renderSess(null); }, 10000);
+        }
       };
       unsubResults = await watchQuery('results', [['sessionId', '==', session.id]], rows => renderSess(rows));
       return;

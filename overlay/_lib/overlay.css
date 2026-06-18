@@ -124,9 +124,9 @@ html,body{width:1920px;height:1080px;overflow:hidden;background:transparent;
 .delta.up{color:var(--green)}
 .delta.dn{color:#ff6b6b}
 .delta.nw{color:var(--orange);font-size:13px}
-/* flash vert du pilote qui vient d'entrer au classement */
-@keyframes justAdded{0%{background:rgba(57,217,138,.55)}100%{background:transparent}}
-.cr.just-added{animation:justAdded 2.6s ease-out}
+/* surbrillance verte PERSISTANTE du dernier pilote entré (jusqu'à la saisie suivante) */
+.cr.just-added{background:linear-gradient(90deg,rgba(57,217,138,.34),rgba(57,217,138,.06));
+  box-shadow:inset 3px 0 0 var(--green)}
 /* intermédiaire : grisé = pas encore passé dans la manche en cours */
 .cr.pts.pending{opacity:.38}
 
