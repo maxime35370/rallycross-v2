@@ -204,9 +204,28 @@
 
   .scene{display:none}
   .scene.on{display:block}
+  /* barre de navigation entre maquettes (aperçu uniquement) */
+  .pv-nav{position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:99;display:flex;gap:5px;
+    background:rgba(10,12,17,.85);border:1px solid rgba(255,255,255,.12);border-radius:10px;padding:6px 8px;
+    font-family:'Barlow Condensed',sans-serif;backdrop-filter:blur(8px)}
+  .pv-nav a{color:#cfd8e3;text-decoration:none;font-weight:600;font-size:15px;letter-spacing:.5px;padding:6px 11px;border-radius:7px}
+  .pv-nav a:hover{background:rgba(255,255,255,.08)}
+  .pv-nav a.on{background:var(--orange);color:#fff}
+  .pv-nav a.home{color:#8b95a4}
 </style>
 </head>
 <body>
+
+<div class="pv-nav">
+  <a class="home" href="../">← Accueil</a>
+  <a data-s="dash" href="?scene=dash">Dashboard</a>
+  <a data-s="race" href="?scene=race">Manche</a>
+  <a data-s="standings" href="?scene=standings">Championnat</a>
+  <a data-s="grid" href="?scene=grid">Grille</a>
+  <a data-s="next" href="?scene=next">À suivre</a>
+  <a data-s="intermission" href="?scene=intermission">Attente</a>
+</div>
+
 <div class="stage">
 
   <!-- FOND DE STREAM (placeholder, n'existera pas dans OBS) -->
@@ -400,6 +419,7 @@
   // sélection de la scène via ?scene=
   const scene = new URLSearchParams(location.search).get('scene') || 'dash';
   document.getElementById('scene-'+scene)?.classList.add('on');
+  document.querySelectorAll('.pv-nav a[data-s]').forEach(a => a.classList.toggle('on', a.dataset.s === scene));
   // les scènes plein écran masquent le faux fond + le bug logo
   if(scene==='intermission'){document.querySelector('.backdrop').style.opacity=.25;
     document.querySelector('.bug .live').style.display='none';}
