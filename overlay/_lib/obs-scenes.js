@@ -1,0 +1,166 @@
+/* ═══════════════════════════════════════════════
+   OBS-SCENES.JS — Rendu HTML des scènes overlay
+   Fonctions pures : (données) → HTML. Le routeur (live.html)
+   fournit les données issues de Firestore / obs-data.js.
+═══════════════════════════════════════════════ */
+
+import { escHtml, msToDisplay } from '../../js/utils.js';
+
+const STATUS_LABEL = { DNS: 'DNS', DNF: 'DNF', DSQ: 'DSQ HC', DSQ_RACE: 'DSQ EC' };
+
+// ─────────────────────────────────────────────────────────
+// LIGNES
+// ─────────────────────────────────────────────────────────
+
+/** Ligne de course (live) : pos, n°, nom, chrono ou écart. */
+function raceRow(r, pos, leaderMs) {
+  const isP1 = pos === 1;
+  let val, cls = 'val';
+  if (r.ms && !r.status) {
+    val = isP1 ? msToDisplay(r.ms) : '+' + ((r.ms - leaderMs) / 1000).toFixed(3);
+    if (!isP1) cls += ' gap';
+  } else {
+    val = STATUS_LABEL[r.status] || '—'; cls += ' gap';
+  }
+  return `<div class="row ${isP1 ? 'p1' : ''}">
+    ${isP1 ? '<span class="accent"></span>' : ''}
+    <span class="pos">${r.ms && !r.status ? pos : '—'}</span>
+    <span class="num">${escHtml(String(r.carNumber ?? ''))}</span>
+    <span class="name">${escHtml((r.lastName || '').toUpperCase())}</span>
+    <span class="${cls}">${escHtml(val)}</span></div>`;
+}
+
+/** Ligne de classement points : pos, n°, nom, pts. */
+function ptsRow(r, pts) {
+  const isP1 = r.position === 1;
+  return `<div class="row ${isP1 ? 'p1' : ''}">
+    ${isP1 ? '<span class="accent"></span>' : ''}
+    <span class="pos">${r.position ?? '—'}</span>
+    <span class="num">${escHtml(String(r.carNumber ?? ''))}</span>
+    <span class="name">${escHtml((r.lastName || '').toUpperCase())}</span>
+    <span class="val">${pts}<small>pts</small></span></div>`;
+}
+
+function raceRowsHtml(results) {
+  if (!results?.length) return `<div class="empty">En attente des résultats…</div>`;
+  const leader = results.find(r => r.ms && !r.status);
+  const leaderMs = leader?.ms ?? 0;
+  let pos = 0;
+  return results.map(r => raceRow(r, (r.ms && !r.status) ? ++pos : '—', leaderMs)).join('');
+}
+
+// ─────────────────────────────────────────────────────────
+// SCÈNE : DASHBOARD
+// ─────────────────────────────────────────────────────────
+
+export function renderDashboard(d) {
+  const fastest = (d.race || []).find(r => r.ms && !r.status);
+  return `
+  <div class="dash">
+    <div class="dash-top">
+      <span class="brand">RX<b>CHRONO</b></span>
+      <span class="sep"></span>
+      <span class="info"><span class="pin">📍</span><span>${escHtml(d.headerText || d.category || '')}</span></span>
+      <span class="live"><span class="d"></span>LIVE</span>
+    </div>
+    <div class="dash-body">
+      <div class="dpanel race">
+        <div class="dhead"><span class="d"></span>Manche en cours<span class="sub">${escHtml(d.raceSub || '')}</span></div>
+        <div class="body">${raceRowsHtml(d.race)}</div>
+        <div class="foot">${(d.race || []).length} partants${fastest ? ` · meilleur chrono <span class="bl">${msToDisplay(fastest.ms)}</span>` : ''}</div>
+      </div>
+      <div class="dright">
+        <div class="dpanel standings">
+          <div class="dhead">Classement intermédiaire<span class="sub">${escHtml(d.interimSub || '')}</span></div>
+          <div class="body">${(d.interim || []).length
+            ? (d.interim).slice(0, 9).map(r => ptsRow(r, r.totalPoints ?? 0)).join('')
+            : `<div class="empty">En attente…</div>`}</div>
+        </div>
+        <div class="dpanel standings">
+          <div class="dhead">Championnat<span class="sub">${escHtml(d.champSub || '')}</span></div>
+          <div class="body">${(d.champ || []).length
+            ? (d.champ).slice(0, 8).map(r => ptsRow(r, r.grandTotal ?? 0)).join('')
+            : `<div class="empty">En attente…</div>`}</div>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
+// ─────────────────────────────────────────────────────────
+// SCÈNE : GRILLE DE DÉPART (matrice du règlement)
+// ─────────────────────────────────────────────────────────
+
+export function renderGrid(d) {
+  const { lanes = 5, rows = 3, positions = {} } = d.layout || {};
+  const byPos = {};
+  (d.slots || []).forEach(s => { byPos[s.pos] = s; });
+
+  let cells = '';
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < lanes; c++) {
+      const p = positions[r + '-' + c];
+      const occ = p && byPos[p];
+      if (occ) cells += `<div class="car ${p === 1 ? 'p1' : ''} ${occ.edited ? 'edited' : ''}"
+          style="grid-column:${c + 1};grid-row:${r + 1}">
+        <span class="gp">${p}</span><span class="gn">${escHtml(String(occ.carNumber ?? ''))}</span>
+        <span class="gl">${escHtml((occ.lastName || '').toUpperCase())}</span></div>`;
+    }
+  }
+  return `
+  <div class="grid-wrap">
+    <div class="head"><span class="h-cat">Grille de départ</span><span class="h-sub">${escHtml(d.sessionLabel || '')}</span></div>
+    ${d.headerText ? `<div class="grid-info"><span class="pin">📍</span><span>${escHtml(d.headerText)}</span></div>` : ''}
+    <div class="track"><div class="dir">SENS COURSE</div>
+      <div class="grid-matrix" style="grid-template-columns:repeat(${lanes},248px)">${cells || '<div class="empty">Grille à venir…</div>'}</div>
+    </div>
+  </div>`;
+}
+
+// ─────────────────────────────────────────────────────────
+// SCÈNE : À SUIVRE (bandeau bas)
+// ─────────────────────────────────────────────────────────
+
+export function renderNextHeat(d) {
+  const list = (d.slots || []).slice(0, 8).map(s => `
+    <div class="chip"><span class="n">${escHtml(String(s.carNumber ?? ''))}</span>
+      <span class="nm">${escHtml((s.lastName || '').toUpperCase())}</span>
+      <span class="pp">P${s.pos}</span></div>`).join('');
+  return `
+  <div class="lower">
+    <div class="lower-inner">
+      <div class="badge"><span class="k">À SUIVRE</span><span class="v">${escHtml(d.sessionLabel || '')}</span></div>
+      <div class="list">${list || '<span class="empty">Série à venir…</span>'}</div>
+    </div>
+  </div>`;
+}
+
+// ─────────────────────────────────────────────────────────
+// SCÈNE : ENTRE DEUX MANCHES
+// ─────────────────────────────────────────────────────────
+
+export function renderIntermission(d) {
+  return `
+  <div class="inter">
+    <div class="big">DE <b>RETOUR</b></div>
+    <div class="tagline">dans un instant</div>
+    ${(d.headerText || d.sessionLabel) ? `<div class="next">
+      <span class="k">À SUIVRE</span><span class="v">${escHtml(d.headerText || d.sessionLabel)}</span>
+    </div>` : ''}
+    ${d.social ? `<div class="social">${escHtml(d.social)}</div>` : ''}
+  </div>`;
+}
+
+// ─────────────────────────────────────────────────────────
+// AIGUILLAGE
+// ─────────────────────────────────────────────────────────
+
+export function renderScene(scene, data) {
+  switch (scene) {
+    case 'grid':         return renderGrid(data);
+    case 'next-heat':    return renderNextHeat(data);
+    case 'intermission': return renderIntermission(data);
+    case 'dashboard':
+    default:             return renderDashboard(data);
+  }
+}

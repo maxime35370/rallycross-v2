@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="fr"><head><meta charset="UTF-8">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;700;800;900&family=Barlow+Condensed:wght@400;500;600;700&family=Exo+2:wght@300;400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../_lib/overlay.css">
+<style>body{background:#11151b}/* fond gris pour visualiser la transparence en test */</style>
+</head>
+<body>
+<div class="overlay-root" id="root"></div>
+<script type="module">
+import { renderScene } from '../_lib/obs-scenes.js';
+
+const race = [
+  {carNumber:11,lastName:'Grondin',ms:41892,status:null},{carNumber:2,lastName:'Boulbès',ms:42404,status:null},
+  {carNumber:77,lastName:'Lefebvre',ms:42772,status:null},{carNumber:4,lastName:'Dubourg',ms:43229,status:null},
+  {carNumber:33,lastName:'Mailloux',ms:43903,status:null},{carNumber:9,lastName:'André',ms:44546,status:null},
+  {carNumber:21,lastName:'Renard',ms:45010,status:null},{carNumber:5,lastName:'Caillot',ms:45432,status:null},
+  {carNumber:14,lastName:'Morel',ms:null,status:'DNF'},{carNumber:8,lastName:'Picard',ms:null,status:'DNS'},
+];
+const interim = [
+  {position:1,carNumber:11,lastName:'Grondin',totalPoints:96},{position:2,carNumber:2,lastName:'Boulbès',totalPoints:91},
+  {position:3,carNumber:77,lastName:'Lefebvre',totalPoints:86},{position:4,carNumber:4,lastName:'Dubourg',totalPoints:80},
+  {position:5,carNumber:33,lastName:'Mailloux',totalPoints:74},{position:6,carNumber:9,lastName:'André',totalPoints:69},
+  {position:7,carNumber:21,lastName:'Renard',totalPoints:63},{position:8,carNumber:5,lastName:'Caillot',totalPoints:58},
+  {position:9,carNumber:14,lastName:'Morel',totalPoints:52},
+];
+const champ = interim.map((r,i)=>({position:i+1,carNumber:r.carNumber,lastName:r.lastName,grandTotal:285-i*17})).slice(0,8);
+const layout = {lanes:5,rows:3,positions:{'0-0':1,'0-2':2,'0-4':3,'1-1':4,'1-3':5,'2-0':6,'2-2':7,'2-4':8}};
+const slots = [
+  {pos:1,carNumber:11,lastName:'Grondin'},{pos:2,carNumber:2,lastName:'Boulbès'},{pos:3,carNumber:77,lastName:'Lefebvre'},
+  {pos:4,carNumber:4,lastName:'Dubourg'},{pos:5,carNumber:33,lastName:'Mailloux'},{pos:6,carNumber:9,lastName:'André'},
+  {pos:7,carNumber:21,lastName:'Renard'},{pos:8,carNumber:5,lastName:'Caillot'},
+];
+
+const data = {
+  dashboard:{headerText:'CIRCUIT DE LOHÉAC · MANCHE 2 · ASPHALTE + TERRE',category:'Supercar',
+    raceSub:'Supercar · Manche 2',interimSub:'après M2',champSub:'Supercar · 2026',race,interim,champ},
+  grid:{sessionLabel:'Demi-finale 1 · Supercar',headerText:'CIRCUIT DE LOHÉAC · 6 TOURS · ASPHALTE + TERRE',layout,slots},
+  'next-heat':{sessionLabel:'Série 3 · Super1600',slots},
+  intermission:{headerText:'Demi-finale 1 — Supercar',social:'📺 twitch.tv/tonchaine · #RallycrossFR'},
+};
+const scene = new URLSearchParams(location.search).get('scene')||'dashboard';
+document.getElementById('root').innerHTML = renderScene(scene, data[scene]);
+</script>
+</body></html>
