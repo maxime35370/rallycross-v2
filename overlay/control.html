@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RX Chrono — Régie OBS</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;700;800;900&family=Barlow+Condensed:wght@400;500;600;700&family=Exo+2:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{--orange:#ff5500;--ink:#0a0c11;--card:#11151d;--card2:#161b25;
+    --line:rgba(255,255,255,.09);--mut:#8b95a4;--green:#39d98a}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:radial-gradient(1200px 700px at 70% -10%,#161d2a,#0a0c11 60%);
+    color:#eef2f7;font-family:'Exo 2',system-ui,sans-serif;min-height:100vh}
+  .wrap{max-width:1500px;margin:0 auto;padding:22px 26px 60px}
+  .top{display:flex;align-items:center;gap:18px;padding:14px 20px;background:var(--card);
+    border:1px solid var(--line);border-radius:14px;margin-bottom:20px}
+  .top .brand{font-family:'Orbitron';font-weight:900;font-size:24px} .top .brand b{color:var(--orange)}
+  .top .tag{font-family:'Barlow Condensed';font-weight:600;letter-spacing:3px;font-size:15px;color:var(--mut);
+    text-transform:uppercase;border-left:1px solid var(--line);padding-left:16px}
+  .top .meet{margin-left:auto;display:flex;align-items:center;gap:10px}
+  .sel{background:var(--card2);border:1px solid var(--line);color:#eef2f7;border-radius:9px;padding:10px 14px;
+    font-family:'Barlow Condensed';font-weight:600;font-size:17px;max-width:340px}
+  .live{display:flex;align-items:center;gap:8px;background:#e11d2a;padding:9px 14px;border-radius:8px;
+    font-family:'Orbitron';font-weight:800;font-size:14px;letter-spacing:2px}
+  .live.off{background:#39414f}
+  .live .d{width:10px;height:10px;border-radius:50%;background:#fff;animation:bl 1.2s infinite}
+  @keyframes bl{50%{opacity:.25}}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;align-items:start}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px 20px}
+  .card h3{font-family:'Orbitron';font-weight:700;font-size:15px;letter-spacing:1.5px;text-transform:uppercase;
+    color:#c4ccd8;margin-bottom:14px;display:flex;align-items:center;gap:10px}
+  .card h3 .n{margin-left:auto;font-family:'Barlow Condensed';font-weight:600;color:var(--orange);letter-spacing:1px;font-size:16px}
+  .btns{display:flex;flex-wrap:wrap;gap:10px}
+  .b{flex:1;min-width:84px;text-align:center;cursor:pointer;user-select:none;background:var(--card2);
+    border:1px solid var(--line);border-radius:10px;padding:14px 8px;font-family:'Barlow Condensed';
+    font-weight:600;font-size:20px;letter-spacing:1px;text-transform:uppercase;transition:.12s}
+  .b:hover{border-color:#3a4760}
+  .b.on{background:linear-gradient(120deg,var(--orange),#c23d00);border-color:var(--orange);color:#fff;
+    box-shadow:0 8px 22px rgba(255,85,0,.32)}
+  .b.scene{font-family:'Orbitron';font-weight:700;font-size:15px}
+  .row2{display:flex;justify-content:flex-end;margin-top:12px}
+  .toggle{display:flex;align-items:center;gap:10px;background:var(--card2);border:1px solid var(--line);
+    border-radius:10px;padding:8px 16px;font-family:'Barlow Condensed';font-weight:600;font-size:18px;cursor:pointer}
+  .toggle .pill{width:54px;height:30px;border-radius:30px;background:#2a3342;position:relative;transition:.2s}
+  .toggle .pill::after{content:"";position:absolute;top:3px;left:3px;width:24px;height:24px;border-radius:50%;background:#fff;transition:.2s}
+  .toggle.on .pill{background:var(--green)} .toggle.on .pill::after{left:27px}
+  .field{display:flex;gap:10px;margin-top:4px}
+  .field input{flex:1;background:var(--card2);border:1px solid var(--line);color:#fff;border-radius:10px;
+    padding:13px 15px;font-family:'Barlow Condensed';font-weight:600;font-size:19px;letter-spacing:1px}
+  .apply{background:var(--orange);border:none;color:#fff;border-radius:10px;padding:0 20px;cursor:pointer;
+    font-family:'Orbitron';font-weight:700;font-size:14px;letter-spacing:1px}
+  .note{display:flex;gap:9px;align-items:center;background:rgba(255,85,0,.10);border:1px solid rgba(255,85,0,.3);
+    border-radius:10px;padding:10px 14px;margin-bottom:14px;font-family:'Barlow Condensed';font-weight:500;font-size:16px;color:#ffca9e}
+  .slots{display:flex;flex-direction:column;gap:9px;max-height:520px;overflow:auto}
+  .slot{display:grid;grid-template-columns:42px 90px 1fr 34px;align-items:center;gap:10px;background:var(--card2);
+    border:1px solid var(--line);border-radius:10px;padding:9px 12px}
+  .slot .p{font-family:'Orbitron';font-weight:800;font-size:21px;color:var(--orange);text-align:center}
+  .slot input{background:#0c0f16;border:1px solid var(--line);color:#fff;border-radius:8px;padding:9px 10px;
+    font-family:'Barlow Condensed';font-weight:600;font-size:18px}
+  .slot input.nm{text-transform:uppercase}
+  .slot .x{color:#7a8699;text-align:center;cursor:pointer;font-size:18px}
+  .actions{display:flex;gap:10px;margin-top:14px}
+  .ghost{flex:1;background:var(--card2);border:1px solid var(--line);color:#dfe6f0;border-radius:10px;padding:13px;
+    cursor:pointer;font-family:'Barlow Condensed';font-weight:600;font-size:18px;letter-spacing:1px}
+  .ghost.primary{background:rgba(57,217,138,.12);border-color:rgba(57,217,138,.4);color:#9af0c4}
+  .ghost.warn{background:rgba(255,85,0,.10);border-color:rgba(255,85,0,.35);color:#ffca9e}
+  .status{display:flex;align-items:center;gap:14px;margin-top:18px;padding:14px 18px;background:var(--card);
+    border:1px solid var(--line);border-radius:12px;font-family:'Barlow Condensed';font-size:18px;color:var(--mut);flex-wrap:wrap}
+  .status .chip{background:var(--card2);border:1px solid var(--line);border-radius:20px;padding:5px 13px;font-weight:600;color:#fff}
+  .status .chip.o{color:var(--orange);border-color:rgba(255,85,0,.4)}
+  /* gate auth */
+  .gate{position:fixed;inset:0;background:rgba(6,8,12,.92);display:flex;align-items:center;justify-content:center;z-index:50}
+  .gate .box{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:30px 34px;width:360px;text-align:center}
+  .gate h2{font-family:'Orbitron';font-weight:800;font-size:22px;margin-bottom:6px}
+  .gate p{color:var(--mut);font-size:15px;margin-bottom:18px}
+  .gate input{width:100%;background:var(--card2);border:1px solid var(--line);color:#fff;border-radius:10px;
+    padding:12px 14px;font-size:16px;margin-bottom:10px}
+  .gate button{width:100%;background:var(--orange);border:none;color:#fff;border-radius:10px;padding:13px;
+    font-family:'Orbitron';font-weight:700;font-size:15px;cursor:pointer}
+  .gate .err{color:#ff7a7a;font-size:14px;min-height:18px;margin-top:8px}
+  .hidden{display:none!important}
+  .muted{opacity:.4;pointer-events:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top">
+    <span class="brand">RX<b>CHRONO</b></span><span class="tag">Régie · OBS</span>
+    <div class="meet">
+      <select class="sel" id="meetSel"></select>
+      <span class="live off" id="liveBadge"><span class="d"></span><span id="liveTxt">MASQUÉ</span></span>
+    </div>
+  </div>
+
+  <div class="grid" id="panel">
+    <div style="display:flex;flex-direction:column;gap:20px">
+      <div class="card">
+        <h3>Scène à l'antenne</h3>
+        <div class="btns" id="scenes">
+          <div class="b scene" data-scene="dashboard">📊 Dashboard</div>
+          <div class="b scene" data-scene="grid">🏁 Grille</div>
+          <div class="b scene" data-scene="next-heat">⏭️ À suivre</div>
+          <div class="b scene" data-scene="intermission">⏸️ Attente</div>
+        </div>
+        <div class="row2"><div class="toggle" id="visToggle"><span>Overlay visible</span><span class="pill"></span></div></div>
+      </div>
+      <div class="card">
+        <h3>Catégorie <span class="n" id="catN">—</span></h3>
+        <div class="btns" id="cats"></div>
+      </div>
+      <div class="card">
+        <h3>Phase / Session <span class="n" id="phN">—</span></h3>
+        <div class="btns" id="phases"></div>
+      </div>
+      <div class="card">
+        <h3>En-tête à l'écran</h3>
+        <div class="field"><input id="hdr" placeholder="Ex. CIRCUIT DE LOHÉAC · MANCHE 2"><button class="apply" id="hdrBtn">Appliquer</button></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Grille / série à venir <span class="n" id="gridN">—</span></h3>
+      <div class="note">✏️ Modifs visuelles uniquement — tes vraies données enregistrées ne sont pas affectées.</div>
+      <div class="slots" id="slots"></div>
+      <div class="actions">
+        <button class="ghost primary" id="autoBtn">↻ Auto (depuis le classement)</button>
+        <button class="ghost" id="addBtn">＋ Ajouter</button>
+      </div>
+      <div class="actions"><button class="ghost warn" id="pushBtn">Appliquer la grille à l'écran</button></div>
+    </div>
+  </div>
+
+  <div class="status" id="status"></div>
+</div>
+
+<!-- AUTH GATE -->
+<div class="gate" id="gate">
+  <div class="box">
+    <h2>🔒 Régie</h2>
+    <p>Connecte-toi pour piloter l'affichage.</p>
+    <input type="email" id="email" placeholder="Email" autocomplete="email">
+    <input type="password" id="pass" placeholder="Mot de passe" autocomplete="current-password">
+    <button id="loginBtn">Connexion</button>
+    <div class="err" id="loginErr"></div>
+  </div>
+</div>
+
+<script type="module">
+  import { initFirebase, fsQuery } from './_lib/obs-firebase.js';
+  import { watchControl, setControl, sessionKey, DEFAULT_CONTROL } from './_lib/obs-control.js';
+  import { getSessions, findSession, getGridOrder, getInterim } from './_lib/obs-data.js';
+
+  const SDK = 'https://www.gstatic.com/firebasejs/10.12.0/';
+  await initFirebase();
+
+  let state = { ...DEFAULT_CONTROL };
+  let champ = null, meetings = [], categories = [], gridSlots = [], applyingRemote = false;
+
+  // ---------- AUTH ----------
+  let auth = null;
+  const { getAuth, onAuthStateChanged, signInWithEmailAndPassword } = await import(SDK + 'firebase-auth.js');
+  const { getApps } = await import(SDK + 'firebase-app.js');
+  auth = getAuth(getApps()[0]);
+  onAuthStateChanged(auth, u => { document.getElementById('gate').classList.toggle('hidden', !!u); });
+  document.getElementById('loginBtn').onclick = async () => {
+    const err = document.getElementById('loginErr'); err.textContent = '';
+    try { await signInWithEmailAndPassword(auth, email.value.trim(), pass.value); }
+    catch (e) { err.textContent = ({'auth/invalid-credential':'Identifiants invalides.','auth/invalid-email':'Email invalide.'})[e.code] || 'Erreur de connexion.'; }
+  };
+  pass.addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('loginBtn').click(); });
+
+  // ---------- CHARGEMENT ----------
+  const champs = await fsQuery('championships', []);
+  champ = champs.find(c => c.isActive) || champs[0] || null;
+  categories = (champ?.categories || []).map(c => c.name || c.id);
+  state.championshipId = champ?.id || '';
+
+  const allMeetings = champ ? (await fsQuery('meetings', [['year', '==', champ.year]]))
+    .filter(m => m.championshipId === champ.id || !m.championshipId) : [];
+  meetings = allMeetings.sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  const meetSel = document.getElementById('meetSel');
+  meetSel.innerHTML = meetings.map(m =>
+    `<option value="${m.id}">${(m.date ? new Date(m.date).toLocaleDateString('fr-FR') : '?')} — ${m.location || '?'}</option>`).join('')
+    || '<option value="">Aucun meeting</option>';
+
+  // phases depuis le règlement
+  function buildPhases() {
+    const sc = champ?.sessionConfig || {};
+    const ph = [];
+    if (sc.EC?.enabled) ph.push({ t: 'EC', n: 1, l: 'Essais' });
+    for (let i = 1; i <= (sc.MQ?.count ?? 4); i++) ph.push({ t: 'MQ', n: i, l: 'M' + i });
+    if (sc.QF?.enabled) for (let i = 1; i <= (sc.QF?.count ?? 4); i++) ph.push({ t: 'QF', n: i, l: 'QF' + i });
+    for (let i = 1; i <= (sc.DF?.count ?? 2); i++) ph.push({ t: 'DF', n: i, l: i === 1 ? '½ A' : '½ B' });
+    ph.push({ t: 'FIN', n: 1, l: 'Finale' });
+    return ph;
+  }
+  const phases = buildPhases();
+
+  // catégories + phases (boutons)
+  document.getElementById('cats').innerHTML = categories.map(c => `<div class="b" data-cat="${c}">${c}</div>`).join('');
+  document.getElementById('phases').innerHTML = phases.map(p => `<div class="b" data-ph="${p.t}-${p.n}">${p.l}</div>`).join('');
+
+  // ---------- ÉCRITURE (le SEUL write : doc obsControl/live) ----------
+  function push(patch) { Object.assign(state, patch); if (!applyingRemote) setControl(patch); }
+
+  // ---------- RENDU UI ----------
+  function paint() {
+    document.querySelectorAll('#scenes .b').forEach(b => b.classList.toggle('on', b.dataset.scene === state.scene));
+    document.querySelectorAll('#cats .b').forEach(b => b.classList.toggle('on', b.dataset.cat === state.category));
+    document.querySelectorAll('#phases .b').forEach(b => b.classList.toggle('on', b.dataset.ph === `${state.sessionType}-${state.sessionNum}`));
+    document.getElementById('visToggle').classList.toggle('on', !!state.visible);
+    document.getElementById('liveBadge').classList.toggle('off', !state.visible);
+    document.getElementById('liveTxt').textContent = state.visible ? 'À L\'ANTENNE' : 'MASQUÉ';
+    document.getElementById('catN').textContent = state.category || '—';
+    document.getElementById('phN').textContent = phases.find(p => p.t === state.sessionType && p.n === state.sessionNum)?.l || '—';
+    document.getElementById('gridN').textContent = `${state.category || '—'} · ${document.getElementById('phN').textContent}`;
+    if (meetSel.value !== state.meetingId) meetSel.value = state.meetingId;
+    document.getElementById('status').innerHTML =
+      `À l'antenne : <span class="chip">${({dashboard:'📊 Dashboard',grid:'🏁 Grille','next-heat':'⏭️ À suivre',intermission:'⏸️ Attente'})[state.scene]}</span>
+       <span class="chip o">${state.category || '—'}</span>
+       <span class="chip">${document.getElementById('phN').textContent}</span>
+       · <b style="color:${state.visible?'var(--green)':'#888'}">${state.visible?'visible':'masqué'}</b>`;
+    renderSlots();
+  }
+
+  function renderSlots() {
+    document.getElementById('slots').innerHTML = gridSlots.map((s, i) => `
+      <div class="slot" data-i="${i}">
+        <span class="p">${s.pos}</span>
+        <input class="num" value="${s.carNumber ?? ''}" data-f="carNumber">
+        <input class="nm" value="${(s.lastName ?? '').toUpperCase()}" data-f="lastName">
+        <span class="x" data-x="${i}">✕</span>
+      </div>`).join('') || '<div class="note">Sélectionne une catégorie + une phase, puis « Auto ».</div>';
+    document.querySelectorAll('#slots input').forEach(inp => inp.oninput = e => {
+      gridSlots[+e.target.closest('.slot').dataset.i][e.target.dataset.f] = e.target.value;
+    });
+    document.querySelectorAll('#slots .x').forEach(x => x.onclick = () => {
+      gridSlots.splice(+x.dataset.x, 1); gridSlots.forEach((s, i) => s.pos = i + 1); renderSlots();
+    });
+  }
+
+  // ---------- ACTIONS ----------
+  document.querySelectorAll('#scenes .b').forEach(b => b.onclick = () => { push({ scene: b.dataset.scene }); paint(); });
+  document.querySelectorAll('#cats .b').forEach(b => b.onclick = () => { push({ category: b.dataset.cat }); paint(); });
+  document.querySelectorAll('#phases .b').forEach(b => b.onclick = () => {
+    const [t, n] = b.dataset.ph.split('-'); push({ sessionType: t, sessionNum: +n }); paint();
+  });
+  meetSel.onchange = () => { push({ meetingId: meetSel.value }); paint(); };
+  document.getElementById('visToggle').onclick = () => { push({ visible: !state.visible }); paint(); };
+  document.getElementById('hdrBtn').onclick = () => push({ headerText: document.getElementById('hdr').value });
+  document.getElementById('addBtn').onclick = () => { gridSlots.push({ pos: gridSlots.length + 1, carNumber: '', lastName: '' }); renderSlots(); };
+
+  document.getElementById('autoBtn').onclick = async () => {
+    if (!state.meetingId || !state.category) return;
+    const sessions = await getSessions(state.meetingId, state.category);
+    const session = findSession(sessions, state.sessionType, state.sessionNum);
+    gridSlots = session ? await getGridOrder(session, sessions, champ) : [];
+    renderSlots();
+    push({ gridOverride: null });   // revient à l'affichage auto
+  };
+  document.getElementById('pushBtn').onclick = () => {
+    push({ gridOverride: { key: sessionKey(state), slots: gridSlots.map((s, i) => ({ pos: i + 1, carNumber: s.carNumber, lastName: s.lastName, edited: true })) } });
+  };
+
+  // ---------- INIT DEPUIS LE DOC EXISTANT ----------
+  watchControl(c => {
+    applyingRemote = true;
+    state = { ...state, ...c, championshipId: champ?.id || c.championshipId };
+    document.getElementById('hdr').value = state.headerText || '';
+    paint();
+    applyingRemote = false;
+  });
+
+  // valeurs initiales si le doc est vide
+  if (!state.category && categories.length) state.category = categories[0];
+  if (!state.meetingId && meetings.length) state.meetingId = meetings[0].id;
+  paint();
+</script>
+</body>
+</html>

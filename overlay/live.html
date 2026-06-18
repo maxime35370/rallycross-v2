@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>RX Chrono — Overlay OBS</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;700;800;900&family=Barlow+Condensed:wght@400;500;600;700&family=Exo+2:wght@300;400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="_lib/overlay.css">
+</head>
+<body>
+<div class="overlay-root" id="root"></div>
+
+<script type="module">
+  import { initFirebase, fsQuery, watchQuery } from './_lib/obs-firebase.js';
+  import { watchControl, sessionKey } from './_lib/obs-control.js';
+  import {
+    getSessions, getResults, findSession, sortRace, getInterim,
+    getChampionshipStandings, getGridOrder, getGridLayout,
+  } from './_lib/obs-data.js';
+  import { renderScene } from './_lib/obs-scenes.js';
+
+  const root = document.getElementById('root');
+  await initFirebase();
+
+  // Caches (évitent de recharger ce qui ne change pas)
+  let championships = [];
+  let cacheKey = '';          // sélection courante (meeting|cat|type|num|scene)
+  let unsubResults = null;    // listener live des résultats de la session courante
+  let champTimer = null;
+  let lastControl = null;
+  let champRows = [];         // classement championnat (rafraîchi périodiquement)
+
+  function labelFor(type, num) {
+    if (type === 'EC')  return 'Essais chronométrés';
+    if (type === 'MQ')  return 'Manche ' + (num ?? 1);
+    if (type === 'QF')  return '¼ de finale ' + (num ?? 1);
+    if (type === 'DF')  return 'Demi-finale ' + (num ?? 1);
+    if (type === 'FIN') return 'Finale';
+    return '';
+  }
+
+  function applyVisibility(visible) {
+    root.classList.toggle('hidden', !visible);
+  }
+
+  async function resolveRegulation(champId) {
+    if (!championships.length) championships = await fsQuery('championships', []);
+    return championships.find(c => c.id === champId)
+        || championships.find(c => c.isActive)
+        || championships[0] || null;
+  }
+
+  async function meetingsOf(reg) {
+    if (!reg) return [];
+    const all = await fsQuery('meetings', [['year', '==', reg.year]]);
+    return all.filter(m => m.championshipId === reg.id || !m.championshipId);
+  }
+
+  // Recharge complète sur changement de sélection
+  async function reload(ctrl) {
+    if (unsubResults) { unsubResults(); unsubResults = null; }
+    if (champTimer)   { clearInterval(champTimer); champTimer = null; }
+
+    const reg = await resolveRegulation(ctrl.championshipId);
+    if (!reg || !ctrl.meetingId || !ctrl.category) {
+      root.innerHTML = renderScene(ctrl.scene, { headerText: ctrl.headerText, category: ctrl.category });
+      return;
+    }
+
+    const sessions = await getSessions(ctrl.meetingId, ctrl.category);
+    const session  = findSession(sessions, ctrl.sessionType, ctrl.sessionNum);
+    const sLabel   = labelFor(ctrl.sessionType, ctrl.sessionNum);
+
+    // Grille (override d'affichage prioritaire si la clé correspond)
+    let slots = [];
+    if (['grid', 'next-heat'].includes(ctrl.scene)) {
+      const ov = ctrl.gridOverride;
+      if (ov && ov.key === sessionKey(ctrl) && ov.slots?.length) {
+        slots = ov.slots;
+      } else if (session) {
+        slots = await getGridOrder(session, sessions, reg);
+      }
+    }
+    const layout = getGridLayout(reg, ctrl.sessionType);
+
+    // Classement championnat (lourd) : une fois, puis toutes les 60 s
+    const refreshChamp = async () => {
+      try { champRows = await getChampionshipStandings(await meetingsOf(reg), ctrl.category, reg); }
+      catch { champRows = []; }
+    };
+    if (ctrl.scene === 'dashboard') { await refreshChamp(); champTimer = setInterval(refreshChamp, 60000); }
+
+    // Fonction de rendu (recalcule l'intermédiaire à chaque tick résultats)
+    const renderNow = async (raceResults) => {
+      const data = {
+        headerText: ctrl.headerText, category: ctrl.category, sessionLabel: sLabel,
+        raceSub: `${ctrl.category} · ${sLabel}`, interimSub: 'classement intermédiaire',
+        champSub: `${ctrl.category} · ${reg.year}`, social: ctrl.headerText,
+        layout, slots,
+      };
+      if (ctrl.scene === 'dashboard') {
+        data.race    = sortRace(raceResults || []);
+        data.interim = await getInterim(ctrl.meetingId, ctrl.category, reg).catch(() => []);
+        data.champ   = champRows;
+      }
+      root.innerHTML = renderScene(ctrl.scene, data);
+    };
+
+    if (ctrl.scene === 'dashboard' && session) {
+      // Live : on s'abonne aux résultats de la session courante
+      unsubResults = await watchQuery('results', [['sessionId', '==', session.id]], rows => renderNow(rows));
+    } else {
+      await renderNow(session ? await getResults(session.id) : []);
+    }
+  }
+
+  // Boucle de contrôle
+  watchControl(async (ctrl) => {
+    applyVisibility(ctrl.visible);
+    const key = [ctrl.scene, ctrl.championshipId, ctrl.meetingId, ctrl.category,
+                 ctrl.sessionType, ctrl.sessionNum, JSON.stringify(ctrl.gridOverride),
+                 ctrl.headerText].join('|');
+    if (key === cacheKey) return;   // rien de pertinent n'a changé
+    cacheKey = key;
+    lastControl = ctrl;
+    await reload(ctrl);
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,144 @@
+/* ═══════════════════════════════════════════════
+   OVERLAY.CSS — Thème broadcast partagé des overlays OBS
+   Fond transparent (composite par-dessus la vidéo OBS),
+   format fixe 1920x1080. Réutilise les styles validés en maquette.
+═══════════════════════════════════════════════ */
+
+:root{
+  --orange:#ff5500; --orange-2:#ff8a3d;
+  --panel:rgba(14,17,23,.82); --line:rgba(255,255,255,.08);
+  --purple:#a78bfa; --gold:#ffcc33; --green:#39d98a; --mut:#8b95a4;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:1920px;height:1080px;overflow:hidden;background:transparent;
+  font-family:'Exo 2',system-ui,sans-serif;color:#fff}
+
+/* racine d'overlay : fondu d'affichage/masquage piloté par la régie */
+.overlay-root{position:absolute;inset:0;opacity:1;transition:opacity .45s ease}
+.overlay-root.hidden{opacity:0}
+
+@keyframes blink{50%{opacity:.25}}
+
+/* ============ PANNEAU GÉNÉRIQUE ============ */
+.panel{position:absolute;left:46px;bottom:64px;width:600px;background:var(--panel);
+  backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border-radius:14px;overflow:hidden;
+  box-shadow:0 26px 70px rgba(0,0,0,.6),0 0 0 1px rgba(255,255,255,.05)}
+.panel .head{position:relative;display:flex;align-items:center;gap:14px;padding:18px 22px 16px;
+  background:linear-gradient(100deg,var(--orange),#c23d00 70%)}
+.head .h-cat{font-family:'Orbitron';font-weight:900;font-size:27px;letter-spacing:.5px;
+  text-transform:uppercase;line-height:1}
+.head .h-sub{margin-left:auto;font-family:'Barlow Condensed';font-weight:600;font-size:21px;
+  letter-spacing:2px;text-transform:uppercase;opacity:.92}
+.head .h-live{display:flex;align-items:center;gap:8px;margin-left:auto;font-family:'Orbitron';
+  font-weight:800;font-size:16px;letter-spacing:2px}
+.head .h-live .d{width:10px;height:10px;border-radius:50%;background:#fff;animation:blink 1.2s infinite}
+.rows{padding:8px 0}
+.row{display:grid;align-items:center;height:62px;padding:0 22px;position:relative;font-family:'Barlow Condensed'}
+.row + .row::before{content:"";position:absolute;top:0;left:22px;right:22px;height:1px;background:var(--line)}
+.row .pos{font-family:'Orbitron';font-weight:800;font-size:26px;color:#9aa4b2}
+.row .num{display:inline-flex;align-items:center;justify-content:center;min-width:48px;height:38px;
+  padding:0 8px;border-radius:7px;background:#1b2230;border:1px solid #2b3445;
+  font-family:'Orbitron';font-weight:700;font-size:21px;color:#dfe6f0}
+.row .name{font-weight:600;font-size:30px;letter-spacing:.5px;text-transform:uppercase;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .val{font-family:'Orbitron';font-weight:700;font-size:25px;text-align:right;letter-spacing:.5px}
+.row .val.gap{color:#aeb8c6;font-size:22px}
+.row.p1{background:linear-gradient(90deg,rgba(255,85,0,.22),rgba(255,85,0,0))}
+.row.p1 .pos{color:var(--orange)} .row.p1 .name{color:#fff}
+.row.p1 .accent{position:absolute;left:0;top:0;bottom:0;width:5px;background:var(--orange)}
+.row.bestlap .val{color:var(--purple)}
+.race .row{grid-template-columns:42px 60px 1fr 130px}
+.standings .row{grid-template-columns:42px 60px 1fr 96px}
+.standings .row .val{color:var(--gold)}
+.standings .row .val small{font-family:'Barlow Condensed';font-weight:500;font-size:16px;color:var(--mut);margin-left:4px}
+.panel .foot{display:flex;align-items:center;gap:10px;padding:11px 22px;background:rgba(0,0,0,.35);
+  font-family:'Barlow Condensed';font-weight:500;font-size:17px;letter-spacing:1px;color:#aeb8c6;text-transform:uppercase}
+.panel .foot .bl{color:var(--purple);font-weight:700}
+.empty{padding:26px 22px;font-family:'Barlow Condensed';font-size:22px;color:var(--mut);text-align:center}
+
+/* ============ DASHBOARD PLEIN ÉCRAN ============ */
+.dash{position:absolute;inset:0;display:flex;flex-direction:column;background:linear-gradient(180deg,#0a0c11,#07090e)}
+.dash-top{display:flex;align-items:center;gap:20px;height:92px;padding:0 40px;
+  background:linear-gradient(100deg,#141a24,#0a0c11);border-bottom:3px solid var(--orange)}
+.dash-top .brand{font-family:'Orbitron';font-weight:900;font-size:30px;letter-spacing:.5px}
+.dash-top .brand b{color:var(--orange)}
+.dash-top .sep{width:2px;height:42px;background:var(--line)}
+.dash-top .info{font-family:'Barlow Condensed';font-weight:600;font-size:27px;letter-spacing:2px;
+  text-transform:uppercase;color:#dbe3ee;display:flex;align-items:center;gap:13px}
+.dash-top .info .pin{color:var(--orange);font-size:23px}
+.dash-top .live{margin-left:auto;display:flex;align-items:center;gap:9px;background:#e11d2a;
+  padding:8px 15px;border-radius:7px;font-family:'Orbitron';font-weight:800;font-size:16px;letter-spacing:2px}
+.dash-top .live .d{width:11px;height:11px;border-radius:50%;background:#fff;animation:blink 1.2s infinite}
+.dash-body{flex:1;display:grid;grid-template-columns:1.22fr 1fr;gap:24px;padding:24px 40px 32px;min-height:0}
+.dright{display:flex;flex-direction:column;gap:24px;min-height:0}
+.dpanel{background:var(--panel);backdrop-filter:blur(14px);border-radius:14px;overflow:hidden;
+  box-shadow:0 0 0 1px rgba(255,255,255,.06);display:flex;flex-direction:column;min-height:0}
+.dpanel .dhead{display:flex;align-items:center;gap:12px;padding:13px 22px;
+  background:linear-gradient(100deg,var(--orange),#c23d00 78%);
+  font-family:'Orbitron';font-weight:800;font-size:21px;letter-spacing:.5px;text-transform:uppercase}
+.dpanel .dhead .d{width:10px;height:10px;border-radius:50%;background:#fff;animation:blink 1.2s infinite}
+.dpanel .dhead .sub{margin-left:auto;font-family:'Barlow Condensed';font-weight:600;font-size:18px;letter-spacing:2px;opacity:.95}
+.dpanel .body{flex:1;overflow:hidden;display:flex;flex-direction:column}
+.dash .row{height:auto;flex:1;min-height:0}
+.dash .race .row{grid-template-columns:46px 64px 1fr 150px}
+.dash .standings .row{grid-template-columns:46px 64px 1fr 92px}
+
+/* ============ GRILLE DE DÉPART (matrice du règlement) ============ */
+.grid-wrap{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+  width:auto;max-width:1640px;min-width:1000px;background:var(--panel);backdrop-filter:blur(14px);
+  border-radius:18px;box-shadow:0 30px 80px rgba(0,0,0,.6),0 0 0 1px rgba(255,255,255,.05);overflow:hidden}
+.grid-wrap .head{padding:20px 34px;background:linear-gradient(100deg,var(--orange),#c23d00 70%);
+  display:flex;align-items:center;gap:16px}
+.grid-wrap .head .h-cat{font-family:'Orbitron';font-weight:900;font-size:30px;text-transform:uppercase}
+.grid-wrap .head .h-sub{margin-left:auto;font-family:'Barlow Condensed';font-weight:600;font-size:24px;
+  letter-spacing:3px;text-transform:uppercase}
+.grid-info{display:flex;align-items:center;gap:14px;padding:13px 34px;background:rgba(0,0,0,.4);
+  border-bottom:1px solid var(--line);font-family:'Barlow Condensed';font-weight:600;font-size:23px;
+  letter-spacing:2px;text-transform:uppercase;color:#e7edf5}
+.grid-info .pin{color:var(--orange);font-size:20px}
+.track{padding:46px 60px 40px;position:relative}
+.track .dir{position:absolute;right:30px;top:50%;transform:translateY(-50%);font-family:'Orbitron';
+  font-weight:800;font-size:16px;color:#5b6678;letter-spacing:2px;writing-mode:vertical-rl}
+.grid-matrix{display:grid;gap:24px 30px;justify-content:center;position:relative}
+.car{height:94px;border-radius:12px;background:linear-gradient(150deg,#1b2230,#10151f);border:1px solid #2b3445;
+  display:flex;align-items:center;gap:11px;padding:0 16px;position:relative;box-shadow:0 10px 26px rgba(0,0,0,.4)}
+.car .gp{font-family:'Orbitron';font-weight:800;font-size:29px;color:var(--orange);flex:none}
+.car .gn{display:inline-flex;align-items:center;justify-content:center;min-width:44px;height:40px;padding:0 7px;
+  border-radius:8px;background:#0c0f16;border:1px solid #2b3445;flex:none;font-family:'Orbitron';font-weight:700;font-size:21px}
+.car .gl{flex:1;min-width:0;font-family:'Barlow Condensed';font-weight:600;font-size:22px;text-transform:uppercase;
+  line-height:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.car.p1{border-color:var(--orange);box-shadow:0 0 0 2px var(--orange),0 10px 30px rgba(255,85,0,.35)}
+.car.edited{border-color:var(--orange);box-shadow:0 0 0 2px var(--orange)}
+
+/* ============ À SUIVRE (bandeau bas) ============ */
+.lower{position:absolute;left:0;right:0;bottom:0;height:200px;
+  background:linear-gradient(0deg,rgba(6,8,14,.96),rgba(6,8,14,0));padding:0 60px}
+.lower-inner{position:absolute;left:60px;right:60px;bottom:46px;background:var(--panel);backdrop-filter:blur(14px);
+  border-radius:14px;box-shadow:0 24px 60px rgba(0,0,0,.6),0 0 0 1px rgba(255,255,255,.05);
+  display:flex;align-items:stretch;overflow:hidden;height:118px}
+.lower .badge{display:flex;flex-direction:column;justify-content:center;padding:0 34px;
+  background:linear-gradient(120deg,var(--orange),#c23d00);min-width:330px}
+.lower .badge .k{font-family:'Barlow Condensed';font-weight:600;font-size:20px;letter-spacing:4px;opacity:.9}
+.lower .badge .v{font-family:'Orbitron';font-weight:900;font-size:38px;line-height:1.05;text-transform:uppercase}
+.lower .list{flex:1;display:flex;align-items:center;gap:30px;padding:0 36px;overflow:hidden}
+.lower .chip{display:flex;align-items:center;gap:12px}
+.lower .chip .n{display:inline-flex;align-items:center;justify-content:center;min-width:46px;height:40px;padding:0 8px;
+  border-radius:8px;background:#1b2230;border:1px solid #2b3445;font-family:'Orbitron';font-weight:700;font-size:20px}
+.lower .chip .nm{font-family:'Barlow Condensed';font-weight:600;font-size:26px;text-transform:uppercase}
+.lower .chip .pp{font-family:'Orbitron';font-weight:800;font-size:18px;color:var(--orange);margin-left:2px}
+
+/* ============ ENTRE DEUX MANCHES ============ */
+.inter{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:30px;
+  background:radial-gradient(900px 600px at 50% 40%,rgba(255,85,0,.10),transparent 60%),linear-gradient(180deg,#0a0c11,#07090e)}
+.inter .big{font-family:'Orbitron';font-weight:900;font-size:120px;letter-spacing:2px;line-height:.95}
+.inter .big b{color:var(--orange)}
+.inter .tagline{font-family:'Barlow Condensed';font-weight:500;font-size:34px;letter-spacing:8px;text-transform:uppercase;color:#aeb8c6}
+.inter .next{margin-top:18px;display:flex;align-items:center;gap:22px;background:var(--panel);backdrop-filter:blur(14px);
+  border-radius:14px;padding:22px 40px;box-shadow:0 0 0 1px rgba(255,255,255,.06)}
+.inter .next .k{font-family:'Barlow Condensed';font-weight:600;font-size:22px;letter-spacing:4px;color:var(--mut)}
+.inter .next .v{font-family:'Orbitron';font-weight:800;font-size:34px;text-transform:uppercase}
+.inter .cd{font-family:'Orbitron';font-weight:900;font-size:46px;color:var(--orange);
+  border-left:2px solid var(--line);padding-left:24px;margin-left:6px}
+.inter .social{position:absolute;bottom:60px;font-family:'Barlow Condensed';font-weight:500;font-size:26px;
+  letter-spacing:3px;color:var(--mut)}
+.inter .social b{color:#fff}
