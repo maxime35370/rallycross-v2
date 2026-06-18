@@ -102,30 +102,36 @@
     font-size:17px;letter-spacing:1px;color:#aeb8c6;text-transform:uppercase}
   .panel .foot .bl{color:var(--purple);font-weight:700}
 
-  /* ============ GRILLE DE DÉPART ============ */
+  /* ============ GRILLE DE DÉPART (matrice du règlement) ============ */
   .grid-wrap{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
-    width:980px;background:var(--panel);backdrop-filter:blur(14px);border-radius:18px;
+    width:auto;max-width:1640px;min-width:1000px;
+    background:var(--panel);backdrop-filter:blur(14px);border-radius:18px;
     box-shadow:0 30px 80px rgba(0,0,0,.6),0 0 0 1px rgba(255,255,255,.05);overflow:hidden}
-  .grid-wrap .head{padding:22px 30px;background:linear-gradient(100deg,var(--orange),#c23d00 70%);
+  .grid-wrap .head{padding:20px 34px;background:linear-gradient(100deg,var(--orange),#c23d00 70%);
     display:flex;align-items:center;gap:16px}
   .grid-wrap .head .h-cat{font-family:'Orbitron';font-weight:900;font-size:30px;text-transform:uppercase}
   .grid-wrap .head .h-sub{margin-left:auto;font-family:'Barlow Condensed';font-weight:600;
     font-size:24px;letter-spacing:3px;text-transform:uppercase}
-  .track{padding:46px 60px 30px;position:relative}
-  .track .line{position:absolute;left:0;right:0;height:100%;top:0;
-    background:repeating-linear-gradient(90deg,transparent 0 78px,rgba(255,255,255,.04) 78px 80px)}
-  .grid-rows{display:flex;flex-direction:column;gap:26px;position:relative}
-  .g-row{display:flex;gap:36px}
-  .g-row.offset{margin-left:160px}
-  .car{width:300px;height:96px;border-radius:12px;background:linear-gradient(150deg,#1b2230,#10151f);
-    border:1px solid #2b3445;display:flex;align-items:center;gap:13px;padding:0 18px;position:relative;
+  /* bandeau texte ÉDITABLE via /control (infos circuit, etc.) */
+  .grid-info{display:flex;align-items:center;gap:14px;padding:13px 34px;background:rgba(0,0,0,.4);
+    border-bottom:1px solid var(--line);font-family:'Barlow Condensed';font-weight:600;
+    font-size:23px;letter-spacing:2px;text-transform:uppercase;color:#e7edf5}
+  .grid-info .pin{color:var(--orange);font-size:20px}
+  .track{padding:46px 60px 40px;position:relative}
+  .track .dir{position:absolute;right:30px;top:50%;transform:translateY(-50%) rotate(0deg);
+    font-family:'Orbitron';font-weight:800;font-size:16px;color:#5b6678;letter-spacing:2px;
+    writing-mode:vertical-rl}
+  .grid-matrix{display:grid;gap:24px 30px;justify-content:center;position:relative}
+  .car{height:94px;border-radius:12px;background:linear-gradient(150deg,#1b2230,#10151f);
+    border:1px solid #2b3445;display:flex;align-items:center;gap:11px;padding:0 16px;position:relative;
     box-shadow:0 10px 26px rgba(0,0,0,.4)}
-  .car .gp{font-family:'Orbitron';font-weight:800;font-size:30px;color:var(--orange);width:32px;flex:none}
-  .car .gn{display:inline-flex;align-items:center;justify-content:center;min-width:46px;height:42px;
-    padding:0 8px;border-radius:8px;background:#0c0f16;border:1px solid #2b3445;flex:none;
-    font-family:'Orbitron';font-weight:700;font-size:22px}
-  .car .gl{flex:1;min-width:0;font-family:'Barlow Condensed';font-weight:600;font-size:24px;
+  .car .gp{font-family:'Orbitron';font-weight:800;font-size:29px;color:var(--orange);flex:none}
+  .car .gn{display:inline-flex;align-items:center;justify-content:center;min-width:44px;height:40px;
+    padding:0 7px;border-radius:8px;background:#0c0f16;border:1px solid #2b3445;flex:none;
+    font-family:'Orbitron';font-weight:700;font-size:21px}
+  .car .gl{flex:1;min-width:0;font-family:'Barlow Condensed';font-weight:600;font-size:22px;
     text-transform:uppercase;line-height:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .car.p1{border-color:var(--orange);box-shadow:0 0 0 2px var(--orange),0 10px 30px rgba(255,85,0,.35)}
   .car.p1{border-color:var(--orange);box-shadow:0 0 0 2px var(--orange),0 10px 30px rgba(255,85,0,.35)}
 
   /* ============ NEXT HEAT (bandeau bas) ============ */
@@ -166,6 +172,36 @@
     font-size:26px;letter-spacing:3px;color:#8b95a4}
   .inter .social b{color:#fff}
 
+  /* ============ DASHBOARD PLEIN ÉCRAN (max data, sans webcam) ============ */
+  .dash{position:absolute;inset:0;display:flex;flex-direction:column;background:linear-gradient(180deg,#0a0c11,#07090e)}
+  .dash-top{display:flex;align-items:center;gap:20px;height:92px;padding:0 40px;
+    background:linear-gradient(100deg,#141a24,#0a0c11);border-bottom:3px solid var(--orange)}
+  .dash-top .brand{font-family:'Orbitron';font-weight:900;font-size:30px;letter-spacing:.5px}
+  .dash-top .brand b{color:var(--orange)}
+  .dash-top .sep{width:2px;height:42px;background:var(--line)}
+  .dash-top .info{font-family:'Barlow Condensed';font-weight:600;font-size:27px;letter-spacing:2px;
+    text-transform:uppercase;color:#dbe3ee;display:flex;align-items:center;gap:13px}
+  .dash-top .info .pin{color:var(--orange);font-size:23px}
+  .dash-top .live{margin-left:auto;display:flex;align-items:center;gap:9px;background:#e11d2a;
+    padding:8px 15px;border-radius:7px;font-family:'Orbitron';font-weight:800;font-size:16px;letter-spacing:2px}
+  .dash-top .live .d{width:11px;height:11px;border-radius:50%;background:#fff;animation:blink 1.2s infinite}
+  .dash-body{flex:1;display:grid;grid-template-columns:1.22fr 1fr;gap:24px;padding:24px 40px 32px;min-height:0}
+  .dright{display:flex;flex-direction:column;gap:24px;min-height:0}
+  .dpanel{background:var(--panel);backdrop-filter:blur(14px);border-radius:14px;overflow:hidden;
+    box-shadow:0 0 0 1px rgba(255,255,255,.06);display:flex;flex-direction:column;min-height:0}
+  .dpanel .dhead{display:flex;align-items:center;gap:12px;padding:13px 22px;
+    background:linear-gradient(100deg,var(--orange),#c23d00 78%);
+    font-family:'Orbitron';font-weight:800;font-size:21px;letter-spacing:.5px;text-transform:uppercase}
+  .dpanel .dhead .d{width:10px;height:10px;border-radius:50%;background:#fff;animation:blink 1.2s infinite}
+  .dpanel .dhead .sub{margin-left:auto;font-family:'Barlow Condensed';font-weight:600;font-size:18px;
+    letter-spacing:2px;opacity:.95}
+  .dpanel .body{flex:1;overflow:hidden;display:flex;flex-direction:column}
+  .dash .row{height:auto;flex:1;min-height:0}
+  .dash .race .row{grid-template-columns:46px 64px 1fr 150px}
+  .dash .standings .row{grid-template-columns:46px 64px 1fr 92px}
+  .dash .standings .row .val{color:var(--gold)}
+  .dash .standings .row .val small{font-family:'Barlow Condensed';font-weight:500;font-size:15px;color:#8b95a4;margin-left:3px}
+
   .scene{display:none}
   .scene.on{display:block}
 </style>
@@ -177,7 +213,6 @@
   <div class="backdrop">
     <div class="bd-grid"></div>
     <div class="bd-video"><div class="play">▶</div><div id="bdLabel">REPLAY / VIDÉO</div></div>
-    <div class="cam"><div class="face">🎙️</div><div class="who">ANIMATEUR · LIVE</div></div>
   </div>
 
   <!-- BRAND BUG -->
@@ -211,11 +246,12 @@
     </div>
   </div>
 
-  <!-- SCÈNE : GRILLE DE DÉPART -->
+  <!-- SCÈNE : GRILLE DE DÉPART (matrice du règlement) -->
   <div class="scene" id="scene-grid">
     <div class="grid-wrap">
       <div class="head"><span class="h-cat">Grille de départ</span><span class="h-sub">Demi-finale 1 · Supercar</span></div>
-      <div class="track"><div class="line"></div><div class="grid-rows" id="gridRows"></div></div>
+      <div class="grid-info"><span class="pin">📍</span><span id="gridInfo">CIRCUIT DE LOHÉAC · 6 TOURS · ASPHALTE + TERRE</span></div>
+      <div class="track"><div class="dir">SENS COURSE</div><div class="grid-matrix" id="gridMatrix"></div></div>
     </div>
   </div>
 
@@ -225,6 +261,35 @@
       <div class="lower-inner">
         <div class="badge"><span class="k">À SUIVRE</span><span class="v">Série 3 · Super1600</span></div>
         <div class="list" id="nextList"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SCÈNE : DASHBOARD PLEIN ÉCRAN (max data) -->
+  <div class="scene" id="scene-dash">
+    <div class="dash">
+      <div class="dash-top">
+        <span class="brand">RX<b>CHRONO</b></span>
+        <span class="sep"></span>
+        <!-- texte ÉDITABLE via /control -->
+        <span class="info"><span class="pin">📍</span><span id="dashInfo">CIRCUIT DE LOHÉAC · DEMI-FINALE 1 · ASPHALTE + TERRE</span></span>
+        <span class="live"><span class="d"></span>LIVE</span>
+      </div>
+      <div class="dash-body">
+        <div class="dpanel race">
+          <div class="dhead"><span class="d"></span>Manche en cours<span class="sub">Supercar · Manche 2</span></div>
+          <div class="body" id="dashRace"></div>
+        </div>
+        <div class="dright">
+          <div class="dpanel standings">
+            <div class="dhead">Classement intermédiaire<span class="sub">après M2</span></div>
+            <div class="body" id="dashInterim"></div>
+          </div>
+          <div class="dpanel standings">
+            <div class="dhead">Championnat<span class="sub">Supercar · 2026</span></div>
+            <div class="body" id="dashChamp"></div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -263,12 +328,15 @@
     {pos:5, num:33, name:'Mailloux', pts:198},
     {pos:6, num:9,  name:'André',    pts:187},
   ];
-  const grid = [
-    {gp:1,num:11,name:'Grondin',lead:true},{gp:2,num:2,name:'Boulbès'},
-    {gp:3,num:77,name:'Lefebvre'},{gp:4,num:4,name:'Dubourg'},
-    {gp:5,num:33,name:'Mailloux'},{gp:6,num:9,name:'André'},
-    {gp:7,num:21,name:'Renard'},{gp:8,num:5,name:'Caillot'},
-  ];
+  // Grille = matrice EXACTE du règlement (championship.sessionConfig[type].gridLayout)
+  // positions['rang-couloir'] = place. Ici la DF par défaut : 3-2-3 en quinconce.
+  const gridLayout = { lanes:5, rows:3, positions:{
+    '0-0':1,'0-2':2,'0-4':3, '1-1':4,'1-3':5, '2-0':6,'2-2':7,'2-4':8 } };
+  // Occupants : place de grille -> pilote (issu des qualifs/standings)
+  const gridOcc = {
+    1:{num:11,name:'Grondin'}, 2:{num:2,name:'Boulbès'}, 3:{num:77,name:'Lefebvre'},
+    4:{num:4,name:'Dubourg'},  5:{num:33,name:'Mailloux'},6:{num:9,name:'André'},
+    7:{num:21,name:'Renard'},  8:{num:5,name:'Caillot'} };
   const next = [
     {num:14,name:'Morel',pp:'P1'},{num:8,name:'Picard',pp:'P2'},
     {num:23,name:'Fauvel',pp:'P3'},{num:6,name:'Lemoine',pp:'P4'},
@@ -287,28 +355,56 @@
     <span class="num">${r.num}</span>
     <span class="name">${r.name}</span>
     <span class="val">${r.pts}<small>pts</small></span></div>`;
-  const carCell = c => `<div class="car ${c.lead?'p1':''}">
-    <span class="gp">${c.gp}</span><span class="gn">${c.num}</span><span class="gl">${c.name}</span></div>`;
   const chip = c => `<div class="chip"><span class="n">${c.num}</span>
     <span class="nm">${c.name}</span><span class="pp">${c.pp}</span></div>`;
 
   document.getElementById('raceRows').innerHTML = race.map(raceRow).join('');
   document.getElementById('stRows').innerHTML   = champ.map(stRow).join('');
-  // grille staggered (2 par rangée, décalée)
-  let gh='';
-  for(let i=0;i<grid.length;i+=2){
-    const off = (i/2)%2===1 ? 'offset':'';
-    gh += `<div class="g-row ${off}">${carCell(grid[i])}${grid[i+1]?carCell(grid[i+1]):''}</div>`;
-  }
-  document.getElementById('gridRows').innerHTML = gh;
   document.getElementById('nextList').innerHTML = next.map(chip).join('');
 
+  // GRILLE : rendu fidèle de la matrice du règlement (couloirs x rangs)
+  const gm = document.getElementById('gridMatrix');
+  if (gm) {
+    gm.style.gridTemplateColumns = `repeat(${gridLayout.lanes}, 248px)`;
+    let cells = '';
+    for (let r = 0; r < gridLayout.rows; r++) {
+      for (let c = 0; c < gridLayout.lanes; c++) {
+        const p = gridLayout.positions[r + '-' + c];
+        if (p && gridOcc[p]) cells += `<div class="car ${p===1?'p1':''}" style="grid-column:${c+1};grid-row:${r+1}">
+          <span class="gp">${p}</span><span class="gn">${gridOcc[p].num}</span>
+          <span class="gl">${gridOcc[p].name}</span></div>`;
+      }
+    }
+    gm.innerHTML = cells;
+  }
+
+  // ---- DASHBOARD : données plus complètes (max data) ----
+  const raceFull = [
+    {pos:1,num:11,name:'Grondin',val:'0:41.892',lead:true},{pos:2,num:2,name:'Boulbès',val:'+0.512'},
+    {pos:3,num:77,name:'Lefebvre',val:'+0.880',best:true},{pos:4,num:4,name:'Dubourg',val:'+1.337'},
+    {pos:5,num:33,name:'Mailloux',val:'+2.011'},{pos:6,num:9,name:'André',val:'+2.654'},
+    {pos:7,num:21,name:'Renard',val:'+3.118'},{pos:8,num:5,name:'Caillot',val:'+3.540'},
+    {pos:9,num:14,name:'Morel',val:'+4.002'},{pos:10,num:8,name:'Picard',val:'+5.219'},
+  ];
+  const interim = [
+    {pos:1,num:11,name:'Grondin',pts:96,lead:true},{pos:2,num:2,name:'Boulbès',pts:91},
+    {pos:3,num:77,name:'Lefebvre',pts:86},{pos:4,num:4,name:'Dubourg',pts:80},
+    {pos:5,num:33,name:'Mailloux',pts:74},{pos:6,num:9,name:'André',pts:69},
+    {pos:7,num:21,name:'Renard',pts:63},{pos:8,num:5,name:'Caillot',pts:58},{pos:9,num:14,name:'Morel',pts:52},
+  ];
+  const champ8 = champ.concat([{pos:7,num:21,name:'Renard',pts:165},{pos:8,num:5,name:'Caillot',pts:150}]);
+  document.getElementById('dashRace').innerHTML    = raceFull.map(raceRow).join('');
+  document.getElementById('dashInterim').innerHTML = interim.map(stRow).join('');
+  document.getElementById('dashChamp').innerHTML   = champ8.map(stRow).join('');
+
   // sélection de la scène via ?scene=
-  const scene = new URLSearchParams(location.search).get('scene') || 'race';
+  const scene = new URLSearchParams(location.search).get('scene') || 'dash';
   document.getElementById('scene-'+scene)?.classList.add('on');
-  // l'intermission masque le fond "vidéo"
+  // les scènes plein écran masquent le faux fond + le bug logo
   if(scene==='intermission'){document.querySelector('.backdrop').style.opacity=.25;
     document.querySelector('.bug .live').style.display='none';}
+  if(scene==='dash'){document.querySelector('.backdrop').style.display='none';
+    document.querySelector('.bug').style.display='none';}
 </script>
 </body>
 </html>

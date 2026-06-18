@@ -4,7 +4,7 @@ import path from 'path';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const file = 'file://' + path.join(__dirname, 'showcase.html');
-const scenes = ['race', 'standings', 'grid', 'next', 'intermission'];
+const scenes = ['dash', 'race', 'standings', 'grid', 'next', 'intermission'];
 
 const browser = await puppeteer.launch({
   headless: 'shell',
