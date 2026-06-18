@@ -94,6 +94,8 @@
     </div>
   </div>
 
+  <div id="errBar" style="display:none;background:#3a1012;border:1px solid #e11d2a;color:#ffb3b3;border-radius:10px;padding:12px 16px;margin-bottom:16px;font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:17px"></div>
+
   <div class="grid" id="panel">
     <div style="display:flex;flex-direction:column;gap:20px">
       <div class="card">
@@ -213,7 +215,14 @@
   document.getElementById('phases').innerHTML = phases.map(p => `<div class="b" data-ph="${p.t}-${p.n}">${p.l}</div>`).join('');
 
   // ---------- ÉCRITURE (le SEUL write : doc obsControl/live) ----------
-  function push(patch) { Object.assign(state, patch); if (!applyingRemote) setControl(patch); }
+  function push(patch) {
+    Object.assign(state, patch);
+    if (!applyingRemote) setControl(patch).catch(err => {
+      console.error('[régie] écriture refusée', err.code, err.message);
+      const bar = document.getElementById('errBar');
+      if (bar) { bar.textContent = '⚠️ Écriture refusée (' + (err.code || err.message) + ') — vérifie la règle obsControl (write) et ta connexion.'; bar.style.display = ''; }
+    });
+  }
 
   // ---------- RENDU UI ----------
   function paint() {
@@ -271,7 +280,7 @@
     if (!state.meetingId || !state.category) return;
     const sessions = await getSessions(state.meetingId, state.category);
     const session = findSession(sessions, state.sessionType, state.sessionNum);
-    gridSlots = session ? await getGridOrder(session, sessions, champ) : [];
+    gridSlots = session ? await getGridOrder(session, sessions, champ, meetings) : [];
     renderSlots();
     push({ gridOverride: null });   // revient à l'affichage auto
   };

@@ -93,12 +93,18 @@ export function renderDashboard(d) {
 
 export function renderGrid(d) {
   const { lanes = 5, rows = 3, positions = {} } = d.layout || {};
-  const byPos = {};
-  (d.slots || []).forEach(s => { byPos[s.pos] = s; });
+  const slots = d.slots || [];
+  const hasMatrix = Object.keys(positions).length > 0;   // QF/DF/FIN = grille en quinconce
+  const title = hasMatrix ? 'Grille de départ' : 'Ordre de départ';
 
-  let cells = '';
-  for (let r = 0; r < rows; r++) {
-    for (let c = 0; c < lanes; c++) {
+  let body;
+  if (!slots.length) {
+    body = '<div class="empty">Grille à venir…</div>';
+  } else if (hasMatrix) {
+    const byPos = {};
+    slots.forEach(s => { byPos[s.pos] = s; });
+    let cells = '';
+    for (let r = 0; r < rows; r++) for (let c = 0; c < lanes; c++) {
       const p = positions[r + '-' + c];
       const occ = p && byPos[p];
       if (occ) cells += `<div class="car ${p === 1 ? 'p1' : ''} ${occ.edited ? 'edited' : ''}"
@@ -106,14 +112,22 @@ export function renderGrid(d) {
         <span class="gp">${p}</span><span class="gn">${escHtml(String(occ.carNumber ?? ''))}</span>
         <span class="gl">${escHtml((occ.lastName || '').toUpperCase())}</span></div>`;
     }
+    body = `<div class="grid-matrix" style="grid-template-columns:repeat(${lanes},248px)">${cells}</div>`;
+  } else {
+    // Essais / manches : ordre de départ en liste ordonnée (2 colonnes si gros plateau)
+    const cols = slots.length > 10 ? 2 : 1;
+    body = `<div class="grid-list" style="grid-template-columns:repeat(${cols},minmax(440px,1fr))">
+      ${slots.map(s => `<div class="g-li ${s.pos === 1 ? 'p1' : ''} ${s.edited ? 'edited' : ''}">
+        <span class="gp">${s.pos}</span>
+        <span class="gn">${escHtml(String(s.carNumber ?? ''))}</span>
+        <span class="gl">${escHtml((s.lastName || '').toUpperCase())}</span></div>`).join('')}
+    </div>`;
   }
   return `
   <div class="grid-wrap">
-    <div class="head"><span class="h-cat">Grille de départ</span><span class="h-sub">${escHtml(d.sessionLabel || '')}</span></div>
+    <div class="head"><span class="h-cat">${title}</span><span class="h-sub">${escHtml(d.sessionLabel || '')}</span></div>
     ${d.headerText ? `<div class="grid-info"><span class="pin">📍</span><span>${escHtml(d.headerText)}</span></div>` : ''}
-    <div class="track"><div class="dir">SENS COURSE</div>
-      <div class="grid-matrix" style="grid-template-columns:repeat(${lanes},248px)">${cells || '<div class="empty">Grille à venir…</div>'}</div>
-    </div>
+    <div class="track">${hasMatrix ? '<div class="dir">SENS COURSE</div>' : ''}${body}</div>
   </div>`;
 }
 
@@ -159,11 +173,51 @@ export function renderIntermission(d) {
 }
 
 // ─────────────────────────────────────────────────────────
+// SCÈNE : SESSION (essais / manche) — à passer | classement | intermédiaire
+// ─────────────────────────────────────────────────────────
+
+export function renderSession(d) {
+  const todoRow = r => `<div class="cr todo">
+    <span class="p">${r.pos}</span><span class="n">${escHtml(String(r.carNumber ?? ''))}</span>
+    <span class="nm">${escHtml((r.lastName || '').toUpperCase())}</span></div>`;
+  const rankRow = (r, i) => `<div class="cr rank ${i === 0 ? 'p1' : ''}">
+    <span class="p">${r.position ?? i + 1}</span><span class="n">${escHtml(String(r.carNumber ?? ''))}</span>
+    <span class="nm">${escHtml((r.lastName || '').toUpperCase())}</span>
+    <span class="v">${escHtml(r.value || '')}</span>
+    <span class="pt">${r.points != null && r.points !== '' ? r.points + ' pt' : ''}</span></div>`;
+  const ptsRow = (r, i) => `<div class="cr pts ${i === 0 ? 'p1' : ''}">
+    <span class="p">${r.position ?? i + 1}</span><span class="n">${escHtml(String(r.carNumber ?? ''))}</span>
+    <span class="nm">${escHtml((r.lastName || '').toUpperCase())}</span>
+    <span class="pt">${r.totalPoints ?? 0} pt</span></div>`;
+  const col = (title, sub, rows, builder, alt, live) => `<div class="col">
+    <div class="ch ${alt ? 'alt' : ''}">${live ? '<span class="d"></span>' : ''}${title}${sub ? `<span class="sub">${sub}</span>` : ''}</div>
+    <div class="cb">${rows.length ? rows.map(builder).join('') : '<div class="empty">—</div>'}</div></div>`;
+
+  const header = `<div class="dash-top">
+    <span class="brand">RX<b>CHRONO</b></span><span class="sep"></span>
+    <span class="info"><span class="pin">📍</span><span>${escHtml(d.headerText || d.sessionLabel || '')}</span></span>
+    <span class="live"><span class="d"></span>LIVE</span></div>`;
+
+  if (d.mode === 'ec') {
+    return `<div class="dash">${header}<div class="sess-body sess-ec">
+      ${col('À passer', 'ordre inverse championnat', d.todo || [], todoRow, true, true)}
+      ${col('Classement essais', '', d.rank || [], rankRow, false, false)}
+    </div></div>`;
+  }
+  return `<div class="dash">${header}<div class="sess-body sess-mq">
+    ${col('À passer', '', d.todo || [], todoRow, true, true)}
+    ${col(d.sessionLabel || 'Classement manche', '', d.rank || [], rankRow, false, false)}
+    ${col('Classement intermédiaire', '', d.interim || [], ptsRow, true, false)}
+  </div></div>`;
+}
+
+// ─────────────────────────────────────────────────────────
 // AIGUILLAGE
 // ─────────────────────────────────────────────────────────
 
 export function renderScene(scene, data) {
   switch (scene) {
+    case 'session':      return renderSession(data);
     case 'grid':         return renderGrid(data);
     case 'next-heat':    return renderNextHeat(data);
     case 'intermission': return renderIntermission(data);
