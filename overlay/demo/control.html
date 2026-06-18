@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RX Chrono — Régie (maquette)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;700;800;900&family=Barlow+Condensed:wght@400;500;600;700&family=Exo+2:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{--orange:#ff5500;--ink:#0a0c11;--card:#11151d;--card2:#161b25;
+    --line:rgba(255,255,255,.09);--mut:#8b95a4;--green:#39d98a}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:radial-gradient(1200px 700px at 70% -10%,#161d2a,#0a0c11 60%);
+    color:#eef2f7;font-family:'Exo 2',system-ui,sans-serif;min-height:100vh}
+  .wrap{max-width:1500px;margin:0 auto;padding:22px 26px 40px}
+
+  /* top bar */
+  .top{display:flex;align-items:center;gap:18px;padding:14px 20px;background:var(--card);
+    border:1px solid var(--line);border-radius:14px;margin-bottom:20px}
+  .top .brand{font-family:'Orbitron';font-weight:900;font-size:24px;letter-spacing:.5px}
+  .top .brand b{color:var(--orange)}
+  .top .tag{font-family:'Barlow Condensed';font-weight:600;letter-spacing:3px;font-size:15px;
+    color:var(--mut);text-transform:uppercase;border-left:1px solid var(--line);padding-left:16px}
+  .top .meet{margin-left:auto;display:flex;align-items:center;gap:10px}
+  .sel{background:var(--card2);border:1px solid var(--line);color:#eef2f7;border-radius:9px;
+    padding:10px 14px;font-family:'Barlow Condensed';font-weight:600;font-size:17px}
+  .live{display:flex;align-items:center;gap:8px;background:#e11d2a;padding:9px 14px;border-radius:8px;
+    font-family:'Orbitron';font-weight:800;font-size:14px;letter-spacing:2px}
+  .live .d{width:10px;height:10px;border-radius:50%;background:#fff;animation:bl 1.2s infinite}
+  @keyframes bl{50%{opacity:.25}}
+
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;align-items:start}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px 20px}
+  .card h3{font-family:'Orbitron';font-weight:700;font-size:15px;letter-spacing:1.5px;
+    text-transform:uppercase;color:#c4ccd8;margin-bottom:14px;display:flex;align-items:center;gap:10px}
+  .card h3 .n{margin-left:auto;font-family:'Barlow Condensed';font-weight:600;color:var(--orange);
+    letter-spacing:1px;font-size:16px}
+
+  /* boutons de sélection */
+  .btns{display:flex;flex-wrap:wrap;gap:10px}
+  .b{flex:1;min-width:84px;text-align:center;cursor:pointer;user-select:none;
+    background:var(--card2);border:1px solid var(--line);border-radius:10px;padding:14px 8px;
+    font-family:'Barlow Condensed';font-weight:600;font-size:20px;letter-spacing:1px;
+    text-transform:uppercase;transition:.15s}
+  .b small{display:block;font-size:13px;color:var(--mut);letter-spacing:1px;margin-top:2px}
+  .b.on{background:linear-gradient(120deg,var(--orange),#c23d00);border-color:var(--orange);
+    color:#fff;box-shadow:0 8px 22px rgba(255,85,0,.32)}
+  .b.scene{font-family:'Orbitron';font-weight:700;font-size:15px}
+
+  .row2{display:grid;grid-template-columns:1fr auto;gap:12px;margin-top:6px}
+  .toggle{display:flex;align-items:center;gap:10px;background:var(--card2);border:1px solid var(--line);
+    border-radius:10px;padding:0 16px;font-family:'Barlow Condensed';font-weight:600;font-size:18px}
+  .toggle .pill{width:54px;height:30px;border-radius:30px;background:#2a3342;position:relative;transition:.2s}
+  .toggle .pill::after{content:"";position:absolute;top:3px;left:3px;width:24px;height:24px;border-radius:50%;
+    background:#fff;transition:.2s}
+  .toggle.on .pill{background:var(--green)}
+  .toggle.on .pill::after{left:27px}
+
+  .field{display:flex;gap:10px;margin-top:4px}
+  .field input{flex:1;background:var(--card2);border:1px solid var(--line);color:#fff;border-radius:10px;
+    padding:13px 15px;font-family:'Barlow Condensed';font-weight:600;font-size:19px;letter-spacing:1px}
+  .apply{background:var(--orange);border:none;color:#fff;border-radius:10px;padding:0 20px;cursor:pointer;
+    font-family:'Orbitron';font-weight:700;font-size:14px;letter-spacing:1px}
+
+  /* éditeur de grille / série */
+  .note{display:flex;gap:9px;align-items:center;background:rgba(255,85,0,.10);
+    border:1px solid rgba(255,85,0,.3);border-radius:10px;padding:10px 14px;margin-bottom:14px;
+    font-family:'Barlow Condensed';font-weight:500;font-size:16px;color:#ffca9e}
+  .slots{display:flex;flex-direction:column;gap:9px}
+  .slot{display:grid;grid-template-columns:42px 86px 1fr 36px;align-items:center;gap:10px;
+    background:var(--card2);border:1px solid var(--line);border-radius:10px;padding:9px 12px}
+  .slot .p{font-family:'Orbitron';font-weight:800;font-size:21px;color:var(--orange);text-align:center}
+  .slot .num,.slot .nm{background:#0c0f16;border:1px solid var(--line);color:#fff;border-radius:8px;
+    padding:9px 10px;font-family:'Barlow Condensed';font-weight:600;font-size:18px}
+  .slot .nm{text-transform:uppercase}
+  .slot .drag{color:#5b6678;text-align:center;cursor:grab;font-size:20px}
+  .slot.edited{border-color:var(--orange);box-shadow:0 0 0 1px var(--orange)}
+  .actions{display:flex;gap:10px;margin-top:14px}
+  .ghost{flex:1;background:var(--card2);border:1px solid var(--line);color:#dfe6f0;border-radius:10px;
+    padding:13px;cursor:pointer;font-family:'Barlow Condensed';font-weight:600;font-size:18px;letter-spacing:1px}
+  .ghost.primary{background:rgba(57,217,138,.12);border-color:rgba(57,217,138,.4);color:#9af0c4}
+
+  .status{display:flex;align-items:center;gap:14px;margin-top:18px;padding:14px 18px;background:var(--card);
+    border:1px solid var(--line);border-radius:12px;font-family:'Barlow Condensed';font-size:18px;color:var(--mut)}
+  .status b{color:#fff;font-weight:600}
+  .status .chip{background:var(--card2);border:1px solid var(--line);border-radius:20px;padding:5px 13px;
+    font-weight:600;color:#fff}
+  .status .chip.o{color:var(--orange);border-color:rgba(255,85,0,.4)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="top">
+    <span class="brand">RX<b>CHRONO</b></span>
+    <span class="tag">Régie · OBS</span>
+    <div class="meet">
+      <select class="sel"><option>Lohéac — Championnat de France 2026</option></select>
+      <span class="live"><span class="d"></span>À L'ANTENNE</span>
+    </div>
+  </div>
+
+  <div class="grid">
+    <!-- COLONNE GAUCHE -->
+    <div style="display:flex;flex-direction:column;gap:20px">
+
+      <div class="card">
+        <h3>Scène à l'antenne</h3>
+        <div class="btns">
+          <div class="b scene on">📊 Dashboard</div>
+          <div class="b scene">🏁 Grille</div>
+          <div class="b scene">⏭️ À suivre</div>
+          <div class="b scene">⏸️ Attente</div>
+        </div>
+        <div class="row2">
+          <div></div>
+          <div class="toggle on"><span>Overlay visible</span><span class="pill"></span></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Catégorie <span class="n">SC · Supercar</span></h3>
+        <div class="btns">
+          <div class="b">D4</div><div class="b">D3</div><div class="b">Fém.</div>
+          <div class="b">D5</div><div class="b">S1600</div><div class="b on">SC</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Phase / Session <span class="n">Manche 2</span></h3>
+        <div class="btns">
+          <div class="b">Essais</div><div class="b">M1</div><div class="b on">M2</div>
+          <div class="b">M3</div><div class="b">M4</div><div class="b">½ Fin.</div><div class="b">Finale</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>En-tête à l'écran</h3>
+        <div class="field">
+          <input value="CIRCUIT DE LOHÉAC · MANCHE 2 · ASPHALTE + TERRE">
+          <button class="apply">Appliquer</button>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- COLONNE DROITE : éditeur de grille -->
+    <div class="card">
+      <h3>Grille / série à venir <span class="n">DF1 · Supercar</span></h3>
+      <div class="note">✏️ Modifs visuelles uniquement — les vraies données enregistrées ne sont pas affectées.</div>
+      <div class="slots">
+        <div class="slot"><span class="p">1</span><input class="num" value="#11"><input class="nm" value="Grondin"><span class="drag">⋮⋮</span></div>
+        <div class="slot"><span class="p">2</span><input class="num" value="#2"><input class="nm" value="Boulbès"><span class="drag">⋮⋮</span></div>
+        <div class="slot edited"><span class="p">3</span><input class="num" value="#23"><input class="nm" value="Fauvel"><span class="drag">⋮⋮</span></div>
+        <div class="slot"><span class="p">4</span><input class="num" value="#4"><input class="nm" value="Dubourg"><span class="drag">⋮⋮</span></div>
+        <div class="slot"><span class="p">5</span><input class="num" value="#33"><input class="nm" value="Mailloux"><span class="drag">⋮⋮</span></div>
+        <div class="slot"><span class="p">6</span><input class="num" value="#9"><input class="nm" value="André"><span class="drag">⋮⋮</span></div>
+        <div class="slot"><span class="p">7</span><input class="num" value="#21"><input class="nm" value="Renard"><span class="drag">⋮⋮</span></div>
+        <div class="slot"><span class="p">8</span><input class="num" value="#5"><input class="nm" value="Caillot"><span class="drag">⋮⋮</span></div>
+      </div>
+      <div class="actions">
+        <button class="ghost primary">↻ Auto (depuis le classement)</button>
+        <button class="ghost">＋ Ajouter un pilote</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="status">
+    À l'antenne :
+    <span class="chip">📊 Dashboard</span>
+    <span class="chip o">SC · Supercar</span>
+    <span class="chip">Manche 2</span>
+    <b>·</b> mise à jour temps réel des classements <b style="color:var(--green)">●</b>
+  </div>
+
+</div>
+</body>
+</html>
