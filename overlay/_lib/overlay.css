@@ -118,6 +118,7 @@ html,body{width:1920px;height:1080px;overflow:hidden;background:transparent;
 .cr.todo .p{color:var(--orange)}
 .cr.rank{grid-template-columns:42px 56px 1fr 96px 64px}
 .cr.pts{grid-template-columns:42px 56px 1fr 72px}
+.cr .v.st{font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:16px;letter-spacing:1px;color:var(--mut)}
 
 /* ============ GRILLE DE DÉPART (matrice du règlement) ============ */
 .grid-wrap{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
