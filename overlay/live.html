@@ -105,7 +105,7 @@
       const renderSess = async (results) => {
         const resMap = {};
         (results || []).forEach(r => { resMap[r.driverId] = r; });
-        const hasRun = id => resMap[id] && (resMap[id].ms != null || resMap[id].status);
+        const hasRun = id => !!(resMap[id] && (resMap[id].ms != null || resMap[id].status));
         const rank = ctrl.sessionType === 'EC'
           ? await getEcRank(sessions, reg).catch(() => [])
           : await getMqRank(session, reg).catch(() => []);
