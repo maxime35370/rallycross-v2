@@ -37,7 +37,7 @@ const data = {
     raceSub:'Supercar · Manche 2',interimSub:'après M2',champSub:'Supercar · 2026',race,interim,champ},
   grid:{sessionLabel:'Demi-finale 1 · Supercar',headerText:'CIRCUIT DE LOHÉAC · 6 TOURS · ASPHALTE + TERRE',layout,slots},
   'next-heat':{sessionLabel:'Série 3 · Super1600',slots},
-  intermission:{headerText:'Demi-finale 1 — Supercar',social:'📺 twitch.tv/tonchaine · #RallycrossFR'},
+  intermission:{nextText:'½ FINALE 1 — SUPERCAR',countdownEnd:Date.now()+5*60000,social:'📺 twitch.tv/tonchaine · #RallycrossFR'},
 };
 const scene = new URLSearchParams(location.search).get('scene')||'dashboard';
 document.getElementById('root').innerHTML = renderScene(scene, data[scene]);

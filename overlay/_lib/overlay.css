@@ -140,6 +140,7 @@ html,body{width:1920px;height:1080px;overflow:hidden;background:transparent;
 .inter .big{font-family:'Orbitron';font-weight:900;font-size:120px;letter-spacing:2px;line-height:.95}
 .inter .big b{color:var(--orange)}
 .inter .tagline{font-family:'Barlow Condensed';font-weight:500;font-size:34px;letter-spacing:8px;text-transform:uppercase;color:#aeb8c6}
+.inter .cd-big{font-family:'Orbitron',sans-serif;font-weight:900;font-size:150px;line-height:1;color:var(--orange);letter-spacing:2px;text-shadow:0 0 50px rgba(255,85,0,.4)}
 .inter .next{margin-top:18px;display:flex;align-items:center;gap:22px;background:var(--panel);backdrop-filter:blur(14px);
   border-radius:14px;padding:22px 40px;box-shadow:0 0 0 1px rgba(255,255,255,.06)}
 .inter .next .k{font-family:'Barlow Condensed';font-weight:600;font-size:22px;letter-spacing:4px;color:var(--mut)}

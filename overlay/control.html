@@ -118,6 +118,16 @@
         <h3>En-tête à l'écran</h3>
         <div class="field"><input id="hdr" placeholder="Ex. CIRCUIT DE LOHÉAC · MANCHE 2"><button class="apply" id="hdrBtn">Appliquer</button></div>
       </div>
+      <div class="card">
+        <h3>Écran d'attente <span class="n">pause</span></h3>
+        <div class="field"><input id="nextTxt" placeholder="À suivre… ex. ½ FINALE SUPERCAR"><button class="apply" id="nextBtn">OK</button></div>
+        <div class="btns" style="margin-top:10px">
+          <div class="b" data-cd="5">⏱ 5 min</div>
+          <div class="b" data-cd="10">⏱ 10 min</div>
+          <div class="b" data-cd="15">⏱ 15 min</div>
+          <div class="b" data-cd="0">Effacer</div>
+        </div>
+      </div>
     </div>
 
     <div class="card">
@@ -250,6 +260,11 @@
   meetSel.onchange = () => { push({ meetingId: meetSel.value }); paint(); };
   document.getElementById('visToggle').onclick = () => { push({ visible: !state.visible }); paint(); };
   document.getElementById('hdrBtn').onclick = () => push({ headerText: document.getElementById('hdr').value });
+  document.getElementById('nextBtn').onclick = () => push({ nextText: document.getElementById('nextTxt').value });
+  document.querySelectorAll('[data-cd]').forEach(b => b.onclick = () => {
+    const m = +b.dataset.cd;
+    push({ countdownEnd: m > 0 ? Date.now() + m * 60000 : 0 });
+  });
   document.getElementById('addBtn').onclick = () => { gridSlots.push({ pos: gridSlots.length + 1, carNumber: '', lastName: '' }); renderSlots(); };
 
   document.getElementById('autoBtn').onclick = async () => {
@@ -269,6 +284,7 @@
     applyingRemote = true;
     state = { ...state, ...c, championshipId: champ?.id || c.championshipId };
     document.getElementById('hdr').value = state.headerText || '';
+    document.getElementById('nextTxt').value = state.nextText || '';
     paint();
     applyingRemote = false;
   });

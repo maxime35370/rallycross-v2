@@ -21,6 +21,8 @@ export const DEFAULT_CONTROL = {
   sessionNum:    1,             // num de manche (MQ 1..4) ou demi (DF 1..2)
   standingsMode: 'interim',     // 'interim' | 'meeting' | 'championship'
   headerText:    '',            // texte d'en-tête éditable (infos circuit…)
+  nextText:      '',            // "à suivre" affiché sur l'écran d'attente
+  countdownEnd:  0,             // timestamp ms de fin du compte à rebours (0 = aucun)
   // calque d'AFFICHAGE seulement — n'écrit jamais dans results/sessionParticipants :
   gridOverride:  null,          // { key, slots:[{pos, carNumber, lastName}] }
   updatedAt:     0,
