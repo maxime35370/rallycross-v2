@@ -115,15 +115,22 @@
           ? await getEcRank(sessions, reg).catch(() => [])
           : await getMqRank(session, reg).catch(() => []);
         const curIds = new Set(rank.map(r => r.driverId).filter(Boolean));
-        // nouveau classé → on garde EN SURBRILLANCE le dernier ajouté
+        // nouveau(x) ce render → fondu une seule fois ; le dernier garde la barre
+        let flashIds = new Set();
         if (prevIds) {
           const newcomers = [...curIds].filter(id => !prevIds.has(id));
           if (newcomers.length) {
+            flashIds = new Set(newcomers);
             lastAddedId = newcomers[newcomers.length - 1];
             if (sessTimer) { clearTimeout(sessTimer); sessTimer = null; }
           }
         }
-        rank.forEach(r => { if (r.driverId && r.driverId === lastAddedId) r.justAdded = true; });
+        const mark = r => {
+          if (!r.driverId) return;
+          if (r.driverId === lastAddedId) r.justAdded = true;   // barre persistante
+          if (flashIds.has(r.driverId)) r.justFlashed = true;   // fondu (à l'entrée)
+        };
+        rank.forEach(mark);
         const todo = order.filter(o => !hasRun(o.driverId)).map((o, i) => ({ pos: i + 1, carNumber: o.carNumber, lastName: o.lastName }));
         const data = {
           mode: ctrl.sessionType === 'EC' ? 'ec' : 'mq',
@@ -138,7 +145,7 @@
             const pp = prevPos[r.driverId];
             r.delta = pp == null ? 'new' : (pp - r.position); // >0 = places gagnées
           });
-          interim.forEach(r => { if (r.driverId === lastAddedId) r.justAdded = true; });
+          interim.forEach(mark);
           prevPos = {}; interim.forEach(r => { prevPos[r.driverId] = r.position; });
           data.interim = interim;
         }
