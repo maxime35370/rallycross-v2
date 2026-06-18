@@ -180,10 +180,10 @@ export function renderSession(d) {
   const todoRow = r => `<div class="cr todo">
     <span class="p">${r.pos}</span><span class="n">${escHtml(String(r.carNumber ?? ''))}</span>
     <span class="nm">${escHtml((r.lastName || '').toUpperCase())}</span></div>`;
-  const rankRow = (r, i) => `<div class="cr rank ${i === 0 ? 'p1' : ''}">
-    <span class="p">${r.position ?? i + 1}</span><span class="n">${escHtml(String(r.carNumber ?? ''))}</span>
+  const rankRow = (r, i) => `<div class="cr rank ${i === 0 && !r.status ? 'p1' : ''}">
+    <span class="p">${r.status ? '—' : (r.position ?? i + 1)}</span><span class="n">${escHtml(String(r.carNumber ?? ''))}</span>
     <span class="nm">${escHtml((r.lastName || '').toUpperCase())}</span>
-    <span class="v">${escHtml(r.value || '')}</span>
+    <span class="v ${r.status ? 'st' : ''}">${escHtml(r.value || '')}</span>
     <span class="pt">${r.points != null && r.points !== '' ? r.points + ' pt' : ''}</span></div>`;
   const ptsRow = (r, i) => `<div class="cr pts ${i === 0 ? 'p1' : ''}">
     <span class="p">${r.position ?? i + 1}</span><span class="n">${escHtml(String(r.carNumber ?? ''))}</span>
