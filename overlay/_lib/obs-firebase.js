@@ -56,14 +56,15 @@ export async function fsQuery(col, filters = []) {
 /**
  * Abonnement temps réel à une requête. Renvoie la fonction d'arrêt.
  * @param {(rows:Array)=>void} cb
+ * @param {(err:Error)=>void} [onErr]
  * @returns {Promise<()=>void>}
  */
-export async function watchQuery(col, filters, cb) {
+export async function watchQuery(col, filters, cb, onErr) {
   const { collection, query, where, onSnapshot } = await fs();
   const cons = (filters || []).map(([f, op, v]) => where(f, op, v));
-  return onSnapshot(query(collection(db, col), ...cons), snap => {
-    cb(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-  });
+  return onSnapshot(query(collection(db, col), ...cons),
+    snap => cb(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
+    err => { console.error('[overlay] lecture', col, err.code, err.message); onErr && onErr(err); });
 }
 
 /** Lecture d'un document unique. */
@@ -74,9 +75,11 @@ export async function getDocById(col, id) {
 }
 
 /** Abonnement temps réel à un document unique. Renvoie l'arrêt. */
-export async function watchDoc(col, id, cb) {
+export async function watchDoc(col, id, cb, onErr) {
   const { doc, onSnapshot } = await fs();
-  return onSnapshot(doc(db, col, id), s => cb(s.exists() ? { id: s.id, ...s.data() } : null));
+  return onSnapshot(doc(db, col, id),
+    s => cb(s.exists() ? { id: s.id, ...s.data() } : null),
+    err => { console.error('[overlay] lecture', col + '/' + id, err.code, err.message); onErr && onErr(err); });
 }
 
 // ─────────────────────────────────────────────────────────

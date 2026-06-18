@@ -32,10 +32,10 @@ export const DEFAULT_CONTROL = {
  * @param {(state:object)=>void} cb
  * @returns {Promise<()=>void>} fonction d'arrêt
  */
-export function watchControl(cb) {
+export function watchControl(cb, onErr) {
   return watchDoc(CTRL_COL, CTRL_ID, doc => {
     cb({ ...DEFAULT_CONTROL, ...(doc || {}) });
-  });
+  }, onErr);
 }
 
 /**

@@ -21,7 +21,15 @@
   import { renderScene } from './_lib/obs-scenes.js';
 
   const root = document.getElementById('root');
+
+  function diag(msg, sub) {
+    root.innerHTML = `<div class="ov-diag"><div class="t">🏁 RX CHRONO</div>
+      <div class="m">${msg}</div>${sub ? `<div class="s">${sub}</div>` : ''}</div>`;
+  }
+  diag('Connexion…');
+
   await initFirebase();
+  diag('En attente de la régie…');
 
   // Caches (évitent de recharger ce qui ne change pas)
   let championships = [];
@@ -124,7 +132,12 @@
     if (key === cacheKey) return;   // rien de pertinent n'a changé
     cacheKey = key;
     lastControl = ctrl;
-    await reload(ctrl);
+    try { await reload(ctrl); }
+    catch (e) { console.error('[overlay] reload', e); diag('Erreur de chargement', e.message); }
+  }, (err) => {
+    diag('Erreur Firestore', err.code === 'permission-denied'
+      ? 'Règle « obsControl » manquante — ajoute-la dans la console Firebase (voir README).'
+      : (err.code || err.message));
   });
 </script>
 </body>
