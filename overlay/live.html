@@ -16,7 +16,7 @@
   import { watchControl, sessionKey } from './_lib/obs-control.js';
   import {
     getSessions, getResults, findSession, sortRace, getInterim,
-    getChampionshipStandings, getGridOrder, getGridLayout,
+    getChampionshipStandings, getGridOrder, getGridLayout, getEcRank, getMqRank,
   } from './_lib/obs-data.js';
   import { renderScene, countdownText } from './_lib/obs-scenes.js';
 
@@ -94,6 +94,33 @@
     const sessions = await getSessions(ctrl.meetingId, ctrl.category);
     const session  = findSession(sessions, ctrl.sessionType, ctrl.sessionNum);
     const sLabel   = labelFor(ctrl.sessionType, ctrl.sessionNum);
+
+    // Scène "Grille" pour ESSAIS / MANCHES : vue multi-colonnes en direct
+    // (à passer | classement | intermédiaire). Le pilote quitte "à passer"
+    // dès qu'un chrono/statut apparaît dans results.
+    if (ctrl.scene === 'grid' && ['EC', 'MQ'].includes(ctrl.sessionType) && session) {
+      const order = await getGridOrder(session, sessions, reg, await meetingsOf(reg));
+      const renderSess = async (results) => {
+        const resMap = {};
+        (results || []).forEach(r => { resMap[r.driverId] = r; });
+        const hasRun = id => resMap[id] && (resMap[id].ms != null || resMap[id].status);
+        const data = {
+          mode: ctrl.sessionType === 'EC' ? 'ec' : 'mq',
+          headerText: ctrl.headerText, sessionLabel: `${sLabel} · ${ctrl.category}`,
+          todo: order.filter(o => !hasRun(o.driverId)).map((o, i) => ({ pos: i + 1, carNumber: o.carNumber, lastName: o.lastName })),
+          rank: ctrl.sessionType === 'EC'
+            ? await getEcRank(sessions, reg).catch(() => [])
+            : await getMqRank(session, reg).catch(() => []),
+        };
+        if (ctrl.sessionType !== 'EC') {
+          data.interim = (await getInterim(ctrl.meetingId, ctrl.category, reg).catch(() => []))
+            .map(r => ({ position: r.position, carNumber: r.carNumber, lastName: r.lastName, totalPoints: r.totalPoints }));
+        }
+        root.innerHTML = renderScene('session', data);
+      };
+      unsubResults = await watchQuery('results', [['sessionId', '==', session.id]], rows => renderSess(rows));
+      return;
+    }
 
     // Grille (override d'affichage prioritaire si la clé correspond)
     let slots = [];

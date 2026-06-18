@@ -12,6 +12,7 @@ import {
   calcInterimStandings, calcEcStandings, calcMqStandings,
   qfPoints, dfPoints, finPoints, calcStatusPoints,
 } from '../../js/calc.js';
+import { msToDisplay } from '../../js/utils.js';
 
 // ─────────────────────────────────────────────────────────
 // HELPERS
@@ -204,6 +205,33 @@ export async function getGridOrder(session, meetingSessions, regulation, meeting
     : ((rank[a.driverId] ?? 999) - (rank[b.driverId] ?? 999)) || numCmp(a, b)); // meilleur en tête
   return participants.map((p, i) => ({
     pos: i + 1, driverId: p.driverId, carNumber: p.carNumber, lastName: p.lastName,
+  }));
+}
+
+// ─────────────────────────────────────────────────────────
+// CLASSEMENTS "comme sur le site" pour la vue session (essais/manche)
+// ─────────────────────────────────────────────────────────
+
+/** Classement essais : pilotes ayant un chrono, triés, avec points bonus. */
+export async function getEcRank(sessions, regulation) {
+  const rows = await calcEcStandings(db, sessions, regulation);
+  return rows.filter(r => r.ms != null)
+    .sort((a, b) => (a.position ?? 99) - (b.position ?? 99))
+    .map(r => ({
+      position: r.position, carNumber: r.carNumber, lastName: r.lastName,
+      value: msToDisplay(r.ms), points: r.bonusPoints ? '+' + r.bonusPoints : '',
+    }));
+}
+
+/** Classement d'une manche : finishers triés (temps/écart) + points. */
+export async function getMqRank(session, regulation) {
+  const rows = await calcMqStandings(db, session, regulation);
+  const fin = rows.filter(r => r.ms != null && !r.status).sort((a, b) => a.ms - b.ms);
+  const lead = fin[0]?.ms ?? 0;
+  return fin.map((r, i) => ({
+    position: r.position ?? i + 1, carNumber: r.carNumber, lastName: r.lastName,
+    value: i === 0 ? msToDisplay(r.ms) : '+' + ((r.ms - lead) / 1000).toFixed(1),
+    points: r.points ?? '',
   }));
 }
 

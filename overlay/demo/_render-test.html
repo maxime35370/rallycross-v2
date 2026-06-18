@@ -46,8 +46,16 @@ const data = {
     ]},
   intermission:{nextText:'½ FINALE 1 — SUPERCAR',countdownEnd:Date.now()+5*60000,social:'📺 twitch.tv/tonchaine · #RallycrossFR'},
 };
+data['session-ec'] = { mode:'ec', headerText:'ESSAIS CHRONOMÉTRÉS · D4 · CHATEAUROUX',
+  todo:[{pos:1,carNumber:410,lastName:'Masset'},{pos:2,carNumber:411,lastName:'Morin'},{pos:3,carNumber:412,lastName:'Lortie'},{pos:4,carNumber:415,lastName:'Gaignard'},{pos:5,carNumber:408,lastName:'Renaud'}],
+  rank:[{position:1,carNumber:421,lastName:'Rozier',value:'0:41.204',points:'+5'},{position:2,carNumber:418,lastName:'Bacheley',value:'0:41.633',points:'+4'},{position:3,carNumber:419,lastName:'Boulant',value:'0:41.901',points:'+3'},{position:4,carNumber:405,lastName:'Thibault',value:'0:42.110',points:'+2'},{position:5,carNumber:402,lastName:'Vasseur',value:'0:42.540',points:'+1'},{position:6,carNumber:399,lastName:'Caron',value:'0:42.998',points:''}] };
+data['session-mq'] = { mode:'mq', headerText:'MANCHE 2 · SUPERCAR · CHATEAUROUX', sessionLabel:'Classement manche 2',
+  todo:[{pos:1,carNumber:9,lastName:'André'},{pos:2,carNumber:5,lastName:'Caillot'}],
+  rank:[{position:1,carNumber:11,lastName:'Grondin',value:'2:48.5',points:50},{position:2,carNumber:2,lastName:'Boulbès',value:'+0.9',points:45},{position:3,carNumber:77,lastName:'Lefebvre',value:'+1.4',points:42},{position:4,carNumber:4,lastName:'Dubourg',value:'+2.1',points:41},{position:5,carNumber:33,lastName:'Mailloux',value:'+2.8',points:40},{position:6,carNumber:21,lastName:'Renard',value:'+3.5',points:39}],
+  interim:[{position:1,carNumber:11,lastName:'Grondin',totalPoints:96},{position:2,carNumber:2,lastName:'Boulbès',totalPoints:91},{position:3,carNumber:77,lastName:'Lefebvre',totalPoints:86},{position:4,carNumber:4,lastName:'Dubourg',totalPoints:80},{position:5,carNumber:33,lastName:'Mailloux',totalPoints:74},{position:6,carNumber:9,lastName:'André',totalPoints:69},{position:7,carNumber:21,lastName:'Renard',totalPoints:63},{position:8,carNumber:5,lastName:'Caillot',totalPoints:58}] };
+
 const scene = new URLSearchParams(location.search).get('scene')||'dashboard';
-const type = scene === 'ordre' ? 'grid' : scene;
+const type = scene === 'ordre' ? 'grid' : scene.startsWith('session') ? 'session' : scene;
 document.getElementById('root').innerHTML = renderScene(type, data[scene] || data.dashboard);
 </script>
 </body></html>

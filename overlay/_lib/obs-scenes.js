@@ -173,11 +173,51 @@ export function renderIntermission(d) {
 }
 
 // ─────────────────────────────────────────────────────────
+// SCÈNE : SESSION (essais / manche) — à passer | classement | intermédiaire
+// ─────────────────────────────────────────────────────────
+
+export function renderSession(d) {
+  const todoRow = r => `<div class="cr todo">
+    <span class="p">${r.pos}</span><span class="n">${escHtml(String(r.carNumber ?? ''))}</span>
+    <span class="nm">${escHtml((r.lastName || '').toUpperCase())}</span></div>`;
+  const rankRow = (r, i) => `<div class="cr rank ${i === 0 ? 'p1' : ''}">
+    <span class="p">${r.position ?? i + 1}</span><span class="n">${escHtml(String(r.carNumber ?? ''))}</span>
+    <span class="nm">${escHtml((r.lastName || '').toUpperCase())}</span>
+    <span class="v">${escHtml(r.value || '')}</span>
+    <span class="pt">${r.points != null && r.points !== '' ? r.points + ' pt' : ''}</span></div>`;
+  const ptsRow = (r, i) => `<div class="cr pts ${i === 0 ? 'p1' : ''}">
+    <span class="p">${r.position ?? i + 1}</span><span class="n">${escHtml(String(r.carNumber ?? ''))}</span>
+    <span class="nm">${escHtml((r.lastName || '').toUpperCase())}</span>
+    <span class="pt">${r.totalPoints ?? 0} pt</span></div>`;
+  const col = (title, sub, rows, builder, alt, live) => `<div class="col">
+    <div class="ch ${alt ? 'alt' : ''}">${live ? '<span class="d"></span>' : ''}${title}${sub ? `<span class="sub">${sub}</span>` : ''}</div>
+    <div class="cb">${rows.length ? rows.map(builder).join('') : '<div class="empty">—</div>'}</div></div>`;
+
+  const header = `<div class="dash-top">
+    <span class="brand">RX<b>CHRONO</b></span><span class="sep"></span>
+    <span class="info"><span class="pin">📍</span><span>${escHtml(d.headerText || d.sessionLabel || '')}</span></span>
+    <span class="live"><span class="d"></span>LIVE</span></div>`;
+
+  if (d.mode === 'ec') {
+    return `<div class="dash">${header}<div class="sess-body sess-ec">
+      ${col('À passer', 'ordre inverse championnat', d.todo || [], todoRow, true, true)}
+      ${col('Classement essais', '', d.rank || [], rankRow, false, false)}
+    </div></div>`;
+  }
+  return `<div class="dash">${header}<div class="sess-body sess-mq">
+    ${col('À passer', '', d.todo || [], todoRow, true, true)}
+    ${col(d.sessionLabel || 'Classement manche', '', d.rank || [], rankRow, false, false)}
+    ${col('Classement intermédiaire', '', d.interim || [], ptsRow, true, false)}
+  </div></div>`;
+}
+
+// ─────────────────────────────────────────────────────────
 // AIGUILLAGE
 // ─────────────────────────────────────────────────────────
 
 export function renderScene(scene, data) {
   switch (scene) {
+    case 'session':      return renderSession(data);
     case 'grid':         return renderGrid(data);
     case 'next-heat':    return renderNextHeat(data);
     case 'intermission': return renderIntermission(data);
