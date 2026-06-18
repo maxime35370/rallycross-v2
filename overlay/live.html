@@ -15,8 +15,9 @@
   import { initFirebase, fsQuery, watchQuery, getDocById } from './_lib/obs-firebase.js';
   import { watchControl, sessionKey } from './_lib/obs-control.js';
   import {
-    getSessions, getResults, findSession, sortRace, getInterim, getInterimBefore,
-    getChampionshipStandings, getMeetingPoints, getGridOrder, getGridLayout, getEcRank, getMqRank,
+    getSessions, getResults, getParticipants, findSession, sortRace, getInterim, getInterimBefore,
+    getChampionshipStandings, getMeetingPoints, getMeetingStandings, getGridOrder, getGridLayout,
+    getEcRank, getMqRank, getPhaseRank,
   } from './_lib/obs-data.js';
   import { renderScene, countdownText } from './_lib/obs-scenes.js';
 
@@ -170,6 +171,30 @@
       return;
     }
 
+    // Scène "Grille" pour DEMI-FINALES / FINALE : grille en haut (qui part où) +
+    // résultats & points en bas, en direct. Encadrements/barres : DF = qualifiés (bleu)
+    // / éliminés (rouge), FIN = podium (or/argent/bronze).
+    if (ctrl.scene === 'grid' && ['DF', 'FIN'].includes(ctrl.sessionType) && session) {
+      const ov = ctrl.gridOverride;
+      const slots = (ov && ov.key === sessionKey(ctrl) && ov.slots?.length)
+        ? ov.slots
+        : await getGridOrder(session, sessions, reg, await meetingsOf(reg));
+      const layout   = getGridLayout(reg, ctrl.sessionType);
+      const poleSide = (await getDocById('meetings', ctrl.meetingId).catch(() => null))?.poleSide || null;
+      // nombre de qualifiés par demi-finale : lu dans le règlement (pas en dur)
+      const qualify  = reg.sessionConfig?.DF?.qualifiedPerDF;
+      const renderCombo = async () => {
+        const results = await getPhaseRank(session, reg).catch(() => []);
+        root.innerHTML = renderScene('grid', {
+          phase: ctrl.sessionType, qualify,
+          headerText: ctrl.headerText, sessionLabel: `${sLabel} · ${ctrl.category}`,
+          layout, slots, poleSide, results,
+        });
+      };
+      unsubResults = await watchQuery('results', [['sessionId', '==', session.id]], () => renderCombo());
+      return;
+    }
+
     // Grille (override d'affichage prioritaire si la clé correspond)
     let slots = [];
     if (['grid', 'next-heat'].includes(ctrl.scene)) {
@@ -196,6 +221,12 @@
         .forEach(r => { champBeforeTot[r.driverId] = r.grandTotal; champBeforePos[r.driverId] = r.position; drvInfo[r.driverId] = r; });
     }
     const hasChampBefore = Object.keys(champBeforeTot).length > 0;
+
+    // Dashboard FINALE : pilotes en finale (participants de la session FIN) → surbrillance bleue
+    const isFinaleDash = ctrl.scene === 'dashboard' && ctrl.sessionType === 'FIN' && !!session;
+    const finalistIds = new Set();
+    if (isFinaleDash) (await getParticipants(session.id).catch(() => [])).forEach(p => finalistIds.add(p.driverId));
+
     const buildChamp = async () => {
       const cur = await getMeetingPoints(ctrl.meetingId, ctrl.category, reg).catch(() => []);
       const curTot = {};
@@ -228,6 +259,12 @@
         data.race    = sortRace(raceResults || []);
         data.interim = await getInterim(ctrl.meetingId, ctrl.category, reg).catch(() => []);
         data.champ   = await buildChamp();
+        if (isFinaleDash) {   // 3e panneau "meeting" + finalistes surlignés dans l'intermédiaire
+          data.interimSub = 'finalistes en bleu';
+          data.meetingSub = 'cumul épreuve';
+          data.meeting    = await getMeetingStandings(ctrl.meetingId, ctrl.category, reg).catch(() => []);
+          data.interim.forEach(r => { if (finalistIds.has(r.driverId)) r.finalist = true; });
+        }
       }
       root.innerHTML = renderScene(ctrl.scene, data);
     };
