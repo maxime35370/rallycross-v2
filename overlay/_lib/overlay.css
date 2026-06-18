@@ -102,10 +102,10 @@ body.transparent{background:transparent}
 .dash .standings .row.finalist{background:linear-gradient(90deg,rgba(56,160,255,.22),transparent 72%);box-shadow:inset 4px 0 0 #38a0ff}
 .dash .standings .row.finalist .accent{display:none}
 .dash .standings .row.finalist .pos{color:#5ab4ff}
-/* finale : 3 panneaux à droite (intermédiaire + meeting + championnat) */
-.dright.three{gap:18px}
-.dright.three .dpanel{flex:1 1 0}
-.dright.three .dpanel .dhead{padding:10px 22px;font-size:19px}
+/* finale : 3 colonnes — finale | intermédiaire | (meeting au-dessus du championnat) */
+.dash-body.finale{grid-template-columns:1.12fr 1fr 1fr}
+.dash-body.finale .dright{gap:20px}
+.dash-body.finale .dright .dpanel{flex:1 1 0}
 
 /* ============ SCÈNE SESSION (essais/manche : à passer | classement | intermédiaire) ============ */
 .sess-body{flex:1;display:grid;gap:18px;padding:18px 36px 24px;min-height:0}

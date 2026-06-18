@@ -63,46 +63,45 @@ function raceRowsHtml(results) {
 
 export function renderDashboard(d) {
   const fastest = (d.race || []).find(r => r.ms && !r.status);
-  const hasMeeting = Array.isArray(d.meeting);   // finale : panneau "Meeting" en plus
+  const hasMeeting = Array.isArray(d.meeting);   // finale : colonne intermédiaire + (meeting/championnat)
   const empty = `<div class="empty">En attente…</div>`;
-  const meetingPanel = hasMeeting ? `
-        <div class="dpanel standings">
-          <div class="dhead">Classement du meeting<span class="sub">${escHtml(d.meetingSub || '')}</span></div>
-          <div class="body">${d.meeting.length
-            ? d.meeting.slice(0, 6).map(r => ptsRow(r, r.total ?? 0)).join('')
-            : empty}</div>
-        </div>` : '';
-  return `
-  <div class="dash">
+
+  const panel = (cls, title, sub, rows, live) => `
+        <div class="dpanel ${cls}">
+          <div class="dhead">${live ? '<span class="d"></span>' : ''}${title}${sub ? `<span class="sub">${escHtml(sub)}</span>` : ''}</div>
+          <div class="body">${rows || empty}</div>${cls === 'race'
+            ? `<div class="foot">${(d.race || []).length} partants${fastest ? ` · meilleur chrono <span class="bl">${msToDisplay(fastest.ms)}</span>` : ''}</div>` : ''}
+        </div>`;
+  const racePanel    = panel('race', hasMeeting ? 'Finale en cours' : 'Manche en cours', d.raceSub, raceRowsHtml(d.race), true);
+  const interimPanel = max => panel('standings', 'Classement intermédiaire', d.interimSub,
+    (d.interim || []).length ? d.interim.slice(0, max).map(r => ptsRow(r, r.totalPoints ?? 0)).join('') : '');
+  const champPanel   = max => panel('standings', 'Championnat', d.champSub,
+    (d.champ || []).length ? d.champ.slice(0, max).map(r => ptsRow(r, r.grandTotal ?? 0)).join('') : '');
+  const meetingPanel = () => panel('standings', 'Classement du meeting', d.meetingSub,
+    (d.meeting || []).length ? d.meeting.slice(0, 6).map(r => ptsRow(r, r.total ?? 0)).join('') : '');
+
+  const header = `
     <div class="dash-top">
       <span class="brand">RX<b>CHRONO</b></span>
       <span class="sep"></span>
       <span class="info"><span class="pin">📍</span><span>${escHtml(d.headerText || d.category || '')}</span></span>
       <span class="live"><span class="d"></span>LIVE</span>
-    </div>
-    <div class="dash-body">
-      <div class="dpanel race">
-        <div class="dhead"><span class="d"></span>Manche en cours<span class="sub">${escHtml(d.raceSub || '')}</span></div>
-        <div class="body">${raceRowsHtml(d.race)}</div>
-        <div class="foot">${(d.race || []).length} partants${fastest ? ` · meilleur chrono <span class="bl">${msToDisplay(fastest.ms)}</span>` : ''}</div>
-      </div>
-      <div class="dright ${hasMeeting ? 'three' : ''}">
-        <div class="dpanel standings">
-          <div class="dhead">Classement intermédiaire<span class="sub">${escHtml(d.interimSub || '')}</span></div>
-          <div class="body">${(d.interim || []).length
-            ? (d.interim).slice(0, hasMeeting ? 7 : 9).map(r => ptsRow(r, r.totalPoints ?? 0)).join('')
-            : empty}</div>
-        </div>
-        ${meetingPanel}
-        <div class="dpanel standings">
-          <div class="dhead">Championnat<span class="sub">${escHtml(d.champSub || '')}</span></div>
-          <div class="body">${(d.champ || []).length
-            ? (d.champ).slice(0, hasMeeting ? 6 : 8).map(r => ptsRow(r, r.grandTotal ?? 0)).join('')
-            : empty}</div>
-        </div>
-      </div>
-    </div>
-  </div>`;
+    </div>`;
+
+  // FINALE : 3 colonnes — finale | intermédiaire | (meeting au-dessus du championnat)
+  const body = hasMeeting
+    ? `<div class="dash-body finale">
+        ${racePanel}
+        ${interimPanel(10)}
+        <div class="dright">${meetingPanel()}${champPanel(6)}</div>
+      </div>`
+    // DÉFAUT : 2 colonnes — manche | (intermédiaire au-dessus du championnat)
+    : `<div class="dash-body">
+        ${racePanel}
+        <div class="dright">${interimPanel(9)}${champPanel(8)}</div>
+      </div>`;
+
+  return `<div class="dash">${header}${body}</div>`;
 }
 
 // ─────────────────────────────────────────────────────────
