@@ -15,7 +15,7 @@
   import { initFirebase, fsQuery, watchQuery } from './_lib/obs-firebase.js';
   import { watchControl, sessionKey } from './_lib/obs-control.js';
   import {
-    getSessions, getResults, findSession, sortRace, getInterim,
+    getSessions, getResults, findSession, sortRace, getInterim, getInterimBefore,
     getChampionshipStandings, getGridOrder, getGridLayout, getEcRank, getMqRank,
   } from './_lib/obs-data.js';
   import { renderScene, countdownText } from './_lib/obs-scenes.js';
@@ -102,10 +102,16 @@
     // dès qu'un chrono/statut apparaît dans results.
     if (ctrl.scene === 'grid' && ['EC', 'MQ'].includes(ctrl.sessionType) && session) {
       const order = await getGridOrder(session, sessions, reg, await meetingsOf(reg));
-      let prevIds = null;     // baseline des pilotes déjà classés (null = 1er rendu)
-      let prevPos = {};       // positions intermédiaires du rendu précédent
+      let prevIds = null;     // pilotes déjà classés (pour détecter les nouveaux → flash)
       let lastAddedId = null; // pilote en surbrillance (reste jusqu'à la saisie suivante)
       let lastResults = [];   // derniers résultats reçus (pour re-render différé)
+      // Référence "remontada" : classement intermédiaire AVANT cette manche (fixe)
+      const baselinePos = {};
+      if (ctrl.sessionType === 'MQ') {
+        (await getInterimBefore(ctrl.meetingId, ctrl.category, reg, session.id).catch(() => []))
+          .forEach(r => { baselinePos[r.driverId] = r.position; });
+      }
+      const hasBaseline = Object.keys(baselinePos).length > 0;
       const renderSess = async (results) => {
         if (results) lastResults = results;
         const resMap = {};
@@ -141,12 +147,10 @@
           const interim = (await getInterim(ctrl.meetingId, ctrl.category, reg).catch(() => []))
             .map(r => ({ driverId: r.driverId, position: r.position, carNumber: r.carNumber, lastName: r.lastName,
               totalPoints: r.totalPoints, done: hasRun(r.driverId) }));   // done = déjà un résultat dans CETTE manche
-          if (prevIds) interim.forEach(r => {                 // deltas seulement après la baseline
-            const pp = prevPos[r.driverId];
-            r.delta = pp == null ? 'new' : (pp - r.position); // >0 = places gagnées
+          if (hasBaseline) interim.forEach(r => {             // delta = places gagnées depuis AVANT la manche
+            r.delta = baselinePos[r.driverId] != null ? baselinePos[r.driverId] - r.position : 'new';
           });
           interim.forEach(mark);
-          prevPos = {}; interim.forEach(r => { prevPos[r.driverId] = r.position; });
           data.interim = interim;
         }
         root.innerHTML = renderScene('session', data);
