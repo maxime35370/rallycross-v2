@@ -17,6 +17,13 @@ html,body{width:1920px;height:1080px;overflow:hidden;background:transparent;
 .overlay-root{position:absolute;inset:0;opacity:1;transition:opacity .45s ease}
 .overlay-root.hidden{opacity:0}
 
+/* placeholder / diagnostic (visible en navigateur ; en attendant la régie) */
+.ov-diag{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);text-align:center;
+  font-family:'Orbitron',sans-serif;color:#fff;opacity:.85}
+.ov-diag .t{font-weight:900;font-size:30px;color:var(--orange);letter-spacing:1px}
+.ov-diag .m{font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:26px;letter-spacing:2px;margin-top:10px}
+.ov-diag .s{font-family:'Barlow Condensed',sans-serif;font-weight:500;font-size:18px;color:var(--mut);margin-top:8px;max-width:760px}
+
 @keyframes blink{50%{opacity:.25}}
 
 /* ============ PANNEAU GÉNÉRIQUE ============ */

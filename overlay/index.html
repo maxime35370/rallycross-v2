@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RX Chrono — Overlays OBS</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700;800;900&family=Barlow+Condensed:wght@400;500;600;700&family=Exo+2:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  :root{--orange:#ff5500;--card:#11151d;--card2:#161b25;--line:rgba(255,255,255,.09);--mut:#8b95a4}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:radial-gradient(1100px 650px at 70% -10%,#161d2a,#0a0c11 60%);color:#eef2f7;
+    font-family:'Exo 2',system-ui,sans-serif;min-height:100vh;padding:40px 22px}
+  .wrap{max-width:920px;margin:0 auto}
+  .head{display:flex;align-items:center;gap:14px;margin-bottom:8px}
+  .head .flag{font-size:30px}
+  .head h1{font-family:'Orbitron';font-weight:900;font-size:30px} .head h1 b{color:var(--orange)}
+  .sub{color:var(--mut);font-family:'Barlow Condensed';font-size:19px;letter-spacing:1px;margin-bottom:28px}
+  .cards{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  a.card{display:block;text-decoration:none;color:inherit;background:var(--card);border:1px solid var(--line);
+    border-radius:14px;padding:22px 22px;transition:.15s}
+  a.card:hover{border-color:var(--orange);transform:translateY(-2px)}
+  a.card .ic{font-size:30px;margin-bottom:10px}
+  a.card .t{font-family:'Orbitron';font-weight:700;font-size:18px;margin-bottom:6px}
+  a.card .d{color:var(--mut);font-size:15px;line-height:1.45}
+  a.card.full{grid-column:1/-1;border-left:5px solid var(--orange)}
+  .tag{display:inline-block;font-family:'Barlow Condensed';font-weight:600;font-size:13px;letter-spacing:2px;
+    text-transform:uppercase;color:var(--orange);margin-top:8px}
+  .obs{background:var(--card2);border:1px dashed var(--line);border-radius:12px;padding:16px 18px;margin-top:22px;
+    font-family:'Barlow Condensed';font-size:16px;color:var(--mut)}
+  .obs code{font-family:ui-monospace,monospace;color:#eef2f7;background:#0c0f16;border:1px solid var(--line);
+    border-radius:6px;padding:3px 8px;font-size:14px}
+  .demos{margin-top:24px}
+  .demos h2{font-family:'Orbitron';font-size:14px;letter-spacing:2px;text-transform:uppercase;color:#c4ccd8;margin-bottom:12px}
+  .chips{display:flex;flex-wrap:wrap;gap:9px}
+  .chips a{text-decoration:none;color:#dfe6f0;background:var(--card2);border:1px solid var(--line);border-radius:8px;
+    padding:8px 13px;font-family:'Barlow Condensed';font-weight:600;font-size:15px}
+  .chips a:hover{border-color:var(--orange);color:#fff}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head"><span class="flag">🏁</span><h1>RX<b>CHRONO</b> · Overlays OBS</h1></div>
+  <div class="sub">Habillage TV pour le live Twitch — piloté en temps réel depuis la régie.</div>
+
+  <div class="cards">
+    <a class="card full" href="control.html">
+      <div class="ic">🎛️</div>
+      <div class="t">Régie</div>
+      <div class="d">Choisir la scène, la catégorie, la phase, l'en-tête et la grille. Connexion requise.</div>
+      <span class="tag">À ouvrir en premier · 2ᵉ écran / tablette</span>
+    </a>
+
+    <a class="card" href="live.html">
+      <div class="ic">📺</div>
+      <div class="t">Overlay (OBS)</div>
+      <div class="d">La page à mettre dans OBS. Suit la régie en direct. Fond transparent 1920×1080.</div>
+    </a>
+
+    <a class="card" href="demo/showcase.html?scene=dash">
+      <div class="ic">🎨</div>
+      <div class="t">Maquettes</div>
+      <div class="d">Aperçu visuel des scènes, sans login ni données. <span class="tag">dash · race · grid · next · intermission</span></div>
+    </a>
+  </div>
+
+  <div class="obs">
+    🎥 Dans OBS : <b>Source navigateur</b>, 1920×1080, URL =
+    <code id="obsUrl">…/overlay/live.html</code>
+  </div>
+
+  <div class="demos">
+    <h2>Aperçus rapides (sans Firestore)</h2>
+    <div class="chips">
+      <a href="demo/showcase.html?scene=dash">Dashboard</a>
+      <a href="demo/showcase.html?scene=race">Manche live</a>
+      <a href="demo/showcase.html?scene=standings">Championnat</a>
+      <a href="demo/showcase.html?scene=grid">Grille</a>
+      <a href="demo/showcase.html?scene=next">À suivre</a>
+      <a href="demo/showcase.html?scene=intermission">Attente</a>
+      <a href="control.html">Régie (maquette live)</a>
+    </div>
+  </div>
+</div>
+<script>
+  // Affiche l'URL absolue de l'overlay (pratique à copier dans OBS)
+  document.getElementById('obsUrl').textContent = new URL('live.html', location.href).href;
+</script>
+</body>
+</html>
