@@ -113,33 +113,46 @@ data['dash-fin'] = {
     {carNumber:77,lastName:'Lefebvre',ms:254894,status:null},{carNumber:4,lastName:'Dubourg',ms:256440,status:null},
     {carNumber:9,lastName:'André',ms:257970,status:null},{carNumber:33,lastName:'Mailloux',ms:260300,status:null},
   ],
-  interim:[
-    {position:1,carNumber:11,lastName:'Grondin',totalPoints:185,finalist:true},
-    {position:2,carNumber:2,lastName:'Boulbès',totalPoints:182,finalist:true},
-    {position:3,carNumber:77,lastName:'Lefebvre',totalPoints:182,finalist:true},
-    {position:4,carNumber:21,lastName:'Renard',totalPoints:171},
-    {position:5,carNumber:4,lastName:'Dubourg',totalPoints:160,finalist:true},
-    {position:6,carNumber:33,lastName:'Mailloux',totalPoints:151,finalist:true},
-    {position:7,carNumber:9,lastName:'André',totalPoints:140,finalist:true},
-  ],
-  meeting:[
-    {position:1,carNumber:2,lastName:'Boulbès',total:207},{position:2,carNumber:11,lastName:'Grondin',total:205},
-    {position:3,carNumber:77,lastName:'Lefebvre',total:196},{position:4,carNumber:4,lastName:'Dubourg',total:173},
-    {position:5,carNumber:9,lastName:'André',total:156},{position:6,carNumber:33,lastName:'Mailloux',total:159},
-  ],
-  champ:[
-    {position:1,carNumber:11,lastName:'Grondin',grandTotal:285,delta:0,meetingPts:45},
-    {position:2,carNumber:2,lastName:'Boulbès',grandTotal:268,delta:1,meetingPts:47},
-    {position:3,carNumber:77,lastName:'Lefebvre',grandTotal:241,delta:-1,meetingPts:42},
-    {position:4,carNumber:4,lastName:'Dubourg',grandTotal:220,delta:0,meetingPts:33},
-    {position:5,carNumber:33,lastName:'Mailloux',grandTotal:198,delta:0,meetingPts:18},
-    {position:6,carNumber:9,lastName:'André',grandTotal:187,delta:0,meetingPts:22},
+  interim:[], meeting:[], champ:[],
+};
+{ // finale : intermédiaire (finalistes en bleu) + meeting + championnat (jusqu'à 20)
+  const fin = new Set([2,11,77,4,9,33]);   // n° des 6 finalistes
+  const nmI=['Grondin','Boulbès','Lefebvre','Renard','Dubourg','Mailloux','André','Bedouet','Le Lay','Rio','Morin','Hautbois','Seignard','Merrien'];
+  const noI=[11,2,77,21,4,33,9,469,422,499,461,426,425,432];
+  data['dash-fin'].interim = nmI.map((n,i)=>({position:i+1,carNumber:noI[i],lastName:n,totalPoints:185-i*4,finalist:fin.has(noI[i])}));
+  const nmM=['Boulbès','Grondin','Lefebvre','Dubourg','André','Mailloux','Renard','Bedouet','Le Lay','Rio','Morin','Hautbois','Seignard','Merrien'];
+  const noM=[2,11,77,4,9,33,21,469,422,499,461,426,425,432];
+  data['dash-fin'].meeting = nmM.map((n,i)=>({position:i+1,carNumber:noM[i],lastName:n,total:207-i*7}));
+  const nmC=['Grondin','Boulbès','Lefebvre','Dubourg','Mailloux','André','Renard','Bedouet','Drouyer','Le Lay','Blanchard','Lortie','Rio','Morin','Hautbois','Seignard','Merrien','Roussillon','Guiziou','Aunay'];
+  const noC=[11,2,77,4,33,9,21,469,405,422,433,412,499,461,426,425,432,485,428,430];
+  const mC=[45,47,42,33,18,22,30,15,12,16,9,7,11,8,6,5,4,3,2,1];
+  data['dash-fin'].champ = nmC.map((n,i)=>({position:i+1,carNumber:noC[i],lastName:n,grandTotal:285-i*11,delta:i===1?1:i===2?-1:0,meetingPts:mC[i]}));
+}
+
+// ── Dashboard demi-finale : 3 colonnes (course | intermédiaire | championnat)
+data['dash-df'] = {
+  threeCol:true, raceTitle:'Demi-finale en cours',
+  headerText:'CIRCUIT DE CHATEAUROUX · D4', category:'D4',
+  raceSub:'D4 · Demi-finale 1', interimSub:'', champSub:'D4 · 2026',
+  race:[
+    {carNumber:410,lastName:'Masset',ms:240123,status:null},{carNumber:422,lastName:'Le Lay',ms:241456,status:null},
+    {carNumber:425,lastName:'Seignard',ms:242644,status:null},{carNumber:448,lastName:'Burson',ms:245165,status:null},
+    {carNumber:418,lastName:'Bacheley',ms:247213,status:null},{carNumber:428,lastName:'Guiziou',ms:248153,status:null},
+    {carNumber:499,lastName:'Rio',ms:250156,status:null},{carNumber:430,lastName:'Aunay',ms:250165,status:null},
   ],
 };
+{ // dash-df : 20 pilotes pour tester la densité (intermédiaire + championnat plafonnés à 20)
+  const nm = ['Burson','Masset','Hautbois','Merrien','Seignard','Morin','Rio','Bedouet','Le Lay','Bacheley',
+    'Drouyer','Blanchard','Lortie','Roussillon','Guiziou','Aunay','Renaud','Thibault','Vasseur','Caron'];
+  const no = [448,410,426,432,425,461,499,469,422,418,405,433,412,485,428,430,408,407,402,399];
+  data['dash-df'].interim = nm.map((n,i)=>({position:i+1,carNumber:no[i],lastName:n,totalPoints:158-i*3}));
+  data['dash-df'].champ   = nm.map((n,i)=>({position:i+1,carNumber:no[i],lastName:n,grandTotal:90-i*4,
+    delta:i===1?2:i===2?-1:i===19?3:0, meetingPts:[3,25,9,16,21,0,0,7,5,4,2,0,0,1,0,0,0,0,0,0][i]}));
+}
 
 const scene = new URLSearchParams(location.search).get('scene')||'dashboard';
 const type = (scene === 'ordre' || scene === 'df-combo' || scene === 'fin-combo') ? 'grid'
-  : scene === 'dash-fin' ? 'dashboard'
+  : (scene === 'dash-fin' || scene === 'dash-df') ? 'dashboard'
   : scene.startsWith('session') ? 'session' : scene;
 document.getElementById('root').innerHTML = renderScene(type, data[scene] || data.dashboard);
 </script>

@@ -251,7 +251,7 @@
     const renderNow = async (raceResults) => {
       const data = {
         headerText: ctrl.headerText, category: ctrl.category, sessionLabel: sLabel,
-        raceSub: `${ctrl.category} · ${sLabel}`, interimSub: 'classement intermédiaire',
+        raceSub: `${ctrl.category} · ${sLabel}`, interimSub: '',
         champSub: `${ctrl.category} · ${reg.year}`, social: ctrl.headerText,
         layout, slots, poleSide,
       };
@@ -264,7 +264,11 @@
           data.meetingSub = 'cumul épreuve';
           data.meeting    = await getMeetingStandings(ctrl.meetingId, ctrl.category, reg).catch(() => []);
           data.interim.forEach(r => { if (finalistIds.has(r.driverId)) r.finalist = true; });
+        } else if (['QF', 'DF'].includes(ctrl.sessionType)) {
+          data.threeCol = true;   // dashboard 3 colonnes : course | intermédiaire | championnat
         }
+        // titre du panneau course selon la phase (sinon "Manche en cours" par défaut)
+        data.raceTitle = { QF: 'Quart de finale en cours', DF: 'Demi-finale en cours', FIN: 'Finale en cours' }[ctrl.sessionType];
       }
       root.innerHTML = renderScene(ctrl.scene, data);
     };
