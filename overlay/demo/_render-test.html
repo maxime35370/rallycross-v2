@@ -133,7 +133,7 @@ data['dash-fin'] = {
 data['dash-df'] = {
   threeCol:true, raceTitle:'Demi-finale en cours',
   headerText:'CIRCUIT DE CHATEAUROUX · D4', category:'D4',
-  raceSub:'D4 · Demi-finale 1', interimSub:'', champSub:'D4 · 2026',
+  raceSub:'D4 · Demi-finale 1', interimSub:'engagés en bleu', champSub:'D4 · 2026',
   race:[
     {carNumber:410,lastName:'Masset',ms:240123,status:null},{carNumber:422,lastName:'Le Lay',ms:241456,status:null},
     {carNumber:425,lastName:'Seignard',ms:242644,status:null},{carNumber:448,lastName:'Burson',ms:245165,status:null},
@@ -145,7 +145,8 @@ data['dash-df'] = {
   const nm = ['Burson','Masset','Hautbois','Merrien','Seignard','Morin','Rio','Bedouet','Le Lay','Bacheley',
     'Drouyer','Blanchard','Lortie','Roussillon','Guiziou','Aunay','Renaud','Thibault','Vasseur','Caron'];
   const no = [448,410,426,432,425,461,499,469,422,418,405,433,412,485,428,430,408,407,402,399];
-  data['dash-df'].interim = nm.map((n,i)=>({position:i+1,carNumber:no[i],lastName:n,totalPoints:158-i*3}));
+  const eng = new Set(data['dash-df'].race.map(r=>r.carNumber));   // engagés dans la demi → bleu
+  data['dash-df'].interim = nm.map((n,i)=>({position:i+1,carNumber:no[i],lastName:n,totalPoints:158-i*3,finalist:eng.has(no[i])}));
   data['dash-df'].champ   = nm.map((n,i)=>({position:i+1,carNumber:no[i],lastName:n,grandTotal:90-i*4,
     delta:i===1?2:i===2?-1:i===19?3:0, meetingPts:[3,25,9,16,21,0,0,7,5,4,2,0,0,1,0,0,0,0,0,0][i]}));
 }
