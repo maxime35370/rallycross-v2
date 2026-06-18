@@ -75,12 +75,15 @@ export function renderDashboard(d) {
         </div>`;
   const raceTitle    = d.raceTitle || (hasMeeting ? 'Finale en cours' : 'Manche en cours');
   const racePanel    = panel('race', raceTitle, d.raceSub, raceRowsHtml(d.race), true);
-  const interimPanel = max => panel('standings', 'Classement intermédiaire', d.interimSub,
-    (d.interim || []).length ? d.interim.slice(0, max).map(r => ptsRow(r, r.totalPoints ?? 0)).join('') : '');
-  const champPanel   = max => panel('standings', 'Championnat', d.champSub,
-    (d.champ || []).length ? d.champ.slice(0, max).map(r => ptsRow(r, r.grandTotal ?? 0)).join('') : '');
-  const meetingPanel = () => panel('standings', 'Classement du meeting', d.meetingSub,
-    (d.meeting || []).length ? d.meeting.slice(0, 6).map(r => ptsRow(r, r.total ?? 0)).join('') : '');
+  // Panneau classement : lignes compactes (.dense) au-delà de 13 pilotes (jusqu'à 20).
+  const stdPanel = (title, sub, items, valOf, max) => {
+    const shown = (items || []).slice(0, max);
+    return panel('standings' + (shown.length > 13 ? ' dense' : ''), title, sub,
+      shown.map(r => ptsRow(r, valOf(r))).join(''));
+  };
+  const interimPanel = max => stdPanel('Classement intermédiaire', d.interimSub, d.interim, r => r.totalPoints ?? 0, max);
+  const champPanel   = max => stdPanel('Championnat', d.champSub, d.champ, r => r.grandTotal ?? 0, max);
+  const meetingPanel = ()  => stdPanel('Classement du meeting', d.meetingSub, d.meeting, r => r.total ?? 0, 6);
 
   const header = `
     <div class="dash-top">
@@ -97,14 +100,14 @@ export function renderDashboard(d) {
   if (hasMeeting) {
     body = `<div class="dash-body finale">
         ${racePanel}
-        ${interimPanel(10)}
-        <div class="dright">${meetingPanel()}${champPanel(6)}</div>
+        ${interimPanel(20)}
+        <div class="dright">${meetingPanel()}${champPanel(7)}</div>
       </div>`;
   } else if (threeCol) {
     body = `<div class="dash-body cols3">
         ${racePanel}
-        ${interimPanel(12)}
-        ${champPanel(12)}
+        ${interimPanel(20)}
+        ${champPanel(20)}
       </div>`;
   } else {
     body = `<div class="dash-body">

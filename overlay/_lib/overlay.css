@@ -102,6 +102,15 @@ body.transparent{background:transparent}
 .dash .standings .row.finalist{background:linear-gradient(90deg,rgba(56,160,255,.22),transparent 72%);box-shadow:inset 4px 0 0 #38a0ff}
 .dash .standings .row.finalist .accent{display:none}
 .dash .standings .row.finalist .pos{color:#5ab4ff}
+/* panneaux denses : jusqu'à 20 pilotes → lignes plus compactes */
+.dash .dpanel.dense .dhead{padding:9px 22px;font-size:18px}
+.dash .dpanel.dense.standings .row{grid-template-columns:38px 54px 1fr 44px 104px;padding:0 18px}
+.dash .dpanel.dense .row .num{height:28px;min-width:50px;font-size:16px}
+.dash .dpanel.dense .row .name{font-size:21px}
+.dash .dpanel.dense .row .pos{font-size:19px}
+.dash .dpanel.dense .row .val{font-size:20px}
+.dash .dpanel.dense .evo{font-size:15px}
+.dash .dpanel.dense .row.finalist{box-shadow:inset 3px 0 0 #38a0ff}
 /* phases finales : 3 colonnes (course | intermédiaire | championnat, +meeting en finale) */
 .dash-body.finale,.dash-body.cols3{grid-template-columns:1.12fr 1fr 1fr}
 .dash-body.finale .dright{gap:20px}

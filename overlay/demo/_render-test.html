@@ -148,24 +148,15 @@ data['dash-df'] = {
     {carNumber:418,lastName:'Bacheley',ms:247213,status:null},{carNumber:428,lastName:'Guiziou',ms:248153,status:null},
     {carNumber:499,lastName:'Rio',ms:250156,status:null},{carNumber:430,lastName:'Aunay',ms:250165,status:null},
   ],
-  interim:[
-    {position:1,carNumber:448,lastName:'Burson',totalPoints:157},{position:2,carNumber:410,lastName:'Masset',totalPoints:154},
-    {position:3,carNumber:426,lastName:'Hautbois',totalPoints:154},{position:4,carNumber:432,lastName:'Merrien',totalPoints:153},
-    {position:5,carNumber:425,lastName:'Seignard',totalPoints:147},{position:6,carNumber:461,lastName:'Morin',totalPoints:140},
-    {position:7,carNumber:499,lastName:'Rio',totalPoints:140},{position:8,carNumber:469,lastName:'Bedouet',totalPoints:139},
-    {position:9,carNumber:422,lastName:'Le Lay',totalPoints:136},{position:10,carNumber:418,lastName:'Bacheley',totalPoints:130},
-  ],
-  champ:[
-    {position:1,carNumber:405,lastName:'Drouyer',grandTotal:80,delta:0,meetingPts:3},
-    {position:2,carNumber:410,lastName:'Masset',grandTotal:71,delta:2,meetingPts:25},
-    {position:3,carNumber:469,lastName:'Bedouet',grandTotal:64,delta:-1,meetingPts:9},
-    {position:3,carNumber:422,lastName:'Le Lay',grandTotal:64,delta:0,meetingPts:16},
-    {position:5,carNumber:448,lastName:'Burson',grandTotal:62,delta:0,meetingPts:21},
-    {position:6,carNumber:433,lastName:'Blanchard',grandTotal:40,delta:0,meetingPts:0},
-    {position:7,carNumber:412,lastName:'Lortie',grandTotal:39,delta:0,meetingPts:0},
-    {position:8,carNumber:485,lastName:'Roussillon',grandTotal:33,delta:1,meetingPts:7},
-  ],
 };
+{ // dash-df : 20 pilotes pour tester la densité (intermédiaire + championnat plafonnés à 20)
+  const nm = ['Burson','Masset','Hautbois','Merrien','Seignard','Morin','Rio','Bedouet','Le Lay','Bacheley',
+    'Drouyer','Blanchard','Lortie','Roussillon','Guiziou','Aunay','Renaud','Thibault','Vasseur','Caron'];
+  const no = [448,410,426,432,425,461,499,469,422,418,405,433,412,485,428,430,408,407,402,399];
+  data['dash-df'].interim = nm.map((n,i)=>({position:i+1,carNumber:no[i],lastName:n,totalPoints:158-i*3}));
+  data['dash-df'].champ   = nm.map((n,i)=>({position:i+1,carNumber:no[i],lastName:n,grandTotal:90-i*4,
+    delta:i===1?2:i===2?-1:i===19?3:0, meetingPts:[3,25,9,16,21,0,0,7,5,4,2,0,0,1,0,0,0,0,0,0][i]}));
+}
 
 const scene = new URLSearchParams(location.search).get('scene')||'dashboard';
 const type = (scene === 'ordre' || scene === 'df-combo' || scene === 'fin-combo') ? 'grid'
