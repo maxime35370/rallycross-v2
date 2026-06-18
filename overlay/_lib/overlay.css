@@ -217,10 +217,7 @@ body.transparent{background:transparent}
 .gr-row .p{font-family:'Orbitron',sans-serif;font-weight:800;font-size:23px;color:#9aa4b2;text-align:center}
 .gr-row .n{display:inline-flex;align-items:center;justify-content:center;min-width:50px;height:36px;padding:0 8px;
   border-radius:7px;background:#1b2230;border:1px solid #2b3445;font-family:'Orbitron',sans-serif;font-weight:700;font-size:19px;color:#dfe6f0}
-.gr-row .who{display:flex;align-items:center;gap:13px;min-width:0}
 .gr-row .nm{font-weight:600;font-size:26px;text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.gr-row .qchip{flex:none;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:13px;letter-spacing:1.5px;
-  color:#08121d;background:#38a0ff;padding:3px 10px;border-radius:5px}
 .gr-row .v{font-family:'Orbitron',sans-serif;font-weight:700;font-size:22px;text-align:right;letter-spacing:.5px}
 .gr-row .v.st{font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:18px;letter-spacing:1px;color:var(--mut)}
 .gr-row .pt{font-family:'Orbitron',sans-serif;font-weight:700;font-size:21px;color:var(--green);text-align:right}

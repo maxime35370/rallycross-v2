@@ -206,12 +206,12 @@ export function renderGridResults(d) {
 
   const resRow = r => {
     const st = r.status ? '' : phaseState(phase, r.position, qualify);
-    const chip = (phase === 'DF' && st === 'qual') ? '<span class="qchip">FINALE</span>' : '';
+    // La barre bleue/podium sur le côté suffit à indiquer les qualifiés (pas de chip).
     return `<div class="gr-row ${st} ${r.status ? 'out' : ''}">
       <span class="bar"></span>
       <span class="p">${r.status ? '—' : (r.position ?? '')}</span>
       <span class="n">${escHtml(String(r.carNumber ?? ''))}</span>
-      <span class="who"><span class="nm">${escHtml((r.lastName || '').toUpperCase())}</span>${chip}</span>
+      <span class="nm">${escHtml((r.lastName || '').toUpperCase())}</span>
       <span class="v ${r.status ? 'st' : ''}">${escHtml(r.value || '')}</span>
       <span class="pt">${r.points != null && r.points !== '' ? '+' + r.points : ''}</span></div>`;
   };
