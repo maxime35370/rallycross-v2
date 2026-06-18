@@ -124,9 +124,10 @@ html,body{width:1920px;height:1080px;overflow:hidden;background:transparent;
 .delta.up{color:var(--green)}
 .delta.dn{color:#ff6b6b}
 .delta.nw{color:var(--orange);font-size:13px}
-/* flash vert du pilote qui vient d'entrer au classement */
-@keyframes justAdded{0%{background:rgba(57,217,138,.55)}100%{background:transparent}}
-.cr.just-added{animation:justAdded 2.6s ease-out}
+/* dernier pilote entré : fondu vert à l'entrée + petite barre verte persistante */
+@keyframes justFlash{0%{background:rgba(57,217,138,.50)}100%{background:transparent}}
+.cr.just-added{box-shadow:inset 3px 0 0 var(--green)}   /* liseré : reste jusqu'à la saisie suivante */
+.cr.just-flashed{animation:justFlash 2.6s ease-out}      /* fondu : joué une seule fois à l'entrée */
 /* intermédiaire : grisé = pas encore passé dans la manche en cours */
 .cr.pts.pending{opacity:.38}
 
