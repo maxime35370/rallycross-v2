@@ -117,7 +117,8 @@ html,body{width:1920px;height:1080px;overflow:hidden;background:transparent;
 .cr.todo{grid-template-columns:42px 56px 1fr}
 .cr.todo .p{color:var(--orange)}
 .cr.rank{grid-template-columns:42px 56px 1fr 96px 64px}
-.cr.pts{grid-template-columns:42px 56px 1fr 58px 72px}
+.cr.pts{grid-template-columns:42px 56px 1fr 50px 118px}
+.cr .pt .cpt{color:var(--green);font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:16px;margin-left:2px}
 .cr .v.st{font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:16px;letter-spacing:1px;color:var(--mut)}
 .cr .dlt{text-align:center}
 .delta{font-family:'Orbitron',sans-serif;font-weight:800;font-size:16px;letter-spacing:.5px}
