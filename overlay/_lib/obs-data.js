@@ -240,7 +240,41 @@ export async function getGridOrder(session, meetingSessions, regulation, meeting
     return [...raw].sort(numDesc).map(toSlot);
   }
 
-  // QF / DF / FIN : classement intermédiaire (meilleur = pole) pour la grille quinconce
+  // FIN : grille = répartition des qualifiés des demi-finales — RÉPLIQUE EXACTE de
+  // timing.js (generateStartGrid). Tri : position d'arrivée en DF, puis points
+  // (interim + DF) décroissants, puis temps en DF. (≠ simple classement intermédiaire :
+  // un pilote 1er au championnat mais 4e de sa demi part en 4e ligne.)
+  if (session.type === 'FIN') {
+    const dfPos = {}, dfPts = {}, dfMs = {};
+    for (const df of meetingSessions.filter(s => s.type === 'DF')) {
+      const res   = await getResults(df.id);
+      const parts = await getParticipants(df.id);
+      const resMap = {};
+      res.forEach(r => { resMap[r.driverId] = r; });
+      const finished = parts
+        .map(p => ({ driverId: p.driverId, ms: resMap[p.driverId]?.ms ?? null }))
+        .filter(r => r.ms)
+        .sort((a, b) => a.ms - b.ms);
+      finished.forEach((r, i) => {
+        dfPos[r.driverId] = i + 1;
+        dfPts[r.driverId] = resMap[r.driverId]?.points ?? 0;
+        dfMs[r.driverId]  = resMap[r.driverId]?.ms ?? Infinity;
+      });
+    }
+    const intPts = {};
+    (await calcInterimStandings(db, meetingSessions, regulation))
+      .forEach(r => { intPts[r.driverId] = r.interimPoints ?? 0; });
+    const total = id => (intPts[id] ?? 0) + (dfPts[id] ?? 0);
+    return [...raw].sort((a, b) => {
+      const pa = dfPos[a.driverId] ?? 99, pb = dfPos[b.driverId] ?? 99;
+      if (pa !== pb) return pa - pb;
+      const ta = total(a.driverId), tb = total(b.driverId);
+      if (ta !== tb) return tb - ta;
+      return (dfMs[a.driverId] ?? Infinity) - (dfMs[b.driverId] ?? Infinity);
+    }).map(toSlot);
+  }
+
+  // QF / DF : classement intermédiaire (meilleur = pole) pour la grille quinconce
   const interim = await calcInterimStandings(db, meetingSessions, regulation);
   const rank = {};
   interim.forEach(r => { rank[r.driverId] = r.position ?? 999; });
