@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>RX Chrono — Maquette scènes Essais / Manche</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;700;800;900&family=Barlow+Condensed:wght@400;500;600;700&family=Exo+2:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{--orange:#ff5500;--panel:rgba(14,17,23,.9);--line:rgba(255,255,255,.08);
+    --gold:#ffcc33;--green:#39d98a;--red:#ff6b6b;--mut:#8b95a4}
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{width:1920px;height:1080px;overflow:hidden;background:linear-gradient(180deg,#0a0c11,#07090e);
+    font-family:'Exo 2',sans-serif;color:#fff}
+  .stage{position:absolute;inset:0;display:flex;flex-direction:column}
+  .top{display:flex;align-items:center;gap:20px;height:84px;padding:0 36px;
+    background:linear-gradient(100deg,#141a24,#0a0c11);border-bottom:3px solid var(--orange);flex:none}
+  .top .brand{font-family:'Orbitron';font-weight:900;font-size:27px}.top .brand b{color:var(--orange)}
+  .top .sep{width:2px;height:38px;background:var(--line)}
+  .top .info{font-family:'Barlow Condensed';font-weight:600;font-size:25px;letter-spacing:2px;text-transform:uppercase;color:#dbe3ee;display:flex;align-items:center;gap:12px}
+  .top .info .pin{color:var(--orange)}
+  .top .live{margin-left:auto;display:flex;align-items:center;gap:9px;background:#e11d2a;padding:7px 14px;border-radius:7px;font-family:'Orbitron';font-weight:800;font-size:15px;letter-spacing:2px}
+  .top .live .d{width:10px;height:10px;border-radius:50%;background:#fff;animation:bl 1.2s infinite}
+  @keyframes bl{50%{opacity:.25}}
+
+  .body{flex:1;display:grid;gap:18px;padding:18px 36px 24px;min-height:0}
+  .ec-body{grid-template-columns:1fr 1.3fr}
+  .mq-body{grid-template-columns:.8fr 1.1fr 1.1fr}
+
+  .col{background:var(--panel);border-radius:13px;overflow:hidden;display:flex;flex-direction:column;
+    box-shadow:0 0 0 1px rgba(255,255,255,.06);min-height:0}
+  .col .ch{display:flex;align-items:center;gap:10px;padding:11px 18px;background:linear-gradient(100deg,var(--orange),#c23d00 80%);
+    font-family:'Orbitron';font-weight:800;font-size:18px;letter-spacing:.5px;text-transform:uppercase;flex:none}
+  .col .ch.alt{background:linear-gradient(100deg,#33405a,#1c2433)}
+  .col .ch .d{width:9px;height:9px;border-radius:50%;background:#fff;animation:bl 1.2s infinite}
+  .col .ch .sub{margin-left:auto;font-family:'Barlow Condensed';font-weight:600;font-size:15px;letter-spacing:2px;opacity:.9}
+  .col .cb{flex:1;overflow:hidden;display:flex;flex-direction:column;padding:4px 0}
+
+  .r{display:grid;align-items:center;gap:8px;padding:0 16px;flex:1;min-height:0;font-family:'Barlow Condensed'}
+  .r + .r{border-top:1px solid var(--line)}
+  .r .p{font-family:'Orbitron';font-weight:800;font-size:21px;color:var(--mut);text-align:center}
+  .r .n{display:inline-flex;align-items:center;justify-content:center;min-width:46px;height:32px;padding:0 7px;border-radius:6px;
+    background:#1b2230;border:1px solid #2b3445;font-family:'Orbitron';font-weight:700;font-size:17px;color:#dfe6f0}
+  .r .nm{font-weight:600;font-size:23px;text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .r .v{font-family:'Orbitron';font-weight:700;font-size:20px;text-align:right}
+  .r .pt{font-family:'Orbitron';font-weight:700;font-size:18px;color:var(--gold);text-align:right}
+  .r.p1{background:linear-gradient(90deg,rgba(255,85,0,.20),transparent)}
+  .r.p1 .p{color:var(--orange)}
+  /* colonnes de gauche "à passer" : juste ordre + n° + nom */
+  .r.todo{grid-template-columns:42px 56px 1fr}
+  .r.todo .p{color:var(--orange)}
+  /* classement avec temps + points */
+  .r.rank{grid-template-columns:42px 56px 1fr 96px 60px}
+  /* classement points (interim/meeting) */
+  .r.pts{grid-template-columns:42px 56px 1fr 70px}
+  /* championnat : total (meeting) evol */
+  .r.champ{grid-template-columns:42px 56px 1fr 86px 74px 46px}
+  .r .ch-tot{font-family:'Orbitron';font-weight:800;font-size:21px;text-align:right;color:#fff}
+  .r .ch-mt{font-family:'Barlow Condensed';font-weight:600;font-size:17px;text-align:right;color:var(--gold)}
+  .evo{font-family:'Orbitron';font-weight:800;font-size:17px;text-align:center}
+  .evo.up{color:var(--green)}.evo.dn{color:var(--red)}.evo.eq{color:var(--mut)}
+  .hint{padding:5px 16px;font-family:'Barlow Condensed';font-size:14px;letter-spacing:2px;color:var(--mut);text-transform:uppercase;flex:none}
+</style>
+</head>
+<body>
+<div class="stage">
+  <div class="top">
+    <span class="brand">RX<b>CHRONO</b></span><span class="sep"></span>
+    <span class="info"><span class="pin">📍</span><span id="hdr"></span></span>
+    <span class="live"><span class="d"></span>LIVE</span>
+  </div>
+  <div class="body" id="body"></div>
+</div>
+
+<script>
+  const view = new URLSearchParams(location.search).get('view') || 'ec';
+
+  // ---- données fictives ----
+  const ecTodo = [
+    {p:1,num:410,nm:'Masset'},{p:2,num:411,nm:'Morin'},{p:3,num:412,nm:'Lortie'},
+    {p:4,num:415,nm:'Gaignard'},{p:5,num:408,nm:'Renaud'},
+  ];
+  const ecRank = [
+    {p:1,num:421,nm:'Rozier',v:'0:41.204',pt:'+5'},{p:2,num:418,nm:'Bacheley',v:'0:41.633',pt:'+4'},
+    {p:3,num:419,nm:'Boulant',v:'0:41.901',pt:'+3'},{p:4,num:405,nm:'Thibault',v:'0:42.110',pt:'+2'},
+    {p:5,num:402,nm:'Vasseur',v:'0:42.540',pt:'+1'},{p:6,num:399,nm:'Caron',v:'0:42.998',pt:''},
+    {p:7,num:396,nm:'Leclerc',v:'0:43.221',pt:''},
+  ];
+  const mqTodo=[{p:1,num:9,nm:'André'},{p:2,num:5,nm:'Caillot'}];
+  const mqRank=[
+    {p:1,num:11,nm:'Grondin',v:'2:48.5',pt:'50'},{p:2,num:2,nm:'Boulbès',v:'+0.9',pt:'45'},
+    {p:3,num:77,nm:'Lefebvre',v:'+1.4',pt:'42'},{p:4,num:4,nm:'Dubourg',v:'+2.1',pt:'41'},
+    {p:5,num:33,nm:'Mailloux',v:'+2.8',pt:'40'},{p:6,num:21,nm:'Renard',v:'+3.5',pt:'39'},
+  ];
+  const inter=[
+    {p:1,num:11,nm:'Grondin',pt:96},{p:2,num:2,nm:'Boulbès',pt:91},{p:3,num:77,nm:'Lefebvre',pt:86},
+    {p:4,num:4,nm:'Dubourg',pt:80},{p:5,num:33,nm:'Mailloux',pt:74},{p:6,num:9,nm:'André',pt:69},
+    {p:7,num:21,nm:'Renard',pt:63},{p:8,num:5,nm:'Caillot',pt:58},
+  ];
+  const meeting=[
+    {p:1,num:11,nm:'Grondin',pt:45},{p:2,num:2,nm:'Boulbès',pt:40},{p:3,num:77,nm:'Lefebvre',pt:38},
+    {p:4,num:4,nm:'Dubourg',pt:34},{p:5,num:33,nm:'Mailloux',pt:30},{p:6,num:21,nm:'Renard',pt:27},
+  ];
+  const champ=[
+    {p:1,num:11,nm:'Grondin',tot:285,mt:45,evo:0},{p:2,num:2,nm:'Boulbès',tot:268,mt:40,evo:1},
+    {p:3,num:77,nm:'Lefebvre',tot:241,mt:38,evo:-1},{p:4,num:4,nm:'Dubourg',tot:220,mt:34,evo:0},
+    {p:5,num:33,nm:'Mailloux',tot:198,mt:30,evo:2},{p:6,num:21,nm:'Renard',tot:187,mt:27,evo:-1},
+  ];
+
+  const todoRow = r=>`<div class="r todo"><span class="p">${r.p}</span><span class="n">${r.num}</span><span class="nm">${r.nm}</span></div>`;
+  const rankRow = (r,i)=>`<div class="r rank ${i===0?'p1':''}"><span class="p">${r.p}</span><span class="n">${r.num}</span><span class="nm">${r.nm}</span><span class="v">${r.v}</span><span class="pt">${r.pt?r.pt+' pt':''}</span></div>`;
+  const ptsRow = (r,i)=>`<div class="r pts ${i===0?'p1':''}"><span class="p">${r.p}</span><span class="n">${r.num}</span><span class="nm">${r.nm}</span><span class="pt">${r.pt} pt</span></div>`;
+  const evoHtml = e=> e>0?`<span class="evo up">↑${e}</span>`:e<0?`<span class="evo dn">↓${-e}</span>`:`<span class="evo eq">→</span>`;
+  const champRow=(r,i)=>`<div class="r champ ${i===0?'p1':''}"><span class="p">${r.p}</span><span class="n">${r.num}</span><span class="nm">${r.nm}</span><span class="ch-tot">${r.tot}</span><span class="ch-mt">(+${r.mt})</span>${evoHtml(r.evo)}</div>`;
+  const col=(title,rows,builder,alt,live)=>`<div class="col"><div class="ch ${alt?'alt':''}">${live?'<span class="d"></span>':''}${title}</div><div class="cb">${rows.map(builder).join('')}</div></div>`;
+
+  const body=document.getElementById('body');
+  if(view==='ec'){
+    document.getElementById('hdr').textContent='ESSAIS CHRONOMÉTRÉS · D4 · CHATEAUROUX';
+    body.className='body ec-body';
+    body.innerHTML =
+      col('À passer <span class="sub">ordre inverse championnat</span>', ecTodo, todoRow, true, true) +
+      col('Classement essais', ecRank, rankRow, false, false);
+  } else {
+    document.getElementById('hdr').textContent='MANCHE 2 · SUPERCAR · CHATEAUROUX';
+    body.className='body mq-body';
+    body.innerHTML =
+      col('À passer', mqTodo, todoRow, true, true) +
+      col('Classement manche 2', mqRank, rankRow, false, false) +
+      col('Classement intermédiaire', inter, ptsRow, true, false);
+  }
+</script>
+</body>
+</html>
