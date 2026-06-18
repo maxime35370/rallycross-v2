@@ -139,14 +139,21 @@ export function renderNextHeat(d) {
 // SCÈNE : ENTRE DEUX MANCHES
 // ─────────────────────────────────────────────────────────
 
+/** Texte "mm:ss" du temps restant jusqu'à `end` (timestamp ms). */
+export function countdownText(end) {
+  const t = Math.max(0, Math.round(((end || 0) - Date.now()) / 1000));
+  return String(Math.floor(t / 60)).padStart(2, '0') + ':' + String(t % 60).padStart(2, '0');
+}
+
 export function renderIntermission(d) {
+  const hasCd = d.countdownEnd && d.countdownEnd > Date.now();
+  const next  = d.nextText || d.headerText || d.sessionLabel;
   return `
   <div class="inter">
     <div class="big">DE <b>RETOUR</b></div>
-    <div class="tagline">dans un instant</div>
-    ${(d.headerText || d.sessionLabel) ? `<div class="next">
-      <span class="k">À SUIVRE</span><span class="v">${escHtml(d.headerText || d.sessionLabel)}</span>
-    </div>` : ''}
+    <div class="tagline">${hasCd ? 'dans' : 'dans un instant'}</div>
+    ${hasCd ? `<div class="cd-big" id="ov-cd">${countdownText(d.countdownEnd)}</div>` : ''}
+    ${next ? `<div class="next"><span class="k">À SUIVRE</span><span class="v">${escHtml(next)}</span></div>` : ''}
     ${d.social ? `<div class="social">${escHtml(d.social)}</div>` : ''}
   </div>`;
 }

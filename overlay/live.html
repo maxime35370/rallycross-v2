@@ -18,7 +18,7 @@
     getSessions, getResults, findSession, sortRace, getInterim,
     getChampionshipStandings, getGridOrder, getGridLayout,
   } from './_lib/obs-data.js';
-  import { renderScene } from './_lib/obs-scenes.js';
+  import { renderScene, countdownText } from './_lib/obs-scenes.js';
 
   const root = document.getElementById('root');
 
@@ -36,6 +36,7 @@
   let cacheKey = '';          // sélection courante (meeting|cat|type|num|scene)
   let unsubResults = null;    // listener live des résultats de la session courante
   let champTimer = null;
+  let cdTimer = null;         // ticker du compte à rebours (écran d'attente)
   let lastControl = null;
   let champRows = [];         // classement championnat (rafraîchi périodiquement)
 
@@ -69,6 +70,20 @@
   async function reload(ctrl) {
     if (unsubResults) { unsubResults(); unsubResults = null; }
     if (champTimer)   { clearInterval(champTimer); champTimer = null; }
+    if (cdTimer)      { clearInterval(cdTimer); cdTimer = null; }
+
+    // Écran d'attente : indépendant du meeting/catégorie + compte à rebours
+    if (ctrl.scene === 'intermission') {
+      root.innerHTML = renderScene('intermission', {
+        headerText: ctrl.headerText, nextText: ctrl.nextText,
+        countdownEnd: ctrl.countdownEnd, social: ctrl.headerText,
+      });
+      if (ctrl.countdownEnd) {
+        const tick = () => { const el = document.getElementById('ov-cd'); if (el) el.textContent = countdownText(ctrl.countdownEnd); };
+        tick(); cdTimer = setInterval(tick, 1000);
+      }
+      return;
+    }
 
     const reg = await resolveRegulation(ctrl.championshipId);
     if (!reg || !ctrl.meetingId || !ctrl.category) {
