@@ -191,7 +191,7 @@ export function renderSession(d) {
     <span class="p">${r.position ?? i + 1}</span><span class="n">${escHtml(String(r.carNumber ?? ''))}</span>
     <span class="nm">${escHtml((r.lastName || '').toUpperCase())}</span>
     <span class="dlt">${deltaHtml(r.delta)}</span>
-    <span class="pt">${r.totalPoints ?? 0} pt</span></div>`;
+    <span class="pt">${r.totalPoints ?? 0}${r.champPts != null ? ` <span class="cpt">(+${r.champPts})</span>` : ' pt'}</span></div>`;
   const col = (title, sub, rows, builder, alt, live) => `<div class="col">
     <div class="ch ${alt ? 'alt' : ''}">${live ? '<span class="d"></span>' : ''}${title}${sub ? `<span class="sub">${sub}</span>` : ''}</div>
     <div class="cb">${rows.length ? rows.map(builder).join('') : '<div class="empty">—</div>'}</div></div>`;

@@ -102,6 +102,9 @@
     // dès qu'un chrono/statut apparaît dans results.
     if (ctrl.scene === 'grid' && ['EC', 'MQ'].includes(ctrl.sessionType) && session) {
       const order = await getGridOrder(session, sessions, reg, await meetingsOf(reg));
+      // dernière manche ? → on affiche les points championnat (interimPoints) dans l'intermédiaire
+      const mqNums = sessions.filter(s => s.type === 'MQ').map(s => s.num ?? 1);
+      const isLastManche = ctrl.sessionType === 'MQ' && mqNums.length && (ctrl.sessionNum ?? 1) === Math.max(...mqNums);
       let prevIds = null;     // pilotes déjà classés (pour détecter les nouveaux → flash)
       let lastAddedId = null; // pilote en surbrillance (reste jusqu'à la saisie suivante)
       let lastResults = [];   // derniers résultats reçus (pour re-render différé)
@@ -146,7 +149,8 @@
         if (ctrl.sessionType !== 'EC') {
           const interim = (await getInterim(ctrl.meetingId, ctrl.category, reg).catch(() => []))
             .map(r => ({ driverId: r.driverId, position: r.position, carNumber: r.carNumber, lastName: r.lastName,
-              totalPoints: r.totalPoints, done: hasRun(r.driverId) }));   // done = déjà un résultat dans CETTE manche
+              totalPoints: r.totalPoints, done: hasRun(r.driverId),       // done = déjà un résultat dans CETTE manche
+              champPts: isLastManche ? (r.interimPoints ?? 0) : null }));  // pts championnat (dernière manche)
           if (hasBaseline) interim.forEach(r => {             // delta = places gagnées depuis AVANT la manche
             r.delta = baselinePos[r.driverId] != null ? baselinePos[r.driverId] - r.position : 'new';
           });
