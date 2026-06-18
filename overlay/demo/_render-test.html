@@ -63,8 +63,84 @@ data['session-mq'] = { mode:'mq', headerText:'MANCHE 2 · SUPERCAR · CHATEAUROU
   rank:[{position:1,carNumber:11,lastName:'Grondin',value:'2:48.5',points:50},{position:2,carNumber:2,lastName:'Boulbès',value:'+0.9',points:45},{position:3,carNumber:77,lastName:'Lefebvre',value:'+1.4',points:42},{position:4,carNumber:4,lastName:'Dubourg',value:'+2.1',points:41},{position:5,carNumber:33,lastName:'Mailloux',value:'+2.8',points:40},{position:6,carNumber:21,lastName:'Renard',value:'+3.5',points:39,justAdded:true},{position:null,carNumber:9,lastName:'André',value:'DNF',points:38,status:'DNF'},{position:null,carNumber:5,lastName:'Caillot',value:'DSQ EC',points:0,status:'DSQ_RACE'}],
   interim:[{position:1,carNumber:11,lastName:'Grondin',totalPoints:185,done:true,delta:0,champPts:16},{position:2,carNumber:2,lastName:'Boulbès',totalPoints:182,done:true,delta:1,champPts:15},{position:3,carNumber:77,lastName:'Lefebvre',totalPoints:182,done:true,delta:-1,champPts:14},{position:4,carNumber:21,lastName:'Renard',totalPoints:171,done:true,delta:5,justAdded:true,champPts:13},{position:5,carNumber:4,lastName:'Dubourg',totalPoints:160,done:true,champPts:12},{position:6,carNumber:33,lastName:'Mailloux',totalPoints:151,done:true,champPts:11},{position:7,carNumber:9,lastName:'André',totalPoints:140,done:true,champPts:10},{position:8,carNumber:14,lastName:'Morel',totalPoints:132,done:false,champPts:9},{position:9,carNumber:5,lastName:'Caillot',totalPoints:120,done:false,champPts:8}] };
 
+// ── DF combinée : grille (haut) + résultats & points (bas), barres/encadrements bleus (qualifiés) / rouges (éliminés)
+data['df-combo'] = {
+  phase:'DF', qualify:3, poleSide:'droite',
+  sessionLabel:'Demi-finale 1 · Supercar', headerText:'CIRCUIT DE LOHÉAC · DEMI-FINALE 1 · SUPERCAR',
+  layout, // même quinconce 8 places que la grille
+  slots:[
+    {pos:1,carNumber:11,lastName:'Grondin',driverId:'d11'},{pos:2,carNumber:2,lastName:'Boulbès',driverId:'d2'},
+    {pos:3,carNumber:77,lastName:'Lefebvre',driverId:'d77'},{pos:4,carNumber:4,lastName:'Dubourg',driverId:'d4'},
+    {pos:5,carNumber:33,lastName:'Mailloux',driverId:'d33'},{pos:6,carNumber:9,lastName:'André',driverId:'d9'},
+    {pos:7,carNumber:21,lastName:'Renard',driverId:'d21'},{pos:8,carNumber:5,lastName:'Caillot',driverId:'d5'},
+  ],
+  results:[
+    {position:1,carNumber:2,lastName:'Boulbès',driverId:'d2',value:'2:58.342',points:10},
+    {position:2,carNumber:11,lastName:'Grondin',driverId:'d11',value:'+0.412',points:8},
+    {position:3,carNumber:4,lastName:'Dubourg',driverId:'d4',value:'+1.205',points:6},
+    {position:4,carNumber:77,lastName:'Lefebvre',driverId:'d77',value:'+1.880',points:5},
+    {position:5,carNumber:9,lastName:'André',driverId:'d9',value:'+2.540',points:4},
+    {position:6,carNumber:33,lastName:'Mailloux',driverId:'d33',value:'+3.310',points:3},
+    {position:7,carNumber:21,lastName:'Renard',driverId:'d21',value:'+4.120',points:2},
+    {position:null,carNumber:5,lastName:'Caillot',driverId:'d5',value:'DNF',points:0,status:'DNF'},
+  ],
+};
+// ── Finale combinée : encadrements/barres or-argent-bronze pour le podium
+data['fin-combo'] = {
+  phase:'FIN', poleSide:'droite',
+  sessionLabel:'Finale · Supercar', headerText:'CIRCUIT DE LOHÉAC · FINALE · SUPERCAR',
+  layout:{lanes:4,rows:3,positions:{'0-0':1,'0-2':2,'1-1':3,'1-3':4,'2-0':5,'2-2':6}},
+  slots:[
+    {pos:1,carNumber:11,lastName:'Grondin',driverId:'d11'},{pos:2,carNumber:2,lastName:'Boulbès',driverId:'d2'},
+    {pos:3,carNumber:4,lastName:'Dubourg',driverId:'d4'},{pos:4,carNumber:77,lastName:'Lefebvre',driverId:'d77'},
+    {pos:5,carNumber:33,lastName:'Mailloux',driverId:'d33'},{pos:6,carNumber:9,lastName:'André',driverId:'d9'},
+  ],
+  results:[
+    {position:1,carNumber:2,lastName:'Boulbès',driverId:'d2',value:'4:12.880',points:15},
+    {position:2,carNumber:11,lastName:'Grondin',driverId:'d11',value:'+0.733',points:12},
+    {position:3,carNumber:77,lastName:'Lefebvre',driverId:'d77',value:'+2.014',points:9},
+    {position:4,carNumber:4,lastName:'Dubourg',driverId:'d4',value:'+3.560',points:7},
+    {position:5,carNumber:9,lastName:'André',driverId:'d9',value:'+5.090',points:6},
+    {position:6,carNumber:33,lastName:'Mailloux',driverId:'d33',value:'+7.420',points:5},
+  ],
+};
+// ── Dashboard finale : 3 panneaux (intermédiaire avec finalistes en bleu + meeting + championnat)
+data['dash-fin'] = {
+  headerText:'CIRCUIT DE LOHÉAC · FINALE · SUPERCAR', category:'Supercar',
+  raceSub:'Finale · Supercar', interimSub:'finalistes en bleu', meetingSub:'cumul épreuve', champSub:'Supercar · 2026',
+  race:[
+    {carNumber:2,lastName:'Boulbès',ms:252880,status:null},{carNumber:11,lastName:'Grondin',ms:253613,status:null},
+    {carNumber:77,lastName:'Lefebvre',ms:254894,status:null},{carNumber:4,lastName:'Dubourg',ms:256440,status:null},
+    {carNumber:9,lastName:'André',ms:257970,status:null},{carNumber:33,lastName:'Mailloux',ms:260300,status:null},
+  ],
+  interim:[
+    {position:1,carNumber:11,lastName:'Grondin',totalPoints:185,finalist:true},
+    {position:2,carNumber:2,lastName:'Boulbès',totalPoints:182,finalist:true},
+    {position:3,carNumber:77,lastName:'Lefebvre',totalPoints:182,finalist:true},
+    {position:4,carNumber:21,lastName:'Renard',totalPoints:171},
+    {position:5,carNumber:4,lastName:'Dubourg',totalPoints:160,finalist:true},
+    {position:6,carNumber:33,lastName:'Mailloux',totalPoints:151,finalist:true},
+    {position:7,carNumber:9,lastName:'André',totalPoints:140,finalist:true},
+  ],
+  meeting:[
+    {position:1,carNumber:2,lastName:'Boulbès',total:207},{position:2,carNumber:11,lastName:'Grondin',total:205},
+    {position:3,carNumber:77,lastName:'Lefebvre',total:196},{position:4,carNumber:4,lastName:'Dubourg',total:173},
+    {position:5,carNumber:9,lastName:'André',total:156},{position:6,carNumber:33,lastName:'Mailloux',total:159},
+  ],
+  champ:[
+    {position:1,carNumber:11,lastName:'Grondin',grandTotal:285,delta:0,meetingPts:45},
+    {position:2,carNumber:2,lastName:'Boulbès',grandTotal:268,delta:1,meetingPts:47},
+    {position:3,carNumber:77,lastName:'Lefebvre',grandTotal:241,delta:-1,meetingPts:42},
+    {position:4,carNumber:4,lastName:'Dubourg',grandTotal:220,delta:0,meetingPts:33},
+    {position:5,carNumber:33,lastName:'Mailloux',grandTotal:198,delta:0,meetingPts:18},
+    {position:6,carNumber:9,lastName:'André',grandTotal:187,delta:0,meetingPts:22},
+  ],
+};
+
 const scene = new URLSearchParams(location.search).get('scene')||'dashboard';
-const type = scene === 'ordre' ? 'grid' : scene.startsWith('session') ? 'session' : scene;
+const type = (scene === 'ordre' || scene === 'df-combo' || scene === 'fin-combo') ? 'grid'
+  : scene === 'dash-fin' ? 'dashboard'
+  : scene.startsWith('session') ? 'session' : scene;
 document.getElementById('root').innerHTML = renderScene(type, data[scene] || data.dashboard);
 </script>
 </body></html>

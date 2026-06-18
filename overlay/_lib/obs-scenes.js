@@ -40,7 +40,7 @@ function ptsRow(r, pts) {
   const val = r.meetingPts != null
     ? `${pts} <span class="mpts">(+${r.meetingPts})</span>`
     : `${pts}<small>pts</small>`;
-  return `<div class="row ${isP1 ? 'p1' : ''}">
+  return `<div class="row ${isP1 ? 'p1' : ''} ${r.finalist ? 'finalist' : ''}">
     ${isP1 ? '<span class="accent"></span>' : ''}
     <span class="pos">${r.position ?? '—'}</span>
     <span class="num">${escHtml(String(r.carNumber ?? ''))}</span>
@@ -63,6 +63,15 @@ function raceRowsHtml(results) {
 
 export function renderDashboard(d) {
   const fastest = (d.race || []).find(r => r.ms && !r.status);
+  const hasMeeting = Array.isArray(d.meeting);   // finale : panneau "Meeting" en plus
+  const empty = `<div class="empty">En attente…</div>`;
+  const meetingPanel = hasMeeting ? `
+        <div class="dpanel standings">
+          <div class="dhead">Classement du meeting<span class="sub">${escHtml(d.meetingSub || '')}</span></div>
+          <div class="body">${d.meeting.length
+            ? d.meeting.slice(0, 6).map(r => ptsRow(r, r.total ?? 0)).join('')
+            : empty}</div>
+        </div>` : '';
   return `
   <div class="dash">
     <div class="dash-top">
@@ -77,18 +86,19 @@ export function renderDashboard(d) {
         <div class="body">${raceRowsHtml(d.race)}</div>
         <div class="foot">${(d.race || []).length} partants${fastest ? ` · meilleur chrono <span class="bl">${msToDisplay(fastest.ms)}</span>` : ''}</div>
       </div>
-      <div class="dright">
+      <div class="dright ${hasMeeting ? 'three' : ''}">
         <div class="dpanel standings">
           <div class="dhead">Classement intermédiaire<span class="sub">${escHtml(d.interimSub || '')}</span></div>
           <div class="body">${(d.interim || []).length
-            ? (d.interim).slice(0, 9).map(r => ptsRow(r, r.totalPoints ?? 0)).join('')
-            : `<div class="empty">En attente…</div>`}</div>
+            ? (d.interim).slice(0, hasMeeting ? 7 : 9).map(r => ptsRow(r, r.totalPoints ?? 0)).join('')
+            : empty}</div>
         </div>
+        ${meetingPanel}
         <div class="dpanel standings">
           <div class="dhead">Championnat<span class="sub">${escHtml(d.champSub || '')}</span></div>
           <div class="body">${(d.champ || []).length
-            ? (d.champ).slice(0, 8).map(r => ptsRow(r, r.grandTotal ?? 0)).join('')
-            : `<div class="empty">En attente…</div>`}</div>
+            ? (d.champ).slice(0, hasMeeting ? 6 : 8).map(r => ptsRow(r, r.grandTotal ?? 0)).join('')
+            : empty}</div>
         </div>
       </div>
     </div>
@@ -99,8 +109,44 @@ export function renderDashboard(d) {
 // SCÈNE : GRILLE DE DÉPART (matrice du règlement)
 // ─────────────────────────────────────────────────────────
 
-export function renderGrid(d) {
+/** Matrice quinconce de la grille (QF/DF/FIN). `slots[].state` (qual|elim|gold|silver|bronze)
+ *  colore l'encadrement (résultat de la phase). `colW` = largeur de colonne (px). */
+function gridMatrixHtml(d, colW = 248) {
   const { lanes = 5, rows = 3, positions = {} } = d.layout || {};
+  const byPos = {};
+  (d.slots || []).forEach(s => { byPos[s.pos] = s; });
+  const mirror = d.poleSide === 'droite';   // 1er virage à droite → pole à droite (cf. site)
+  let cells = '';
+  for (let r = 0; r < rows; r++) for (let c = 0; c < lanes; c++) {
+    const p = positions[r + '-' + c];
+    const occ = p && byPos[p];
+    if (occ) {
+      const col = (mirror ? (lanes - 1 - c) : c) + 1;
+      cells += `<div class="car ${p === 1 ? 'p1' : ''} ${occ.edited ? 'edited' : ''} ${occ.state ? 'st-' + occ.state : ''}"
+        style="grid-column:${col};grid-row:${r + 1}">
+      <span class="gp">${p}</span><span class="gn">${escHtml(String(occ.carNumber ?? ''))}</span>
+      <span class="gl">${escHtml((occ.lastName || '').toUpperCase())}</span>
+      ${p === 1 ? '<span class="pole">POLE</span>' : ''}</div>`;
+    }
+  }
+  return `<div class="grid-matrix" style="grid-template-columns:repeat(${lanes},${colW}px)">${cells}</div>`;
+}
+
+const PODIUM = { 1: 'gold', 2: 'silver', 3: 'bronze' };
+
+/** État (couleur) d'une position selon la phase : DF = qualifié/éliminé, FIN = podium. */
+function phaseState(phase, position, qualify) {
+  if (position == null) return '';
+  if (phase === 'FIN') return PODIUM[position] || '';
+  if (phase === 'DF')  return position <= (qualify || 3) ? 'qual' : 'elim';
+  return '';
+}
+
+export function renderGrid(d) {
+  // DF / Finale en cours ou terminées → vue combinée grille + résultats
+  if ((d.phase === 'DF' || d.phase === 'FIN') && Array.isArray(d.results)) return renderGridResults(d);
+
+  const { positions = {} } = d.layout || {};
   const slots = d.slots || [];
   const hasMatrix = Object.keys(positions).length > 0;   // QF/DF/FIN = grille en quinconce
   const title = hasMatrix ? 'Grille de départ' : 'Ordre de départ';
@@ -109,23 +155,7 @@ export function renderGrid(d) {
   if (!slots.length) {
     body = '<div class="empty">Grille à venir…</div>';
   } else if (hasMatrix) {
-    const byPos = {};
-    slots.forEach(s => { byPos[s.pos] = s; });
-    const mirror = d.poleSide === 'droite';   // 1er virage à droite → pole à droite (cf. site)
-    let cells = '';
-    for (let r = 0; r < rows; r++) for (let c = 0; c < lanes; c++) {
-      const p = positions[r + '-' + c];
-      const occ = p && byPos[p];
-      if (occ) {
-        const col = (mirror ? (lanes - 1 - c) : c) + 1;
-        cells += `<div class="car ${p === 1 ? 'p1' : ''} ${occ.edited ? 'edited' : ''}"
-          style="grid-column:${col};grid-row:${r + 1}">
-        <span class="gp">${p}</span><span class="gn">${escHtml(String(occ.carNumber ?? ''))}</span>
-        <span class="gl">${escHtml((occ.lastName || '').toUpperCase())}</span>
-        ${p === 1 ? '<span class="pole">POLE</span>' : ''}</div>`;
-      }
-    }
-    body = `<div class="grid-matrix" style="grid-template-columns:repeat(${lanes},248px)">${cells}</div>`;
+    body = gridMatrixHtml(d);
   } else {
     // Essais / manches : ordre de départ en liste ordonnée (2 colonnes si gros plateau)
     const cols = slots.length > 10 ? 2 : 1;
@@ -141,6 +171,74 @@ export function renderGrid(d) {
     <div class="head"><span class="h-cat">${title}</span><span class="h-sub">${escHtml(d.sessionLabel || '')}</span></div>
     ${d.headerText ? `<div class="grid-info"><span class="pin">📍</span><span>${escHtml(d.headerText)}</span></div>` : ''}
     <div class="track">${hasMatrix ? '<div class="dir">SENS COURSE</div>' : ''}${body}</div>
+  </div>`;
+}
+
+// ─────────────────────────────────────────────────────────
+// SCÈNE : GRILLE + RÉSULTATS (DF / Finale) — grille en haut, résultats + points en bas
+//   DF  : barres / encadrements bleus = qualifiés finale, rouges = éliminés
+//   FIN : barres / encadrements or-argent-bronze = podium
+// ─────────────────────────────────────────────────────────
+
+export function renderGridResults(d) {
+  const phase   = d.phase;
+  const qualify = d.qualify || 3;
+  const results = d.results || [];
+  const isFin   = phase === 'FIN';
+
+  // Résultat par pilote (n° ou driverId) → état coloré de l'encadrement sur la grille.
+  const byKey = {};
+  results.forEach(r => {
+    if (r.driverId != null) byKey['d' + r.driverId] = r;
+    byKey['n' + r.carNumber] = r;
+  });
+  const slots = (d.slots || []).map(s => {
+    const res = (s.driverId != null && byKey['d' + s.driverId]) || byKey['n' + s.carNumber];
+    let state = '';
+    if (res) {
+      if (phase === 'DF') state = (!res.status && res.position <= qualify) ? 'qual' : 'elim';
+      else if (!res.status) state = phaseState(phase, res.position, qualify);   // finale : podium
+    }
+    return { ...s, state };
+  });
+  const matrix = (d.slots || []).length
+    ? gridMatrixHtml({ ...d, slots }, 244)
+    : '<div class="empty">Grille à venir…</div>';
+
+  const resRow = r => {
+    const st = r.status ? '' : phaseState(phase, r.position, qualify);
+    const chip = (phase === 'DF' && st === 'qual') ? '<span class="qchip">FINALE</span>' : '';
+    return `<div class="gr-row ${st} ${r.status ? 'out' : ''}">
+      <span class="bar"></span>
+      <span class="p">${r.status ? '—' : (r.position ?? '')}</span>
+      <span class="n">${escHtml(String(r.carNumber ?? ''))}</span>
+      <span class="who"><span class="nm">${escHtml((r.lastName || '').toUpperCase())}</span>${chip}</span>
+      <span class="v ${r.status ? 'st' : ''}">${escHtml(r.value || '')}</span>
+      <span class="pt">${r.points != null && r.points !== '' ? '+' + r.points : ''}</span></div>`;
+  };
+
+  const dir    = d.poleSide === 'droite' ? 'SENS COURSE →' : '← SENS COURSE';
+  const subRes = isFin ? 'Podium · points championnat' : `${qualify} qualifiés pour la finale · points championnat`;
+
+  return `
+  <div class="gr-combo">
+    <div class="dash-top">
+      <span class="brand">RX<b>CHRONO</b></span><span class="sep"></span>
+      <span class="info"><span class="pin">📍</span><span>${escHtml(d.headerText || d.sessionLabel || '')}</span></span>
+      <span class="live"><span class="d"></span>LIVE</span>
+    </div>
+    <div class="gr-body">
+      <div class="gr-grid">
+        <div class="gr-ch">Grille de départ<span class="sub">${escHtml(d.sessionLabel || '')}</span></div>
+        <div class="gr-track"><div class="dir">${dir}</div>${matrix}</div>
+      </div>
+      <div class="gr-res">
+        <div class="gr-ch alt">Résultats &amp; points<span class="sub">${subRes}</span></div>
+        <div class="gr-rows">${results.length
+          ? results.map(resRow).join('')
+          : '<div class="empty">En attente des résultats…</div>'}</div>
+      </div>
+    </div>
   </div>`;
 }
 

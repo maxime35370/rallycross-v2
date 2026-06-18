@@ -98,6 +98,14 @@ body.transparent{background:transparent}
 .dash .standings .evo.dn{color:#ff6b6b}
 .dash .standings .evo.nw{color:var(--orange);font-size:12px}
 .dash .standings .val .mpts{color:var(--green);font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:17px;margin-left:1px}
+/* finale : pilotes qualifiés en finale surlignés en bleu dans l'intermédiaire */
+.dash .standings .row.finalist{background:linear-gradient(90deg,rgba(56,160,255,.22),transparent 72%);box-shadow:inset 4px 0 0 #38a0ff}
+.dash .standings .row.finalist .accent{display:none}
+.dash .standings .row.finalist .pos{color:#5ab4ff}
+/* finale : 3 panneaux à droite (intermédiaire + meeting + championnat) */
+.dright.three{gap:18px}
+.dright.three .dpanel{flex:1 1 0}
+.dright.three .dpanel .dhead{padding:10px 22px;font-size:19px}
 
 /* ============ SCÈNE SESSION (essais/manche : à passer | classement | intermédiaire) ============ */
 .sess-body{flex:1;display:grid;gap:18px;padding:18px 36px 24px;min-height:0}
@@ -181,6 +189,57 @@ body.transparent{background:transparent}
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .g-li.p1{border-color:var(--orange);box-shadow:0 0 0 1px var(--orange)}
 .g-li.edited{border-color:var(--orange)}
+
+/* ============ GRILLE + RÉSULTATS (DF / Finale) ============ */
+.gr-combo{position:absolute;inset:0;display:flex;flex-direction:column;background:transparent}
+.gr-body{flex:1;display:grid;grid-template-rows:auto 1fr;gap:18px;padding:18px 40px 26px;min-height:0}
+.gr-grid,.gr-res{background:var(--panel);border-radius:14px;overflow:hidden;display:flex;flex-direction:column;
+  box-shadow:0 0 0 1px rgba(255,255,255,.06);min-height:0}
+.gr-ch{display:flex;align-items:center;gap:12px;padding:11px 26px;
+  background:linear-gradient(100deg,var(--orange),#c23d00 80%);font-family:'Orbitron',sans-serif;
+  font-weight:800;font-size:20px;letter-spacing:.5px;text-transform:uppercase;flex:none}
+.gr-ch.alt{background:linear-gradient(100deg,#33405a,#1c2433)}
+.gr-ch .sub{margin-left:auto;font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:16px;letter-spacing:2px;opacity:.92}
+.gr-track{flex:1;display:flex;align-items:center;justify-content:center;padding:14px;position:relative;min-height:0}
+.gr-track .dir{position:absolute;right:24px;top:50%;transform:translateY(-50%);font-family:'Orbitron',sans-serif;
+  font-weight:800;font-size:14px;color:#5b6678;letter-spacing:2px;writing-mode:vertical-rl}
+.gr-combo .grid-matrix{gap:14px 24px}
+.gr-combo .car{height:72px;border-radius:11px}
+.gr-combo .car .gp{font-size:26px}
+.gr-combo .car .gn{height:36px;font-size:19px}
+.gr-combo .car .gl{font-size:20px}
+.gr-combo .car .pole{bottom:-9px;font-size:12px;padding:2px 9px}
+.gr-rows{flex:1;display:flex;flex-direction:column;padding:2px 0;min-height:0}
+.gr-row{display:grid;grid-template-columns:8px 54px 60px 1fr 150px 86px;align-items:center;gap:14px;
+  padding:0 22px 0 0;flex:1;min-height:0;position:relative;font-family:'Barlow Condensed',sans-serif}
+.gr-row + .gr-row{border-top:1px solid var(--line)}
+.gr-row .bar{width:8px;height:100%;background:transparent;border-radius:0 3px 3px 0}
+.gr-row .p{font-family:'Orbitron',sans-serif;font-weight:800;font-size:23px;color:#9aa4b2;text-align:center}
+.gr-row .n{display:inline-flex;align-items:center;justify-content:center;min-width:50px;height:36px;padding:0 8px;
+  border-radius:7px;background:#1b2230;border:1px solid #2b3445;font-family:'Orbitron',sans-serif;font-weight:700;font-size:19px;color:#dfe6f0}
+.gr-row .who{display:flex;align-items:center;gap:13px;min-width:0}
+.gr-row .nm{font-weight:600;font-size:26px;text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.gr-row .qchip{flex:none;font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:13px;letter-spacing:1.5px;
+  color:#08121d;background:#38a0ff;padding:3px 10px;border-radius:5px}
+.gr-row .v{font-family:'Orbitron',sans-serif;font-weight:700;font-size:22px;text-align:right;letter-spacing:.5px}
+.gr-row .v.st{font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:18px;letter-spacing:1px;color:var(--mut)}
+.gr-row .pt{font-family:'Orbitron',sans-serif;font-weight:700;font-size:21px;color:var(--green);text-align:right}
+.gr-row.out{opacity:.5}
+/* barres de couleur (DF : qualifiés ; Finale : podium) */
+.gr-row.qual{background:linear-gradient(90deg,rgba(56,160,255,.16),transparent 62%)}
+.gr-row.qual .bar{background:#38a0ff}.gr-row.qual .p{color:#5ab4ff}
+.gr-row.gold{background:linear-gradient(90deg,rgba(255,204,51,.18),transparent 62%)}
+.gr-row.gold .bar{background:var(--gold)}.gr-row.gold .p{color:var(--gold)}
+.gr-row.silver{background:linear-gradient(90deg,rgba(207,214,224,.16),transparent 62%)}
+.gr-row.silver .bar{background:#cfd6e0}.gr-row.silver .p{color:#cfd6e0}
+.gr-row.bronze{background:linear-gradient(90deg,rgba(205,141,86,.18),transparent 62%)}
+.gr-row.bronze .bar{background:#cd8d56}.gr-row.bronze .p{color:#d79a66}
+/* encadrement des voitures sur la grille selon le résultat de la phase */
+.car.st-qual{border-color:rgba(56,160,255,.85);box-shadow:0 0 0 2px rgba(56,160,255,.55),0 10px 26px rgba(0,0,0,.4)}
+.car.st-elim{border-color:rgba(255,99,99,.8);box-shadow:0 0 0 2px rgba(255,99,99,.5),0 10px 26px rgba(0,0,0,.4)}
+.car.st-gold{border-color:var(--gold);box-shadow:0 0 0 2px var(--gold),0 10px 28px rgba(255,204,51,.28)}
+.car.st-silver{border-color:#cfd6e0;box-shadow:0 0 0 2px #cfd6e0,0 10px 26px rgba(0,0,0,.45)}
+.car.st-bronze{border-color:#cd8d56;box-shadow:0 0 0 2px #cd8d56,0 10px 26px rgba(0,0,0,.45)}
 
 /* ============ À SUIVRE (bandeau bas) ============ */
 .lower{position:absolute;left:0;right:0;bottom:0;height:200px;
