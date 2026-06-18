@@ -64,6 +64,7 @@ function raceRowsHtml(results) {
 export function renderDashboard(d) {
   const fastest = (d.race || []).find(r => r.ms && !r.status);
   const hasMeeting = Array.isArray(d.meeting);   // finale : colonne intermédiaire + (meeting/championnat)
+  const threeCol   = hasMeeting || d.threeCol;   // QF/DF/FIN : dashboard sur 3 colonnes
   const empty = `<div class="empty">En attente…</div>`;
 
   const panel = (cls, title, sub, rows, live) => `
@@ -72,7 +73,8 @@ export function renderDashboard(d) {
           <div class="body">${rows || empty}</div>${cls === 'race'
             ? `<div class="foot">${(d.race || []).length} partants${fastest ? ` · meilleur chrono <span class="bl">${msToDisplay(fastest.ms)}</span>` : ''}</div>` : ''}
         </div>`;
-  const racePanel    = panel('race', hasMeeting ? 'Finale en cours' : 'Manche en cours', d.raceSub, raceRowsHtml(d.race), true);
+  const raceTitle    = d.raceTitle || (hasMeeting ? 'Finale en cours' : 'Manche en cours');
+  const racePanel    = panel('race', raceTitle, d.raceSub, raceRowsHtml(d.race), true);
   const interimPanel = max => panel('standings', 'Classement intermédiaire', d.interimSub,
     (d.interim || []).length ? d.interim.slice(0, max).map(r => ptsRow(r, r.totalPoints ?? 0)).join('') : '');
   const champPanel   = max => panel('standings', 'Championnat', d.champSub,
@@ -89,17 +91,27 @@ export function renderDashboard(d) {
     </div>`;
 
   // FINALE : 3 colonnes — finale | intermédiaire | (meeting au-dessus du championnat)
-  const body = hasMeeting
-    ? `<div class="dash-body finale">
+  // QF/DF : 3 colonnes — course | intermédiaire | championnat (un panneau par colonne)
+  // DÉFAUT (essais/manches) : 2 colonnes — manche | (intermédiaire + championnat)
+  let body;
+  if (hasMeeting) {
+    body = `<div class="dash-body finale">
         ${racePanel}
         ${interimPanel(10)}
         <div class="dright">${meetingPanel()}${champPanel(6)}</div>
-      </div>`
-    // DÉFAUT : 2 colonnes — manche | (intermédiaire au-dessus du championnat)
-    : `<div class="dash-body">
+      </div>`;
+  } else if (threeCol) {
+    body = `<div class="dash-body cols3">
+        ${racePanel}
+        ${interimPanel(12)}
+        ${champPanel(12)}
+      </div>`;
+  } else {
+    body = `<div class="dash-body">
         ${racePanel}
         <div class="dright">${interimPanel(9)}${champPanel(8)}</div>
       </div>`;
+  }
 
   return `<div class="dash">${header}${body}</div>`;
 }
