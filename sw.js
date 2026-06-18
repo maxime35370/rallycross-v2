@@ -5,7 +5,7 @@
    Compatible GitHub Pages (sous-dossier) et racine.
 ═══════════════════════════════════════════════ */
 
-const CACHE_NAME = 'rx-chrono-v22';
+const CACHE_NAME = 'rx-chrono-v23';
 
 // Assets relatifs au scope du SW (pas de / en prefixe)
 const ASSET_PATHS = [
@@ -84,52 +84,62 @@ self.addEventListener('activate', (event) => {
 
 // ── Fetch : strategie selon le type de requete ──
 self.addEventListener('fetch', (event) => {
-  const url = new URL(event.request.url);
+  const req = event.request;
 
-  // Firebase / API : network-first (ne pas cacher les donnees dynamiques)
-  if (
-    url.hostname.includes('firebaseio.com') ||
-    url.hostname.includes('googleapis.com') ||
-    url.hostname.includes('gstatic.com')
-  ) {
-    event.respondWith(
-      fetch(event.request).catch(() => caches.match(event.request))
-    );
-    return;
-  }
+  // Ne gérer que les GET http(s). On laisse passer le reste (POST/écritures,
+  // chrome-extension://, etc.) → évite l'erreur "Request scheme is unsupported".
+  if (req.method !== 'GET') return;
+  const url = new URL(req.url);
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return;
 
   // Google Fonts : cache-first
-  if (
-    url.hostname === 'fonts.googleapis.com' ||
-    url.hostname === 'fonts.gstatic.com'
-  ) {
+  if (url.hostname === 'fonts.googleapis.com' || url.hostname === 'fonts.gstatic.com') {
     event.respondWith(
-      caches.match(event.request).then(
-        (cached) =>
-          cached ||
-          fetch(event.request).then((response) => {
-            const clone = response.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
-            return response;
-          })
+      caches.match(req).then((cached) =>
+        cached ||
+        fetch(req).then((response) => {
+          const clone = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(req, clone));
+          return response;
+        })
       )
     );
     return;
   }
 
-  // Assets statiques locaux : cache-first, fallback network
+  // Firebase / Firestore / Auth / SDK : NE PAS intercepter.
+  // Le streaming Listen de Firestore et les tokens d'auth ne supportent pas
+  // d'être ré-emballés par le SW (sinon "Failed to convert value to Response").
+  // On laisse le navigateur gérer nativement.
+  if (/\.googleapis\.com$|\.gstatic\.com$|firebaseio\.com$/.test(url.hostname)) {
+    return;
+  }
+
+  // Overlays : network-first → les mises à jour se déploient immédiatement.
+  if (url.pathname.includes('/overlay/')) {
+    event.respondWith(
+      fetch(req).then((response) => {
+        if (response.status === 200 && response.type === 'basic') {
+          const clone = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(req, clone));
+        }
+        return response;
+      }).catch(() => caches.match(req))
+    );
+    return;
+  }
+
+  // Assets statiques locaux : cache-first, fallback réseau
   event.respondWith(
-    caches.match(event.request).then(
-      (cached) =>
-        cached ||
-        fetch(event.request).then((response) => {
-          // Ne cacher que les reponses valides
-          if (response.status === 200 && response.type === 'basic') {
-            const clone = response.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
-          }
-          return response;
-        })
+    caches.match(req).then((cached) =>
+      cached ||
+      fetch(req).then((response) => {
+        if (response.status === 200 && response.type === 'basic') {
+          const clone = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(req, clone));
+        }
+        return response;
+      })
     )
   );
 });
