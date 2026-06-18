@@ -255,13 +255,13 @@ export async function getEcRank(sessions, regulation) {
   const rows = await calcEcStandings(db, sessions, regulation);
   const fin = rows.filter(r => r.ms != null).sort((a, b) => (a.position ?? 99) - (b.position ?? 99));
   const out = fin.map(r => ({
-    position: r.position, carNumber: r.carNumber, lastName: r.lastName,
+    driverId: r.driverId, position: r.position, carNumber: r.carNumber, lastName: r.lastName,
     value: msToDisplay(r.ms), points: r.bonusPoints ? '+' + r.bonusPoints : '',
   }));
   rows.filter(r => r.ms == null && r.status)
     .sort((a, b) => (STATUS_ORDER[a.status] || 9) - (STATUS_ORDER[b.status] || 9))
     .forEach(r => out.push({
-      position: null, carNumber: r.carNumber, lastName: r.lastName,
+      driverId: r.driverId, position: null, carNumber: r.carNumber, lastName: r.lastName,
       value: STATUS_LABEL[r.status] || r.status, points: '', status: r.status,
     }));
   return out;
@@ -278,14 +278,14 @@ export async function getMqRank(session, regulation) {
   const fin = results.filter(r => r.ms != null && !r.status).sort((a, b) => a.ms - b.ms);
   const lead = fin[0]?.ms ?? 0;
   const out = fin.map((r, i) => ({
-    position: i + 1, carNumber: r.carNumber, lastName: r.lastName,
+    driverId: r.driverId, position: i + 1, carNumber: r.carNumber, lastName: r.lastName,
     value: i === 0 ? msToDisplay(r.ms) : '+' + ((r.ms - lead) / 1000).toFixed(1),
     points: mqPoints(i + 1, regulation),
   }));
   results.filter(r => r.status)
     .sort((a, b) => (STATUS_ORDER[a.status] || 9) - (STATUS_ORDER[b.status] || 9))
     .forEach(r => out.push({
-      position: null, carNumber: r.carNumber, lastName: r.lastName,
+      driverId: r.driverId, position: null, carNumber: r.carNumber, lastName: r.lastName,
       value: STATUS_LABEL[r.status] || r.status,
       points: calcStatusPoints(r.status, 'MQ', totalEngaged, regulation), status: r.status,
     }));

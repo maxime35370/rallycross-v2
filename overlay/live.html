@@ -100,23 +100,37 @@
     // dès qu'un chrono/statut apparaît dans results.
     if (ctrl.scene === 'grid' && ['EC', 'MQ'].includes(ctrl.sessionType) && session) {
       const order = await getGridOrder(session, sessions, reg, await meetingsOf(reg));
+      let prevIds = null;     // baseline des pilotes déjà classés (null = 1er rendu, pas de flash)
+      let prevPos = {};       // positions intermédiaires du rendu précédent
       const renderSess = async (results) => {
         const resMap = {};
         (results || []).forEach(r => { resMap[r.driverId] = r; });
         const hasRun = id => resMap[id] && (resMap[id].ms != null || resMap[id].status);
+        const rank = ctrl.sessionType === 'EC'
+          ? await getEcRank(sessions, reg).catch(() => [])
+          : await getMqRank(session, reg).catch(() => []);
+        // pilote(s) qui viennent d'entrer au classement → flash
+        const curIds = new Set(rank.map(r => r.driverId).filter(Boolean));
+        if (prevIds) rank.forEach(r => { if (r.driverId && !prevIds.has(r.driverId)) r.justAdded = true; });
         const data = {
           mode: ctrl.sessionType === 'EC' ? 'ec' : 'mq',
           headerText: ctrl.headerText, sessionLabel: `${sLabel} · ${ctrl.category}`,
           todo: order.filter(o => !hasRun(o.driverId)).map((o, i) => ({ pos: i + 1, carNumber: o.carNumber, lastName: o.lastName })),
-          rank: ctrl.sessionType === 'EC'
-            ? await getEcRank(sessions, reg).catch(() => [])
-            : await getMqRank(session, reg).catch(() => []),
+          rank,
         };
         if (ctrl.sessionType !== 'EC') {
-          data.interim = (await getInterim(ctrl.meetingId, ctrl.category, reg).catch(() => []))
-            .map(r => ({ position: r.position, carNumber: r.carNumber, lastName: r.lastName, totalPoints: r.totalPoints }));
+          const interim = (await getInterim(ctrl.meetingId, ctrl.category, reg).catch(() => []))
+            .map(r => ({ driverId: r.driverId, position: r.position, carNumber: r.carNumber, lastName: r.lastName,
+              totalPoints: r.totalPoints, done: hasRun(r.driverId) }));   // done = déjà un résultat dans CETTE manche
+          if (prevIds) interim.forEach(r => {                 // deltas seulement après la baseline
+            const pp = prevPos[r.driverId];
+            r.delta = pp == null ? 'new' : (pp - r.position); // >0 = places gagnées
+          });
+          prevPos = {}; interim.forEach(r => { prevPos[r.driverId] = r.position; });
+          data.interim = interim;
         }
         root.innerHTML = renderScene('session', data);
+        prevIds = curIds;
       };
       unsubResults = await watchQuery('results', [['sessionId', '==', session.id]], rows => renderSess(rows));
       return;
