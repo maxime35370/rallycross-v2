@@ -180,14 +180,17 @@ export function renderSession(d) {
   const todoRow = r => `<div class="cr todo">
     <span class="p">${r.pos}</span><span class="n">${escHtml(String(r.carNumber ?? ''))}</span>
     <span class="nm">${escHtml((r.lastName || '').toUpperCase())}</span></div>`;
-  const rankRow = (r, i) => `<div class="cr rank ${i === 0 && !r.status ? 'p1' : ''}">
+  const rankRow = (r, i) => `<div class="cr rank ${i === 0 && !r.status ? 'p1' : ''} ${r.justAdded ? 'just-added' : ''}">
     <span class="p">${r.status ? '—' : (r.position ?? i + 1)}</span><span class="n">${escHtml(String(r.carNumber ?? ''))}</span>
     <span class="nm">${escHtml((r.lastName || '').toUpperCase())}</span>
     <span class="v ${r.status ? 'st' : ''}">${escHtml(r.value || '')}</span>
     <span class="pt">${r.points != null && r.points !== '' ? r.points + ' pt' : ''}</span></div>`;
-  const ptsRow = (r, i) => `<div class="cr pts ${i === 0 ? 'p1' : ''}">
+  const deltaHtml = d => d == null ? '' : d === 'new' ? '<span class="delta nw">NEW</span>'
+    : d > 0 ? `<span class="delta up">▲${d}</span>` : d < 0 ? `<span class="delta dn">▼${-d}</span>` : '';
+  const ptsRow = (r, i) => `<div class="cr pts ${i === 0 ? 'p1' : ''} ${r.justAdded ? 'just-added' : ''} ${r.done === false ? 'pending' : ''}">
     <span class="p">${r.position ?? i + 1}</span><span class="n">${escHtml(String(r.carNumber ?? ''))}</span>
     <span class="nm">${escHtml((r.lastName || '').toUpperCase())}</span>
+    <span class="dlt">${deltaHtml(r.delta)}</span>
     <span class="pt">${r.totalPoints ?? 0} pt</span></div>`;
   const col = (title, sub, rows, builder, alt, live) => `<div class="col">
     <div class="ch ${alt ? 'alt' : ''}">${live ? '<span class="d"></span>' : ''}${title}${sub ? `<span class="sub">${sub}</span>` : ''}</div>

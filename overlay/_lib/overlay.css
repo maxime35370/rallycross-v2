@@ -117,8 +117,18 @@ html,body{width:1920px;height:1080px;overflow:hidden;background:transparent;
 .cr.todo{grid-template-columns:42px 56px 1fr}
 .cr.todo .p{color:var(--orange)}
 .cr.rank{grid-template-columns:42px 56px 1fr 96px 64px}
-.cr.pts{grid-template-columns:42px 56px 1fr 72px}
+.cr.pts{grid-template-columns:42px 56px 1fr 58px 72px}
 .cr .v.st{font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:16px;letter-spacing:1px;color:var(--mut)}
+.cr .dlt{text-align:center}
+.delta{font-family:'Orbitron',sans-serif;font-weight:800;font-size:16px;letter-spacing:.5px}
+.delta.up{color:var(--green)}
+.delta.dn{color:#ff6b6b}
+.delta.nw{color:var(--orange);font-size:13px}
+/* flash vert du pilote qui vient d'entrer au classement */
+@keyframes justAdded{0%{background:rgba(57,217,138,.55)}100%{background:transparent}}
+.cr.just-added{animation:justAdded 2.6s ease-out}
+/* intermédiaire : grisé = pas encore passé dans la manche en cours */
+.cr.pts.pending{opacity:.38}
 
 /* ============ GRILLE DE DÉPART (matrice du règlement) ============ */
 .grid-wrap{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
