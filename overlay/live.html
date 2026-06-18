@@ -222,10 +222,12 @@
     }
     const hasChampBefore = Object.keys(champBeforeTot).length > 0;
 
-    // Dashboard FINALE : pilotes en finale (participants de la session FIN) → surbrillance bleue
+    // Dashboard QF/DF/FIN : pilotes engagés dans la session courante → surbrillance bleue
+    // dans l'intermédiaire (qui est en finale / qui court cette demi).
+    const isPhaseDash  = ctrl.scene === 'dashboard' && ['QF', 'DF', 'FIN'].includes(ctrl.sessionType) && !!session;
     const isFinaleDash = ctrl.scene === 'dashboard' && ctrl.sessionType === 'FIN' && !!session;
-    const finalistIds = new Set();
-    if (isFinaleDash) (await getParticipants(session.id).catch(() => [])).forEach(p => finalistIds.add(p.driverId));
+    const engagedIds = new Set();
+    if (isPhaseDash) (await getParticipants(session.id).catch(() => [])).forEach(p => engagedIds.add(p.driverId));
 
     const buildChamp = async () => {
       const cur = await getMeetingPoints(ctrl.meetingId, ctrl.category, reg).catch(() => []);
@@ -259,14 +261,16 @@
         data.race    = sortRace(raceResults || []);
         data.interim = await getInterim(ctrl.meetingId, ctrl.category, reg).catch(() => []);
         data.champ   = await buildChamp();
-        if (isFinaleDash) {   // 3e panneau "meeting" + finalistes surlignés dans l'intermédiaire
+        if (isFinaleDash) {   // finale : 4e panneau "meeting" + colonnes pleine hauteur
           data.interimSub = 'finalistes en bleu';
           data.meetingSub = 'cumul épreuve';
           data.meeting    = await getMeetingStandings(ctrl.meetingId, ctrl.category, reg).catch(() => []);
-          data.interim.forEach(r => { if (finalistIds.has(r.driverId)) r.finalist = true; });
         } else if (['QF', 'DF'].includes(ctrl.sessionType)) {
-          data.threeCol = true;   // dashboard 3 colonnes : course | intermédiaire | championnat
+          data.threeCol  = true;            // dashboard 3 colonnes : course | intermédiaire | championnat
+          data.interimSub = 'engagés en bleu';
         }
+        // surbrillance bleue des pilotes engagés dans la demi / la finale
+        if (isPhaseDash) data.interim.forEach(r => { if (engagedIds.has(r.driverId)) r.finalist = true; });
         // titre du panneau course selon la phase (sinon "Manche en cours" par défaut)
         data.raceTitle = { QF: 'Quart de finale en cours', DF: 'Demi-finale en cours', FIN: 'Finale en cours' }[ctrl.sessionType];
       }
