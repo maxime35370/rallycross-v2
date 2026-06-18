@@ -12,7 +12,7 @@
 <div class="overlay-root" id="root"></div>
 
 <script type="module">
-  import { initFirebase, fsQuery, watchQuery } from './_lib/obs-firebase.js';
+  import { initFirebase, fsQuery, watchQuery, getDocById } from './_lib/obs-firebase.js';
   import { watchControl, sessionKey } from './_lib/obs-control.js';
   import {
     getSessions, getResults, findSession, sortRace, getInterim, getInterimBefore,
@@ -179,26 +179,53 @@
       }
     }
     const layout = getGridLayout(reg, ctrl.sessionType);
+    // sens du 1er virage (pole gauche/droite) pour la grille en quinconce
+    let poleSide = null;
+    if (ctrl.scene === 'grid' && Object.keys(layout.positions || {}).length) {
+      poleSide = (await getDocById('meetings', ctrl.meetingId).catch(() => null))?.poleSide || null;
+    }
 
-    // Classement championnat (lourd) : une fois, puis toutes les 60 s
-    const refreshChamp = async () => {
-      try { champRows = await getChampionshipStandings(await meetingsOf(reg), ctrl.category, reg); }
-      catch { champRows = []; }
+    // Championnat : référence AVANT l'épreuve (meeting exclu), calculée 1 fois ;
+    // puis on ajoute en direct les points du meeting en cours (léger) → total + flèches + (+meeting).
+    let champBeforeTot = {}, champBeforePos = {}, drvInfo = {};
+    if (ctrl.scene === 'dashboard') {
+      const all = await meetingsOf(reg);
+      (await getChampionshipStandings(all.filter(m => m.id !== ctrl.meetingId), ctrl.category, reg).catch(() => []))
+        .forEach(r => { champBeforeTot[r.driverId] = r.grandTotal; champBeforePos[r.driverId] = r.position; drvInfo[r.driverId] = r; });
+    }
+    const hasChampBefore = Object.keys(champBeforeTot).length > 0;
+    const buildChamp = async () => {
+      const cur = await getMeetingPoints(ctrl.meetingId, ctrl.category, reg).catch(() => []);
+      const curTot = {};
+      cur.forEach(d => { curTot[d.driverId] = d.total; if (!drvInfo[d.driverId]) drvInfo[d.driverId] = d; });
+      const ids = new Set([...Object.keys(champBeforeTot), ...Object.keys(curTot)]);
+      const rows = [...ids].map(id => ({
+        driverId: id, carNumber: drvInfo[id]?.carNumber, lastName: drvInfo[id]?.lastName,
+        grandTotal: (champBeforeTot[id] || 0) + (curTot[id] || 0),
+        meetingPts: hasChampBefore ? (curTot[id] || 0) : null,
+      }));
+      rows.sort((a, b) => b.grandTotal - a.grandTotal);
+      let cp = 1;
+      rows.forEach((r, i) => {
+        r.position = (i > 0 && r.grandTotal === rows[i - 1].grandTotal) ? rows[i - 1].position : cp;
+        cp = i + 2;
+        r.delta = hasChampBefore ? (champBeforePos[r.driverId] != null ? champBeforePos[r.driverId] - r.position : 'new') : null;
+      });
+      return rows;
     };
-    if (ctrl.scene === 'dashboard') { await refreshChamp(); champTimer = setInterval(refreshChamp, 60000); }
 
-    // Fonction de rendu (recalcule l'intermédiaire à chaque tick résultats)
+    // Fonction de rendu (recalcule intermédiaire + championnat à chaque tick résultats)
     const renderNow = async (raceResults) => {
       const data = {
         headerText: ctrl.headerText, category: ctrl.category, sessionLabel: sLabel,
         raceSub: `${ctrl.category} · ${sLabel}`, interimSub: 'classement intermédiaire',
         champSub: `${ctrl.category} · ${reg.year}`, social: ctrl.headerText,
-        layout, slots,
+        layout, slots, poleSide,
       };
       if (ctrl.scene === 'dashboard') {
         data.race    = sortRace(raceResults || []);
         data.interim = await getInterim(ctrl.meetingId, ctrl.category, reg).catch(() => []);
-        data.champ   = champRows;
+        data.champ   = await buildChamp();
       }
       root.innerHTML = renderScene(ctrl.scene, data);
     };

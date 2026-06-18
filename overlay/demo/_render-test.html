@@ -24,7 +24,16 @@ const interim = [
   {position:7,carNumber:21,lastName:'Renard',totalPoints:63},{position:8,carNumber:5,lastName:'Caillot',totalPoints:58},
   {position:9,carNumber:14,lastName:'Morel',totalPoints:52},
 ];
-const champ = interim.map((r,i)=>({position:i+1,carNumber:r.carNumber,lastName:r.lastName,grandTotal:285-i*17})).slice(0,8);
+const champ = [
+  {position:1,carNumber:11,lastName:'Grondin',grandTotal:285,delta:2,meetingPts:45},
+  {position:2,carNumber:2,lastName:'Boulbès',grandTotal:268,delta:-1,meetingPts:38},
+  {position:3,carNumber:77,lastName:'Lefebvre',grandTotal:241,delta:1,meetingPts:42},
+  {position:4,carNumber:4,lastName:'Dubourg',grandTotal:220,delta:'new',meetingPts:30},
+  {position:5,carNumber:33,lastName:'Mailloux',grandTotal:198,delta:0,meetingPts:18},
+  {position:6,carNumber:9,lastName:'André',grandTotal:187,delta:-2,meetingPts:12},
+  {position:7,carNumber:21,lastName:'Renard',grandTotal:165,delta:1,meetingPts:9},
+  {position:8,carNumber:5,lastName:'Caillot',grandTotal:150,delta:-1,meetingPts:6},
+];
 const layout = {lanes:5,rows:3,positions:{'0-0':1,'0-2':2,'0-4':3,'1-1':4,'1-3':5,'2-0':6,'2-2':7,'2-4':8}};
 const slots = [
   {pos:1,carNumber:11,lastName:'Grondin'},{pos:2,carNumber:2,lastName:'Boulbès'},{pos:3,carNumber:77,lastName:'Lefebvre'},
@@ -35,7 +44,7 @@ const slots = [
 const data = {
   dashboard:{headerText:'CIRCUIT DE LOHÉAC · MANCHE 2 · ASPHALTE + TERRE',category:'Supercar',
     raceSub:'Supercar · Manche 2',interimSub:'après M2',champSub:'Supercar · 2026',race,interim,champ},
-  grid:{sessionLabel:'Demi-finale 1 · Supercar',headerText:'CIRCUIT DE LOHÉAC · 6 TOURS · ASPHALTE + TERRE',layout,slots},
+  grid:{sessionLabel:'Demi-finale 1 · Supercar',headerText:'CIRCUIT DE LOHÉAC · 6 TOURS · ASPHALTE + TERRE',layout,slots,poleSide:'droite'},
   'next-heat':{sessionLabel:'Série 3 · Super1600',slots},
   ordre:{sessionLabel:'Essais chronométrés · D4',headerText:'CIRCUIT DE CHATEAUROUX · ESSAIS',layout:{lanes:5,rows:3,positions:{}},
     slots:[

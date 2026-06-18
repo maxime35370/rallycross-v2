@@ -30,15 +30,23 @@ function raceRow(r, pos, leaderMs) {
     <span class="${cls}">${escHtml(val)}</span></div>`;
 }
 
-/** Ligne de classement points : pos, n°, nom, pts. */
+/** Ligne de classement points : pos, n°, nom, [évolution], pts [(+meeting)]. */
 function ptsRow(r, pts) {
   const isP1 = r.position === 1;
+  let evo = '<span class="evo"></span>';
+  if (r.delta === 'new') evo = '<span class="evo nw">NEW</span>';
+  else if (typeof r.delta === 'number' && r.delta > 0) evo = `<span class="evo up">▲${r.delta}</span>`;
+  else if (typeof r.delta === 'number' && r.delta < 0) evo = `<span class="evo dn">▼${-r.delta}</span>`;
+  const val = r.meetingPts != null
+    ? `${pts} <span class="mpts">(+${r.meetingPts})</span>`
+    : `${pts}<small>pts</small>`;
   return `<div class="row ${isP1 ? 'p1' : ''}">
     ${isP1 ? '<span class="accent"></span>' : ''}
     <span class="pos">${r.position ?? '—'}</span>
     <span class="num">${escHtml(String(r.carNumber ?? ''))}</span>
     <span class="name">${escHtml((r.lastName || '').toUpperCase())}</span>
-    <span class="val">${pts}<small>pts</small></span></div>`;
+    ${evo}
+    <span class="val">${val}</span></div>`;
 }
 
 function raceRowsHtml(results) {
@@ -103,14 +111,19 @@ export function renderGrid(d) {
   } else if (hasMatrix) {
     const byPos = {};
     slots.forEach(s => { byPos[s.pos] = s; });
+    const mirror = d.poleSide === 'droite';   // 1er virage à droite → pole à droite (cf. site)
     let cells = '';
     for (let r = 0; r < rows; r++) for (let c = 0; c < lanes; c++) {
       const p = positions[r + '-' + c];
       const occ = p && byPos[p];
-      if (occ) cells += `<div class="car ${p === 1 ? 'p1' : ''} ${occ.edited ? 'edited' : ''}"
-          style="grid-column:${c + 1};grid-row:${r + 1}">
+      if (occ) {
+        const col = (mirror ? (lanes - 1 - c) : c) + 1;
+        cells += `<div class="car ${p === 1 ? 'p1' : ''} ${occ.edited ? 'edited' : ''}"
+          style="grid-column:${col};grid-row:${r + 1}">
         <span class="gp">${p}</span><span class="gn">${escHtml(String(occ.carNumber ?? ''))}</span>
-        <span class="gl">${escHtml((occ.lastName || '').toUpperCase())}</span></div>`;
+        <span class="gl">${escHtml((occ.lastName || '').toUpperCase())}</span>
+        ${p === 1 ? '<span class="pole">POLE</span>' : ''}</div>`;
+      }
     }
     body = `<div class="grid-matrix" style="grid-template-columns:repeat(${lanes},248px)">${cells}</div>`;
   } else {
