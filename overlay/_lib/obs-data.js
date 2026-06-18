@@ -135,6 +135,13 @@ export async function getInterim(meetingId, category, regulation) {
   return rows.sort((a, b) => (a.position ?? 99) - (b.position ?? 99));
 }
 
+/** Classement intermédiaire AVANT une manche (= en excluant cette session). Réf. pour la "remontada". */
+export async function getInterimBefore(meetingId, category, regulation, excludeSessionId) {
+  const sessions = (await getSessions(meetingId, category)).filter(s => s.id !== excludeSessionId);
+  const rows = await calcInterimStandings(db, sessions, regulation);
+  return rows.sort((a, b) => (a.position ?? 99) - (b.position ?? 99));
+}
+
 // ─────────────────────────────────────────────────────────
 // CLASSEMENT CHAMPIONNAT (cumul tous meetings) — copie de championship.js
 // ─────────────────────────────────────────────────────────
