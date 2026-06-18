@@ -165,47 +165,80 @@ export async function getChampionshipStandings(meetings, category, regulation) {
 // GRILLE DE DÉPART — ordre (depuis classement) + disposition (règlement)
 // ─────────────────────────────────────────────────────────
 
+// Résultats d'une session triés comme le site (DNS/DSQ en fin, puis DNF, puis chrono).
+async function getSessionResultsSorted(sessionId) {
+  const res = await getResults(sessionId);
+  return res.sort((a, b) => {
+    const aZero = ['DNS', 'DSQ'].includes(a.status), bZero = ['DNS', 'DSQ'].includes(b.status);
+    if (aZero && !bZero) return 1; if (!aZero && bZero) return -1;
+    const aSp = ['DNF', 'DSQ_RACE'].includes(a.status), bSp = ['DNF', 'DSQ_RACE'].includes(b.status);
+    if (aSp && !bSp) return 1; if (!aSp && bSp) return -1;
+    return (a.ms ?? Infinity) - (b.ms ?? Infinity);
+  });
+}
+
+// Inverse l'ordre d'une référence (copie fidèle de timing.js).
+function sortByReferenceInverse(raw, reference) {
+  const posMap = {};
+  reference.forEach((r, i) => { posMap[r.driverId] = i; });
+  const numDesc = (a, b) => (Number(b.carNumber) || 0) - (Number(a.carNumber) || 0);
+  const notInRef = raw.filter(p => posMap[p.driverId] === undefined).sort(numDesc);
+  const inRef = raw.filter(p => posMap[p.driverId] !== undefined).sort((a, b) => posMap[b.driverId] - posMap[a.driverId]);
+  return [...notInRef, ...inRef];
+}
+
 /**
- * Ordre de départ AUTO d'une session. Règles :
- *  - EC (essais)      → ordre INVERSE du classement championnat (dernier = 1er)
- *  - MQ (manche N)    → classement de la manche N-1, INVERSÉ (dernier = 1er)
- *                       (manche 1 : essais inversés, sinon championnat inversé)
- *  - QF/DF/FIN        → classement intermédiaire (meilleur = pole)
- * Renvoie [{pos, driverId, carNumber, lastName}]. L'opérateur peut corriger à la main.
+ * Ordre de départ ("à passer"), RÉPLIQUE EXACTE de js/timing.js :
+ *  - EC      → inverse du championnat (points cumulés des meetings précédents :
+ *              nouveaux d'abord par n° décroissant, puis du - de pts au + de pts)
+ *  - MQ N    → inverse des résultats de la référence (EC pour M1, MQ N-1 sinon)
+ *  - QF/DF/FIN → classement intermédiaire (placement quinconce)
  */
 export async function getGridOrder(session, meetingSessions, regulation, meetings) {
-  const participants = await getParticipants(session.id);
-  if (!participants.length) return [];
-  const numCmp = (a, b) => String(a.carNumber).localeCompare(String(b.carNumber), 'fr', { numeric: true });
-  const rank = {};
-  let dir = 'asc';   // 'asc' = meilleur en tête ; 'desc' = dernier en tête (essais/manches)
+  const raw = await getParticipants(session.id);
+  if (!raw.length) return [];
+  const toSlot = (p, i) => ({ pos: i + 1, driverId: p.driverId, carNumber: p.carNumber, lastName: p.lastName });
+  const numDesc = (a, b) => (Number(b.carNumber) || 0) - (Number(a.carNumber) || 0);
 
   if (session.type === 'EC') {
-    const champ = meetings ? await getChampionshipStandings(meetings, session.category, regulation) : [];
-    champ.forEach(r => { rank[r.driverId] = r.position ?? 0; });
-    dir = 'desc';
-  } else if (session.type === 'MQ') {
-    const prev = meetingSessions.find(s => s.type === 'MQ' && s.num === (session.num ?? 1) - 1)
-              || meetingSessions.find(s => s.type === 'EC');
-    let standings = [];
-    if (prev) standings = prev.type === 'EC'
-      ? await calcEcStandings(db, meetingSessions, regulation)
-      : await calcMqStandings(db, prev, regulation);
-    if (!standings.length && meetings) standings = await getChampionshipStandings(meetings, session.category, regulation);
-    standings.forEach(r => { rank[r.driverId] = r.position ?? 0; });
-    dir = 'desc';
-  } else {
-    const interim = await calcInterimStandings(db, meetingSessions, regulation);
-    interim.forEach(r => { rank[r.driverId] = r.position ?? 999; });
-    dir = 'asc';
+    const DF_PTS = [0, 10, 8, 6, 5, 4, 3, 2, 1], FIN_PTS = [0, 15, 12, 9, 7, 6, 5, 4, 3];
+    const current = (meetings || []).find(m => m.id === session.meetingId);
+    const past = (meetings || []).filter(m => m.id !== session.meetingId && (m.date || '') < (current?.date || '9999'));
+    if (!past.length) return [...raw].sort(numDesc).map(toSlot);
+    const pts = {};
+    for (const m of past) {
+      const ms = await getSessions(m.id, session.category);
+      if (!ms.length) continue;
+      (await calcInterimStandings(db, ms, regulation)).forEach(r => { pts[r.driverId] = (pts[r.driverId] || 0) + (r.interimPoints ?? 0); });
+      for (const df of ms.filter(s => s.type === 'DF'))
+        (await getResults(df.id)).filter(r => r.ms && !r.status).sort((a, b) => a.ms - b.ms)
+          .forEach((r, i) => { pts[r.driverId] = (pts[r.driverId] || 0) + (DF_PTS[i + 1] ?? 0); });
+      const fin = ms.find(s => s.type === 'FIN');
+      if (fin) (await getResults(fin.id)).filter(r => r.ms && !r.status).sort((a, b) => a.ms - b.ms)
+        .forEach((r, i) => { pts[r.driverId] = (pts[r.driverId] || 0) + (FIN_PTS[i + 1] ?? 0); });
+    }
+    const notRanked = raw.filter(p => !pts[p.driverId]).sort(numDesc);
+    const ranked = raw.filter(p => pts[p.driverId]).sort((a, b) => pts[a.driverId] - pts[b.driverId]);
+    return [...notRanked, ...ranked].map(toSlot);
   }
 
-  participants.sort((a, b) => dir === 'desc'
-    ? ((rank[b.driverId] ?? -1) - (rank[a.driverId] ?? -1)) || numCmp(a, b)   // dernier/inconnu en tête
-    : ((rank[a.driverId] ?? 999) - (rank[b.driverId] ?? 999)) || numCmp(a, b)); // meilleur en tête
-  return participants.map((p, i) => ({
-    pos: i + 1, driverId: p.driverId, carNumber: p.carNumber, lastName: p.lastName,
-  }));
+  if (session.type === 'MQ') {
+    const ref = (session.num ?? 1) === 1
+      ? meetingSessions.find(s => s.type === 'EC')
+      : meetingSessions.find(s => s.type === 'MQ' && s.num === (session.num ?? 1) - 1);
+    if (ref) {
+      const refRes = await getSessionResultsSorted(ref.id);
+      if (refRes.length) return sortByReferenceInverse(raw, refRes).map(toSlot);
+    }
+    return [...raw].sort(numDesc).map(toSlot);
+  }
+
+  // QF / DF / FIN : classement intermédiaire (meilleur = pole) pour la grille quinconce
+  const interim = await calcInterimStandings(db, meetingSessions, regulation);
+  const rank = {};
+  interim.forEach(r => { rank[r.driverId] = r.position ?? 999; });
+  const numCmp = (a, b) => String(a.carNumber).localeCompare(String(b.carNumber), 'fr', { numeric: true });
+  return [...raw].sort((a, b) => (rank[a.driverId] ?? 999) - (rank[b.driverId] ?? 999) || numCmp(a, b)).map(toSlot);
 }
 
 // ─────────────────────────────────────────────────────────
