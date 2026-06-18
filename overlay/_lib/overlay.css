@@ -10,8 +10,12 @@
   --purple:#a78bfa; --gold:#ffcc33; --green:#39d98a; --mut:#8b95a4;
 }
 *{box-sizing:border-box;margin:0;padding:0}
-html,body{width:1920px;height:1080px;overflow:hidden;background:transparent;
+/* Dark mode par défaut (fond sombre uniforme). Pour superposer sur une vidéo
+   en OBS, ouvrir l'overlay avec ?transparent=1 (le routeur rend le fond transparent). */
+html,body{width:1920px;height:1080px;overflow:hidden;
+  background:radial-gradient(1400px 820px at 50% -8%, #12161f, #0a0c11 55%, #070809);
   font-family:'Exo 2',system-ui,sans-serif;color:#fff}
+body.transparent{background:transparent}
 
 /* racine d'overlay : fondu d'affichage/masquage piloté par la régie */
 .overlay-root{position:absolute;inset:0;opacity:1;transition:opacity .45s ease}
@@ -64,7 +68,7 @@ html,body{width:1920px;height:1080px;overflow:hidden;background:transparent;
 .empty{padding:26px 22px;font-family:'Barlow Condensed';font-size:22px;color:var(--mut);text-align:center}
 
 /* ============ DASHBOARD PLEIN ÉCRAN ============ */
-.dash{position:absolute;inset:0;display:flex;flex-direction:column;background:linear-gradient(180deg,#0a0c11,#07090e)}
+.dash{position:absolute;inset:0;display:flex;flex-direction:column;background:transparent}
 .dash-top{display:flex;align-items:center;gap:20px;height:92px;padding:0 40px;
   background:linear-gradient(100deg,#141a24,#0a0c11);border-bottom:3px solid var(--orange)}
 .dash-top .brand{font-family:'Orbitron';font-weight:900;font-size:30px;letter-spacing:.5px}
@@ -197,7 +201,7 @@ html,body{width:1920px;height:1080px;overflow:hidden;background:transparent;
 
 /* ============ ENTRE DEUX MANCHES ============ */
 .inter{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:30px;
-  background:radial-gradient(900px 600px at 50% 40%,rgba(255,85,0,.10),transparent 60%),linear-gradient(180deg,#0a0c11,#07090e)}
+  background:radial-gradient(900px 600px at 50% 40%,rgba(255,85,0,.10),transparent 60%)}
 .inter .big{font-family:'Orbitron';font-weight:900;font-size:120px;letter-spacing:2px;line-height:.95}
 .inter .big b{color:var(--orange)}
 .inter .tagline{font-family:'Barlow Condensed';font-weight:500;font-size:34px;letter-spacing:8px;text-transform:uppercase;color:#aeb8c6}

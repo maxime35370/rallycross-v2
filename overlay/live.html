@@ -16,11 +16,13 @@
   import { watchControl, sessionKey } from './_lib/obs-control.js';
   import {
     getSessions, getResults, findSession, sortRace, getInterim, getInterimBefore,
-    getChampionshipStandings, getGridOrder, getGridLayout, getEcRank, getMqRank,
+    getChampionshipStandings, getMeetingPoints, getGridOrder, getGridLayout, getEcRank, getMqRank,
   } from './_lib/obs-data.js';
   import { renderScene, countdownText } from './_lib/obs-scenes.js';
 
   const root = document.getElementById('root');
+  // fond sombre par défaut ; ?transparent=1 → fond transparent (superposition vidéo OBS)
+  if (new URLSearchParams(location.search).get('transparent')) document.body.classList.add('transparent');
 
   function diag(msg, sub) {
     root.innerHTML = `<div class="ov-diag"><div class="t">🏁 RX CHRONO</div>
