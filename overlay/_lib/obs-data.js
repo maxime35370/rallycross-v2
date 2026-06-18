@@ -9,8 +9,8 @@
 
 import { db, fsQuery } from './obs-firebase.js';
 import {
-  calcInterimStandings, calcEcStandings, calcMqStandings,
-  qfPoints, dfPoints, finPoints, calcStatusPoints,
+  calcInterimStandings, calcEcStandings,
+  mqPoints, qfPoints, dfPoints, finPoints, calcStatusPoints,
 } from '../../js/calc.js';
 import { msToDisplay } from '../../js/utils.js';
 
@@ -267,22 +267,27 @@ export async function getEcRank(sessions, regulation) {
   return out;
 }
 
-/** Classement d'une manche : finishers (temps/écart + pts), puis DNF/DSQ/DNS avec leurs points. */
+/**
+ * Classement d'une manche EN DIRECT, réplique fidèle de timing.js (pointsFromResult) :
+ * le nombre d'engagés = nombre de résultats déjà saisis (points provisoires qui
+ * convergent vers le définitif quand tous les pilotes sont chronométrés).
+ */
 export async function getMqRank(session, regulation) {
-  const rows = await calcMqStandings(db, session, regulation);
-  const fin = rows.filter(r => r.ms != null && !r.status).sort((a, b) => a.ms - b.ms);
+  const results = await getResults(session.id);
+  const totalEngaged = results.length;   // = Object.keys(sessionResults).length côté site
+  const fin = results.filter(r => r.ms != null && !r.status).sort((a, b) => a.ms - b.ms);
   const lead = fin[0]?.ms ?? 0;
   const out = fin.map((r, i) => ({
-    position: r.position ?? i + 1, carNumber: r.carNumber, lastName: r.lastName,
+    position: i + 1, carNumber: r.carNumber, lastName: r.lastName,
     value: i === 0 ? msToDisplay(r.ms) : '+' + ((r.ms - lead) / 1000).toFixed(1),
-    points: r.points ?? '',
+    points: mqPoints(i + 1, regulation),
   }));
-  rows.filter(r => r.status)
+  results.filter(r => r.status)
     .sort((a, b) => (STATUS_ORDER[a.status] || 9) - (STATUS_ORDER[b.status] || 9))
     .forEach(r => out.push({
       position: null, carNumber: r.carNumber, lastName: r.lastName,
       value: STATUS_LABEL[r.status] || r.status,
-      points: r.points != null ? r.points : 0, status: r.status,
+      points: calcStatusPoints(r.status, 'MQ', totalEngaged, regulation), status: r.status,
     }));
   return out;
 }
