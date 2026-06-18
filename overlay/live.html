@@ -102,7 +102,7 @@
       if (ov && ov.key === sessionKey(ctrl) && ov.slots?.length) {
         slots = ov.slots;
       } else if (session) {
-        slots = await getGridOrder(session, sessions, reg);
+        slots = await getGridOrder(session, sessions, reg, await meetingsOf(reg));
       }
     }
     const layout = getGridLayout(reg, ctrl.sessionType);
@@ -138,22 +138,29 @@
     }
   }
 
-  // Boucle de contrôle
-  watchControl(async (ctrl) => {
-    applyVisibility(ctrl.visible);
-    const key = [ctrl.scene, ctrl.championshipId, ctrl.meetingId, ctrl.category,
-                 ctrl.sessionType, ctrl.sessionNum, JSON.stringify(ctrl.gridOverride),
-                 ctrl.headerText].join('|');
-    if (key === cacheKey) return;   // rien de pertinent n'a changé
-    cacheKey = key;
-    lastControl = ctrl;
-    try { await reload(ctrl); }
-    catch (e) { console.error('[overlay] reload', e); diag('Erreur de chargement', e.message); }
-  }, (err) => {
-    diag('Erreur Firestore', err.code === 'permission-denied'
-      ? 'Règle « obsControl » manquante — ajoute-la dans la console Firebase (voir README).'
-      : (err.code || err.message));
-  });
+  // Boucle de contrôle (avec reconnexion auto du listener)
+  let ctrlUnsub = null;
+  async function startControl() {
+    if (ctrlUnsub) { ctrlUnsub(); ctrlUnsub = null; }
+    ctrlUnsub = await watchControl(async (ctrl) => {
+      applyVisibility(ctrl.visible);
+      const key = [ctrl.scene, ctrl.championshipId, ctrl.meetingId, ctrl.category,
+                   ctrl.sessionType, ctrl.sessionNum, JSON.stringify(ctrl.gridOverride),
+                   ctrl.headerText, ctrl.nextText, ctrl.countdownEnd].join('|');
+      if (key === cacheKey) return;   // rien de pertinent n'a changé
+      cacheKey = key;
+      lastControl = ctrl;
+      try { await reload(ctrl); }
+      catch (e) { console.error('[overlay] reload', e); diag('Erreur de chargement', e.message); }
+    }, (err) => {
+      diag('Erreur Firestore', err.code === 'permission-denied'
+        ? 'Règle « obsControl » manquante — ajoute-la dans la console Firebase (voir README).'
+        : (err.code || err.message));
+      cacheKey = '';
+      setTimeout(startControl, 5000);   // reconnexion auto (règle ajoutée, coupure réseau…)
+    });
+  }
+  startControl();
 </script>
 </body>
 </html>

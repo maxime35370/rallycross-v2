@@ -93,12 +93,18 @@ export function renderDashboard(d) {
 
 export function renderGrid(d) {
   const { lanes = 5, rows = 3, positions = {} } = d.layout || {};
-  const byPos = {};
-  (d.slots || []).forEach(s => { byPos[s.pos] = s; });
+  const slots = d.slots || [];
+  const hasMatrix = Object.keys(positions).length > 0;   // QF/DF/FIN = grille en quinconce
+  const title = hasMatrix ? 'Grille de départ' : 'Ordre de départ';
 
-  let cells = '';
-  for (let r = 0; r < rows; r++) {
-    for (let c = 0; c < lanes; c++) {
+  let body;
+  if (!slots.length) {
+    body = '<div class="empty">Grille à venir…</div>';
+  } else if (hasMatrix) {
+    const byPos = {};
+    slots.forEach(s => { byPos[s.pos] = s; });
+    let cells = '';
+    for (let r = 0; r < rows; r++) for (let c = 0; c < lanes; c++) {
       const p = positions[r + '-' + c];
       const occ = p && byPos[p];
       if (occ) cells += `<div class="car ${p === 1 ? 'p1' : ''} ${occ.edited ? 'edited' : ''}"
@@ -106,14 +112,22 @@ export function renderGrid(d) {
         <span class="gp">${p}</span><span class="gn">${escHtml(String(occ.carNumber ?? ''))}</span>
         <span class="gl">${escHtml((occ.lastName || '').toUpperCase())}</span></div>`;
     }
+    body = `<div class="grid-matrix" style="grid-template-columns:repeat(${lanes},248px)">${cells}</div>`;
+  } else {
+    // Essais / manches : ordre de départ en liste ordonnée (2 colonnes si gros plateau)
+    const cols = slots.length > 10 ? 2 : 1;
+    body = `<div class="grid-list" style="grid-template-columns:repeat(${cols},minmax(440px,1fr))">
+      ${slots.map(s => `<div class="g-li ${s.pos === 1 ? 'p1' : ''} ${s.edited ? 'edited' : ''}">
+        <span class="gp">${s.pos}</span>
+        <span class="gn">${escHtml(String(s.carNumber ?? ''))}</span>
+        <span class="gl">${escHtml((s.lastName || '').toUpperCase())}</span></div>`).join('')}
+    </div>`;
   }
   return `
   <div class="grid-wrap">
-    <div class="head"><span class="h-cat">Grille de départ</span><span class="h-sub">${escHtml(d.sessionLabel || '')}</span></div>
+    <div class="head"><span class="h-cat">${title}</span><span class="h-sub">${escHtml(d.sessionLabel || '')}</span></div>
     ${d.headerText ? `<div class="grid-info"><span class="pin">📍</span><span>${escHtml(d.headerText)}</span></div>` : ''}
-    <div class="track"><div class="dir">SENS COURSE</div>
-      <div class="grid-matrix" style="grid-template-columns:repeat(${lanes},248px)">${cells || '<div class="empty">Grille à venir…</div>'}</div>
-    </div>
+    <div class="track">${hasMatrix ? '<div class="dir">SENS COURSE</div>' : ''}${body}</div>
   </div>`;
 }
 

@@ -9,7 +9,8 @@
 
 import { db, fsQuery } from './obs-firebase.js';
 import {
-  calcInterimStandings, qfPoints, dfPoints, finPoints, calcStatusPoints,
+  calcInterimStandings, calcEcStandings, calcMqStandings,
+  qfPoints, dfPoints, finPoints, calcStatusPoints,
 } from '../../js/calc.js';
 
 // ─────────────────────────────────────────────────────────
@@ -164,19 +165,43 @@ export async function getChampionshipStandings(meetings, category, regulation) {
 // ─────────────────────────────────────────────────────────
 
 /**
- * Ordre de grille AUTO : participants de la session triés par classement
- * intermédiaire (meilleur = pole). Renvoie [{pos, driverId, carNumber, lastName}].
- * (Le règlement gère la qualif fine ; l'opérateur peut corriger à la main.)
+ * Ordre de départ AUTO d'une session. Règles :
+ *  - EC (essais)      → ordre INVERSE du classement championnat (dernier = 1er)
+ *  - MQ (manche N)    → classement de la manche N-1, INVERSÉ (dernier = 1er)
+ *                       (manche 1 : essais inversés, sinon championnat inversé)
+ *  - QF/DF/FIN        → classement intermédiaire (meilleur = pole)
+ * Renvoie [{pos, driverId, carNumber, lastName}]. L'opérateur peut corriger à la main.
  */
-export async function getGridOrder(session, meetingSessions, regulation) {
+export async function getGridOrder(session, meetingSessions, regulation, meetings) {
   const participants = await getParticipants(session.id);
   if (!participants.length) return [];
-  const interim = await calcInterimStandings(db, meetingSessions, regulation);
+  const numCmp = (a, b) => String(a.carNumber).localeCompare(String(b.carNumber), 'fr', { numeric: true });
   const rank = {};
-  interim.forEach(r => { rank[r.driverId] = r.position ?? 999; });
-  participants.sort((a, b) =>
-    (rank[a.driverId] ?? 999) - (rank[b.driverId] ?? 999) ||
-    String(a.carNumber).localeCompare(String(b.carNumber), 'fr', { numeric: true }));
+  let dir = 'asc';   // 'asc' = meilleur en tête ; 'desc' = dernier en tête (essais/manches)
+
+  if (session.type === 'EC') {
+    const champ = meetings ? await getChampionshipStandings(meetings, session.category, regulation) : [];
+    champ.forEach(r => { rank[r.driverId] = r.position ?? 0; });
+    dir = 'desc';
+  } else if (session.type === 'MQ') {
+    const prev = meetingSessions.find(s => s.type === 'MQ' && s.num === (session.num ?? 1) - 1)
+              || meetingSessions.find(s => s.type === 'EC');
+    let standings = [];
+    if (prev) standings = prev.type === 'EC'
+      ? await calcEcStandings(db, meetingSessions, regulation)
+      : await calcMqStandings(db, prev, regulation);
+    if (!standings.length && meetings) standings = await getChampionshipStandings(meetings, session.category, regulation);
+    standings.forEach(r => { rank[r.driverId] = r.position ?? 0; });
+    dir = 'desc';
+  } else {
+    const interim = await calcInterimStandings(db, meetingSessions, regulation);
+    interim.forEach(r => { rank[r.driverId] = r.position ?? 999; });
+    dir = 'asc';
+  }
+
+  participants.sort((a, b) => dir === 'desc'
+    ? ((rank[b.driverId] ?? -1) - (rank[a.driverId] ?? -1)) || numCmp(a, b)   // dernier/inconnu en tête
+    : ((rank[a.driverId] ?? 999) - (rank[b.driverId] ?? 999)) || numCmp(a, b)); // meilleur en tête
   return participants.map((p, i) => ({
     pos: i + 1, driverId: p.driverId, carNumber: p.carNumber, lastName: p.lastName,
   }));

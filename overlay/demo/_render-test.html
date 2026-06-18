@@ -37,9 +37,17 @@ const data = {
     raceSub:'Supercar · Manche 2',interimSub:'après M2',champSub:'Supercar · 2026',race,interim,champ},
   grid:{sessionLabel:'Demi-finale 1 · Supercar',headerText:'CIRCUIT DE LOHÉAC · 6 TOURS · ASPHALTE + TERRE',layout,slots},
   'next-heat':{sessionLabel:'Série 3 · Super1600',slots},
+  ordre:{sessionLabel:'Essais chronométrés · D4',headerText:'CIRCUIT DE CHATEAUROUX · ESSAIS',layout:{lanes:5,rows:3,positions:{}},
+    slots:[
+      {pos:1,carNumber:421,lastName:'Rozier'},{pos:2,carNumber:419,lastName:'Boulant'},{pos:3,carNumber:418,lastName:'Bacheley'},
+      {pos:4,carNumber:415,lastName:'Gaignard'},{pos:5,carNumber:412,lastName:'Lortie'},{pos:6,carNumber:411,lastName:'Morin'},
+      {pos:7,carNumber:410,lastName:'Masset'},{pos:8,carNumber:408,lastName:'Renaud'},{pos:9,carNumber:405,lastName:'Thibault'},
+      {pos:10,carNumber:402,lastName:'Vasseur'},{pos:11,carNumber:399,lastName:'Caron'},{pos:12,carNumber:396,lastName:'Leclerc'},
+    ]},
   intermission:{nextText:'½ FINALE 1 — SUPERCAR',countdownEnd:Date.now()+5*60000,social:'📺 twitch.tv/tonchaine · #RallycrossFR'},
 };
 const scene = new URLSearchParams(location.search).get('scene')||'dashboard';
-document.getElementById('root').innerHTML = renderScene(scene, data[scene]);
+const type = scene === 'ordre' ? 'grid' : scene;
+document.getElementById('root').innerHTML = renderScene(type, data[scene] || data.dashboard);
 </script>
 </body></html>
