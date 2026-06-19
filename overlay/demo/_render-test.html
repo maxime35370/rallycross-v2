@@ -171,6 +171,18 @@ data['dash-df'] = {
   data['dash-mq2'].champ=cn.map((n,i)=>({position:i+1,carNumber:cno[i],lastName:n,grandTotal:79-i*3,delta:cd[i],meetingPts:cm[i]}));
 }
 
+{ // session-graph : manche terminée → 2 colonnes (manche + intermédiaire) + graphique d'évolution
+  const gno=[430,412,411,497,485,403,405,426,433,438,425,419,469,408,415,432,499,418,421,422,489,428,448,461,410];
+  const gnm=['Aunay','Lortie','Morin','Foulfoin','Roussillon','Barbier','Drouyer','Hautbois','Blanchard','Barbault-F.','Seignard','Boulant','Bedouet','Guillard','Gaignard','Merrien','Rio','Bacheley','Rozier','Le Lay','Hardier','Guiziou','Burson','Morin','Masset'];
+  const finals=[171,167,165,165,162,155,143,143,136,135,135,123,119,116,115,114,111,106,106,100,96,96,93,91,67];
+  const drivers=gnm.map((n,i)=>({carNumber:gno[i],lastName:n,
+    pts:[0.24,0.49,0.74,1].map((fr,m)=>Math.max(0,Math.round(finals[i]*fr+Math.sin(i*1.6+m*2.2)*8)))}));
+  const rank=[{position:1,carNumber:405,lastName:'Drouyer',value:'2:50.498',points:50},{position:2,carNumber:485,lastName:'Roussillon',value:'+0.0',points:45},{position:3,carNumber:433,lastName:'Blanchard',value:'+4.5',points:42},{position:4,carNumber:426,lastName:'Hautbois',value:'+4.5',points:40},{position:5,carNumber:411,lastName:'Morin',value:'+5.0',points:39},{position:6,carNumber:497,lastName:'Foulfoin',value:'+6.5',points:38},{position:null,carNumber:448,lastName:'Burson',value:'DNF',points:18,status:'DNF'},{position:null,carNumber:410,lastName:'Masset',value:'DNS',points:0,status:'DNS'}];
+  const interim=gnm.map((n,i)=>({position:i+1,carNumber:gno[i],lastName:n,totalPoints:finals[i]}));
+  data['session-graph']={mode:'mq',headerText:'MANCHE 4 · D4 · CHATEAUROUX',sessionLabel:'Classement manche 4',rank,interim,graph:{series:['M1','M2','M3','M4'],mode:'places',drivers}};
+  data['session-graph-pts']={...data['session-graph'],graph:{series:['M1','M2','M3','M4'],mode:'points',drivers}};
+}
+
 const scene = new URLSearchParams(location.search).get('scene')||'dashboard';
 const type = (scene === 'ordre' || scene === 'df-combo' || scene === 'fin-combo') ? 'grid'
   : (scene === 'dash-fin' || scene === 'dash-df' || scene === 'dash-mq2') ? 'dashboard'

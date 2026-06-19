@@ -18,6 +18,13 @@ import { msToDisplay } from '../../js/utils.js';
 // HELPERS
 // ─────────────────────────────────────────────────────────
 
+// Ordre des sessions dans une épreuve, pour les classements « au moment de la session
+// affichée » (on ne compte pas les phases postérieures).
+const PHASE_ORDER = { EC: 0, MQ: 1, QF: 2, DF: 3, FIN: 4 };
+const sessionRank = s => (PHASE_ORDER[s?.type] ?? 9) * 100 + (s?.num ?? 1);
+/** Filtre les sessions jusqu'à `upTo` inclus (selon l'ordre EC<MQ<QF<DF<FIN). */
+const upToSessions = (sessions, upTo) => upTo ? sessions.filter(s => sessionRank(s) <= sessionRank(upTo)) : sessions;
+
 export function getSessions(meetingId, category) {
   return fsQuery('sessions', [['meetingId', '==', meetingId], ['category', '==', category]]);
 }
@@ -85,8 +92,9 @@ async function calcPhasePoints(session, regulation) {
 // POINTS D'UN MEETING (interim + QF + DF + FIN) — copie de championship.js
 // ─────────────────────────────────────────────────────────
 
-export async function getMeetingPoints(meetingId, category, regulation) {
-  const sessions = await getSessions(meetingId, category);
+export async function getMeetingPoints(meetingId, category, regulation, upTo) {
+  // upTo : ne compter que les sessions jusqu'à celle affichée (intermédiaire + QF/DF/FIN antérieurs)
+  const sessions = upToSessions(await getSessions(meetingId, category), upTo);
   if (!sessions.length) return [];
 
   // Intermédiaire + phases (QF/DF/FIN) calculés en parallèle (lectures Firestore concurrentes).
@@ -122,9 +130,9 @@ export async function getMeetingPoints(meetingId, category, regulation) {
     .filter(d => d.total > 0);
 }
 
-/** Classement de l'épreuve (meeting) trié + positions. */
-export async function getMeetingStandings(meetingId, category, regulation) {
-  const rows = await getMeetingPoints(meetingId, category, regulation);
+/** Classement de l'épreuve (meeting) trié + positions. `upTo` : au moment de la session affichée. */
+export async function getMeetingStandings(meetingId, category, regulation, upTo) {
+  const rows = await getMeetingPoints(meetingId, category, regulation, upTo);
   rows.sort((a, b) => b.total - a.total);
   rows.forEach((d, i) => { d.position = (i > 0 && d.total === rows[i - 1].total) ? rows[i - 1].position : i + 1; });
   return rows;
@@ -146,7 +154,8 @@ export async function getInterim(meetingId, category, regulation) {
  * @param {Array} [provRank] - getMqRank déjà calculé (pour coller exactement à la colonne manche)
  */
 export async function getInterimLive(meetingId, category, regulation, currentSession, provRank) {
-  const sessions = await getSessions(meetingId, category);
+  // « au moment de la session » : on n'inclut pas les manches/phases postérieures
+  const sessions = upToSessions(await getSessions(meetingId, category), currentSession);
   const interimRows = await calcInterimStandings(db, sessions, regulation);
   if (currentSession?.type !== 'MQ') {
     return interimRows.sort((a, b) => (a.position ?? 99) - (b.position ?? 99));
@@ -173,11 +182,40 @@ export async function getInterimLive(meetingId, category, regulation, currentSes
   return rows;
 }
 
-/** Classement intermédiaire AVANT une manche (= en excluant cette session). Réf. pour la "remontada". */
-export async function getInterimBefore(meetingId, category, regulation, excludeSessionId) {
-  const sessions = (await getSessions(meetingId, category)).filter(s => s.id !== excludeSessionId);
+/** Classement intermédiaire AVANT une manche (sessions strictement antérieures à
+ *  `currentSession`, donc sans la manche en cours NI les suivantes). Réf. pour la "remontada". */
+export async function getInterimBefore(meetingId, category, regulation, currentSession) {
+  const sessions = (await getSessions(meetingId, category))
+    .filter(s => sessionRank(s) < sessionRank(currentSession));
   const rows = await calcInterimStandings(db, sessions, regulation);
   return rows.sort((a, b) => (a.position ?? 99) - (b.position ?? 99));
+}
+
+/**
+ * Évolution du classement intermédiaire manche par manche : pour chaque pilote,
+ * points cumulés (bonus essais + somme des points de manche) après chaque manche
+ * disputée. Sert au graphique d'évolution (places = rang par points ; points = cumul).
+ * @returns {{ series: string[], drivers: Array<{carNumber, lastName, pts:number[]}> }}
+ */
+export async function getInterimEvolution(meetingId, category, regulation, upTo) {
+  const sessions = await getSessions(meetingId, category);
+  let mqs = sessions.filter(s => s.type === 'MQ').sort((a, b) => (a.num ?? 0) - (b.num ?? 0));
+  if (upTo?.type === 'MQ') mqs = mqs.filter(m => (m.num ?? 0) <= (upTo.num ?? 0));   // pas les manches postérieures
+  const [ecRows, perManche] = await Promise.all([
+    calcEcStandings(db, sessions, regulation).catch(() => []),
+    Promise.all(mqs.map(m => calcMqStandings(db, m, regulation))),
+  ]);
+  const ec = {}; ecRows.forEach(r => { ec[r.driverId] = r.bonusPoints ?? 0; });
+  const doneIdx = perManche.map((rows, i) => rows.some(r => r.points != null) ? i : -1).filter(i => i >= 0);
+  if (doneIdx.length < 2) return { series: [], drivers: [] };   // graphique pertinent ≥ 2 manches
+  const info = {};
+  perManche.forEach(rows => rows.forEach(r => { if (!info[r.driverId]) info[r.driverId] = { carNumber: r.carNumber, lastName: r.lastName }; }));
+  const drivers = Object.keys(info).map(id => {
+    let acc = ec[id] ?? 0;
+    const pts = doneIdx.map(i => { acc += (perManche[i].find(x => x.driverId === id)?.points ?? 0); return acc; });
+    return { carNumber: info[id].carNumber, lastName: info[id].lastName, pts };
+  });
+  return { series: doneIdx.map((i, k) => 'M' + (mqs[i].num ?? k + 1)), drivers };
 }
 
 // ─────────────────────────────────────────────────────────
