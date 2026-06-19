@@ -51,8 +51,7 @@ export function sortRace(results) {
 // ─────────────────────────────────────────────────────────
 
 async function calcPhasePoints(session, regulation) {
-  const results      = await getResults(session.id);
-  const participants = await getParticipants(session.id);
+  const [results, participants] = await Promise.all([getResults(session.id), getParticipants(session.id)]);
   const resultMap = {};
   results.forEach(r => { resultMap[r.driverId] = r; });
 
@@ -90,7 +89,16 @@ export async function getMeetingPoints(meetingId, category, regulation) {
   const sessions = await getSessions(meetingId, category);
   if (!sessions.length) return [];
 
-  const interimRows = await calcInterimStandings(db, sessions, regulation);
+  // Intermédiaire + phases (QF/DF/FIN) calculés en parallèle (lectures Firestore concurrentes).
+  const phaseSessions = sessions.filter(s => ['QF', 'DF', 'FIN'].includes(s.type));
+  const [interimRows, phases] = await Promise.all([
+    calcInterimStandings(db, sessions, regulation),
+    Promise.all(phaseSessions.map(async s => {
+      const [pts, parts] = await Promise.all([calcPhasePoints(s, regulation), getParticipants(s.id)]);
+      return { field: s.type === 'FIN' ? 'fin' : s.type === 'DF' ? 'df' : 'qf', assign: s.type === 'FIN', pts, parts };
+    })),
+  ]);
+
   const driverMap = {};
   interimRows.forEach(r => {
     driverMap[r.driverId] = {
@@ -101,19 +109,13 @@ export async function getMeetingPoints(meetingId, category, regulation) {
   const blank = p => ({ driverId: p.driverId, carNumber: p.carNumber, firstName: p.firstName,
     lastName: p.lastName, interim: 0, qf: 0, df: 0, fin: 0 });
 
-  for (const qf of sessions.filter(s => s.type === 'QF')) {
-    const pts = await calcPhasePoints(qf, regulation);
-    (await getParticipants(qf.id)).forEach(p => { (driverMap[p.driverId] ||= blank(p)).qf += pts[p.driverId] ?? 0; });
-  }
-  for (const df of sessions.filter(s => s.type === 'DF')) {
-    const pts = await calcPhasePoints(df, regulation);
-    (await getParticipants(df.id)).forEach(p => { (driverMap[p.driverId] ||= blank(p)).df += pts[p.driverId] ?? 0; });
-  }
-  const fin = sessions.find(s => s.type === 'FIN');
-  if (fin) {
-    const pts = await calcPhasePoints(fin, regulation);
-    (await getParticipants(fin.id)).forEach(p => { (driverMap[p.driverId] ||= blank(p)).fin = pts[p.driverId] ?? 0; });
-  }
+  phases.forEach(({ field, assign, pts, parts }) => {
+    parts.forEach(p => {
+      const d = (driverMap[p.driverId] ||= blank(p));
+      if (assign) d[field] = pts[p.driverId] ?? 0;     // FIN : session unique → assignation
+      else        d[field] += pts[p.driverId] ?? 0;    // QF/DF : cumul
+    });
+  });
 
   return Object.values(driverMap)
     .map(d => ({ ...d, total: d.interim + d.qf + d.df + d.fin }))
@@ -147,10 +149,11 @@ export async function getInterimBefore(meetingId, category, regulation, excludeS
 // ─────────────────────────────────────────────────────────
 
 export async function getChampionshipStandings(meetings, category, regulation) {
+  // Points de chaque meeting en parallèle (au lieu d'enchaîner les lectures une par une).
+  const perMeeting = await Promise.all(meetings.map(m => getMeetingPoints(m.id, category, regulation)));
   const champMap = {};
-  for (const m of meetings) {
-    const pts = await getMeetingPoints(m.id, category, regulation);
-    pts.forEach(d => {
+  meetings.forEach((m, i) => {
+    perMeeting[i].forEach(d => {
       const c = (champMap[d.driverId] ||= {
         driverId: d.driverId, carNumber: d.carNumber, firstName: d.firstName,
         lastName: d.lastName, meetingPts: {}, grandTotal: 0,
@@ -158,7 +161,7 @@ export async function getChampionshipStandings(meetings, category, regulation) {
       c.meetingPts[m.id] = d.total;
       c.grandTotal += d.total;
     });
-  }
+  });
   const standings = Object.values(champMap).sort((a, b) => b.grandTotal - a.grandTotal);
   let pos = 1;
   standings.forEach((d, i) => {
@@ -212,18 +215,29 @@ export async function getGridOrder(session, meetingSessions, regulation, meeting
     const current = (meetings || []).find(m => m.id === session.meetingId);
     const past = (meetings || []).filter(m => m.id !== session.meetingId && (m.date || '') < (current?.date || '9999'));
     if (!past.length) return [...raw].sort(numDesc).map(toSlot);
-    const pts = {};
-    for (const m of past) {
+    // Points cumulés des meetings précédents — meetings traités en parallèle, puis fusion (additive).
+    const partials = await Promise.all(past.map(async m => {
       const ms = await getSessions(m.id, session.category);
-      if (!ms.length) continue;
-      (await calcInterimStandings(db, ms, regulation)).forEach(r => { pts[r.driverId] = (pts[r.driverId] || 0) + (r.interimPoints ?? 0); });
-      for (const df of ms.filter(s => s.type === 'DF'))
-        (await getResults(df.id)).filter(r => r.ms && !r.status).sort((a, b) => a.ms - b.ms)
-          .forEach((r, i) => { pts[r.driverId] = (pts[r.driverId] || 0) + (DF_PTS[i + 1] ?? 0); });
+      if (!ms.length) return {};
+      const local = {};
+      const dfs = ms.filter(s => s.type === 'DF');
       const fin = ms.find(s => s.type === 'FIN');
-      if (fin) (await getResults(fin.id)).filter(r => r.ms && !r.status).sort((a, b) => a.ms - b.ms)
-        .forEach((r, i) => { pts[r.driverId] = (pts[r.driverId] || 0) + (FIN_PTS[i + 1] ?? 0); });
-    }
+      const [interim, ...reads] = await Promise.all([
+        calcInterimStandings(db, ms, regulation),
+        ...dfs.map(df => getResults(df.id)),
+        ...(fin ? [getResults(fin.id)] : []),
+      ]);
+      interim.forEach(r => { local[r.driverId] = (local[r.driverId] || 0) + (r.interimPoints ?? 0); });
+      dfs.forEach((df, i) => {
+        reads[i].filter(r => r.ms && !r.status).sort((a, b) => a.ms - b.ms)
+          .forEach((r, k) => { local[r.driverId] = (local[r.driverId] || 0) + (DF_PTS[k + 1] ?? 0); });
+      });
+      if (fin) reads[dfs.length].filter(r => r.ms && !r.status).sort((a, b) => a.ms - b.ms)
+        .forEach((r, k) => { local[r.driverId] = (local[r.driverId] || 0) + (FIN_PTS[k + 1] ?? 0); });
+      return local;
+    }));
+    const pts = {};
+    partials.forEach(local => { for (const id in local) pts[id] = (pts[id] || 0) + local[id]; });
     const notRanked = raw.filter(p => !pts[p.driverId]).sort(numDesc);
     const ranked = raw.filter(p => pts[p.driverId]).sort((a, b) => pts[a.driverId] - pts[b.driverId]);
     return [...notRanked, ...ranked].map(toSlot);
@@ -245,25 +259,31 @@ export async function getGridOrder(session, meetingSessions, regulation, meeting
   // (interim + DF) décroissants, puis temps en DF. (≠ simple classement intermédiaire :
   // un pilote 1er au championnat mais 4e de sa demi part en 4e ligne.)
   if (session.type === 'FIN') {
+    const dfSessions = meetingSessions.filter(s => s.type === 'DF');
+    // Lectures des demi-finales + intermédiaire en parallèle.
+    const [dfData, interimRows] = await Promise.all([
+      Promise.all(dfSessions.map(async df => {
+        const [res, parts] = await Promise.all([getResults(df.id), getParticipants(df.id)]);
+        return { res, parts };
+      })),
+      calcInterimStandings(db, meetingSessions, regulation),
+    ]);
     const dfPos = {}, dfPts = {}, dfMs = {};
-    for (const df of meetingSessions.filter(s => s.type === 'DF')) {
-      const res   = await getResults(df.id);
-      const parts = await getParticipants(df.id);
+    dfData.forEach(({ res, parts }) => {
       const resMap = {};
       res.forEach(r => { resMap[r.driverId] = r; });
-      const finished = parts
+      parts
         .map(p => ({ driverId: p.driverId, ms: resMap[p.driverId]?.ms ?? null }))
         .filter(r => r.ms)
-        .sort((a, b) => a.ms - b.ms);
-      finished.forEach((r, i) => {
-        dfPos[r.driverId] = i + 1;
-        dfPts[r.driverId] = resMap[r.driverId]?.points ?? 0;
-        dfMs[r.driverId]  = resMap[r.driverId]?.ms ?? Infinity;
-      });
-    }
+        .sort((a, b) => a.ms - b.ms)
+        .forEach((r, i) => {
+          dfPos[r.driverId] = i + 1;
+          dfPts[r.driverId] = resMap[r.driverId]?.points ?? 0;
+          dfMs[r.driverId]  = resMap[r.driverId]?.ms ?? Infinity;
+        });
+    });
     const intPts = {};
-    (await calcInterimStandings(db, meetingSessions, regulation))
-      .forEach(r => { intPts[r.driverId] = r.interimPoints ?? 0; });
+    interimRows.forEach(r => { intPts[r.driverId] = r.interimPoints ?? 0; });
     const total = id => (intPts[id] ?? 0) + (dfPts[id] ?? 0);
     return [...raw].sort((a, b) => {
       const pa = dfPos[a.driverId] ?? 99, pb = dfPos[b.driverId] ?? 99;
@@ -340,8 +360,8 @@ export async function getMqRank(session, regulation) {
  * Le nombre d'engagés (pour les statuts) = nombre de participants à la session.
  */
 export async function getPhaseRank(session, regulation) {
-  const results      = await getResults(session.id);
-  const totalEngaged = (await getParticipants(session.id)).length || results.length;
+  const [results, participants] = await Promise.all([getResults(session.id), getParticipants(session.id)]);
+  const totalEngaged = participants.length || results.length;
   const ptsFn = session.type === 'DF' ? (p => dfPoints(p, regulation))
               : session.type === 'QF' ? (p => qfPoints(p, regulation))
               : (p => finPoints(p, regulation));

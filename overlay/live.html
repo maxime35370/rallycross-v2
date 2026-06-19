@@ -43,6 +43,23 @@
   let sessTimer = null;       // effacement différé de la surbrillance (dernier de la manche)
   let lastControl = null;
   let champRows = [];         // classement championnat (rafraîchi périodiquement)
+  const meetingsCache = new Map();   // regId|year → meetings (liste fixe pendant l'épreuve)
+  const baselineCache = new Map();   // champId|cat|meetingId → classement championnat AVANT l'épreuve
+  let renderTimer = null;            // debounce des saisies (annulé au changement de scène)
+
+  // Délai (ms) de regroupement des saisies : un seul recalcul après une rafale de saisies.
+  const SAISIE_DELAY = 900;
+  // Rend le 1er instantané immédiatement (changement de scène), puis regroupe les
+  // mises à jour suivantes (saisies) : recalcul unique après SAISIE_DELAY.
+  function freshThenDebounce(fn) {
+    let first = true, lastArgs;
+    return (...args) => {
+      lastArgs = args;
+      if (first) { first = false; fn(...args); return; }
+      clearTimeout(renderTimer);
+      renderTimer = setTimeout(() => fn(...lastArgs), SAISIE_DELAY);
+    };
+  }
 
   function labelFor(type, num) {
     if (type === 'EC')  return 'Essais chronométrés';
@@ -66,8 +83,26 @@
 
   async function meetingsOf(reg) {
     if (!reg) return [];
+    const key = reg.id + '|' + reg.year;
+    if (meetingsCache.has(key)) return meetingsCache.get(key);
     const all = await fsQuery('meetings', [['year', '==', reg.year]]);
-    return all.filter(m => m.championshipId === reg.id || !m.championshipId);
+    const list = all.filter(m => m.championshipId === reg.id || !m.championshipId);
+    meetingsCache.set(key, list);
+    return list;
+  }
+
+  // Classement championnat AVANT l'épreuve (meetings passés) : ne change pas pendant
+  // l'épreuve → calculé une seule fois, réutilisé à chaque changement de scène.
+  // (Pour forcer un recalcul — ex. édition d'un meeting passé — recharger la source OBS.)
+  async function championshipBaseline(reg, meetingId, category) {
+    const key = reg.id + '|' + category + '|' + meetingId;
+    if (baselineCache.has(key)) return baselineCache.get(key);
+    const all = await meetingsOf(reg);
+    const standings = await getChampionshipStandings(all.filter(m => m.id !== meetingId), category, reg).catch(() => []);
+    const base = { tot: {}, pos: {}, info: {} };
+    standings.forEach(r => { base.tot[r.driverId] = r.grandTotal; base.pos[r.driverId] = r.position; base.info[r.driverId] = r; });
+    baselineCache.set(key, base);
+    return base;
   }
 
   // Recharge complète sur changement de sélection
@@ -76,6 +111,7 @@
     if (champTimer)   { clearInterval(champTimer); champTimer = null; }
     if (cdTimer)      { clearInterval(cdTimer); cdTimer = null; }
     if (sessTimer)    { clearTimeout(sessTimer); sessTimer = null; }
+    if (renderTimer)  { clearTimeout(renderTimer); renderTimer = null; }   // annule un recalcul de saisie en attente
 
     // Écran d'attente : indépendant du meeting/catégorie + compte à rebours
     if (ctrl.scene === 'intermission') {
@@ -167,7 +203,7 @@
           sessTimer = setTimeout(() => { lastAddedId = null; sessTimer = null; renderSess(null); }, 10000);
         }
       };
-      unsubResults = await watchQuery('results', [['sessionId', '==', session.id]], rows => renderSess(rows));
+      unsubResults = await watchQuery('results', [['sessionId', '==', session.id]], freshThenDebounce(rows => renderSess(rows)));
       return;
     }
 
@@ -191,7 +227,7 @@
           layout, slots, poleSide, results,
         });
       };
-      unsubResults = await watchQuery('results', [['sessionId', '==', session.id]], () => renderCombo());
+      unsubResults = await watchQuery('results', [['sessionId', '==', session.id]], freshThenDebounce(() => renderCombo()));
       return;
     }
 
@@ -212,13 +248,13 @@
       poleSide = (await getDocById('meetings', ctrl.meetingId).catch(() => null))?.poleSide || null;
     }
 
-    // Championnat : référence AVANT l'épreuve (meeting exclu), calculée 1 fois ;
+    // Championnat : référence AVANT l'épreuve (meeting exclu), calculée 1 fois (mise en cache) ;
     // puis on ajoute en direct les points du meeting en cours (léger) → total + flèches + (+meeting).
     let champBeforeTot = {}, champBeforePos = {}, drvInfo = {};
     if (ctrl.scene === 'dashboard') {
-      const all = await meetingsOf(reg);
-      (await getChampionshipStandings(all.filter(m => m.id !== ctrl.meetingId), ctrl.category, reg).catch(() => []))
-        .forEach(r => { champBeforeTot[r.driverId] = r.grandTotal; champBeforePos[r.driverId] = r.position; drvInfo[r.driverId] = r; });
+      const base = await championshipBaseline(reg, ctrl.meetingId, ctrl.category);
+      champBeforeTot = base.tot; champBeforePos = base.pos;
+      drvInfo = { ...base.info };   // copie : buildChamp ajoute les pilotes du meeting en cours (ne pas polluer le cache)
     }
     const hasChampBefore = Object.keys(champBeforeTot).length > 0;
 
@@ -279,7 +315,7 @@
 
     if (ctrl.scene === 'dashboard' && session) {
       // Live : on s'abonne aux résultats de la session courante
-      unsubResults = await watchQuery('results', [['sessionId', '==', session.id]], rows => renderNow(rows));
+      unsubResults = await watchQuery('results', [['sessionId', '==', session.id]], freshThenDebounce(rows => renderNow(rows)));
     } else {
       await renderNow(session ? await getResults(session.id) : []);
     }
