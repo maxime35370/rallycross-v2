@@ -170,14 +170,17 @@ export async function getInterimLive(meetingId, category, regulation, currentSes
   const provPts = {}; prov.forEach(r => { if (r.driverId) provPts[r.driverId] = numPts(r); });
   const rows = interimRows.map(r => ({
     ...r,
+    _origPos: r.position,   // position DÉPARTAGÉE par le site (tie-breaker), à conserver
     totalPoints: (r.totalPoints ?? 0) - (defPts[r.driverId] ?? 0) + (provPts[r.driverId] ?? 0),
   }));
-  rows.sort((a, b) => (b.totalPoints ?? 0) - (a.totalPoints ?? 0));
-  let p = 1;
+  // tri : points (provisoires) puis ordre départagé du site (préserve le tie-breaker)
+  rows.sort((a, b) => (b.totalPoints ?? 0) - (a.totalPoints ?? 0) || (a._origPos ?? 99) - (b._origPos ?? 99));
+  let pos = 1;
   rows.forEach((r, i) => {
-    r.position = (i > 0 && r.totalPoints === rows[i - 1].totalPoints) ? rows[i - 1].position : p;
-    p = i + 2;
-    r.interimPoints = interimPoints(r.position, regulation);   // pts championnat cohérents avec la position live
+    // ex æquo SEULEMENT si le site ne les départage pas (mêmes points ET même position d'origine)
+    if (i > 0 && !(r.totalPoints === rows[i - 1].totalPoints && r._origPos === rows[i - 1]._origPos)) pos = i + 1;
+    r.position = pos;
+    r.interimPoints = interimPoints(r.position, regulation);   // pts championnat cohérents avec la position
   });
   return rows;
 }
