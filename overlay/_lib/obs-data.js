@@ -409,7 +409,9 @@ export async function getPhaseRank(session, regulation) {
     points: ptsFn(i + 1),
   }));
   results.filter(r => r.status)
-    .sort((a, b) => (STATUS_ORDER[a.status] || 9) - (STATUS_ORDER[b.status] || 9))
+    // tri par type de statut, puis par position manuelle (DNF 7e avant DNF 8e)
+    .sort((a, b) => (STATUS_ORDER[a.status] || 9) - (STATUS_ORDER[b.status] || 9)
+                  || (a.manualPosition ?? 999) - (b.manualPosition ?? 999))
     .forEach(r => out.push({
       driverId: r.driverId, position: null, carNumber: r.carNumber, lastName: r.lastName,
       value: STATUS_LABEL[r.status] || r.status,
