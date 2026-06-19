@@ -155,9 +155,25 @@ data['dash-df'] = {
     delta:i===1?2:i===2?-1:i===19?3:0, meetingPts:[3,25,9,16,21,0,0,7,5,4,2,0,0,1,0,0,0,0,0,0][i]}));
 }
 
+{ // dash-mq2 : dashboard manche 2 en 3 colonnes (course | intermédiaire | championnat top 20)
+  const rno=[412,430,497,403,485,411,438,426,433,405,425,432,418,419,469,415,448,489,461,408,421,422,499,428];
+  const rn=['Lortie','Aunay','Foulfoin','Barbier','Roussillon','Morin','Barbault-Forget','Hautbois','Blanchard','Drouyer','Seignard','Merrien','Bacheley','Boulant','Bedouet','Gaignard','Burson','Hardier','Morin','Guillard','Rozier','Le Lay','Rio','Guiziou'];
+  const gaps=[0,5,6.697,8.381,9.347,9.469,10.03,10.258,11.333,11.577,11.667,12.43,12.667,13.703,13.892,14.1,14.469,15.03,15.544,15.802,17.389,20,26.031,29.031];
+  data['dash-mq2']={ threeCol:true, headerText:'CIRCUIT DE CHATEAUROUX · D4', category:'D4',
+    raceSub:'D4 · Manche 2', interimSub:'', champSub:'D4 · 2026',
+    race:[...rn.map((n,i)=>({carNumber:rno[i],lastName:n,ms:170654+Math.round(gaps[i]*1000),status:null})),{carNumber:410,lastName:'Masset',ms:null,status:'DNF'}] };
+  const ino=[412,430,497,403,485,411,438,426,425,405,422,410,469,418,419,432,415,448,421,499];
+  const inn=['Lortie','Aunay','Foulfoin','Barbier','Roussillon','Morin','Barbault-Forget','Hautbois','Seignard','Drouyer','Le Lay','Masset','Bedouet','Bacheley','Boulant','Merrien','Gaignard','Burson','Rozier','Rio'];
+  data['dash-mq2'].interim=inn.map((n,i)=>({position:i+1,carNumber:ino[i],lastName:n,totalPoints:104-i*4}));
+  const cno=[405,469,412,422,410,497,433,448,430,415,425,408,421,426,499,403,461,432,485,489];
+  const cn=['Drouyer','Bedouet','Lortie','Le Lay','Masset','Foulfoin','Blanchard','Burson','Aunay','Gaignard','Seignard','Guillard','Rozier','Hautbois','Rio','Barbier','Morin','Merrien','Roussillon','Hardier'];
+  const cd=[2,0,5,-1,-1,3,-1,-3,0,3,4,-2,1,6,1,0,3,0,1,-5], cm=[2,0,16,0,0,14,3,0,7,13,18,0,5,16,12,0,14,14,12,0];
+  data['dash-mq2'].champ=cn.map((n,i)=>({position:i+1,carNumber:cno[i],lastName:n,grandTotal:79-i*3,delta:cd[i],meetingPts:cm[i]}));
+}
+
 const scene = new URLSearchParams(location.search).get('scene')||'dashboard';
 const type = (scene === 'ordre' || scene === 'df-combo' || scene === 'fin-combo') ? 'grid'
-  : (scene === 'dash-fin' || scene === 'dash-df') ? 'dashboard'
+  : (scene === 'dash-fin' || scene === 'dash-df' || scene === 'dash-mq2') ? 'dashboard'
   : scene.startsWith('session') ? 'session' : scene;
 document.getElementById('root').innerHTML = renderScene(type, data[scene] || data.dashboard);
 </script>

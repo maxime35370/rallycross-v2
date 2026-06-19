@@ -9,8 +9,8 @@
 
 import { db, fsQuery } from './obs-firebase.js';
 import {
-  calcInterimStandings, calcEcStandings,
-  mqPoints, qfPoints, dfPoints, finPoints, calcStatusPoints,
+  calcInterimStandings, calcEcStandings, calcMqStandings,
+  mqPoints, qfPoints, dfPoints, finPoints, interimPoints, calcStatusPoints,
 } from '../../js/calc.js';
 import { msToDisplay } from '../../js/utils.js';
 
@@ -135,6 +135,42 @@ export async function getInterim(meetingId, category, regulation) {
   const sessions = await getSessions(meetingId, category);
   const rows = await calcInterimStandings(db, sessions, regulation);
   return rows.sort((a, b) => (a.position ?? 99) - (b.position ?? 99));
+}
+
+/**
+ * Classement intermédiaire "live" : comme getInterim, mais les points de la manche
+ * EN COURS sont provisoires (basés sur les chronos déjà saisis — comme la colonne
+ * manche / la vue chrono du site) au lieu de la valeur définitive (plateau complet).
+ * Les deux convergent en fin de manche. L'ajustement n'opère que pour une MQ en cours.
+ * @param {object} currentSession - session affichée
+ * @param {Array} [provRank] - getMqRank déjà calculé (pour coller exactement à la colonne manche)
+ */
+export async function getInterimLive(meetingId, category, regulation, currentSession, provRank) {
+  const sessions = await getSessions(meetingId, category);
+  const interimRows = await calcInterimStandings(db, sessions, regulation);
+  if (currentSession?.type !== 'MQ') {
+    return interimRows.sort((a, b) => (a.position ?? 99) - (b.position ?? 99));
+  }
+  // points définitifs (plateau complet) vs provisoires (chronos saisis) de la manche en cours
+  const [defRows, prov] = await Promise.all([
+    calcMqStandings(db, currentSession, regulation),
+    provRank ? Promise.resolve(provRank) : getMqRank(currentSession, regulation),
+  ]);
+  const numPts = r => (typeof r.points === 'number' ? r.points : 0);
+  const defPts = {}; defRows.forEach(r => { defPts[r.driverId] = numPts(r); });
+  const provPts = {}; prov.forEach(r => { if (r.driverId) provPts[r.driverId] = numPts(r); });
+  const rows = interimRows.map(r => ({
+    ...r,
+    totalPoints: (r.totalPoints ?? 0) - (defPts[r.driverId] ?? 0) + (provPts[r.driverId] ?? 0),
+  }));
+  rows.sort((a, b) => (b.totalPoints ?? 0) - (a.totalPoints ?? 0));
+  let p = 1;
+  rows.forEach((r, i) => {
+    r.position = (i > 0 && r.totalPoints === rows[i - 1].totalPoints) ? rows[i - 1].position : p;
+    p = i + 2;
+    r.interimPoints = interimPoints(r.position, regulation);   // pts championnat cohérents avec la position live
+  });
+  return rows;
 }
 
 /** Classement intermédiaire AVANT une manche (= en excluant cette session). Réf. pour la "remontada". */
