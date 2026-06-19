@@ -89,6 +89,7 @@
   <div class="top">
     <span class="brand">RX<b>CHRONO</b></span><span class="tag">Régie · OBS</span>
     <div class="meet">
+      <select class="sel" id="champSel"></select>
       <select class="sel" id="meetSel"></select>
       <span class="live off" id="liveBadge"><span class="d"></span><span id="liveTxt">MASQUÉ</span></span>
     </div>
@@ -185,19 +186,11 @@
 
   // ---------- CHARGEMENT ----------
   const champs = await fsQuery('championships', []);
-  champ = champs.find(c => c.isActive) || champs[0] || null;
-  categories = (champ?.categories || []).map(c => c.name || c.id);
-  state.championshipId = champ?.id || '';
-
-  const allMeetings = champ ? (await fsQuery('meetings', [['year', '==', champ.year]]))
-    .filter(m => m.championshipId === champ.id || !m.championshipId) : [];
-  meetings = allMeetings.sort((a, b) => String(a.date).localeCompare(String(b.date)));
   const meetSel = document.getElementById('meetSel');
-  meetSel.innerHTML = meetings.map(m =>
-    `<option value="${m.id}">${(m.date ? new Date(m.date).toLocaleDateString('fr-FR') : '?')} — ${m.location || '?'}</option>`).join('')
-    || '<option value="">Aucun meeting</option>';
+  const champSel = document.getElementById('champSel');
+  let phases = [];
 
-  // phases depuis le règlement
+  // phases depuis le règlement du championnat courant
   function buildPhases() {
     const sc = champ?.sessionConfig || {};
     const ph = [];
@@ -208,11 +201,37 @@
     ph.push({ t: 'FIN', n: 1, l: 'Finale' });
     return ph;
   }
-  const phases = buildPhases();
+  function renderMeetSel() {
+    meetSel.innerHTML = meetings.map(m =>
+      `<option value="${m.id}">${(m.date ? new Date(m.date).toLocaleDateString('fr-FR') : '?')} — ${m.location || '?'}</option>`).join('')
+      || '<option value="">Aucun meeting</option>';
+  }
+  function renderCats() {
+    document.getElementById('cats').innerHTML = categories.map(c => `<div class="b" data-cat="${c}">${c}</div>`).join('');
+    document.querySelectorAll('#cats .b').forEach(b => b.onclick = () => { push({ category: b.dataset.cat }); paint(); });
+  }
+  function renderPhases() {
+    document.getElementById('phases').innerHTML = phases.map(p => `<div class="b" data-ph="${p.t}-${p.n}">${p.l}</div>`).join('');
+    document.querySelectorAll('#phases .b').forEach(b => b.onclick = () => { const [t, n] = b.dataset.ph.split('-'); push({ sessionType: t, sessionNum: +n }); paint(); });
+  }
+  // (re)charge un championnat : catégories, phases et meetings — puis rafraîchit l'UI
+  async function loadChampionship(c) {
+    champ = c;
+    state.championshipId = c?.id || '';
+    categories = (c?.categories || []).map(x => x.name || x.id);
+    phases = buildPhases();
+    const all = c ? (await fsQuery('meetings', [['year', '==', c.year]]))
+      .filter(m => m.championshipId === c.id || !m.championshipId) : [];
+    meetings = all.sort((a, b) => String(a.date).localeCompare(String(b.date)));
+    renderMeetSel(); renderCats(); renderPhases();
+  }
 
-  // catégories + phases (boutons)
-  document.getElementById('cats').innerHTML = categories.map(c => `<div class="b" data-cat="${c}">${c}</div>`).join('');
-  document.getElementById('phases').innerHTML = phases.map(p => `<div class="b" data-ph="${p.t}-${p.n}">${p.l}</div>`).join('');
+  // sélecteur de championnat (la liste des meetings/catégories/phases suit)
+  champSel.innerHTML = champs.map(c => `<option value="${c.id}">${c.name || c.year || c.id}</option>`).join('')
+    || '<option value="">Aucun championnat</option>';
+  const initialChamp = champs.find(c => c.isActive) || champs[0] || null;
+  champSel.value = initialChamp?.id || '';
+  await loadChampionship(initialChamp);
 
   // ---------- ÉCRITURE (le SEUL write : doc obsControl/live) ----------
   function push(patch) {
@@ -262,11 +281,17 @@
 
   // ---------- ACTIONS ----------
   document.querySelectorAll('#scenes .b').forEach(b => b.onclick = () => { push({ scene: b.dataset.scene }); paint(); });
-  document.querySelectorAll('#cats .b').forEach(b => b.onclick = () => { push({ category: b.dataset.cat }); paint(); });
-  document.querySelectorAll('#phases .b').forEach(b => b.onclick = () => {
-    const [t, n] = b.dataset.ph.split('-'); push({ sessionType: t, sessionNum: +n }); paint();
-  });
+  // (boutons catégories/phases : liés dans renderCats()/renderPhases(), car re-rendus au changement de championnat)
   meetSel.onchange = () => { push({ meetingId: meetSel.value }); paint(); };
+  champSel.onchange = async () => {
+    const c = champs.find(x => x.id === champSel.value) || null;
+    await loadChampionship(c);
+    // ramène catégorie + meeting sur des valeurs valides du nouveau championnat
+    const cat = categories.includes(state.category) ? state.category : (categories[0] || '');
+    const mid = meetings.find(m => m.id === state.meetingId) ? state.meetingId : (meetings[0]?.id || '');
+    push({ championshipId: c?.id || '', category: cat, meetingId: mid });
+    paint();
+  };
   document.getElementById('visToggle').onclick = () => { push({ visible: !state.visible }); paint(); };
   document.getElementById('hdrBtn').onclick = () => push({ headerText: document.getElementById('hdr').value });
   document.getElementById('nextBtn').onclick = () => push({ nextText: document.getElementById('nextTxt').value });
