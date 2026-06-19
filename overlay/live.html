@@ -61,6 +61,11 @@
     };
   }
 
+  // nom affichable d'une catégorie depuis son id (les sessions utilisent l'id = c.id || c.name)
+  function catLabel(reg, id) {
+    return (reg?.categories || []).find(c => (c.id || c.name) === id)?.name || id || '';
+  }
+
   function labelFor(type, num) {
     if (type === 'EC')  return 'Essais chronométrés';
     if (type === 'MQ')  return 'Manche ' + (num ?? 1);
@@ -135,6 +140,9 @@
     const sessions = await getSessions(ctrl.meetingId, ctrl.category);
     const session  = findSession(sessions, ctrl.sessionType, ctrl.sessionNum);
     const sLabel   = labelFor(ctrl.sessionType, ctrl.sessionNum);
+    const catName  = catLabel(reg, ctrl.category);   // nom affichable (la requête utilise ctrl.category = id)
+    // en-tête : texte saisi, sinon par défaut « Catégorie · Phase »
+    const headerText = ctrl.headerText || [catName, sLabel].filter(Boolean).join(' · ');
 
     // Scène "Grille" pour ESSAIS / MANCHES : vue multi-colonnes en direct
     // (à passer | classement | intermédiaire). Le pilote quitte "à passer"
@@ -182,7 +190,7 @@
         const todo = order.filter(o => !hasRun(o.driverId)).map((o, i) => ({ pos: i + 1, carNumber: o.carNumber, lastName: o.lastName }));
         const data = {
           mode: ctrl.sessionType === 'EC' ? 'ec' : 'mq',
-          headerText: ctrl.headerText, sessionLabel: `${sLabel} · ${ctrl.category}`,
+          headerText, sessionLabel: `${sLabel} · ${catName}`,
           todo, rank,
         };
         // Classement intermédiaire : pertinent à partir de la manche 2 (≥ 2 manches).
@@ -227,7 +235,7 @@
         const results = await getPhaseRank(session, reg).catch(() => []);
         root.innerHTML = renderScene('grid', {
           phase: ctrl.sessionType, qualify,
-          headerText: ctrl.headerText, sessionLabel: `${sLabel} · ${ctrl.category}`,
+          headerText, sessionLabel: `${sLabel} · ${catName}`,
           layout, slots, poleSide, results,
         });
       };
@@ -292,9 +300,9 @@
     // Fonction de rendu (recalcule intermédiaire + championnat à chaque tick résultats)
     const renderNow = async (raceResults) => {
       const data = {
-        headerText: ctrl.headerText, category: ctrl.category, sessionLabel: sLabel,
-        raceSub: `${ctrl.category} · ${sLabel}`, interimSub: '',
-        champSub: `${ctrl.category} · ${reg.year}`, social: ctrl.headerText,
+        headerText, category: catName, sessionLabel: sLabel,
+        raceSub: `${catName} · ${sLabel}`, interimSub: '',
+        champSub: `${catName} · ${reg.year}`, social: headerText,
         layout, slots, poleSide,
       };
       if (ctrl.scene === 'dashboard') {

@@ -207,7 +207,8 @@
       || '<option value="">Aucun meeting</option>';
   }
   function renderCats() {
-    document.getElementById('cats').innerHTML = categories.map(c => `<div class="b" data-cat="${c}">${c}</div>`).join('');
+    // data-cat = id (valeur stockée dans les sessions) ; texte = nom (affichage)
+    document.getElementById('cats').innerHTML = categories.map(c => `<div class="b" data-cat="${c.id}">${c.name}</div>`).join('');
     document.querySelectorAll('#cats .b').forEach(b => b.onclick = () => { push({ category: b.dataset.cat }); paint(); });
   }
   function renderPhases() {
@@ -218,7 +219,8 @@
   async function loadChampionship(c) {
     champ = c;
     state.championshipId = c?.id || '';
-    categories = (c?.categories || []).map(x => x.name || x.id);
+    // id = valeur des sessions (getChampCategories = c.id || c.name côté site) ; name = affichage
+    categories = (c?.categories || []).map(x => ({ id: x.id || x.name, name: x.name || x.id }));
     phases = buildPhases();
     const all = c ? (await fsQuery('meetings', [['year', '==', c.year]]))
       .filter(m => m.championshipId === c.id || !m.championshipId) : [];
@@ -244,6 +246,8 @@
   }
 
   // ---------- RENDU UI ----------
+  // nom affichable de la catégorie courante (les boutons portent l'id = valeur des sessions)
+  const catName = () => categories.find(c => c.id === state.category)?.name || state.category || '—';
   function paint() {
     document.querySelectorAll('#scenes .b').forEach(b => b.classList.toggle('on', b.dataset.scene === state.scene));
     document.querySelectorAll('#cats .b').forEach(b => b.classList.toggle('on', b.dataset.cat === state.category));
@@ -251,13 +255,13 @@
     document.getElementById('visToggle').classList.toggle('on', !!state.visible);
     document.getElementById('liveBadge').classList.toggle('off', !state.visible);
     document.getElementById('liveTxt').textContent = state.visible ? 'À L\'ANTENNE' : 'MASQUÉ';
-    document.getElementById('catN').textContent = state.category || '—';
+    document.getElementById('catN').textContent = catName();
     document.getElementById('phN').textContent = phases.find(p => p.t === state.sessionType && p.n === state.sessionNum)?.l || '—';
-    document.getElementById('gridN').textContent = `${state.category || '—'} · ${document.getElementById('phN').textContent}`;
+    document.getElementById('gridN').textContent = `${catName()} · ${document.getElementById('phN').textContent}`;
     if (meetSel.value !== state.meetingId) meetSel.value = state.meetingId;
     document.getElementById('status').innerHTML =
       `À l'antenne : <span class="chip">${({dashboard:'📊 Dashboard',grid:'🏁 Grille','next-heat':'⏭️ À suivre',intermission:'⏸️ Attente'})[state.scene]}</span>
-       <span class="chip o">${state.category || '—'}</span>
+       <span class="chip o">${catName()}</span>
        <span class="chip">${document.getElementById('phN').textContent}</span>
        · <b style="color:${state.visible?'var(--green)':'#888'}">${state.visible?'visible':'masqué'}</b>`;
     renderSlots();
@@ -287,7 +291,7 @@
     const c = champs.find(x => x.id === champSel.value) || null;
     await loadChampionship(c);
     // ramène catégorie + meeting sur des valeurs valides du nouveau championnat
-    const cat = categories.includes(state.category) ? state.category : (categories[0] || '');
+    const cat = categories.some(c => c.id === state.category) ? state.category : (categories[0]?.id || '');
     const mid = meetings.find(m => m.id === state.meetingId) ? state.meetingId : (meetings[0]?.id || '');
     push({ championshipId: c?.id || '', category: cat, meetingId: mid });
     paint();
@@ -324,7 +328,7 @@
   });
 
   // valeurs initiales si le doc est vide
-  if (!state.category && categories.length) state.category = categories[0];
+  if (!state.category && categories.length) state.category = categories[0].id;
   if (!state.meetingId && meetings.length) state.meetingId = meetings[0].id;
   paint();
 </script>
