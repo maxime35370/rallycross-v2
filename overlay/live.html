@@ -15,7 +15,7 @@
   import { initFirebase, fsQuery, watchQuery, getDocById } from './_lib/obs-firebase.js';
   import { watchControl, sessionKey } from './_lib/obs-control.js';
   import {
-    getSessions, getResults, getParticipants, findSession, sortRace, getInterim, getInterimBefore,
+    getSessions, getResults, getParticipants, findSession, sortRace, getInterim, getInterimLive, getInterimBefore,
     getChampionshipStandings, getMeetingPoints, getMeetingStandings, getGridOrder, getGridLayout,
     getEcRank, getMqRank, getPhaseRank,
   } from './_lib/obs-data.js';
@@ -188,7 +188,9 @@
         // Classement intermédiaire : pertinent à partir de la manche 2 (≥ 2 manches).
         // En manche 1, on masque la colonne (vue 2 colonnes).
         if (ctrl.sessionType === 'MQ' && (ctrl.sessionNum ?? 1) >= 2) {
-          const interim = (await getInterim(ctrl.meetingId, ctrl.category, reg).catch(() => []))
+          // intermédiaire "live" : la manche en cours compte ses points provisoires
+          // (mêmes que la colonne manche), pour que les deux colonnes collent en direct.
+          const interim = (await getInterimLive(ctrl.meetingId, ctrl.category, reg, session, rank).catch(() => []))
             .map(r => ({ driverId: r.driverId, position: r.position, carNumber: r.carNumber, lastName: r.lastName,
               totalPoints: r.totalPoints, done: hasRun(r.driverId),       // done = déjà un résultat dans CETTE manche
               champPts: isLastManche ? (r.interimPoints ?? 0) : null }));  // pts championnat (dernière manche)
@@ -297,15 +299,16 @@
       };
       if (ctrl.scene === 'dashboard') {
         data.race    = sortRace(raceResults || []);
-        data.interim = await getInterim(ctrl.meetingId, ctrl.category, reg).catch(() => []);
+        // intermédiaire "live" (manche en cours en provisoire) ; définitif pour les autres phases
+        data.interim = await getInterimLive(ctrl.meetingId, ctrl.category, reg, session).catch(() => []);
         data.champ   = await buildChamp();
         if (isFinaleDash) {   // finale : 4e panneau "meeting" + colonnes pleine hauteur
           data.interimSub = 'finalistes en bleu';
           data.meetingSub = 'cumul épreuve';
           data.meeting    = await getMeetingStandings(ctrl.meetingId, ctrl.category, reg).catch(() => []);
-        } else if (['QF', 'DF'].includes(ctrl.sessionType)) {
-          data.threeCol  = true;            // dashboard 3 colonnes : course | intermédiaire | championnat
-          data.interimSub = 'engagés en bleu';
+        } else if (['QF', 'DF'].includes(ctrl.sessionType) || (ctrl.sessionType === 'MQ' && (ctrl.sessionNum ?? 1) >= 2)) {
+          data.threeCol = true;             // dashboard 3 colonnes : course | intermédiaire | championnat
+          if (['QF', 'DF'].includes(ctrl.sessionType)) data.interimSub = 'engagés en bleu';
         }
         // surbrillance bleue des pilotes engagés dans la demi / la finale
         if (isPhaseDash) data.interim.forEach(r => { if (engagedIds.has(r.driverId)) r.finalist = true; });
