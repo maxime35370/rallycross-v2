@@ -302,6 +302,59 @@ export function renderIntermission(d) {
 // SCÈNE : SESSION (essais / manche) — à passer | classement | intermédiaire
 // ─────────────────────────────────────────────────────────
 
+/** Graphique d'évolution (SVG) : une courbe par pilote sur les manches.
+ *  mode 'places' = bump-chart (place 1 en haut) ; mode 'points' = points cumulés.
+ *  drivers = [{ carNumber, lastName, pts:[cumul M1, M2, …] }]. Top 8 (place finale) en couleur, reste en gris. */
+function evolutionSvg(drivers, series, mode) {
+  const N = series.length;
+  if (!drivers.length || N < 2) return '<div class="empty">Graphique disponible après 2 manches…</div>';
+  const W = 1000, H = 750, mL = 50, mR = 116, mT = 24, mB = 40;
+  const pw = W - mL - mR, ph = H - mT - mB, nD = drivers.length;
+  const xAt = i => mL + i / (N - 1) * pw;
+
+  // place de chaque pilote à chaque manche (tri par points cumulés décroissants)
+  const posOf = drivers.map(() => []);
+  for (let i = 0; i < N; i++) {
+    drivers.map((d, idx) => ({ idx, v: d.pts[i] ?? 0 })).sort((a, b) => b.v - a.v)
+      .forEach((o, r) => { posOf[o.idx][i] = r + 1; });
+  }
+  const maxPts = Math.max(1, ...drivers.flatMap(d => d.pts.map(v => v ?? 0)));
+  const yAt = (idx, i) => mode === 'points'
+    ? mT + ph - ((drivers[idx].pts[i] ?? 0) / maxPts) * ph
+    : mT + (nD <= 1 ? 0 : (posOf[idx][i] - 1) / (nD - 1) * ph);
+
+  // top 8 selon la place finale → couleurs ; le reste en gris
+  const order = drivers.map((d, idx) => idx).sort((a, b) => posOf[a][N - 1] - posOf[b][N - 1]);
+  const rankOf = {}; order.forEach((idx, r) => { rankOf[idx] = r; });
+  const PAL = ['#ff5500', '#39d98a', '#38a0ff', '#ffcc33', '#c084fc', '#ff7ab8', '#4dd0e1', '#f1f5f9'];
+  const isTop = idx => rankOf[idx] < 8;
+
+  // gridlines + repères d'axes
+  let grid = '';
+  if (mode === 'points') {
+    const step = maxPts <= 60 ? 10 : maxPts <= 160 ? 25 : 50;
+    for (let v = 0; v <= maxPts; v += step) { const yy = mT + ph - (v / maxPts) * ph;
+      grid += `<line x1="${mL}" y1="${yy.toFixed(1)}" x2="${mL + pw}" y2="${yy.toFixed(1)}" class="gl"/><text x="${mL - 8}" y="${(yy + 5).toFixed(1)}" class="gy">${v}</text>`; }
+  } else {
+    [1, 5, 10, 15, 20, 25].filter(p => p <= nD).forEach(p => { const yy = mT + (nD <= 1 ? 0 : (p - 1) / (nD - 1) * ph);
+      grid += `<line x1="${mL}" y1="${yy.toFixed(1)}" x2="${mL + pw}" y2="${yy.toFixed(1)}" class="gl"/><text x="${mL - 8}" y="${(yy + 5).toFixed(1)}" class="gy">${p}</text>`; });
+  }
+  let xax = ''; series.forEach((s, i) => { xax += `<text x="${xAt(i).toFixed(1)}" y="${H - 12}" class="gx">${escHtml(s)}</text>`; });
+
+  const polyline = idx => {
+    const pts = series.map((_, i) => `${xAt(i).toFixed(1)},${yAt(idx, i).toFixed(1)}`).join(' ');
+    if (!isTop(idx)) return `<polyline points="${pts}" class="ev-grey"/>`;
+    const c = PAL[rankOf[idx]];
+    const dots = series.map((_, i) => `<circle cx="${xAt(i).toFixed(1)}" cy="${yAt(idx, i).toFixed(1)}" r="4.5" fill="${c}"/>`).join('');
+    const lx = xAt(N - 1) + 12, ly = yAt(idx, N - 1) + 5;
+    return `<polyline points="${pts}" fill="none" stroke="${c}" stroke-width="3.5" stroke-linejoin="round"/>${dots}<text x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" class="ev-lab" fill="${c}">${escHtml(String(drivers[idx].carNumber ?? ''))}</text>`;
+  };
+  const greys = drivers.map((_, idx) => isTop(idx) ? '' : polyline(idx)).join('');
+  const tops  = order.filter(isTop).map(polyline).join('');
+
+  return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" class="ev-svg">${grid}${xax}${greys}${tops}</svg>`;
+}
+
 export function renderSession(d) {
   const todoRow = r => `<div class="cr todo">
     <span class="p">${r.pos}</span><span class="n">${escHtml(String(r.carNumber ?? ''))}</span>
@@ -331,6 +384,18 @@ export function renderSession(d) {
     return `<div class="dash">${header}<div class="sess-body sess-ec">
       ${col('À passer', 'ordre inverse championnat', d.todo || [], todoRow, true, true)}
       ${col('Classement essais', '', d.rank || [], rankRow, false, false)}
+    </div></div>`;
+  }
+  // Manche terminée : 2 colonnes (manche + intermédiaire) à gauche + graphique d'évolution à droite
+  if (d.graph) {
+    const gm = d.graph.mode === 'points' ? 'points' : 'places';
+    return `<div class="dash">${header}<div class="sess-body sess-graph">
+      ${col(d.sessionLabel || 'Classement manche', '', d.rank || [], rankRow, false, false)}
+      ${col('Classement intermédiaire', '', d.interim || [], ptsRow, true, false)}
+      <div class="col">
+        <div class="ch alt">Évolution · ${gm === 'points' ? 'points' : 'places'}<span class="sub">classement intermédiaire</span></div>
+        <div class="cb graph-cb">${evolutionSvg(d.graph.drivers || [], d.graph.series || [], gm)}</div>
+      </div>
     </div></div>`;
   }
   // Manche : 3 colonnes dès qu'un intermédiaire est fourni (manche ≥ 2),
