@@ -16,7 +16,7 @@
   import { watchControl, sessionKey } from './_lib/obs-control.js';
   import {
     getSessions, getResults, getParticipants, findSession, sortRace, getInterim, getInterimLive, getInterimBefore,
-    getChampionshipStandings, getMeetingPoints, getMeetingStandings, getGridOrder, getGridLayout,
+    getInterimEvolution, getChampionshipStandings, getMeetingPoints, getMeetingStandings, getGridOrder, getGridLayout,
     getEcRank, getMqRank, getPhaseRank,
   } from './_lib/obs-data.js';
   import { renderScene, countdownText } from './_lib/obs-scenes.js';
@@ -141,8 +141,9 @@
     const session  = findSession(sessions, ctrl.sessionType, ctrl.sessionNum);
     const sLabel   = labelFor(ctrl.sessionType, ctrl.sessionNum);
     const catName  = catLabel(reg, ctrl.category);   // nom affichable (la requête utilise ctrl.category = id)
-    // en-tête : texte saisi, sinon par défaut « Catégorie · Phase »
-    const headerText = ctrl.headerText || [catName, sLabel].filter(Boolean).join(' · ');
+    const meeting  = await getDocById('meetings', ctrl.meetingId).catch(() => null);
+    // en-tête : texte saisi, sinon par défaut « Circuit · Catégorie · Phase »
+    const headerText = ctrl.headerText || [meeting?.location, catName, sLabel].filter(Boolean).join(' · ');
 
     // Scène "Grille" pour ESSAIS / MANCHES : vue multi-colonnes en direct
     // (à passer | classement | intermédiaire). Le pilote quitte "à passer"
@@ -158,7 +159,7 @@
       // Référence "remontada" : classement intermédiaire AVANT cette manche (fixe)
       const baselinePos = {};
       if (ctrl.sessionType === 'MQ') {
-        (await getInterimBefore(ctrl.meetingId, ctrl.category, reg, session.id).catch(() => []))
+        (await getInterimBefore(ctrl.meetingId, ctrl.category, reg, session).catch(() => []))
           .forEach(r => { baselinePos[r.driverId] = r.position; });
       }
       const hasBaseline = Object.keys(baselinePos).length > 0;
@@ -208,6 +209,11 @@
           interim.forEach(mark);
           data.interim = interim;
         }
+        // manche terminée (plus personne à passer) → graphique d'évolution à droite
+        if (ctrl.sessionType === 'MQ' && todo.length === 0) {
+          const evo = await getInterimEvolution(ctrl.meetingId, ctrl.category, reg, session).catch(() => null);
+          if (evo && evo.series.length >= 2) data.graph = { ...evo, mode: ctrl.graphMode === 'points' ? 'points' : 'places' };
+        }
         root.innerHTML = renderScene('session', data);
         prevIds = curIds;
         // dernier de la manche (plus personne à passer) → effacer la surbrillance après 10 s
@@ -228,7 +234,7 @@
         ? ov.slots
         : await getGridOrder(session, sessions, reg, await meetingsOf(reg));
       const layout   = getGridLayout(reg, ctrl.sessionType);
-      const poleSide = (await getDocById('meetings', ctrl.meetingId).catch(() => null))?.poleSide || null;
+      const poleSide = meeting?.poleSide || null;
       // nombre de qualifiés par demi-finale : lu dans le règlement (pas en dur)
       const qualify  = reg.sessionConfig?.DF?.qualifiedPerDF;
       const renderCombo = async () => {
@@ -255,10 +261,8 @@
     }
     const layout = getGridLayout(reg, ctrl.sessionType);
     // sens du 1er virage (pole gauche/droite) pour la grille en quinconce
-    let poleSide = null;
-    if (ctrl.scene === 'grid' && Object.keys(layout.positions || {}).length) {
-      poleSide = (await getDocById('meetings', ctrl.meetingId).catch(() => null))?.poleSide || null;
-    }
+    const poleSide = (ctrl.scene === 'grid' && Object.keys(layout.positions || {}).length)
+      ? (meeting?.poleSide || null) : null;
 
     // Championnat : référence AVANT l'épreuve (meeting exclu), calculée 1 fois (mise en cache) ;
     // puis on ajoute en direct les points du meeting en cours (léger) → total + flèches + (+meeting).
@@ -278,7 +282,7 @@
     if (isPhaseDash) (await getParticipants(session.id).catch(() => [])).forEach(p => engagedIds.add(p.driverId));
 
     const buildChamp = async () => {
-      const cur = await getMeetingPoints(ctrl.meetingId, ctrl.category, reg).catch(() => []);
+      const cur = await getMeetingPoints(ctrl.meetingId, ctrl.category, reg, session).catch(() => []);
       const curTot = {};
       cur.forEach(d => { curTot[d.driverId] = d.total; if (!drvInfo[d.driverId]) drvInfo[d.driverId] = d; });
       const ids = new Set([...Object.keys(champBeforeTot), ...Object.keys(curTot)]);
@@ -313,7 +317,7 @@
         if (isFinaleDash) {   // finale : 4e panneau "meeting" + colonnes pleine hauteur
           data.interimSub = 'finalistes en bleu';
           data.meetingSub = 'cumul épreuve';
-          data.meeting    = await getMeetingStandings(ctrl.meetingId, ctrl.category, reg).catch(() => []);
+          data.meeting    = await getMeetingStandings(ctrl.meetingId, ctrl.category, reg, session).catch(() => []);
         } else if (['QF', 'DF'].includes(ctrl.sessionType) || (ctrl.sessionType === 'MQ' && (ctrl.sessionNum ?? 1) >= 2)) {
           data.threeCol = true;             // dashboard 3 colonnes : course | intermédiaire | championnat
           if (['QF', 'DF'].includes(ctrl.sessionType)) data.interimSub = 'engagés en bleu';
@@ -342,7 +346,7 @@
       applyVisibility(ctrl.visible);
       const key = [ctrl.scene, ctrl.championshipId, ctrl.meetingId, ctrl.category,
                    ctrl.sessionType, ctrl.sessionNum, JSON.stringify(ctrl.gridOverride),
-                   ctrl.headerText, ctrl.nextText, ctrl.countdownEnd].join('|');
+                   ctrl.headerText, ctrl.nextText, ctrl.countdownEnd, ctrl.graphMode].join('|');
       if (key === cacheKey) return;   // rien de pertinent n'a changé
       cacheKey = key;
       lastControl = ctrl;

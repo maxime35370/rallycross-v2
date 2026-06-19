@@ -108,6 +108,7 @@
           <div class="b scene" data-scene="intermission">⏸️ Attente</div>
         </div>
         <div class="row2"><div class="toggle" id="visToggle"><span>Overlay visible</span><span class="pill"></span></div></div>
+        <div class="row2"><div class="toggle" id="graphToggle"><span>Graphique évolution : <b id="gmLabel">Places</b></span><span class="pill"></span></div></div>
       </div>
       <div class="card">
         <h3>Catégorie <span class="n" id="catN">—</span></h3>
@@ -253,6 +254,8 @@
     document.querySelectorAll('#cats .b').forEach(b => b.classList.toggle('on', b.dataset.cat === state.category));
     document.querySelectorAll('#phases .b').forEach(b => b.classList.toggle('on', b.dataset.ph === `${state.sessionType}-${state.sessionNum}`));
     document.getElementById('visToggle').classList.toggle('on', !!state.visible);
+    document.getElementById('graphToggle').classList.toggle('on', state.graphMode === 'points');
+    document.getElementById('gmLabel').textContent = state.graphMode === 'points' ? 'Points' : 'Places';
     document.getElementById('liveBadge').classList.toggle('off', !state.visible);
     document.getElementById('liveTxt').textContent = state.visible ? 'À L\'ANTENNE' : 'MASQUÉ';
     document.getElementById('catN').textContent = catName();
@@ -297,6 +300,7 @@
     paint();
   };
   document.getElementById('visToggle').onclick = () => { push({ visible: !state.visible }); paint(); };
+  document.getElementById('graphToggle').onclick = () => { push({ graphMode: state.graphMode === 'points' ? 'places' : 'points' }); paint(); };
   document.getElementById('hdrBtn').onclick = () => push({ headerText: document.getElementById('hdr').value });
   document.getElementById('nextBtn').onclick = () => push({ nextText: document.getElementById('nextTxt').value });
   document.querySelectorAll('[data-cd]').forEach(b => b.onclick = () => {
