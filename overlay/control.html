@@ -106,6 +106,7 @@
           <div class="b scene" data-scene="grid">🏁 Grille</div>
           <div class="b scene" data-scene="next-heat">⏭️ À suivre</div>
           <div class="b scene" data-scene="intermission">⏸️ Attente</div>
+          <div class="b scene" data-scene="ending">🔚 Fin de stream</div>
         </div>
         <div class="row2"><div class="toggle" id="visToggle"><span>Overlay visible</span><span class="pill"></span></div></div>
         <div class="row2"><div class="toggle" id="graphToggle"><span>Graphique évolution : <b id="gmLabel">Places</b></span><span class="pill"></span></div></div>
@@ -263,7 +264,7 @@
     document.getElementById('gridN').textContent = `${catName()} · ${document.getElementById('phN').textContent}`;
     if (meetSel.value !== state.meetingId) meetSel.value = state.meetingId;
     document.getElementById('status').innerHTML =
-      `À l'antenne : <span class="chip">${({dashboard:'📊 Dashboard',grid:'🏁 Grille','next-heat':'⏭️ À suivre',intermission:'⏸️ Attente'})[state.scene]}</span>
+      `À l'antenne : <span class="chip">${({dashboard:'📊 Dashboard',grid:'🏁 Grille','next-heat':'⏭️ À suivre',intermission:'⏸️ Attente',ending:'🔚 Fin de stream'})[state.scene]}</span>
        <span class="chip o">${catName()}</span>
        <span class="chip">${document.getElementById('phN').textContent}</span>
        · <b style="color:${state.visible?'var(--green)':'#888'}">${state.visible?'visible':'masqué'}</b>`;

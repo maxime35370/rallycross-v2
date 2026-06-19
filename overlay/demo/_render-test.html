@@ -183,6 +183,8 @@ data['dash-df'] = {
   data['session-graph-pts']={...data['session-graph'],graph:{series:['M1','M2','M3','M4'],mode:'points',drivers}};
 }
 
+data['ending'] = { countdownEnd: Date.now()+5*60000, nextText:'PROCHAIN MEETING — DIMANCHE 10H30', social:'📺 twitch.tv/mawrxime · #RallycrossFR' };
+
 const scene = new URLSearchParams(location.search).get('scene')||'dashboard';
 const type = (scene === 'ordre' || scene === 'df-combo' || scene === 'fin-combo') ? 'grid'
   : (scene === 'dash-fin' || scene === 'dash-df' || scene === 'dash-mq2') ? 'dashboard'

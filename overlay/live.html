@@ -118,9 +118,9 @@
     if (sessTimer)    { clearTimeout(sessTimer); sessTimer = null; }
     if (renderTimer)  { clearTimeout(renderTimer); renderTimer = null; }   // annule un recalcul de saisie en attente
 
-    // Écran d'attente : indépendant du meeting/catégorie + compte à rebours
-    if (ctrl.scene === 'intermission') {
-      root.innerHTML = renderScene('intermission', {
+    // Écran d'attente / Fin de stream : indépendants du meeting/catégorie + compte à rebours
+    if (ctrl.scene === 'intermission' || ctrl.scene === 'ending') {
+      root.innerHTML = renderScene(ctrl.scene, {
         headerText: ctrl.headerText, nextText: ctrl.nextText,
         countdownEnd: ctrl.countdownEnd, social: ctrl.headerText,
       });
