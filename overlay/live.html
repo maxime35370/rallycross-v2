@@ -185,7 +185,9 @@
           headerText: ctrl.headerText, sessionLabel: `${sLabel} · ${ctrl.category}`,
           todo, rank,
         };
-        if (ctrl.sessionType !== 'EC') {
+        // Classement intermédiaire : pertinent à partir de la manche 2 (≥ 2 manches).
+        // En manche 1, on masque la colonne (vue 2 colonnes).
+        if (ctrl.sessionType === 'MQ' && (ctrl.sessionNum ?? 1) >= 2) {
           const interim = (await getInterim(ctrl.meetingId, ctrl.category, reg).catch(() => []))
             .map(r => ({ driverId: r.driverId, position: r.position, carNumber: r.carNumber, lastName: r.lastName,
               totalPoints: r.totalPoints, done: hasRun(r.driverId),       // done = déjà un résultat dans CETTE manche
