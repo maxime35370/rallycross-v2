@@ -333,10 +333,13 @@ export function renderSession(d) {
       ${col('Classement essais', '', d.rank || [], rankRow, false, false)}
     </div></div>`;
   }
-  return `<div class="dash">${header}<div class="sess-body sess-mq">
+  // Manche : 3 colonnes dès qu'un intermédiaire est fourni (manche ≥ 2),
+  // sinon 2 colonnes (manche 1 : l'intermédiaire n'a pas encore de sens).
+  const showInterim = Array.isArray(d.interim);
+  return `<div class="dash">${header}<div class="sess-body ${showInterim ? 'sess-mq' : 'sess-mq2'}">
     ${col('À passer', '', d.todo || [], todoRow, true, true)}
     ${col(d.sessionLabel || 'Classement manche', '', d.rank || [], rankRow, false, false)}
-    ${col('Classement intermédiaire', '', d.interim || [], ptsRow, true, false)}
+    ${showInterim ? col('Classement intermédiaire', '', d.interim, ptsRow, true, false) : ''}
   </div></div>`;
 }
 
