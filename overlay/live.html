@@ -20,6 +20,7 @@
     getEcRank, getMqRank, getPhaseRank,
   } from './_lib/obs-data.js';
   import { renderScene, countdownText } from './_lib/obs-scenes.js';
+  import { buildPrediction } from './_lib/obs-predict.js';
 
   const root = document.getElementById('root');
   // fond sombre par défaut ; ?transparent=1 → fond transparent (superposition vidéo OBS)
@@ -110,6 +111,38 @@
     return base;
   }
 
+  // Bandeau prédiction : scénario d'objectif d'un pilote (calculé une fois par
+  // (re)chargement, à partir du classement AVANT la session prédite → énoncé stable).
+  //  • p1 / qualif  → classement INTERMÉDIAIRE avant la manche (pendant les MQ)
+  //  • champ_*      → classement CHAMPIONNAT avant la finale (pendant les phases finales)
+  async function computePredict(ctrl, reg, session) {
+    const p = ctrl.predict;
+    if (!p || !p.enabled || !p.driverId) return null;
+    if (!['dashboard', 'grid'].includes(ctrl.scene)) return null;
+    const obj = p.objective || 'p1';
+
+    if (obj === 'p1' || obj === 'qualif') {
+      if (!session || session.type !== 'MQ') return null;   // objectifs manche : pendant les MQ
+      const before = await getInterimBefore(ctrl.meetingId, ctrl.category, reg, session).catch(() => []);
+      const standings = before.map(r => ({ driverId: r.driverId, carNumber: r.carNumber, lastName: r.lastName, total: r.totalPoints ?? 0 }));
+      if (!standings.length) return null;
+      return buildPrediction({ objective: obj, standings, driverId: p.driverId, regulation: reg, cutoff: p.cutoff || 6 });
+    }
+
+    // niveau 2 — championnat : base = cumul AVANT la finale (meeting courant jusqu'aux demis)
+    if (!['QF', 'DF', 'FIN'].includes(ctrl.sessionType) || !session) return null;
+    const all = await meetingsOf(reg);
+    const perM = await Promise.all(all.map(m => m.id === ctrl.meetingId
+      ? getMeetingPoints(m.id, ctrl.category, reg, { type: 'DF', num: 99 })   // jusqu'aux demis (exclut la finale)
+      : getMeetingPoints(m.id, ctrl.category, reg))).catch(() => []);
+    const tot = {}, info = {};
+    perM.forEach(rows => (rows || []).forEach(d => { tot[d.driverId] = (tot[d.driverId] || 0) + d.total; info[d.driverId] = d; }));
+    const standings = Object.keys(tot).map(id => ({ driverId: id, carNumber: info[id]?.carNumber, lastName: info[id]?.lastName, total: tot[id] }));
+    if (!standings.length) return null;
+    const inSessionIds = (await getParticipants(session.id).catch(() => [])).map(x => x.driverId);
+    return buildPrediction({ objective: obj, standings, driverId: p.driverId, regulation: reg, sessionType: ctrl.sessionType, inSessionIds });
+  }
+
   // Recharge complète sur changement de sélection
   async function reload(ctrl) {
     if (unsubResults) { unsubResults(); unsubResults = null; }
@@ -144,6 +177,8 @@
     const meeting  = await getDocById('meetings', ctrl.meetingId).catch(() => null);
     // en-tête : texte saisi, sinon par défaut « Circuit · Catégorie · Phase »
     const headerText = ctrl.headerText || [meeting?.location, catName, sLabel].filter(Boolean).join(' · ');
+    // bandeau prédiction (scénario d'objectif) — calculé une fois, stable pendant la session
+    const predict = await computePredict(ctrl, reg, session).catch(() => null);
 
     // Scène "Grille" pour ESSAIS / MANCHES : vue multi-colonnes en direct
     // (à passer | classement | intermédiaire). Le pilote quitte "à passer"
@@ -192,7 +227,7 @@
         const data = {
           mode: ctrl.sessionType === 'EC' ? 'ec' : 'mq',
           headerText, sessionLabel: `${sLabel} · ${catName}`,
-          todo, rank,
+          todo, rank, predict,
         };
         // Classement intermédiaire : pertinent à partir de la manche 2 (≥ 2 manches).
         // En manche 1, on masque la colonne (vue 2 colonnes).
@@ -307,7 +342,7 @@
         headerText, category: catName, sessionLabel: sLabel,
         raceSub: `${catName} · ${sLabel}`, interimSub: '',
         champSub: `${catName} · ${reg.year}`, social: headerText,
-        layout, slots, poleSide,
+        layout, slots, poleSide, predict,
       };
       if (ctrl.scene === 'dashboard') {
         data.race    = sortRace(raceResults || []);
@@ -346,7 +381,8 @@
       applyVisibility(ctrl.visible);
       const key = [ctrl.scene, ctrl.championshipId, ctrl.meetingId, ctrl.category,
                    ctrl.sessionType, ctrl.sessionNum, JSON.stringify(ctrl.gridOverride),
-                   ctrl.headerText, ctrl.nextText, ctrl.countdownEnd, ctrl.graphMode].join('|');
+                   ctrl.headerText, ctrl.nextText, ctrl.countdownEnd, ctrl.graphMode,
+                   JSON.stringify(ctrl.predict)].join('|');
       if (key === cacheKey) return;   // rien de pertinent n'a changé
       cacheKey = key;
       lastControl = ctrl;
