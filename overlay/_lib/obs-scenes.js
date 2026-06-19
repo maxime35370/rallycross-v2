@@ -299,6 +299,22 @@ export function renderIntermission(d) {
 }
 
 // ─────────────────────────────────────────────────────────
+// SCÈNE : FIN DE STREAM (outro + compte à rebours pour couper proprement)
+// ─────────────────────────────────────────────────────────
+
+export function renderEnding(d) {
+  const hasCd = d.countdownEnd && d.countdownEnd > Date.now();
+  return `
+  <div class="inter ending">
+    <div class="big">MERCI <b>À TOUS</b></div>
+    <div class="tagline">Fin du direct — à très vite</div>
+    ${hasCd ? `<div class="cd-big" id="ov-cd">${countdownText(d.countdownEnd)}</div>` : ''}
+    ${d.nextText ? `<div class="next"><span class="k">PROCHAINEMENT</span><span class="v">${escHtml(d.nextText)}</span></div>` : ''}
+    ${d.social ? `<div class="social">${escHtml(d.social)}</div>` : ''}
+  </div>`;
+}
+
+// ─────────────────────────────────────────────────────────
 // SCÈNE : SESSION (essais / manche) — à passer | classement | intermédiaire
 // ─────────────────────────────────────────────────────────
 
@@ -418,6 +434,7 @@ export function renderScene(scene, data) {
     case 'grid':         return renderGrid(data);
     case 'next-heat':    return renderNextHeat(data);
     case 'intermission': return renderIntermission(data);
+    case 'ending':       return renderEnding(data);
     case 'dashboard':
     default:             return renderDashboard(data);
   }
