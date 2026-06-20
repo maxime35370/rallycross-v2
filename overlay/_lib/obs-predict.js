@@ -103,18 +103,20 @@ const winOrPos = (idx, word) => idx === 0 ? `gagner ${word}` : `finir au moins $
  * @returns {{ok, scope, objectiveLabel, driver, meta, state, pill:{text,tone}, lines:[{icon,text}]}}
  */
 function frScenario(o) {
-  const { scope, goal, curPos, dTotal, scale, rival, gap,
-          minSecureIdx, securedIfLast, securedIfDnf, reachable, rivalCeilIdx, inBand } = o;
+  const { scope, goal, curPos, dTotal, scale, rival, gap, condRival, condCeilIdx,
+          minSecureIdx, securedIfLast, securedIfDnf, reachable, inBand } = o;
   const lines = [];
   let state, pill;
   const D = o.driver;
   const word = o.raceWord || (scope === 'CHAMPIONNAT' ? 'la finale' : 'la manche');
   const threat = rival ? `${drv(rival)} (${sg(gap)})` : '';
-  // énoncé conditionnel commun (objectif atteignable seulement avec un coup de pouce)
+  // énoncé conditionnel commun (objectif atteignable seulement avec un coup de pouce).
+  // La condition « X ne fasse pas mieux que Pk » porte sur le rival MOBILE pertinent ;
+  // un rival déjà figé (abandon) est intégré au calcul, pas cité.
   const conditional = () => {
-    const rc = rivalCeilIdx != null && rival
-      ? ` et que ${drv(rival)} ne fasse pas mieux que ${Pn(rivalCeilIdx)}`
-      : (rival ? ` et un faux pas de ${drv(rival)}` : '');
+    const rc = condCeilIdx != null && condRival
+      ? ` et que ${drv(condRival)} ne fasse pas mieux que ${Pn(condCeilIdx)}`
+      : '';
     return `${drv(D)} doit gagner ${word}${rc}.`;
   };
 
@@ -161,13 +163,16 @@ function frScenario(o) {
 // ─────────────────────────────────────────────────────────
 /**
  * @param rows   classement courant : [{driverId, carNumber, lastName, total}]
- *               `total` = métrique avant la session prédite (intermédiaire ou
- *               championnat). Les places sont recalculées par total décroissant.
+ *               `total` = métrique AVANT la session prédite (intermédiaire ou
+ *               championnat). Pour les pilotes déjà FIGÉS (abandon dans la manche,
+ *               hors session finale…), `total` inclut déjà leurs points acquis.
+ *               Les places sont recalculées par total décroissant.
  * @param scale  barème de la session prédite (points P1..PN).
- * @param fixedIds  (niveau 2) ids des pilotes dont le total ne bouge pas
- *               (absents de la session finale). Vide ⇒ tout le plateau marque.
+ * @param movingIds  ids des pilotes qui peuvent ENCORE marquer dans la session
+ *               (variables) : engagés non abandonnés. Les autres sont FIGÉS à leur
+ *               `total`. null ⇒ tout le plateau marque (calcul avant la session).
  */
-function predictTarget(rows0, driverId, target, scale, scope, goalFor, objectiveLabel, fixedIds = null) {
+function predictTarget(rows0, driverId, target, scale, scope, goalFor, objectiveLabel, movingIds = null) {
   const rows = (rows0 || []).filter(r => r && r.driverId != null)
     .map(r => ({ ...r, total: r.total ?? 0 }))
     .sort((a, b) => b.total - a.total);
@@ -181,11 +186,11 @@ function predictTarget(rows0, driverId, target, scale, scope, goalFor, objective
   const curPos = D.rank;
   const goal = goalFor(T);
 
-  // rivaux mobiles (qui marquent dans la session) vs fixes (niveau 2 hors finale)
+  // rivaux mobiles (peuvent encore marquer) vs figés (abandon / hors session)
   const others = rows.filter(r => r.driverId !== driverId);
-  const fixedSet = fixedIds ? new Set(fixedIds) : null;
-  const moving = fixedSet ? others.filter(r => fixedSet.has(r.driverId)) : others;
-  const fixed  = fixedSet ? others.filter(r => !fixedSet.has(r.driverId)) : [];
+  const movingSet = movingIds ? new Set(movingIds) : null;
+  const moving = movingSet ? others.filter(r => movingSet.has(r.driverId)) : others;
+  const fixed  = movingSet ? others.filter(r => !movingSet.has(r.driverId)) : [];
 
   // créneaux de points disponibles dans la session pour les rivaux mobiles :
   // autant que de pilotes qui marquent (D + mobiles), donc on prend les
@@ -211,29 +216,33 @@ function predictTarget(rows0, driverId, target, scale, scope, goalFor, objective
   for (let p = 0; p <= lastIdx; p++) { if (posAt(p, 'best') <= T) { reachable = true; break; } }
 
   const inBand = curPos <= T;
-  // rival clé : en bande → 1er hors-bande (menace) ; sinon → détenteur de la place T (à dépasser)
-  let rival = null, gap = null;
-  if (inBand) {
-    rival = rows[T] && rows[T].driverId !== driverId ? rows[T] : (rows[T + 1] || null);
-    if (rival) gap = dTotal - rival.total;
-  } else {
-    rival = rows[T - 1] || null;
-    if (rival) gap = rival.total - dTotal;
-  }
-
-  // pour l'énoncé conditionnel : si D gagne, pire place que le rival clé peut
-  // prendre en restant DERRIÈRE D (barème décroissant → 1re place qui passe sous D).
-  let rivalCeilIdx = null;
-  if (rival) {
+  const isMoving = r => !movingSet || movingSet.has(r.driverId);
+  // rival "frontière" : en bande → 1er hors-bande ; sinon → détenteur de la place T.
+  const boundary = inBand
+    ? (rows[T] && rows[T].driverId !== driverId ? rows[T] : (rows[T + 1] || null))
+    : (rows[T - 1] || null);
+  // menace défensive : 1er poursuivant MOBILE hors de la bande (un abandon ne menace pas).
+  const defendThreat = rows.filter(r => r.driverId !== driverId && isMoving(r) && r.rank > T)
+    .sort((a, b) => b.total - a.total)[0] || (boundary && isMoving(boundary) ? boundary : null);
+  // rival pertinent pour la condition « ne fasse pas mieux » : le MOBILE le plus
+  // proche AU-DESSUS de D (si la frontière est figée — abandon — on prend le 1er mobile).
+  const condRival = (boundary && isMoving(boundary)) ? boundary
+    : (rows.filter(r => r.driverId !== driverId && isMoving(r) && r.total >= dTotal)
+        .sort((a, b) => a.total - b.total)[0] || null);
+  // si D gagne, pire place que condRival peut prendre en restant DERRIÈRE D.
+  let condCeilIdx = null;
+  if (condRival) {
     const dWin = dTotal + fullSlots[0];
     for (let idx = 0; idx < fullSlots.length; idx++) {
-      if (fullSlots[idx] < dWin - rival.total) { rivalCeilIdx = idx; break; }
+      if (fullSlots[idx] < dWin - condRival.total) { condCeilIdx = idx; break; }
     }
   }
+  const rival = inBand ? defendThreat : boundary;   // pour l'affichage de l'écart
+  const gap = rival ? (inBand ? dTotal - rival.total : rival.total - dTotal) : null;
 
   return frScenario({
     scope, goal, objectiveLabel, driver: D, curPos, dTotal, scale: fullSlots,
-    rival, gap, minSecureIdx, securedIfLast, securedIfDnf, reachable, rivalCeilIdx, inBand,
+    rival, gap, condRival, condCeilIdx, minSecureIdx, securedIfLast, securedIfDnf, reachable, inBand,
   });
 }
 
@@ -245,14 +254,15 @@ function predictTarget(rows0, driverId, target, scale, scope, goalFor, objective
  *                  [{driverId, carNumber, lastName, total}]
  * @param target    1 = tête de l'intermédiaire ; N = place qualificative (cutoff)
  * @param kind      'p1' | 'qualif' (libellé)
+ * @param opts      { movingIds } : pilotes encore en lice (live ; abandons figés)
  */
-export function predictManche(standings, driverId, target, regulation, kind = 'p1') {
+export function predictManche(standings, driverId, target, regulation, kind = 'p1', opts = {}) {
   const scale = mancheScale((standings || []).length, regulation);
   const goalFor = T => kind === 'qualif'
     ? (T <= 1 ? 'la qualification' : `une place dans les ${T} qualifiés`)
     : "la tête de l'intermédiaire";
   const objectiveLabel = kind === 'qualif' ? `Place qualificative · top ${target}` : "Tête de l'intermédiaire";
-  return predictTarget(standings, driverId, target, scale, 'INTERMÉDIAIRE', goalFor, objectiveLabel);
+  return predictTarget(standings, driverId, target, scale, 'INTERMÉDIAIRE', goalFor, objectiveLabel, opts.movingIds || null);
 }
 
 // ─────────────────────────────────────────────────────────
@@ -330,12 +340,13 @@ export function buildPrediction(input) {
   const { objective, standings, driverId } = input || {};
   if (!driverId || !Array.isArray(standings) || !standings.length) return { ok: false };
   const champScale = () => phaseScale(input.sessionType || 'FIN', standings.length, input.regulation);
+  const mOpts = { movingIds: input.movingIds || null };
   switch (objective) {
-    case 'qualif':     return predictManche(standings, driverId, input.cutoff || 1, input.regulation, 'qualif');
+    case 'qualif':     return predictManche(standings, driverId, input.cutoff || 1, input.regulation, 'qualif', mOpts);
     case 'champ_p1':   return predictChampSession(standings, driverId, champScale(), input.inSessionIds || [], 'champ_p1');
     case 'champ_top3': return predictChampSession(standings, driverId, champScale(), input.inSessionIds || [], 'champ_top3');
     case 'champ_gap':  return predictChampGap(standings, driverId, champScale(), input.inSessionIds || []);
     case 'p1':
-    default:           return predictManche(standings, driverId, 1, input.regulation, 'p1');
+    default:           return predictManche(standings, driverId, 1, input.regulation, 'p1', mOpts);
   }
 }

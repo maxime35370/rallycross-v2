@@ -223,6 +223,21 @@ data['ending'] = { countdownEnd: Date.now()+5*60000, nextText:'PROCHAIN MEETING 
   const inFinale = ['a','b','c','d','e','f'];   // les 6 finalistes marquent
   data['dash-fin-predict'] = { ...data['dash-fin'],
     predict: predictChampSession(champ, 'b', finScale, inFinale, 'champ_p1') };
+
+  // REMONTADA (live) : le leader GRONDIN est exclu (DSQ) de la manche → sa tête se
+  // rouvre. Le moteur fige son total et recalcule ce qu'il faut à LEFEBVRE.
+  const movingR = stInter.filter(r => r.driverId !== 'd11').map(r => r.driverId);   // Grondin (d11) figé
+  data['session-remontada'] = {
+    mode: 'mq', headerText: 'MANCHE 4 · SUPERCAR · LOHÉAC — GRONDIN DSQ', sessionLabel: 'Classement manche 4',
+    todo: [{ pos: 1, carNumber: 77, lastName: 'Lefebvre' }, { pos: 2, carNumber: 2, lastName: 'Boulbès' }],
+    rank: [
+      { position: 1, carNumber: 4, lastName: 'Dubourg', value: '2:49.3', points: 50 },
+      { position: 2, carNumber: 33, lastName: 'Mailloux', value: '+0.8', points: 45 },
+      { position: null, carNumber: 11, lastName: 'Grondin', value: 'DSQ EC', points: 0, status: 'DSQ_RACE', justAdded: true },
+    ],
+    interim: interCol.map((r, i) => ({ ...r, delta: 0 })),
+    predict: predictManche(stInter, 'd77', 1, undefined, 'p1', { movingIds: movingR }),
+  };
 }
 
 const scene = new URLSearchParams(location.search).get('scene')||'dashboard';

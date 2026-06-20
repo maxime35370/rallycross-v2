@@ -16,7 +16,7 @@
   import { watchControl, sessionKey } from './_lib/obs-control.js';
   import {
     getSessions, getResults, getParticipants, findSession, sortRace, getInterim, getInterimLive, getInterimBefore,
-    getInterimEvolution, getChampionshipStandings, getMeetingPoints, getMeetingStandings, getGridOrder, getGridLayout,
+    getCumulBefore, getInterimEvolution, getChampionshipStandings, getMeetingPoints, getMeetingStandings, getGridOrder, getGridLayout,
     getEcRank, getMqRank, getPhaseRank,
   } from './_lib/obs-data.js';
   import { renderScene, countdownText } from './_lib/obs-scenes.js';
@@ -111,11 +111,36 @@
     return base;
   }
 
-  // Bandeau prédiction : scénario d'objectif d'un pilote (calculé une fois par
-  // (re)chargement, à partir du classement AVANT la session prédite → énoncé stable).
-  //  • p1 / qualif  → classement INTERMÉDIAIRE avant la manche (pendant les MQ)
-  //  • champ_*      → classement CHAMPIONNAT avant la finale (pendant les phases finales)
-  async function computePredict(ctrl, reg, session) {
+  // Bandeau prédiction : recalculé EN DIRECT à chaque saisie (les abandons déjà
+  // saisis sont figés → une remontada redevient possible si un leader abandonne).
+  //  • p1 / qualif  → base = cumul AVANT la manche (intermédiaire), pendant les MQ
+  //  • champ_*      → base = championnat AVANT la finale, pendant les phases finales
+  // La base (avant la session) est figée pendant la session → mise en cache ;
+  // seul le « live » (abandons, places) est relu à chaque tick.
+  const cumulBeforeCache = new Map();   // meeting|cat|sessRank → cumul avant la manche
+  const champBaseCache   = new Map();   // meeting|cat → {tot, info} championnat avant la finale
+  const OUT_STATUS = new Set(['DNF', 'DSQ_RACE', 'DNS', 'DSQ']);
+
+  async function cumulBeforeOf(ctrl, reg, session) {
+    const k = [ctrl.meetingId, ctrl.category, session.type, session.num].join('|');
+    if (!cumulBeforeCache.has(k)) cumulBeforeCache.set(k, await getCumulBefore(ctrl.meetingId, ctrl.category, reg, session).catch(() => []));
+    return cumulBeforeCache.get(k);
+  }
+  async function champBaseOf(ctrl, reg) {
+    const k = ctrl.meetingId + '|' + ctrl.category;
+    if (!champBaseCache.has(k)) {
+      const all = await meetingsOf(reg);
+      const perM = await Promise.all(all.map(m => m.id === ctrl.meetingId
+        ? getMeetingPoints(m.id, ctrl.category, reg, { type: 'DF', num: 99 })   // jusqu'aux demis (exclut la finale)
+        : getMeetingPoints(m.id, ctrl.category, reg))).catch(() => []);
+      const tot = {}, info = {};
+      perM.forEach(rows => (rows || []).forEach(d => { tot[d.driverId] = (tot[d.driverId] || 0) + d.total; info[d.driverId] = d; }));
+      champBaseCache.set(k, { tot, info });
+    }
+    return champBaseCache.get(k);
+  }
+
+  async function computePredict(ctrl, reg, session, liveRank) {
     const p = ctrl.predict;
     if (!p || !p.enabled || !p.driverId) return null;
     if (!['dashboard', 'grid'].includes(ctrl.scene)) return null;
@@ -123,24 +148,45 @@
 
     if (obj === 'p1' || obj === 'qualif') {
       if (!session || session.type !== 'MQ') return null;   // objectifs manche : pendant les MQ
-      const before = await getInterimBefore(ctrl.meetingId, ctrl.category, reg, session).catch(() => []);
-      const standings = before.map(r => ({ driverId: r.driverId, carNumber: r.carNumber, lastName: r.lastName, total: r.totalPoints ?? 0 }));
-      if (!standings.length) return null;
-      return buildPrediction({ objective: obj, standings, driverId: p.driverId, regulation: reg, cutoff: p.cutoff || 6 });
+      const before = await cumulBeforeOf(ctrl, reg, session);
+      const dInfo = before.find(b => b.driverId === p.driverId);
+      if (!dInfo) return null;
+      const rank = liveRank || await getMqRank(session, reg).catch(() => []);
+      const rmap = {}; rank.forEach(r => { if (r.driverId) rmap[r.driverId] = r; });
+      const dr = rmap[p.driverId];
+      if (dr && OUT_STATUS.has(dr.status)) {   // pilote choisi a abandonné → bandeau neutre
+        return { ok: true, scope: 'INTERMÉDIAIRE',
+          objectiveLabel: obj === 'qualif' ? `Place qualificative · top ${p.cutoff || 6}` : "Tête de l'intermédiaire",
+          driver: dInfo, meta: `Abandon · +${typeof dr.points === 'number' ? dr.points : 0} pts cette manche`,
+          state: 'lost', pill: { text: 'ABANDON', tone: 'bad' },
+          lines: [{ icon: '🚩', text: `N°${dInfo.carNumber} ${(dInfo.lastName || '').toUpperCase()} a abandonné la manche — classement à figer en fin de manche.` }] };
+      }
+      // abandons déjà saisis → total figé (points acquis) + retirés des "mobiles"
+      const standings = before.map(b => {
+        const r = rmap[b.driverId]; const out = r && OUT_STATUS.has(r.status);
+        return { driverId: b.driverId, carNumber: b.carNumber, lastName: b.lastName,
+          total: (b.total ?? 0) + (out ? (typeof r.points === 'number' ? r.points : 0) : 0), _out: out };
+      });
+      const movingIds = standings.filter(s => !s._out).map(s => s.driverId);
+      return buildPrediction({ objective: obj, standings, driverId: p.driverId, regulation: reg, cutoff: p.cutoff || 6, movingIds });
     }
 
-    // niveau 2 — championnat : base = cumul AVANT la finale (meeting courant jusqu'aux demis)
+    // niveau 2 — championnat (phases finales)
     if (!['QF', 'DF', 'FIN'].includes(ctrl.sessionType) || !session) return null;
-    const all = await meetingsOf(reg);
-    const perM = await Promise.all(all.map(m => m.id === ctrl.meetingId
-      ? getMeetingPoints(m.id, ctrl.category, reg, { type: 'DF', num: 99 })   // jusqu'aux demis (exclut la finale)
-      : getMeetingPoints(m.id, ctrl.category, reg))).catch(() => []);
-    const tot = {}, info = {};
-    perM.forEach(rows => (rows || []).forEach(d => { tot[d.driverId] = (tot[d.driverId] || 0) + d.total; info[d.driverId] = d; }));
-    const standings = Object.keys(tot).map(id => ({ driverId: id, carNumber: info[id]?.carNumber, lastName: info[id]?.lastName, total: tot[id] }));
-    if (!standings.length) return null;
-    const inSessionIds = (await getParticipants(session.id).catch(() => [])).map(x => x.driverId);
-    return buildPrediction({ objective: obj, standings, driverId: p.driverId, regulation: reg, sessionType: ctrl.sessionType, inSessionIds });
+    const { tot, info } = await champBaseOf(ctrl, reg);
+    if (!Object.keys(tot).length) return null;
+    const ranks = liveRank || await getPhaseRank(session, reg).catch(() => []);
+    const rmap = {}; (ranks || []).forEach(r => { if (r.driverId) rmap[r.driverId] = r; });
+    const parts = (await getParticipants(session.id).catch(() => [])).map(x => x.driverId);
+    const inSet = new Set(parts);
+    const standings = Object.keys(tot).map(id => {
+      const r = rmap[id]; const out = inSet.has(id) && r && OUT_STATUS.has(r.status);
+      return { driverId: id, carNumber: info[id]?.carNumber, lastName: info[id]?.lastName,
+        total: (tot[id] ?? 0) + (out ? (typeof r.points === 'number' ? r.points : 0) : 0) };
+    });
+    // mobiles = engagés de la finale NON abandonnés (seuls eux marquent encore)
+    const movingIds = parts.filter(id => { const r = rmap[id]; return !(r && OUT_STATUS.has(r.status)); });
+    return buildPrediction({ objective: obj, standings, driverId: p.driverId, regulation: reg, sessionType: ctrl.sessionType, inSessionIds: movingIds });
   }
 
   // Recharge complète sur changement de sélection
@@ -177,8 +223,6 @@
     const meeting  = await getDocById('meetings', ctrl.meetingId).catch(() => null);
     // en-tête : texte saisi, sinon par défaut « Circuit · Catégorie · Phase »
     const headerText = ctrl.headerText || [meeting?.location, catName, sLabel].filter(Boolean).join(' · ');
-    // bandeau prédiction (scénario d'objectif) — calculé une fois, stable pendant la session
-    const predict = await computePredict(ctrl, reg, session).catch(() => null);
 
     // Scène "Grille" pour ESSAIS / MANCHES : vue multi-colonnes en direct
     // (à passer | classement | intermédiaire). Le pilote quitte "à passer"
@@ -227,7 +271,8 @@
         const data = {
           mode: ctrl.sessionType === 'EC' ? 'ec' : 'mq',
           headerText, sessionLabel: `${sLabel} · ${catName}`,
-          todo, rank, predict,
+          todo, rank,
+          predict: await computePredict(ctrl, reg, session, rank).catch(() => null),
         };
         // Classement intermédiaire : pertinent à partir de la manche 2 (≥ 2 manches).
         // En manche 1, on masque la colonne (vue 2 colonnes).
@@ -342,7 +387,7 @@
         headerText, category: catName, sessionLabel: sLabel,
         raceSub: `${catName} · ${sLabel}`, interimSub: '',
         champSub: `${catName} · ${reg.year}`, social: headerText,
-        layout, slots, poleSide, predict,
+        layout, slots, poleSide,
       };
       if (ctrl.scene === 'dashboard') {
         data.race    = sortRace(raceResults || []);
@@ -361,6 +406,8 @@
         if (isPhaseDash) data.interim.forEach(r => { if (engagedIds.has(r.driverId)) r.finalist = true; });
         // titre du panneau course selon la phase (sinon "Manche en cours" par défaut)
         data.raceTitle = { QF: 'Quart de finale en cours', DF: 'Demi-finale en cours', FIN: 'Finale en cours' }[ctrl.sessionType];
+        // bandeau prédiction recalculé en direct (abandons figés)
+        data.predict = await computePredict(ctrl, reg, session).catch(() => null);
       }
       root.innerHTML = renderScene(ctrl.scene, data);
     };

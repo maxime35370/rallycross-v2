@@ -195,6 +195,32 @@ export async function getInterimBefore(meetingId, category, regulation, currentS
 }
 
 /**
+ * Points cumulés AVANT la manche en cours, SANS la règle d'éligibilité « ≥ 2 manches »
+ * (contrairement à calcInterimStandings) : EC bonus + somme des points de chaque manche
+ * antérieure, pour TOUS les pilotes ayant marqué. Sert de base au moteur de prédiction
+ * (utilisable dès la 2e manche). @returns [{driverId, carNumber, lastName, firstName, total}]
+ */
+export async function getCumulBefore(meetingId, category, regulation, currentSession) {
+  const sessions = await getSessions(meetingId, category);
+  const prevMqs = sessions
+    .filter(s => s.type === 'MQ' && sessionRank(s) < sessionRank(currentSession))
+    .sort((a, b) => (a.num ?? 0) - (b.num ?? 0));
+  const [ecRows, perManche] = await Promise.all([
+    calcEcStandings(db, sessions, regulation).catch(() => []),
+    Promise.all(prevMqs.map(m => calcMqStandings(db, m, regulation))),
+  ]);
+  const map = {};
+  const add = (r, pts) => {
+    const d = (map[r.driverId] ||= { driverId: r.driverId, carNumber: r.carNumber,
+      lastName: r.lastName, firstName: r.firstName, total: 0 });
+    d.total += pts;
+  };
+  ecRows.forEach(r => add(r, r.bonusPoints ?? 0));
+  perManche.forEach(rows => rows.forEach(r => { if (r.points != null) add(r, r.points); }));
+  return Object.values(map);
+}
+
+/**
  * Évolution du classement intermédiaire manche par manche : pour chaque pilote,
  * points cumulés (bonus essais + somme des points de manche) après chaque manche
  * disputée. Sert au graphique d'évolution (places = rang par points ; points = cumul).
