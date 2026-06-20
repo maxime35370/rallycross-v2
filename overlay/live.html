@@ -17,7 +17,7 @@
   import {
     getSessions, getResults, getParticipants, findSession, sortRace, getInterim, getInterimLive, getInterimBefore,
     getCumulBefore, getInterimEvolution, getChampionshipStandings, getMeetingPoints, getMeetingStandings, getGridOrder, getGridLayout,
-    getEcRank, getMqRank, getPhaseRank,
+    getQualifCutoff, getEcRank, getMqRank, getPhaseRank,
   } from './_lib/obs-data.js';
   import { renderScene, countdownText } from './_lib/obs-scenes.js';
   import { buildPrediction } from './_lib/obs-predict.js';
@@ -168,7 +168,9 @@
           total: (b.total ?? 0) + (out ? (typeof r.points === 'number' ? r.points : 0) : 0), _out: out };
       });
       const movingIds = standings.filter(s => !s._out).map(s => s.driverId);
-      return buildPrediction({ objective: obj, standings, driverId: p.driverId, regulation: reg, cutoff: p.cutoff || 6, movingIds });
+      // place qualificative = cutoff du RÈGLEMENT (auto) ; valeur régie = secours si indéterminable
+      const cutoff = getQualifCutoff(reg) || (p.cutoff > 0 ? p.cutoff : 6);
+      return buildPrediction({ objective: obj, standings, driverId: p.driverId, regulation: reg, cutoff, movingIds });
     }
 
     // niveau 2 — championnat (phases finales)
