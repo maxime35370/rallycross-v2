@@ -9,6 +9,7 @@
 <div class="overlay-root" id="root"></div>
 <script type="module">
 import { renderScene } from '../_lib/obs-scenes.js';
+import { predictManche, predictChampSession, predictChampGap } from '../_lib/obs-predict.js';
 
 const race = [
   {carNumber:11,lastName:'Grondin',ms:41892,status:null},{carNumber:2,lastName:'Boulbès',ms:42404,status:null},
@@ -185,9 +186,63 @@ data['dash-df'] = {
 
 data['ending'] = { countdownEnd: Date.now()+5*60000, nextText:'PROCHAIN MEETING — DIMANCHE 10H30', social:'📺 twitch.tv/mawrxime · #RallycrossFR' };
 
+// ── BANDEAU PRÉDICTION (scénario d'objectif). Le moteur (obs-predict.js) calcule
+//    le scénario à partir d'un classement ; on l'affiche sous les colonnes.
+//    Données cohérentes : le pilote du bandeau figure dans les colonnes affichées.
+{
+  // classement intermédiaire AVANT la dernière manche (barème MQ 50/45/42/40/39/38…)
+  const interN = ['Grondin','Boulbès','Lefebvre','Dubourg','Mailloux','André','Renard','Caillot','Morel','Picard'];
+  const interNo = [11,2,77,4,33,9,21,5,14,8];
+  const interT  = [135,122,114,108,101,97,92,88,84,80];
+  const stInter = interN.map((n,i)=>({driverId:'d'+interNo[i],carNumber:interNo[i],lastName:n,total:interT[i]}));
+  const interCol = interN.map((n,i)=>({position:i+1,carNumber:interNo[i],lastName:n,totalPoints:interT[i]}));
+  const champCol = interN.map((n,i)=>({position:i+1,carNumber:interNo[i],lastName:n,grandTotal:255-i*9,
+    delta:i===1?1:i===2?-1:0,meetingPts:[38,30,28,24,18,16,12,9,6,3][i]}));
+
+  // Dashboard manche (3 colonnes) + bandeau « défendre la tête de l'intermédiaire »
+  data['dash-predict'] = { threeCol:true, headerText:'CIRCUIT DE LOHÉAC · MANCHE 4 · SUPERCAR', category:'Supercar',
+    raceSub:'Supercar · Manche 4', interimSub:'avant M4', champSub:'Supercar · 2026',
+    race: interN.map((n,i)=>({carNumber:interNo[i],lastName:n,ms:168000+i*900+Math.round(Math.sin(i)*300),status:null})),
+    interim: interCol, champ: champCol,
+    predict: predictManche(stInter, 'd11', 1, undefined, 'p1') };
+
+  // Session (manche en cours) + bandeau « se qualifier (top 6) » pour un poursuivant (Renard P7)
+  data['session-predict'] = { mode:'mq', headerText:'MANCHE 4 · SUPERCAR · LOHÉAC', sessionLabel:'Classement manche 4',
+    todo:[{pos:1,carNumber:21,lastName:'Renard'},{pos:2,carNumber:5,lastName:'Caillot'}],
+    rank:[{position:1,carNumber:11,lastName:'Grondin',value:'2:48.5',points:50},{position:2,carNumber:2,lastName:'Boulbès',value:'+0.9',points:45},{position:3,carNumber:77,lastName:'Lefebvre',value:'+1.4',points:42},{position:4,carNumber:4,lastName:'Dubourg',value:'+2.1',points:40},{position:5,carNumber:33,lastName:'Mailloux',value:'+2.8',points:39,justAdded:true}],
+    interim: interCol.map((r,i)=>({...r,delta:0})),
+    predict: predictManche(stInter, 'd21', 6, undefined, 'qualif') };
+
+  // Niveau 2 — championnat (finale 4 colonnes) : barème 15/12/9/7/6/5, leader chassé
+  const champ = [
+    {driverId:'a',carNumber:11,lastName:'Grondin', total:285},{driverId:'b',carNumber:2, lastName:'Boulbès', total:278},
+    {driverId:'c',carNumber:77,lastName:'Lefebvre',total:248},{driverId:'d',carNumber:4, lastName:'Dubourg', total:233},
+    {driverId:'e',carNumber:33,lastName:'Mailloux',total:220},{driverId:'f',carNumber:9, lastName:'André',   total:210},
+  ];
+  const finScale = [15,12,9,7,6,5];
+  const inFinale = ['a','b','c','d','e','f'];   // les 6 finalistes marquent
+  data['dash-fin-predict'] = { ...data['dash-fin'],
+    predict: predictChampSession(champ, 'b', finScale, inFinale, 'champ_p1') };
+
+  // REMONTADA (live) : le leader GRONDIN est exclu (DSQ) de la manche → sa tête se
+  // rouvre. Le moteur fige son total et recalcule ce qu'il faut à LEFEBVRE.
+  const movingR = stInter.filter(r => r.driverId !== 'd11').map(r => r.driverId);   // Grondin (d11) figé
+  data['session-remontada'] = {
+    mode: 'mq', headerText: 'MANCHE 4 · SUPERCAR · LOHÉAC — GRONDIN DSQ', sessionLabel: 'Classement manche 4',
+    todo: [{ pos: 1, carNumber: 77, lastName: 'Lefebvre' }, { pos: 2, carNumber: 2, lastName: 'Boulbès' }],
+    rank: [
+      { position: 1, carNumber: 4, lastName: 'Dubourg', value: '2:49.3', points: 50 },
+      { position: 2, carNumber: 33, lastName: 'Mailloux', value: '+0.8', points: 45 },
+      { position: null, carNumber: 11, lastName: 'Grondin', value: 'DSQ EC', points: 0, status: 'DSQ_RACE', justAdded: true },
+    ],
+    interim: interCol.map((r, i) => ({ ...r, delta: 0 })),
+    predict: predictManche(stInter, 'd77', 1, undefined, 'p1', { movingIds: movingR }),
+  };
+}
+
 const scene = new URLSearchParams(location.search).get('scene')||'dashboard';
 const type = (scene === 'ordre' || scene === 'df-combo' || scene === 'fin-combo') ? 'grid'
-  : (scene === 'dash-fin' || scene === 'dash-df' || scene === 'dash-mq2') ? 'dashboard'
+  : (scene === 'dash-fin' || scene === 'dash-df' || scene === 'dash-mq2' || scene === 'dash-predict' || scene === 'dash-fin-predict') ? 'dashboard'
   : scene.startsWith('session') ? 'session' : scene;
 document.getElementById('root').innerHTML = renderScene(type, data[scene] || data.dashboard);
 </script>

@@ -58,6 +58,29 @@ function raceRowsHtml(results) {
 }
 
 // ─────────────────────────────────────────────────────────
+// BANDEAU PRÉDICTION (scénario d'objectif d'un pilote, bas d'écran)
+//   Données : objet produit par obs-predict.js (buildPrediction).
+// ─────────────────────────────────────────────────────────
+export function predictBanner(p) {
+  if (!p || !p.ok) return '';
+  const tone = (p.pill && p.pill.tone) || 'neutral';
+  const lines = (p.lines || []).map(l =>
+    `<div class="pl"><span class="pi">${l.icon || '•'}</span><span>${escHtml(l.text)}</span></div>`).join('');
+  return `
+  <div class="pred-bar pred-${escHtml(p.state || '')}">
+    <div class="pred-tag"><span class="pk">SCÉNARIO</span><span class="pv">${escHtml(p.scope || '')}</span></div>
+    <div class="pred-drv">
+      <div class="ptop"><span class="pn">${escHtml(String(p.driver?.carNumber ?? ''))}</span>
+        <span class="pnm">${escHtml((p.driver?.lastName || '').toUpperCase())}</span></div>
+      <span class="pobj">${escHtml(p.objectiveLabel || '')}</span>
+      <span class="pmeta">${escHtml(p.meta || '')}</span>
+    </div>
+    <div class="pred-lines">${lines}</div>
+    <div class="pred-pill pill-${tone}">${escHtml((p.pill && p.pill.text) || '')}</div>
+  </div>`;
+}
+
+// ─────────────────────────────────────────────────────────
 // SCÈNE : DASHBOARD
 // ─────────────────────────────────────────────────────────
 
@@ -117,7 +140,7 @@ export function renderDashboard(d) {
       </div>`;
   }
 
-  return `<div class="dash">${header}${body}</div>`;
+  return `<div class="dash">${header}${body}${predictBanner(d.predict)}</div>`;
 }
 
 // ─────────────────────────────────────────────────────────
@@ -396,11 +419,13 @@ export function renderSession(d) {
     <span class="info"><span class="pin">📍</span><span>${escHtml(d.headerText || d.sessionLabel || '')}</span></span>
     <span class="live"><span class="d"></span>LIVE</span></div>`;
 
+  const pb = predictBanner(d.predict);
+
   if (d.mode === 'ec') {
     return `<div class="dash">${header}<div class="sess-body sess-ec">
       ${col('À passer', 'ordre inverse championnat', d.todo || [], todoRow, true, true)}
       ${col('Classement essais', '', d.rank || [], rankRow, false, false)}
-    </div></div>`;
+    </div>${pb}</div>`;
   }
   // Manche terminée : 2 colonnes (manche + intermédiaire) à gauche + graphique d'évolution à droite
   if (d.graph) {
@@ -412,7 +437,7 @@ export function renderSession(d) {
         <div class="ch alt">Évolution · ${gm === 'points' ? 'points' : 'places'}<span class="sub">classement intermédiaire</span></div>
         <div class="cb graph-cb">${evolutionSvg(d.graph.drivers || [], d.graph.series || [], gm)}</div>
       </div>
-    </div></div>`;
+    </div>${pb}</div>`;
   }
   // Manche : 3 colonnes dès qu'un intermédiaire est fourni (manche ≥ 2),
   // sinon 2 colonnes (manche 1 : l'intermédiaire n'a pas encore de sens).
@@ -421,7 +446,7 @@ export function renderSession(d) {
     ${col('À passer', '', d.todo || [], todoRow, true, true)}
     ${col(d.sessionLabel || 'Classement manche', '', d.rank || [], rankRow, false, false)}
     ${showInterim ? col('Classement intermédiaire', '', d.interim, ptsRow, true, false) : ''}
-  </div></div>`;
+  </div>${pb}</div>`;
 }
 
 // ─────────────────────────────────────────────────────────

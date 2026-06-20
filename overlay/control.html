@@ -133,6 +133,24 @@
           <div class="b" data-cd="0">Effacer</div>
         </div>
       </div>
+      <div class="card">
+        <h3>🔮 Bandeau prédiction <span class="n" id="predN">off</span></h3>
+        <div class="note">Affiche, sous les colonnes, l'objectif d'un pilote (calculé depuis le règlement). Manche : pendant les MQ · Championnat : pendant les phases finales.</div>
+        <div class="row2" style="justify-content:flex-start;margin:0 0 12px">
+          <div class="toggle" id="predToggle"><span>Afficher le bandeau</span><span class="pill"></span></div>
+        </div>
+        <select class="sel" id="predDrv" style="max-width:none;width:100%;margin-bottom:10px"></select>
+        <select class="sel" id="predObj" style="max-width:none;width:100%">
+          <option value="p1">🏆 Intermédiaire — viser / garder la tête</option>
+          <option value="qualif">✅ Intermédiaire — place qualificative</option>
+          <option value="champ_p1">👑 Championnat — prendre / garder la tête</option>
+          <option value="champ_top3">🥉 Championnat — entrer dans le top 3</option>
+          <option value="champ_gap">🎯 Championnat — recoller au leader</option>
+        </select>
+        <div class="field" id="predCutoffRow" style="margin-top:10px">
+          <input id="predCutoff" type="number" min="1" placeholder="Nombre de qualifiés (top N)">
+        </div>
+      </div>
     </div>
 
     <div class="card">
@@ -165,7 +183,7 @@
 <script type="module">
   import { initFirebase, fsQuery } from './_lib/obs-firebase.js';
   import { watchControl, setControl, sessionKey, DEFAULT_CONTROL } from './_lib/obs-control.js';
-  import { getSessions, findSession, getGridOrder, getInterim } from './_lib/obs-data.js';
+  import { getSessions, findSession, getGridOrder, getInterim, getParticipants } from './_lib/obs-data.js';
 
   const SDK = 'https://www.gstatic.com/firebasejs/10.12.0/';
   await initFirebase();
@@ -211,11 +229,11 @@
   function renderCats() {
     // data-cat = id (valeur stockée dans les sessions) ; texte = nom (affichage)
     document.getElementById('cats').innerHTML = categories.map(c => `<div class="b" data-cat="${c.id}">${c.name}</div>`).join('');
-    document.querySelectorAll('#cats .b').forEach(b => b.onclick = () => { push({ category: b.dataset.cat }); paint(); });
+    document.querySelectorAll('#cats .b').forEach(b => b.onclick = () => { push({ category: b.dataset.cat }); paint(); loadPredictDrivers(); });
   }
   function renderPhases() {
     document.getElementById('phases').innerHTML = phases.map(p => `<div class="b" data-ph="${p.t}-${p.n}">${p.l}</div>`).join('');
-    document.querySelectorAll('#phases .b').forEach(b => b.onclick = () => { const [t, n] = b.dataset.ph.split('-'); push({ sessionType: t, sessionNum: +n }); paint(); });
+    document.querySelectorAll('#phases .b').forEach(b => b.onclick = () => { const [t, n] = b.dataset.ph.split('-'); push({ sessionType: t, sessionNum: +n }); paint(); loadPredictDrivers(); });
   }
   // (re)charge un championnat : catégories, phases et meetings — puis rafraîchit l'UI
   async function loadChampionship(c) {
@@ -268,6 +286,15 @@
        <span class="chip o">${catName()}</span>
        <span class="chip">${document.getElementById('phN').textContent}</span>
        · <b style="color:${state.visible?'var(--green)':'#888'}">${state.visible?'visible':'masqué'}</b>`;
+    // bandeau prédiction
+    const pr = state.predict || {};
+    document.getElementById('predToggle').classList.toggle('on', !!pr.enabled);
+    document.getElementById('predN').textContent = pr.enabled ? 'actif' : 'off';
+    document.getElementById('predObj').value = pr.objective || 'p1';
+    document.getElementById('predCutoff').value = pr.cutoff || '';
+    document.getElementById('predCutoffRow').style.display = (pr.objective === 'qualif') ? '' : 'none';
+    const drvSel = document.getElementById('predDrv');
+    if (drvSel.querySelector(`option[value="${(pr.driverId || '').replace(/"/g, '')}"]`)) drvSel.value = pr.driverId || '';
     renderSlots();
   }
 
@@ -287,10 +314,41 @@
     });
   }
 
+  // Liste des pilotes pour le bandeau prédiction : engagés de la session courante
+  // (repli sur les engagés de la 1re session si la session ciblée n'a pas encore d'engagés).
+  let predictDrivers = [], lastPredSelKey = '';
+  async function loadPredictDrivers() {
+    const sel = document.getElementById('predDrv');
+    if (!sel) return;
+    const cur = state.predict?.driverId || '';
+    let parts = [];
+    if (state.meetingId && state.category) {
+      try {
+        const sessions = await getSessions(state.meetingId, state.category);
+        const session = findSession(sessions, state.sessionType, state.sessionNum);
+        parts = session ? await getParticipants(session.id) : [];
+        if (!parts.length && sessions.length) parts = await getParticipants(sessions[0].id);
+      } catch { parts = []; }
+    }
+    predictDrivers = parts.slice().sort((a, b) => (Number(a.carNumber) || 0) - (Number(b.carNumber) || 0));
+    sel.innerHTML = '<option value="">— Choisir un pilote —</option>' +
+      predictDrivers.map(p => `<option value="${p.driverId}">N°${p.carNumber} ${(p.lastName || '').toUpperCase()}</option>`).join('');
+    if (predictDrivers.some(p => p.driverId === cur)) sel.value = cur;
+    lastPredSelKey = [state.meetingId, state.category, state.sessionType, state.sessionNum].join('|');
+  }
+  function pushPredict(patch) {
+    push({ predict: { ...(state.predict || DEFAULT_CONTROL.predict), ...patch } });
+    paint();
+  }
+
   // ---------- ACTIONS ----------
+  document.getElementById('predToggle').onclick = () => pushPredict({ enabled: !(state.predict?.enabled) });
+  document.getElementById('predDrv').onchange = e => pushPredict({ driverId: e.target.value });
+  document.getElementById('predObj').onchange = e => pushPredict({ objective: e.target.value });
+  document.getElementById('predCutoff').onchange = e => pushPredict({ cutoff: +e.target.value || 6 });
   document.querySelectorAll('#scenes .b').forEach(b => b.onclick = () => { push({ scene: b.dataset.scene }); paint(); });
   // (boutons catégories/phases : liés dans renderCats()/renderPhases(), car re-rendus au changement de championnat)
-  meetSel.onchange = () => { push({ meetingId: meetSel.value }); paint(); };
+  meetSel.onchange = () => { push({ meetingId: meetSel.value }); paint(); loadPredictDrivers(); };
   champSel.onchange = async () => {
     const c = champs.find(x => x.id === champSel.value) || null;
     await loadChampionship(c);
@@ -298,7 +356,7 @@
     const cat = categories.some(c => c.id === state.category) ? state.category : (categories[0]?.id || '');
     const mid = meetings.find(m => m.id === state.meetingId) ? state.meetingId : (meetings[0]?.id || '');
     push({ championshipId: c?.id || '', category: cat, meetingId: mid });
-    paint();
+    paint(); loadPredictDrivers();
   };
   document.getElementById('visToggle').onclick = () => { push({ visible: !state.visible }); paint(); };
   document.getElementById('graphToggle').onclick = () => { push({ graphMode: state.graphMode === 'points' ? 'places' : 'points' }); paint(); };
@@ -329,6 +387,9 @@
     document.getElementById('hdr').value = state.headerText || '';
     document.getElementById('nextTxt').value = state.nextText || '';
     paint();
+    // recharge la liste pilotes si la session ciblée a changé (depuis une autre régie / au 1er chargement)
+    const selKey = [state.meetingId, state.category, state.sessionType, state.sessionNum].join('|');
+    if (selKey !== lastPredSelKey) loadPredictDrivers();
     applyingRemote = false;
   });
 
@@ -336,6 +397,7 @@
   if (!state.category && categories.length) state.category = categories[0].id;
   if (!state.meetingId && meetings.length) state.meetingId = meetings[0].id;
   paint();
+  loadPredictDrivers();
 </script>
 </body>
 </html>

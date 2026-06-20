@@ -273,6 +273,38 @@ body.transparent{background:transparent}
 .lower .chip .nm{font-family:'Barlow Condensed';font-weight:600;font-size:26px;text-transform:uppercase}
 .lower .chip .pp{font-family:'Orbitron';font-weight:800;font-size:18px;color:var(--orange);margin-left:2px}
 
+/* ============ BANDEAU PRÉDICTION (scénario d'objectif, bas d'écran) ============ */
+.pred-bar{flex:none;display:flex;align-items:stretch;margin:0 40px 22px;border-radius:14px;overflow:hidden;
+  background:var(--panel);box-shadow:0 0 0 1px rgba(255,255,255,.07),0 18px 50px rgba(0,0,0,.5);
+  border-left:7px solid var(--mut);min-height:128px}
+.pred-bar.pred-locked,.pred-bar.pred-safe{border-left-color:var(--green)}
+.pred-bar.pred-defend,.pred-bar.pred-atrisk{border-left-color:var(--orange)}
+.pred-bar.pred-chase,.pred-bar.pred-open,.pred-bar.pred-gap{border-left-color:#38a0ff}
+.pred-bar.pred-lost{border-left-color:#ff6b6b}
+.pred-tag{display:flex;flex-direction:column;justify-content:center;gap:6px;padding:0 28px;
+  background:linear-gradient(120deg,#33405a,#1c2433);min-width:190px}
+.pred-tag .pk{font-family:'Orbitron',sans-serif;font-weight:900;font-size:20px;letter-spacing:3px}
+.pred-tag .pv{font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:16px;letter-spacing:3px;color:#9fb4d8}
+.pred-drv{display:flex;flex-direction:column;justify-content:center;gap:6px;padding:0 28px;min-width:320px;
+  border-right:1px solid var(--line)}
+.pred-drv .ptop{display:flex;align-items:center;gap:13px}
+.pred-drv .pn{display:inline-flex;align-items:center;justify-content:center;min-width:56px;height:42px;padding:0 9px;
+  border-radius:8px;background:#1b2230;border:1px solid #2b3445;font-family:'Orbitron',sans-serif;font-weight:700;font-size:23px;color:#dfe6f0}
+.pred-drv .pnm{font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:31px;text-transform:uppercase;line-height:1}
+.pred-drv .pobj{font-family:'Orbitron',sans-serif;font-weight:700;font-size:15px;letter-spacing:1px;color:var(--orange-2);text-transform:uppercase}
+.pred-drv .pmeta{font-family:'Barlow Condensed',sans-serif;font-weight:500;font-size:17px;letter-spacing:1px;color:var(--mut)}
+.pred-lines{flex:1;display:flex;flex-direction:column;justify-content:center;gap:10px;padding:0 32px;min-width:0}
+.pred-lines .pl{display:flex;align-items:center;gap:14px;font-family:'Barlow Condensed',sans-serif;font-weight:500;
+  font-size:27px;letter-spacing:.3px;color:#eef3fa;line-height:1.12}
+.pred-lines .pl .pi{font-size:25px;flex:none;width:30px;text-align:center}
+.pred-pill{display:flex;align-items:center;text-align:center;padding:0 30px;font-family:'Orbitron',sans-serif;
+  font-weight:900;font-size:23px;letter-spacing:1px;text-transform:uppercase;white-space:nowrap}
+.pill-good{background:linear-gradient(120deg,rgba(57,217,138,.24),rgba(57,217,138,.05));color:var(--green)}
+.pill-warn{background:linear-gradient(120deg,rgba(255,138,61,.24),rgba(255,138,61,.05));color:var(--orange-2)}
+.pill-live{background:linear-gradient(120deg,rgba(56,160,255,.24),rgba(56,160,255,.05));color:#5ab4ff}
+.pill-bad{background:linear-gradient(120deg,rgba(255,107,107,.24),rgba(255,107,107,.05));color:#ff8585}
+.pill-neutral{background:rgba(255,255,255,.06);color:var(--mut)}
+
 /* ============ ENTRE DEUX MANCHES ============ */
 .inter{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:30px;
   background:radial-gradient(900px 600px at 50% 40%,rgba(255,85,0,.10),transparent 60%)}

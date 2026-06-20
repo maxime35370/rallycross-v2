@@ -24,6 +24,9 @@ export const DEFAULT_CONTROL = {
   nextText:      '',            // "à suivre" affiché sur l'écran d'attente
   countdownEnd:  0,             // timestamp ms de fin du compte à rebours (0 = aucun)
   graphMode:     'places',      // graphique d'évolution (manche terminée) : 'places' | 'points'
+  // bandeau prédiction (scénario d'objectif d'un pilote, bas d'écran) :
+  predict:       { enabled: false, driverId: '', objective: 'p1', cutoff: 6 },
+  // objective : 'p1' | 'qualif' (manche) · 'champ_p1' | 'champ_top3' | 'champ_gap' (championnat)
   // calque d'AFFICHAGE seulement — n'écrit jamais dans results/sessionParticipants :
   gridOverride:  null,          // { key, slots:[{pos, carNumber, lastName}] }
   updatedAt:     0,
