@@ -2,19 +2,17 @@
 <html lang="fr"><head><meta charset="UTF-8">
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;700;800;900&family=Barlow+Condensed:wght@400;500;600;700&family=Exo+2:wght@300;400;500;600&display=swap" rel="stylesheet">
 <style>
-  :root{--orange:#ff5500;--panel:rgba(7,9,13,.97);--line:rgba(255,255,255,.08);--gold:#ffcc33;--green:#39d98a;--mut:#8b95a4}
+  :root{--orange:#ff5500;--panel:rgba(7,9,13,.97);--line:rgba(255,255,255,.08);--gold:#ffcc33;--green:#39d98a;--mut:#8b95a4;--blue:#38a0ff}
   *{box-sizing:border-box;margin:0;padding:0}
   html,body{width:1920px;height:1080px;overflow:hidden;background:#0a0c11;font-family:'Exo 2',sans-serif;color:#fff}
   .stage{position:absolute;inset:0}
-  /* ── caméra (placeholder) ── */
-  .cam{position:absolute;background:linear-gradient(135deg,#1b2735,#0c1119);border:1px solid #2b3445;
-    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;overflow:hidden;z-index:1}
+  .cam{position:absolute;background:linear-gradient(135deg,#1b2735,#0c1119);border:1px solid #2b3445;border-radius:13px;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;overflow:hidden;z-index:2}
   .cam::after{content:"";position:absolute;inset:0;background:repeating-linear-gradient(115deg,rgba(255,255,255,.03) 0 2px,transparent 2px 7px)}
-  .cam .ico{font-size:52px;opacity:.6}
-  .cam .lbl{font-family:'Barlow Condensed';font-weight:600;font-size:22px;letter-spacing:2px;color:#9fb4d8;text-transform:uppercase;z-index:1}
-  .cam .rec{position:absolute;top:14px;left:16px;display:flex;align-items:center;gap:7px;font-family:'Orbitron';font-weight:800;font-size:13px;letter-spacing:2px;color:#ff5f5f;z-index:1}
-  .cam .rec i{width:11px;height:11px;border-radius:50%;background:#ff3b3b;display:inline-block}
-  /* ── en-tête ── */
+  .cam .ico{font-size:48px;opacity:.6}
+  .cam .lbl{font-family:'Barlow Condensed';font-weight:600;font-size:20px;letter-spacing:2px;color:#9fb4d8;text-transform:uppercase;z-index:1;text-align:center;padding:0 14px}
+  .cam .rec{position:absolute;top:13px;left:15px;display:flex;align-items:center;gap:7px;font-family:'Orbitron';font-weight:800;font-size:12px;letter-spacing:2px;color:#ff5f5f;z-index:1}
+  .cam .rec i{width:10px;height:10px;border-radius:50%;background:#ff3b3b;display:inline-block}
   .hdr{position:absolute;top:0;left:0;right:0;height:88px;display:flex;align-items:center;gap:20px;padding:0 40px;z-index:10;
     background:linear-gradient(100deg,#141a24,#0a0c11);border-bottom:3px solid var(--orange)}
   .hdr .brand{font-family:'Orbitron';font-weight:900;font-size:28px}.hdr .brand b{color:var(--orange)}
@@ -22,15 +20,14 @@
   .hdr .info{font-family:'Barlow Condensed';font-weight:600;font-size:24px;letter-spacing:2px;text-transform:uppercase;color:#dbe3ee}
   .hdr .live{margin-left:auto;display:flex;align-items:center;gap:8px;background:#e11d2a;padding:7px 13px;border-radius:6px;font-family:'Orbitron';font-weight:800;font-size:14px;letter-spacing:2px}
   .hdr .live i{width:10px;height:10px;border-radius:50%;background:#fff;display:inline-block}
-  /* ── panneaux ── */
   .panel{position:absolute;background:var(--panel);border-radius:13px;overflow:hidden;display:flex;flex-direction:column;
     box-shadow:0 0 0 1px rgba(255,255,255,.06);z-index:5}
   .panel .h{display:flex;align-items:center;padding:11px 18px;font-family:'Orbitron';font-weight:800;font-size:18px;
-    letter-spacing:.5px;text-transform:uppercase;background:linear-gradient(100deg,var(--orange),#c23d00 80%)}
+    letter-spacing:.5px;text-transform:uppercase;background:linear-gradient(100deg,var(--orange),#c23d00 80%);flex:none}
   .panel .h.alt{background:linear-gradient(100deg,#33405a,#1c2433)}
   .panel .h .s{margin-left:auto;font-family:'Barlow Condensed';font-weight:600;font-size:14px;letter-spacing:2px;opacity:.9}
-  .panel .b{flex:1;display:flex;flex-direction:column;padding:3px 0;min-height:0}
-  .r{display:grid;grid-template-columns:40px 52px 1fr auto;align-items:center;gap:10px;padding:0 16px;flex:1;min-height:0;
+  .panel .b{flex:1;overflow:hidden;padding:2px 0}
+  .r{display:grid;grid-template-columns:40px 52px 1fr auto;align-items:center;gap:10px;padding:0 16px;height:70px;
     font-family:'Barlow Condensed';border-top:1px solid var(--line)}
   .r:first-child{border-top:0}
   .r.p1{background:linear-gradient(90deg,rgba(255,85,0,.18),transparent 70%)}
@@ -40,22 +37,18 @@
     background:#1b2230;border:1px solid #2b3445;font-family:'Orbitron';font-weight:700;font-size:16px;color:#dfe6f0}
   .r .nm{font-weight:600;font-size:22px;text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .r .v{font-family:'Orbitron';font-weight:700;font-size:19px;color:var(--gold);text-align:right}
-  .r.dense{ }
-  .dense .p{font-size:16px}.dense .nm{font-size:19px}.dense .n{height:26px;min-width:42px;font-size:14px}.dense .v{font-size:16px}
-  /* ── lower-third (plein écran) ── */
-  .lt{position:absolute;left:0;right:0;bottom:0;height:184px;z-index:10;
-    background:linear-gradient(0deg,rgba(6,8,14,.97),rgba(6,8,14,.75) 60%,transparent);padding:24px 40px 26px;display:flex;flex-direction:column;gap:12px}
-  .lt .cap{display:flex;align-items:center;gap:14px;font-family:'Orbitron';font-weight:800;font-size:20px;letter-spacing:1px;text-transform:uppercase}
-  .lt .cap b{color:var(--orange)}
-  .lt .chips{display:flex;gap:14px;overflow:hidden}
-  .chip{display:flex;align-items:center;gap:10px;background:var(--panel);border:1px solid var(--line);border-radius:11px;padding:11px 16px}
-  .chip .p{font-family:'Orbitron';font-weight:800;font-size:20px;color:var(--orange)}
-  .chip .n{display:inline-flex;align-items:center;justify-content:center;min-width:44px;height:32px;padding:0 7px;border-radius:6px;background:#1b2230;border:1px solid #2b3445;font-family:'Orbitron';font-weight:700;font-size:16px}
-  .chip .nm{font-family:'Barlow Condensed';font-weight:600;font-size:24px;text-transform:uppercase}
-  .chip .v{font-family:'Orbitron';font-weight:700;font-size:18px;color:var(--gold)}
-  /* légende du mode (repère maquette) */
-  .tag{position:absolute;top:100px;left:40px;z-index:20;background:rgba(255,85,0,.14);border:1px solid rgba(255,85,0,.5);
-    border-radius:8px;padding:7px 14px;font-family:'Barlow Condensed';font-weight:600;font-size:17px;letter-spacing:1px;color:#ffca9e}
+  /* bandeau prédiction */
+  .pred{position:absolute;height:150px;z-index:8;display:flex;align-items:stretch;background:var(--panel);border-radius:13px;overflow:hidden;
+    box-shadow:0 0 0 1px rgba(255,255,255,.07);border-left:7px solid var(--orange)}
+  .pred .pt{display:flex;flex-direction:column;justify-content:center;gap:5px;padding:0 24px;background:linear-gradient(120deg,#33405a,#1c2433);min-width:180px}
+  .pred .pt b{font-family:'Orbitron';font-weight:900;font-size:19px;letter-spacing:2px}
+  .pred .pt span{font-family:'Barlow Condensed';font-weight:600;font-size:15px;letter-spacing:3px;color:#9fb4d8}
+  .pred .pd{display:flex;flex-direction:column;justify-content:center;gap:5px;padding:0 24px;min-width:270px;border-right:1px solid var(--line)}
+  .pred .pd b{font-family:'Barlow Condensed';font-weight:700;font-size:27px;text-transform:uppercase}
+  .pred .pd span{font-family:'Barlow Condensed';font-weight:500;font-size:15px;color:var(--mut)}
+  .pred .pl{flex:1;display:flex;align-items:center;padding:0 26px;font-family:'Barlow Condensed';font-weight:500;font-size:24px;color:#eef3fa}
+  .pred .pp{display:flex;align-items:center;padding:0 26px;font-family:'Orbitron';font-weight:900;font-size:20px;letter-spacing:1px;
+    background:linear-gradient(120deg,rgba(255,138,61,.24),rgba(255,138,61,.05));color:#ff8a3d}
 </style></head>
 <body>
 <div class="stage" id="stage"></div>
@@ -63,40 +56,55 @@
 const N=['Grondin','Boulbès','Lefebvre','Dubourg','Mailloux','André','Renard','Caillot','Morel','Picard','Bedouet','Le Lay'];
 const NO=[11,2,77,4,33,9,21,5,14,8,69,22];
 const INT=(n)=>Array.from({length:n},(_,i)=>({p:i+1,n:NO[i],nm:N[i],v:(135-i*5)+' pt'}));
-const rowHtml=(r,i,dense)=>`<div class="r ${i===0?'p1':''} ${dense?'dense':''}"><span class="p">${r.p}</span><span class="n">${r.n}</span><span class="nm">${r.nm}</span><span class="v">${r.v}</span></div>`;
-const panel=(title,sub,list,alt,dense)=>`<div class="h ${alt?'alt':''}">${title}${sub?`<span class="s">${sub}</span>`:''}</div><div class="b">${list.map((r,i)=>rowHtml(r,i,dense)).join('')}</div>`;
-const cam=(lbl)=>`<div class="rec"><i></i>REC</div><div class="ico">📹</div><div class="lbl">${lbl}</div>`;
+const rowHtml=(r,i)=>`<div class="r ${i===0?'p1':''}"><span class="p">${r.p}</span><span class="n">${r.n}</span><span class="nm">${r.nm}</span><span class="v">${r.v}</span></div>`;
 const hdr=`<div class="hdr"><span class="brand">RX<b>CHRONO</b></span><span class="sep"></span><span class="info">📍 Lohéac · Supercar · Manche 4</span><span class="live"><i></i>LIVE</span></div>`;
+const camBox=(x)=>`<div class="cam" style="${x}"><div class="rec"><i></i>REC</div><div class="ico">📹</div><div class="lbl">Caméra<br>webcam / R50</div></div>`;
+const S=document.getElementById('stage');
+
+const CW=520, CH=293, M=40, MB=32, TOP=104, GAP=16;
+const COLS=[{l:40,w:590,t:'Manche en cours',s:'en direct',alt:0},{l:648,w:590,t:'Classement intermédiaire',s:'',alt:1},{l:1256,w:624,t:'Championnat',s:'',alt:1}];
+function col(c,top,bottom){return `<div class="panel" style="left:${c.l}px;width:${c.w}px;top:${top}px;bottom:${bottom}px">
+  <div class="h ${c.alt?'alt':''}">${c.t}${c.s?`<span class="s">${c.s}</span>`:''}</div><div class="b">${INT(12).map(rowHtml).join('')}</div></div>`;}
+const predBar=(left,width)=>`<div class="pred" style="left:${left}px;width:${width}px;bottom:${MB}px">
+  <div class="pt"><b>SCÉNARIO</b><span>INTERMÉDIAIRE</span></div>
+  <div class="pd"><b>N°11 Grondin</b><span>Tête de l'intermédiaire · P1 · 135 pts</span></div>
+  <div class="pl">🛡️ Doit finir au moins P6 (≥ 38 pts) pour garder la tête.</div>
+  <div class="pp">À DÉFENDRE</div></div>`;
+
+const CORNERS={ // position caméra + colonne impactée (1..3) + côté
+  hg:{x:`left:${M}px;top:${TOP}px;width:${CW}px;height:${CH}px`, col:0, side:'top'},
+  hd:{x:`right:${M}px;top:${TOP}px;width:${CW}px;height:${CH}px`, col:2, side:'top'},
+  bg:{x:`left:${M}px;bottom:${MB}px;width:${CW}px;height:${CH}px`, col:0, side:'bottom'},
+  bd:{x:`right:${M}px;bottom:${MB}px;width:${CW}px;height:${CH}px`, col:2, side:'bottom'},
+};
 
 const layout=new URLSearchParams(location.search).get('layout')||'none';
-const S=document.getElementById('stage');
-const tag=t=>``;
-const P=(cls,style,html)=>`<div class="panel" style="${style}"><div style="display:contents">${html}</div></div>`.replace('class="panel"',`class="panel ${cls||''}"`);
+const base=layout.replace('-pred','');
+const withPred=layout.endsWith('-pred');
 
-if(layout==='none'){
-  S.innerHTML=hdr+tag('AUCUNE — tableaux plein écran (comme aujourd\'hui)')
-    +P('','left:40px;top:104px;width:600px;bottom:32px',panel('Manche en cours','en direct',INT(9)))
-    +P('','left:660px;top:104px;width:600px;bottom:32px',panel('Classement intermédiaire','après M4',INT(9),true))
-    +P('','left:1280px;top:104px;width:600px;bottom:32px',panel('Championnat','2026',INT(9),true));
-}
-else if(layout==='corner'){
-  S.innerHTML=hdr+tag('COIN — caméra en incrustation, les tableaux réservent le coin')
-    +P('','left:40px;top:104px;width:590px;bottom:32px',panel('Manche en cours','en direct',INT(9)))
-    +P('','left:648px;top:104px;width:590px;bottom:32px',panel('Classement intermédiaire','',INT(9),true))
-    +P('','left:1256px;top:104px;width:624px;height:560px',panel('Championnat','top 6',INT(6),true))
-    +`<div class="cam" style="right:40px;bottom:32px;width:624px;height:352px;border-radius:13px">${cam('Caméra — webcam / R50')}</div>`;
-}
-else if(layout==='lateral'){
-  S.innerHTML=hdr+tag('CENTRE / GRANDE — vidéo à gauche, tableaux en rail à droite')
-    +`<div class="cam" style="left:40px;top:104px;width:1180px;bottom:32px;border-radius:14px">${cam('Caméra — plan large / face-cam')}</div>`
-    +P('','left:1256px;top:104px;width:624px;height:600px',panel('Classement intermédiaire','après M4',INT(11),true,true))
-    +P('','left:1256px;top:724px;width:624px;bottom:32px',panel('Championnat','top 5',INT(5),true,true));
-}
-else if(layout==='fullscreen'){
-  S.innerHTML=`<div class="cam" style="inset:0">${cam('Caméra — plein écran')}</div>`+hdr
-    +`<div class="lt"><div class="cap">📊 <b>Classement intermédiaire</b> · Supercar · après M4</div><div class="chips">`
-    +INT(6).map(r=>`<div class="chip"><span class="p">${r.p}</span><span class="n">${r.n}</span><span class="nm">${r.nm}</span><span class="v">${r.v}</span></div>`).join('')
-    +`</div></div>`;
+if(layout==='full'){
+  S.innerHTML=hdr+camBox('inset:0;border-radius:0;border:0');
+}else{
+  const cam=CORNERS[base]||null;
+  const bannerBottom = withPred ? (MB+150+GAP) : MB;   // colonnes au-dessus du bandeau
+  let html=hdr;
+  COLS.forEach((c,i)=>{
+    let top=TOP, bottom=bannerBottom;
+    if(cam && cam.col===i){
+      if(cam.side==='top') top = TOP+CH+GAP;
+      if(cam.side==='bottom') bottom = Math.max(bottom, MB+CH+GAP);
+    }
+    html+=col(c,top,bottom);
+  });
+  if(cam) html+=camBox(cam.x);
+  if(withPred){
+    // bandeau décalé pour s'arrêter juste à côté de la caméra (petit espace)
+    let left=M, width=1920-2*M;
+    if(base==='bd'){ width = (1920-M-CW-GAP) - M; }               // caméra à droite → bandeau à gauche
+    if(base==='bg'){ left = M+CW+GAP; width = (1920-M) - left; }  // caméra à gauche → bandeau à droite
+    html+=predBar(left,width);
+  }
+  S.innerHTML=html;
 }
 </script>
 </body></html>
