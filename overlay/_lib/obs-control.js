@@ -30,6 +30,7 @@ export const DEFAULT_CONTROL = {
   // source vidéo (caméra locale OU lien) composée DANS la page + placement piloté :
   videoLayout:   'none',        // 'none' | 'hg' | 'hd' | 'bg' | 'bd' (coins) | 'full' (plein écran)
   videoSource:   { type: 'camera', value: '' },  // 'camera' (deviceId, choisi côté overlay) | 'url' (YouTube / VDO.Ninja / iframe)
+  videoVolume:   0,             // volume du son d'un lien (0-100 ; 0 = muet). Caméra : audio géré dans OBS.
   // calque d'AFFICHAGE seulement — n'écrit jamais dans results/sessionParticipants :
   gridOverride:  null,          // { key, slots:[{pos, carNumber, lastName}] }
   updatedAt:     0,
