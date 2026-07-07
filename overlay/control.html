@@ -171,6 +171,11 @@
         <div class="field" id="vidUrlRow" style="margin-top:10px">
           <input id="vidUrl" placeholder="Colle l'URL du live YouTube / VDO.Ninja…"><button class="apply" id="vidUrlBtn">OK</button>
         </div>
+        <div id="vidVolRow" style="margin-top:12px;display:flex;align-items:center;gap:14px">
+          <span style="font-family:'Barlow Condensed';font-weight:600;font-size:17px;white-space:nowrap">🔊 Volume <b id="vidVolVal" style="color:var(--orange)">0</b></span>
+          <input type="range" id="vidVol" min="0" max="100" value="0" style="flex:1;accent-color:var(--orange)">
+        </div>
+        <div class="note" style="margin:10px 0 0;background:rgba(255,255,255,.04);border-color:var(--line);color:var(--mut)">Volume du son d'un lien (YouTube). La caméra n'a pas d'audio ici — le son du R50 se gère dans OBS.</div>
       </div>
     </div>
 
@@ -322,8 +327,12 @@
     document.querySelectorAll('#vidLayout .b').forEach(b => b.classList.toggle('on', b.dataset.vl === vlay));
     document.querySelectorAll('#vidSrc .b').forEach(b => b.classList.toggle('on', b.dataset.vs === vs.type));
     document.getElementById('vidUrlRow').style.display = (vs.type === 'url') ? '' : 'none';
+    document.getElementById('vidVolRow').style.display = (vs.type === 'url') ? 'flex' : 'none';
     const vurl = document.getElementById('vidUrl');
     if (document.activeElement !== vurl) vurl.value = vs.value || '';
+    const vv = state.videoVolume || 0, volInput = document.getElementById('vidVol');
+    if (document.activeElement !== volInput) volInput.value = vv;
+    document.getElementById('vidVolVal').textContent = vv;
     document.getElementById('vidN').textContent = vlay === 'none' ? 'off' : vlay.toUpperCase();
     renderSlots();
   }
@@ -382,6 +391,8 @@
     push({ videoSource: { ...(state.videoSource || { type: 'camera', value: '' }), type: b.dataset.vs } }); paint();
   });
   document.getElementById('vidUrlBtn').onclick = () => push({ videoSource: { type: 'url', value: document.getElementById('vidUrl').value.trim() } });
+  document.getElementById('vidVol').oninput = e => { document.getElementById('vidVolVal').textContent = e.target.value; };
+  document.getElementById('vidVol').onchange = e => push({ videoVolume: +e.target.value });
   document.querySelectorAll('#scenes .b').forEach(b => b.onclick = () => { push({ scene: b.dataset.scene }); paint(); });
   // (boutons catégories/phases : liés dans renderCats()/renderPhases(), car re-rendus au changement de championnat)
   meetSel.onchange = () => { push({ meetingId: meetSel.value }); paint(); loadPredictDrivers(); };

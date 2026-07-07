@@ -18,8 +18,10 @@ html,body{width:1920px;height:1080px;overflow:hidden;
 body.transparent{background:transparent}
 
 /* racine d'overlay : fondu d'affichage/masquage piloté par la régie.
-   z-index 5 : passe AU-DESSUS de l'étage vidéo (#vid-stage, z-index 1). */
-.overlay-root{position:absolute;inset:0;opacity:1;transition:opacity .45s ease;z-index:5}
+   z-index 5 : passe AU-DESSUS de l'étage vidéo (#vid-stage, z-index 1).
+   pointer-events:none : les tableaux ne captent pas les clics → ils traversent
+   vers la vidéo (permet de cliquer le lecteur, ex. activer le son). */
+.overlay-root{position:absolute;inset:0;opacity:1;transition:opacity .45s ease;z-index:5;pointer-events:none}
 .overlay-root.hidden{opacity:0}
 
 /* ============ ÉTAGE VIDÉO (caméra locale OU lien) composé dans la page ============

@@ -113,9 +113,24 @@
       if (/youtube\.com$/.test(url.hostname) || /youtube\.com/.test(url.hostname)) {
         id = url.searchParams.get('v') || (url.pathname.match(/\/(?:live|embed|shorts)\/([\w-]+)/) || [])[1] || '';
       } else if (url.hostname.includes('youtu.be')) { id = url.pathname.slice(1); }
-      if (id) return `https://www.youtube.com/embed/${id}?autoplay=1&mute=1&controls=0&modestbranding=1&playsinline=1&rel=0`;
+      // enablejsapi=1 → on peut piloter le volume (postMessage). mute=1 : requis pour l'autoplay.
+      if (id) return `https://www.youtube.com/embed/${id}?autoplay=1&mute=1&controls=0&modestbranding=1&playsinline=1&rel=0&enablejsapi=1`;
     } catch (e) { /* pas une URL standard */ }
     return u;   // VDO.Ninja & autres liens embarquables : tels quels
+  }
+
+  // Volume du lien YouTube : piloté via l'API du lecteur (postMessage).
+  //  0 = muet ; > 0 = son (dé-mute + volume). L'autoplay démarre muet, on dé-mute
+  //  à la demande (fiable dans OBS ; dans un simple onglet, un clic peut être requis).
+  let vidVolume = 0, vidIsYt = false;
+  function ytCmd(func, args) {
+    const f = vidStage && vidStage.querySelector('iframe');
+    try { if (f && f.contentWindow) f.contentWindow.postMessage(JSON.stringify({ event: 'command', func, args: args || [] }), '*'); } catch (e) {}
+  }
+  function applyVolume() {
+    if (!vidIsYt) return;
+    if (vidVolume > 0) { ytCmd('unMute'); ytCmd('setVolume', [vidVolume]); }
+    else ytCmd('mute');
   }
 
   async function startCamera(deviceId) {
@@ -142,14 +157,16 @@
     if (vidMode === 'cam') return;
     vidStage.innerHTML = ''; vidStage.appendChild(vidEl); vidMode = 'cam'; vidUrl = '';
   }
-  function setStageIframe(url) {
+  function setStageIframe(url, isYt) {
     if (vidMode === 'url' && vidUrl === url) return;
     vidStage.innerHTML = `<iframe src="${url}" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe>`;
-    vidMode = 'url'; vidUrl = url;
+    vidMode = 'url'; vidUrl = url; vidIsYt = !!isYt;
+    const f = vidStage.querySelector('iframe');
+    if (f) f.addEventListener('load', () => setTimeout(applyVolume, 400));   // volume dès que le lecteur est prêt
   }
 
   // Appliqué à CHAQUE mise à jour du contrôle (indépendant du rechargement de scène) :
-  // change la source/placement de la vidéo sans re-render les tableaux.
+  // change la source/placement/volume de la vidéo sans re-render les tableaux.
   function applyVideo(ctrl) {
     ensureVidEls();
     const layout = ctrl.videoLayout || 'none';
@@ -159,7 +176,10 @@
     if (off) { showStart(false); vidErr(''); return; }
     if (src.type === 'url' && src.value) {
       stopCamera(); showStart(false); vidErr('');
-      setStageIframe(embedUrl(src.value));
+      const emb = embedUrl(src.value);
+      setStageIframe(emb, emb.includes('youtube.com/embed'));
+      vidVolume = Math.max(0, Math.min(100, ctrl.videoVolume ?? 0));
+      applyVolume();
     } else {
       setStageVideo();
       const want = src.value || localStorage.getItem(CAM_KEY) || '';
