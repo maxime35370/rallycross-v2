@@ -140,7 +140,9 @@ export function renderDashboard(d) {
       </div>`;
   }
 
-  return `<div class="dash">${header}${body}${predictBanner(d.predict)}</div>`;
+  // classe de placement vidéo : les tableaux réservent le coin (CSS .dash.vl-*)
+  const vl = d.videoLayout && d.videoLayout !== 'none' ? ' vl-' + d.videoLayout : '';
+  return `<div class="dash${vl}">${header}${body}${predictBanner(d.predict)}</div>`;
 }
 
 // ─────────────────────────────────────────────────────────
@@ -420,9 +422,10 @@ export function renderSession(d) {
     <span class="live"><span class="d"></span>LIVE</span></div>`;
 
   const pb = predictBanner(d.predict);
+  const vl = d.videoLayout && d.videoLayout !== 'none' ? ' vl-' + d.videoLayout : '';
 
   if (d.mode === 'ec') {
-    return `<div class="dash">${header}<div class="sess-body sess-ec">
+    return `<div class="dash${vl}">${header}<div class="sess-body sess-ec">
       ${col('À passer', 'ordre inverse championnat', d.todo || [], todoRow, true, true)}
       ${col('Classement essais', '', d.rank || [], rankRow, false, false)}
     </div>${pb}</div>`;
@@ -430,7 +433,7 @@ export function renderSession(d) {
   // Manche terminée : 2 colonnes (manche + intermédiaire) à gauche + graphique d'évolution à droite
   if (d.graph) {
     const gm = d.graph.mode === 'points' ? 'points' : 'places';
-    return `<div class="dash">${header}<div class="sess-body sess-graph">
+    return `<div class="dash${vl}">${header}<div class="sess-body sess-graph">
       ${col(d.sessionLabel || 'Classement manche', '', d.rank || [], rankRow, false, false)}
       ${col('Classement intermédiaire', '', d.interim || [], ptsRow, true, false)}
       <div class="col">
@@ -442,7 +445,7 @@ export function renderSession(d) {
   // Manche : 3 colonnes dès qu'un intermédiaire est fourni (manche ≥ 2),
   // sinon 2 colonnes (manche 1 : l'intermédiaire n'a pas encore de sens).
   const showInterim = Array.isArray(d.interim);
-  return `<div class="dash">${header}<div class="sess-body ${showInterim ? 'sess-mq' : 'sess-mq2'}">
+  return `<div class="dash${vl}">${header}<div class="sess-body ${showInterim ? 'sess-mq' : 'sess-mq2'}">
     ${col('À passer', '', d.todo || [], todoRow, true, true)}
     ${col(d.sessionLabel || 'Classement manche', '', d.rank || [], rankRow, false, false)}
     ${showInterim ? col('Classement intermédiaire', '', d.interim, ptsRow, true, false) : ''}

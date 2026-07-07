@@ -151,6 +151,27 @@
           <input id="predCutoff" type="number" min="1" placeholder="Nombre de qualifiés (top N)">
         </div>
       </div>
+      <div class="card">
+        <h3>📹 Source vidéo <span class="n" id="vidN">off</span></h3>
+        <div class="note">Compose une caméra (webcam / R50) ou un lien (YouTube live, VDO.Ninja) dans l'overlay. La caméra se démarre sur la page overlay (bouton en bas à gauche, clic droit → Interagir dans OBS).</div>
+        <div style="font-family:'Barlow Condensed';font-weight:600;font-size:14px;letter-spacing:1px;color:var(--mut);text-transform:uppercase;margin-bottom:8px">Placement</div>
+        <div class="btns" id="vidLayout">
+          <div class="b" data-vl="none">Aucune</div>
+          <div class="b" data-vl="hg">Haut G</div>
+          <div class="b" data-vl="hd">Haut D</div>
+          <div class="b" data-vl="bg">Bas G</div>
+          <div class="b" data-vl="bd">Bas D</div>
+          <div class="b" data-vl="full">Plein écran</div>
+        </div>
+        <div style="font-family:'Barlow Condensed';font-weight:600;font-size:14px;letter-spacing:1px;color:var(--mut);text-transform:uppercase;margin:12px 0 8px">Source</div>
+        <div class="btns" id="vidSrc">
+          <div class="b" data-vs="camera">📷 Caméra</div>
+          <div class="b" data-vs="url">🔗 Lien (YouTube / VDO.Ninja)</div>
+        </div>
+        <div class="field" id="vidUrlRow" style="margin-top:10px">
+          <input id="vidUrl" placeholder="Colle l'URL du live YouTube / VDO.Ninja…"><button class="apply" id="vidUrlBtn">OK</button>
+        </div>
+      </div>
     </div>
 
     <div class="card">
@@ -295,6 +316,15 @@
     document.getElementById('predCutoffRow').style.display = (pr.objective === 'qualif') ? '' : 'none';
     const drvSel = document.getElementById('predDrv');
     if (drvSel.querySelector(`option[value="${(pr.driverId || '').replace(/"/g, '')}"]`)) drvSel.value = pr.driverId || '';
+    // source vidéo
+    const vs = state.videoSource || { type: 'camera', value: '' };
+    const vlay = state.videoLayout || 'none';
+    document.querySelectorAll('#vidLayout .b').forEach(b => b.classList.toggle('on', b.dataset.vl === vlay));
+    document.querySelectorAll('#vidSrc .b').forEach(b => b.classList.toggle('on', b.dataset.vs === vs.type));
+    document.getElementById('vidUrlRow').style.display = (vs.type === 'url') ? '' : 'none';
+    const vurl = document.getElementById('vidUrl');
+    if (document.activeElement !== vurl) vurl.value = vs.value || '';
+    document.getElementById('vidN').textContent = vlay === 'none' ? 'off' : vlay.toUpperCase();
     renderSlots();
   }
 
@@ -346,6 +376,12 @@
   document.getElementById('predDrv').onchange = e => pushPredict({ driverId: e.target.value });
   document.getElementById('predObj').onchange = e => pushPredict({ objective: e.target.value });
   document.getElementById('predCutoff').onchange = e => pushPredict({ cutoff: +e.target.value || 6 });
+  // source vidéo : placement + type de source + URL
+  document.querySelectorAll('#vidLayout .b').forEach(b => b.onclick = () => { push({ videoLayout: b.dataset.vl }); paint(); });
+  document.querySelectorAll('#vidSrc .b').forEach(b => b.onclick = () => {
+    push({ videoSource: { ...(state.videoSource || { type: 'camera', value: '' }), type: b.dataset.vs } }); paint();
+  });
+  document.getElementById('vidUrlBtn').onclick = () => push({ videoSource: { type: 'url', value: document.getElementById('vidUrl').value.trim() } });
   document.querySelectorAll('#scenes .b').forEach(b => b.onclick = () => { push({ scene: b.dataset.scene }); paint(); });
   // (boutons catégories/phases : liés dans renderCats()/renderPhases(), car re-rendus au changement de championnat)
   meetSel.onchange = () => { push({ meetingId: meetSel.value }); paint(); loadPredictDrivers(); };
