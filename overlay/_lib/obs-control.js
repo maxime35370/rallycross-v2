@@ -27,6 +27,9 @@ export const DEFAULT_CONTROL = {
   // bandeau prédiction (scénario d'objectif d'un pilote, bas d'écran) :
   predict:       { enabled: false, driverId: '', objective: 'p1', cutoff: 6 },
   // objective : 'p1' | 'qualif' (manche) · 'champ_p1' | 'champ_top3' | 'champ_gap' (championnat)
+  // source vidéo (caméra locale OU lien) composée DANS la page + placement piloté :
+  videoLayout:   'none',        // 'none' | 'hg' | 'hd' | 'bg' | 'bd' (coins) | 'full' (plein écran)
+  videoSource:   { type: 'camera', value: '' },  // 'camera' (deviceId, choisi côté overlay) | 'url' (YouTube / VDO.Ninja / iframe)
   // calque d'AFFICHAGE seulement — n'écrit jamais dans results/sessionParticipants :
   gridOverride:  null,          // { key, slots:[{pos, carNumber, lastName}] }
   updatedAt:     0,

@@ -80,6 +80,94 @@
     root.classList.toggle('hidden', !visible);
   }
 
+  // ─────────────────────────────────────────────────────────
+  // ÉTAGE VIDÉO (caméra locale OU lien) composé dans la page
+  //   Élément persistant hors de #root ; placement piloté par ctrl.videoLayout,
+  //   source par ctrl.videoSource ({type:'camera'|'url', value}).
+  // ─────────────────────────────────────────────────────────
+  let vidStage, vidStartBtn, vidErrEl, vidEl;
+  let vidMode = '', vidUrl = '', vidStarted = false, vidStream = null, vidWantId = '';
+  const CAM_KEY = 'rxchrono.camDeviceId';
+
+  function ensureVidEls() {
+    if (vidStage) return;
+    vidStage = document.createElement('div'); vidStage.id = 'vid-stage';
+    vidEl = document.createElement('video'); vidEl.id = 'vid-el';
+    vidEl.autoplay = true; vidEl.muted = true; vidEl.setAttribute('playsinline', '');
+    document.body.appendChild(vidStage);
+    vidStartBtn = document.createElement('button'); vidStartBtn.id = 'vid-start';
+    vidStartBtn.textContent = '📷 Démarrer caméra';
+    vidStartBtn.onclick = () => startCamera(vidWantId);
+    document.body.appendChild(vidStartBtn);
+    vidErrEl = document.createElement('div'); vidErrEl.id = 'vid-err';
+    document.body.appendChild(vidErrEl);
+  }
+  const vidErr = msg => { vidErrEl.textContent = msg || ''; vidErrEl.classList.toggle('show', !!msg); };
+  const showStart = show => vidStartBtn.classList.toggle('show', show);
+
+  // URL → embed lisible (YouTube live → iframe embed ; sinon URL telle quelle : VDO.Ninja…)
+  function embedUrl(u) {
+    try {
+      const url = new URL(u);
+      let id = '';
+      if (/youtube\.com$/.test(url.hostname) || /youtube\.com/.test(url.hostname)) {
+        id = url.searchParams.get('v') || (url.pathname.match(/\/(?:live|embed|shorts)\/([\w-]+)/) || [])[1] || '';
+      } else if (url.hostname.includes('youtu.be')) { id = url.pathname.slice(1); }
+      if (id) return `https://www.youtube.com/embed/${id}?autoplay=1&mute=1&controls=0&modestbranding=1&playsinline=1&rel=0`;
+    } catch (e) { /* pas une URL standard */ }
+    return u;   // VDO.Ninja & autres liens embarquables : tels quels
+  }
+
+  async function startCamera(deviceId) {
+    vidErr(''); showStart(false);
+    try {
+      if (vidStream) vidStream.getTracks().forEach(t => t.stop());
+      vidStream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: deviceId ? { deviceId: { exact: deviceId } } : { width: { ideal: 1920 }, height: { ideal: 1080 } },
+      });
+      vidEl.srcObject = vidStream; vidStarted = true;
+      const id = vidStream.getVideoTracks()[0]?.getSettings().deviceId;
+      if (id) { localStorage.setItem(CAM_KEY, id); vidWantId = id; }
+    } catch (e) {
+      vidStarted = false; showStart(true);
+      vidErr('Caméra : ' + ({ NotAllowedError: 'autorisation refusée (autorise la caméra pour ce site).',
+        NotFoundError: 'aucune caméra (vérifie le câble USB-C data / le mode webcam).',
+        NotReadableError: 'caméra occupée par une autre application.' }[e.name] || e.message));
+    }
+  }
+  function stopCamera() { if (vidStream) { vidStream.getTracks().forEach(t => t.stop()); vidStream = null; } vidStarted = false; }
+
+  function setStageVideo() {
+    if (vidMode === 'cam') return;
+    vidStage.innerHTML = ''; vidStage.appendChild(vidEl); vidMode = 'cam'; vidUrl = '';
+  }
+  function setStageIframe(url) {
+    if (vidMode === 'url' && vidUrl === url) return;
+    vidStage.innerHTML = `<iframe src="${url}" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe>`;
+    vidMode = 'url'; vidUrl = url;
+  }
+
+  // Appliqué à CHAQUE mise à jour du contrôle (indépendant du rechargement de scène) :
+  // change la source/placement de la vidéo sans re-render les tableaux.
+  function applyVideo(ctrl) {
+    ensureVidEls();
+    const layout = ctrl.videoLayout || 'none';
+    const src = ctrl.videoSource || { type: 'camera', value: '' };
+    const off = layout === 'none' || !ctrl.visible;   // suit aussi le masquage global de l'overlay
+    vidStage.className = off ? '' : ('on ' + layout);
+    if (off) { showStart(false); vidErr(''); return; }
+    if (src.type === 'url' && src.value) {
+      stopCamera(); showStart(false); vidErr('');
+      setStageIframe(embedUrl(src.value));
+    } else {
+      setStageVideo();
+      const want = src.value || localStorage.getItem(CAM_KEY) || '';
+      if (!vidStarted) { vidWantId = want; showStart(true); }
+      else if (want && want !== vidWantId) { startCamera(want); }   // changement de caméra en direct
+    }
+  }
+
   async function resolveRegulation(champId) {
     if (!championships.length) championships = await fsQuery('championships', []);
     return championships.find(c => c.id === champId)
@@ -271,7 +359,7 @@
         const data = {
           mode: ctrl.sessionType === 'EC' ? 'ec' : 'mq',
           headerText, sessionLabel: `${sLabel} · ${catName}`,
-          todo, rank,
+          todo, rank, videoLayout: ctrl.videoLayout,
           predict: await computePredict(ctrl, reg, session, rank).catch(() => null),
         };
         // Classement intermédiaire : pertinent à partir de la manche 2 (≥ 2 manches).
@@ -387,7 +475,7 @@
         headerText, category: catName, sessionLabel: sLabel,
         raceSub: `${catName} · ${sLabel}`, interimSub: '',
         champSub: `${catName} · ${reg.year}`, social: headerText,
-        layout, slots, poleSide,
+        layout, slots, poleSide, videoLayout: ctrl.videoLayout,
       };
       if (ctrl.scene === 'dashboard') {
         data.race    = sortRace(raceResults || []);
@@ -426,10 +514,11 @@
     if (ctrlUnsub) { ctrlUnsub(); ctrlUnsub = null; }
     ctrlUnsub = await watchControl(async (ctrl) => {
       applyVisibility(ctrl.visible);
+      applyVideo(ctrl);   // source/placement vidéo : appliqué en direct (sans recharger la scène)
       const key = [ctrl.scene, ctrl.championshipId, ctrl.meetingId, ctrl.category,
                    ctrl.sessionType, ctrl.sessionNum, JSON.stringify(ctrl.gridOverride),
                    ctrl.headerText, ctrl.nextText, ctrl.countdownEnd, ctrl.graphMode,
-                   JSON.stringify(ctrl.predict)].join('|');
+                   JSON.stringify(ctrl.predict), ctrl.videoLayout].join('|');
       if (key === cacheKey) return;   // rien de pertinent n'a changé
       cacheKey = key;
       lastControl = ctrl;

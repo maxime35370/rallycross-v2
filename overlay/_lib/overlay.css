@@ -17,9 +17,41 @@ html,body{width:1920px;height:1080px;overflow:hidden;
   font-family:'Exo 2',system-ui,sans-serif;color:#fff}
 body.transparent{background:transparent}
 
-/* racine d'overlay : fondu d'affichage/masquage piloté par la régie */
-.overlay-root{position:absolute;inset:0;opacity:1;transition:opacity .45s ease}
+/* racine d'overlay : fondu d'affichage/masquage piloté par la régie.
+   z-index 5 : passe AU-DESSUS de l'étage vidéo (#vid-stage, z-index 1). */
+.overlay-root{position:absolute;inset:0;opacity:1;transition:opacity .45s ease;z-index:5}
 .overlay-root.hidden{opacity:0}
+
+/* ============ ÉTAGE VIDÉO (caméra locale OU lien) composé dans la page ============
+   Élément persistant hors de #root (survit aux changements de scène). Placé SOUS les
+   tableaux ; les tableaux réservent le coin correspondant (voir .dash.vl-*). */
+:root{--vidw:544px;--vidh:306px;--vidm:32px;--vidgap:16px;--vidtop:104px}
+#vid-stage{position:fixed;z-index:1;background:#000;overflow:hidden;display:none;box-shadow:0 14px 40px rgba(0,0,0,.5)}
+#vid-stage.on{display:block}
+#vid-stage video,#vid-stage iframe{width:100%;height:100%;object-fit:cover;border:0;display:block;background:#000}
+#vid-stage.hg{left:var(--vidm);top:var(--vidtop);width:var(--vidw);height:var(--vidh);border-radius:13px}
+#vid-stage.hd{right:var(--vidm);top:var(--vidtop);width:var(--vidw);height:var(--vidh);border-radius:13px}
+#vid-stage.bg{left:var(--vidm);bottom:var(--vidm);width:var(--vidw);height:var(--vidh);border-radius:13px}
+#vid-stage.bd{right:var(--vidm);bottom:var(--vidm);width:var(--vidw);height:var(--vidh);border-radius:13px}
+#vid-stage.full{inset:0;width:100%;height:100%;border-radius:0}
+/* bouton discret « démarrer caméra » (getUserMedia exige un geste utilisateur) */
+#vid-start{position:fixed;left:8px;bottom:8px;z-index:40;background:rgba(20,26,36,.9);color:#cfe0ff;border:1px solid #2b3445;
+  border-radius:8px;padding:8px 12px;font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:15px;cursor:pointer;display:none}
+#vid-start.show{display:block}
+#vid-err{position:fixed;left:8px;bottom:8px;z-index:40;background:rgba(58,16,18,.92);color:#ffb3b3;border:1px solid #e11d2a;
+  border-radius:8px;padding:8px 12px;font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:14px;max-width:520px;display:none}
+#vid-err.show{display:block}
+
+/* réserver le coin pour la vidéo : le panneau du coin se raccourcit (les autres restent pleins) */
+.dash.vl-bd .dash-body > :last-child, .dash.vl-bd .sess-body > :last-child { margin-bottom: calc(var(--vidh) + var(--vidgap)); }
+.dash.vl-bg .dash-body > :first-child,.dash.vl-bg .sess-body > :first-child{ margin-bottom: calc(var(--vidh) + var(--vidgap)); }
+.dash.vl-hd .dash-body > :last-child, .dash.vl-hd .sess-body > :last-child { margin-top: calc(var(--vidh) + var(--vidgap)); }
+.dash.vl-hg .dash-body > :first-child,.dash.vl-hg .sess-body > :first-child{ margin-top: calc(var(--vidh) + var(--vidgap)); }
+/* bandeau prédiction : se cale à côté d'une vidéo en bas (ne passe pas dessous) */
+.dash.vl-bd .pred-bar{ margin-right: calc(var(--vidw) + var(--vidm) + var(--vidgap) - 40px); }
+.dash.vl-bg .pred-bar{ margin-left:  calc(var(--vidw) + var(--vidm) + var(--vidgap) - 40px); }
+/* plein écran : la vidéo occupe tout, on masque les tableaux (en-tête conservé) */
+.dash.vl-full .dash-body,.dash.vl-full .sess-body,.dash.vl-full .pred-bar{display:none}
 
 /* placeholder / diagnostic (visible en navigateur ; en attendant la régie) */
 .ov-diag{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);text-align:center;

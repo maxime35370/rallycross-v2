@@ -240,10 +240,22 @@ data['ending'] = { countdownEnd: Date.now()+5*60000, nextText:'PROCHAIN MEETING 
   };
 }
 
-const scene = new URLSearchParams(location.search).get('scene')||'dashboard';
+const params = new URLSearchParams(location.search);
+const scene = params.get('scene')||'dashboard';
+const vl = params.get('vl');   // test placement vidéo : hg|hd|bg|bd|full
 const type = (scene === 'ordre' || scene === 'df-combo' || scene === 'fin-combo') ? 'grid'
   : (scene === 'dash-fin' || scene === 'dash-df' || scene === 'dash-mq2' || scene === 'dash-predict' || scene === 'dash-fin-predict') ? 'dashboard'
   : scene.startsWith('session') ? 'session' : scene;
-document.getElementById('root').innerHTML = renderScene(type, data[scene] || data.dashboard);
+const sceneData = data[scene] || data.dashboard;
+if (vl) sceneData.videoLayout = vl;
+document.getElementById('root').innerHTML = renderScene(type, sceneData);
+// placeholder d'étage vidéo (comme le fera live.html, hors de #root)
+if (vl) {
+  const s = document.createElement('div');
+  s.id = 'vid-stage'; s.className = 'on ' + vl;
+  s.style.cssText = 'background:linear-gradient(135deg,#1b2735,#0c1119)';
+  s.innerHTML = '<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-family:Orbitron;color:#9fb4d8;font-size:22px;letter-spacing:2px">📹 CAMÉRA</div>';
+  document.body.appendChild(s);
+}
 </script>
 </body></html>
