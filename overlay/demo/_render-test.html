@@ -213,6 +213,17 @@ data['duel'] = { headerText:'CIRCUIT DE LOHÉAC · SUPERCAR', category:'Supercar
   data['prono-revealed'] = { headerText:'RX CHRONO · SUPERCAR', category:'Supercar', qrDataUrl:_qr,
     pronostic:{ status:'revealed', correctDriverId:'d2', question:'Qui gagne la Finale Supercar ?', options:opts,
       totalVotes:148, tally:{d11:77,d2:40,d77:8,d4:6,d33:11,d9:6} } };
+
+  // gros plateau (D4, ~22 pilotes) — test densité adaptative
+  const d4no = [408,410,411,412,415,418,419,421,422,425,426,428,430,433,448,461,485,489,497,499,405,432];
+  const d4nm = ['Guillard','Masset','Morin','Lortie','Gaignard','Bacheley','Boulant','Rozier','Le Lay','Seignard','Hautbois','Guiziou','Aunay','Blanchard','Burson','Morin','Roussillon','Hardier','Foulfoin','Rio','Drouyer','Merrien'];
+  const bopts = d4no.map((no,i)=>({driverId:'d'+no,num:String(no),name:d4nm[i]}));
+  const btally = {}; bopts.forEach((o,i)=>{ btally[o.driverId]=Math.max(0,Math.round(28*Math.exp(-i*0.26)+Math.sin(i*1.7)*3)); });
+  const btotal = Object.values(btally).reduce((a,b)=>a+b,0);
+  data['prono-d4-open']   = { headerText:'RX CHRONO · D4', category:'D4', voteUrl:'rxchrono.netlify.app/#spectator', qrDataUrl:_qr,
+    pronostic:{ status:'open', question:'Qui signe le meilleur temps aux essais chronos D4 ?', options:bopts } };
+  data['prono-d4-closed'] = { headerText:'RX CHRONO · D4', category:'D4', qrDataUrl:_qr,
+    pronostic:{ status:'closed', question:'Qui signe le meilleur temps aux essais chronos D4 ?', options:bopts, totalVotes:btotal, tally:btally } };
 }
 
 // ── BANDEAU PRÉDICTION (scénario d'objectif). Le moteur (obs-predict.js) calcule

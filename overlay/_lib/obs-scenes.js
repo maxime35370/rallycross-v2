@@ -551,6 +551,9 @@ export function renderPronostic(d) {
   const p = d.pronostic;
   if (!p) return `<div class="dash">${header}<div class="po-body"><div class="empty">Aucun pronostic sélectionné en régie…</div></div></div>`;
   const opts = Array.isArray(p.options) ? p.options : [];
+  // densité : réduit police + hauteur des lignes selon le nombre de pilotes (EC = beaucoup)
+  const n = opts.length;
+  const dens = n <= 8 ? 'po-d1' : n <= 14 ? 'po-d2' : n <= 20 ? 'po-d3' : 'po-d4';
   const kick = `<div class="po-kick"><span class="po-vt">PRONOSTIC</span><span>Le pronostic des spectateurs</span></div>`;
   const q    = `<div class="po-q">${escHtml(p.question || '')}</div>`;
 
@@ -558,7 +561,7 @@ export function renderPronostic(d) {
   if (p.status === 'open' || p.status === 'draft') {
     const grid = opts.map(o =>
       `<div class="po-opt"><span class="po-onum">${escHtml(String(o.num ?? ''))}</span><span class="po-onm">${escHtml((o.name || '').toUpperCase())}</span></div>`).join('');
-    return `<div class="dash">${header}<div class="po-body po-open">
+    return `<div class="dash">${header}<div class="po-body po-open ${dens}">
       ${kick}${q}
       <div class="po-grid">${grid || '<div class="empty">—</div>'}</div>
       <div class="po-cta">
@@ -584,7 +587,7 @@ export function renderPronostic(d) {
       <span class="po-cnt">${r.c} vote${r.c > 1 ? 's' : ''}</span>
       <span class="po-pct">${pct}%</span></div>`;
   }).join('');
-  return `<div class="dash">${header}<div class="po-body">
+  return `<div class="dash">${header}<div class="po-body ${dens}">
     ${kick}${q}
     <div class="po-bars">${bars || '<div class="empty">Aucun vote enregistré.</div>'}</div>
     <div class="po-foot"><span class="po-tot">🗳️ <b>${total}</b> vote${total > 1 ? 's' : ''}</span>

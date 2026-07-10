@@ -411,7 +411,7 @@ body.transparent{background:transparent}
 .po-q{font-family:'Barlow Condensed';font-weight:700;font-size:60px;line-height:1;text-transform:uppercase;margin-bottom:34px}
 /* barres résultats (vote fermé / révélé) */
 .po-bars{flex:1;display:flex;flex-direction:column;justify-content:center;gap:16px;min-height:0}
-.po-bar{position:relative;height:78px;border-radius:14px;overflow:hidden;display:flex;align-items:center;
+.po-bar{position:relative;flex:1 1 0;min-height:0;max-height:80px;border-radius:14px;overflow:hidden;display:flex;align-items:center;
   background:rgba(255,255,255,.05);box-shadow:inset 0 0 0 1px rgba(255,255,255,.06)}
 .po-f{position:absolute;inset:0 auto 0 0;background:linear-gradient(90deg,rgba(255,85,0,.55),rgba(255,85,0,.2));transition:width 1s cubic-bezier(.2,.8,.2,1)}
 .po-bar.lead .po-f{background:linear-gradient(90deg,var(--orange),var(--orange-2))}
@@ -419,7 +419,7 @@ body.transparent{background:transparent}
 .po-bar>span:not(.po-f){position:relative;z-index:1}
 .po-num{margin:0 24px 0 22px;min-width:78px;height:54px;display:flex;align-items:center;justify-content:center;
   font-family:'Orbitron';font-weight:800;font-size:30px;background:rgba(0,0,0,.4);border-radius:10px}
-.po-nm{font-family:'Barlow Condensed';font-weight:700;font-size:42px;letter-spacing:1px;text-transform:uppercase;flex:1;display:flex;align-items:center;gap:18px;min-width:0}
+.po-nm{font-family:'Barlow Condensed';font-weight:700;font-size:42px;letter-spacing:1px;text-transform:uppercase;flex:1;display:flex;align-items:center;gap:18px;min-width:0;white-space:nowrap;overflow:hidden}
 .po-ok{font-family:'Orbitron';font-weight:800;font-size:20px;letter-spacing:1px;color:#8affc0;background:rgba(30,215,96,.2);padding:5px 14px;border-radius:20px;white-space:nowrap}
 .po-cnt{font-family:'Barlow Condensed';font-weight:500;font-size:22px;color:#c7cfdb;margin-right:28px;min-width:130px;text-align:right}
 .po-pct{font-family:'Orbitron';font-weight:800;font-size:42px;margin-right:30px;min-width:118px;text-align:right}
@@ -446,6 +446,22 @@ body.transparent{background:transparent}
 .po-ctatxt{display:flex;flex-direction:column;gap:4px}
 .po-ctatxt b{font-family:'Orbitron';font-weight:900;font-size:38px;color:var(--orange-2)}
 .po-ctatxt span{font-family:'Barlow Condensed';font-weight:500;font-size:26px;color:#c7cfdb;letter-spacing:1px}
+/* ── densité adaptative : afficher TOUS les pilotes (ex. EC D4 ~20+) ── */
+.po-body.po-d2 .po-bars{gap:9px}  .po-body.po-d2 .po-bar{max-height:56px}
+.po-body.po-d3 .po-bars{gap:5px}  .po-body.po-d3 .po-bar{max-height:38px}
+.po-body.po-d4 .po-bars{gap:3px}  .po-body.po-d4 .po-bar{max-height:30px}
+.po-body.po-d2 .po-nm{font-size:30px} .po-body.po-d2 .po-num{font-size:24px;min-width:64px;height:44px;margin:0 20px 0 18px}
+.po-body.po-d2 .po-pct{font-size:30px;min-width:92px;margin-right:24px} .po-body.po-d2 .po-cnt{font-size:18px;min-width:104px;margin-right:22px} .po-body.po-d2 .po-ok{font-size:16px}
+.po-body.po-d3 .po-nm{font-size:22px;gap:10px} .po-body.po-d3 .po-num{font-size:18px;min-width:50px;height:30px;margin:0 16px 0 14px;border-radius:8px}
+.po-body.po-d3 .po-pct{font-size:22px;min-width:74px;margin-right:20px} .po-body.po-d3 .po-cnt{font-size:15px;min-width:86px;margin-right:18px} .po-body.po-d3 .po-ok{font-size:13px;padding:3px 9px}
+.po-body.po-d4 .po-nm{font-size:17px;gap:8px} .po-body.po-d4 .po-num{font-size:14px;min-width:42px;height:24px;margin:0 12px 0 10px;border-radius:6px}
+.po-body.po-d4 .po-pct{font-size:17px;min-width:58px;margin-right:16px} .po-body.po-d4 .po-cnt{font-size:13px;min-width:70px;margin-right:14px} .po-body.po-d4 .po-ok{font-size:11px;padding:2px 7px}
+.po-body.po-d3,.po-body.po-d4{padding-top:30px}
+.po-body.po-d3 .po-kick,.po-body.po-d4 .po-kick{font-size:22px;margin-bottom:8px}
+.po-body.po-d3 .po-q,.po-body.po-d4 .po-q{font-size:42px;margin-bottom:20px}
+.po-body.po-d2 .po-grid{gap:11px 24px} .po-body.po-d2 .po-opt{padding:11px 18px} .po-body.po-d2 .po-onm{font-size:30px} .po-body.po-d2 .po-onum{font-size:22px;min-width:60px;height:44px}
+.po-body.po-d3 .po-grid{grid-template-columns:repeat(3,1fr);gap:8px 20px} .po-body.po-d3 .po-opt{padding:8px 14px} .po-body.po-d3 .po-onm{font-size:22px} .po-body.po-d3 .po-onum{font-size:17px;min-width:50px;height:36px}
+.po-body.po-d4 .po-grid{grid-template-columns:repeat(3,1fr);gap:7px 18px} .po-body.po-d4 .po-opt{padding:7px 12px} .po-body.po-d4 .po-onm{font-size:19px} .po-body.po-d4 .po-onum{font-size:15px;min-width:44px;height:32px}
 
 /* ============ BANDEAU INFO / SPONSORS (lower-third, par-dessus la scène) ============ */
 #info-band{position:absolute;left:0;right:0;bottom:0;height:78px;display:none;align-items:stretch;z-index:6;

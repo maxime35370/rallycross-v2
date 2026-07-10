@@ -805,7 +805,7 @@
     const base = state.spectatorBaseUrl || 'https://rxchrono.netlify.app';
     const baseInput = document.getElementById('specBase');
     if (baseInput && document.activeElement !== baseInput) baseInput.value = base;
-    const url = spectatorUrl(base, state.meetingId, state.category);
+    const url = spectatorUrl(base, state.meetingId);   // event-global (le spectateur choisit sa catégorie)
     const urlEl = document.getElementById('specUrl');
     if (urlEl) urlEl.textContent = url;
     if (url !== _lastSpecUrl) {   // ne régénère le QR que si le lien change
