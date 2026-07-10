@@ -562,7 +562,7 @@ export function renderPronostic(d) {
       ${kick}${q}
       <div class="po-grid">${grid || '<div class="empty">—</div>'}</div>
       <div class="po-cta">
-        ${qrCells()}
+        ${d.qrDataUrl ? `<img class="po-qrimg" src="${escHtml(d.qrDataUrl)}" alt="QR vote">` : qrCells()}
         <div class="po-ctatxt"><b>Scanne &amp; vote&nbsp;!</b><span>${escHtml(d.voteUrl || 'Rejoins le mode spectateur RX Chrono')}</span></div>
       </div>
     </div></div>`;
@@ -588,7 +588,8 @@ export function renderPronostic(d) {
     ${kick}${q}
     <div class="po-bars">${bars || '<div class="empty">Aucun vote enregistré.</div>'}</div>
     <div class="po-foot"><span class="po-tot">🗳️ <b>${total}</b> vote${total > 1 ? 's' : ''}</span>
-      <span class="po-res ${revealed ? '' : 'muted'}">${revealed ? 'Résultat officiel' : 'Votes clos'}</span></div>
+      <span class="po-res ${revealed ? '' : 'muted'}">${revealed ? 'Résultat officiel' : 'Votes clos'}</span>
+      ${d.qrDataUrl ? `<span class="po-footqr"><img src="${escHtml(d.qrDataUrl)}" alt="QR"><span>Scanne&nbsp;&amp;&nbsp;joue</span></span>` : ''}</div>
   </div></div>`;
 }
 

@@ -36,6 +36,8 @@ export const DEFAULT_CONTROL = {
   // scène « Résultats du pronostic » : id du pronostic à afficher à l'antenne
   // (scene === 'pronostic'). Le décompte n'apparaît qu'une fois le vote fermé.
   pronosticId:   '',
+  // base du lien d'accès spectateur (QR pronostics + classements) :
+  spectatorBaseUrl: 'https://rxchrono.netlify.app',
   // calque d'AFFICHAGE seulement — n'écrit jamais dans results/sessionParticipants :
   gridOverride:  null,          // { key, slots:[{pos, carNumber, lastName}] }
   updatedAt:     0,

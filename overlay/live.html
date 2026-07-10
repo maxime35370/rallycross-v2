@@ -22,6 +22,7 @@
   import { renderScene, countdownText } from './_lib/obs-scenes.js';
   import { buildPrediction } from './_lib/obs-predict.js';
   import { watchPronostic } from './_lib/obs-pronostics.js';
+  import { qrDataUrl, spectatorUrl } from './_lib/obs-qr.js';
 
   const root = document.getElementById('root');
   const qs = new URLSearchParams(location.search);
@@ -338,9 +339,13 @@
       const paint = (p) => {
         const catId = (p && p.category) || ctrl.category || '';
         const cName = reg0 ? catLabel(reg0, catId) : catId;
+        const url = spectatorUrl(ctrl.spectatorBaseUrl, ctrl.meetingId, catId);
         root.innerHTML = renderScene('pronostic', {
           headerText: ctrl.headerText || ['RX Chrono', cName].filter(Boolean).join(' · '),
-          category: cName, voteUrl: ctrl.pronosticUrl || '', pronostic: p,
+          category: cName,
+          voteUrl: url.replace(/^https?:\/\//, ''),
+          qrDataUrl: qrDataUrl(url, { cell: 6, margin: 2 }),
+          pronostic: p,
         });
       };
       if (!pid) { paint(null); return; }
@@ -577,7 +582,7 @@
       const key = [ctrl.scene, ctrl.championshipId, ctrl.meetingId, ctrl.category,
                    ctrl.sessionType, ctrl.sessionNum, JSON.stringify(ctrl.gridOverride),
                    ctrl.headerText, ctrl.nextText, ctrl.countdownEnd, ctrl.graphMode,
-                   JSON.stringify(ctrl.predict), ctrl.videoLayout, JSON.stringify(ctrl.fiche), ctrl.pronosticId].join('|');
+                   JSON.stringify(ctrl.predict), ctrl.videoLayout, JSON.stringify(ctrl.fiche), ctrl.pronosticId, ctrl.spectatorBaseUrl].join('|');
       if (key === cacheKey) return;   // rien de pertinent n'a changé
       cacheKey = key;
       lastControl = ctrl;

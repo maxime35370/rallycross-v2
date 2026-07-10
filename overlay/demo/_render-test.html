@@ -10,6 +10,7 @@
 <script type="module">
 import { renderScene } from '../_lib/obs-scenes.js';
 import { predictManche, predictChampSession, predictChampGap } from '../_lib/obs-predict.js';
+import { qrDataUrl, spectatorUrl } from '../_lib/obs-qr.js';
 
 const race = [
   {carNumber:11,lastName:'Grondin',ms:41892,status:null},{carNumber:2,lastName:'Boulbès',ms:42404,status:null},
@@ -203,12 +204,13 @@ data['duel'] = { headerText:'CIRCUIT DE LOHÉAC · SUPERCAR', category:'Supercar
     {driverId:'d77',num:'77',name:'Lefebvre'},{driverId:'d4',num:'4',name:'Dubourg'},
     {driverId:'d33',num:'33',name:'Mailloux'},{driverId:'d9',num:'9',name:'André'},
   ];
-  data['prono-open'] = { headerText:'RX CHRONO · SUPERCAR', category:'Supercar', voteUrl:'rxchrono.netlify.app',
+  const _qr = qrDataUrl(spectatorUrl('https://rxchrono.netlify.app', 'demo123', 'Supercar'));
+  data['prono-open'] = { headerText:'RX CHRONO · SUPERCAR', category:'Supercar', voteUrl:'rxchrono.netlify.app/#spectator', qrDataUrl:_qr,
     pronostic:{ status:'open', question:'Qui gagne la Finale Supercar ?', options:opts } };
-  data['prono-closed'] = { headerText:'RX CHRONO · SUPERCAR', category:'Supercar',
+  data['prono-closed'] = { headerText:'RX CHRONO · SUPERCAR', category:'Supercar', qrDataUrl:_qr,
     pronostic:{ status:'closed', question:'Qui gagne la Finale Supercar ?', options:opts,
       totalVotes:148, tally:{d11:77,d2:40,d77:8,d4:6,d33:11,d9:6} } };
-  data['prono-revealed'] = { headerText:'RX CHRONO · SUPERCAR', category:'Supercar',
+  data['prono-revealed'] = { headerText:'RX CHRONO · SUPERCAR', category:'Supercar', qrDataUrl:_qr,
     pronostic:{ status:'revealed', correctDriverId:'d2', question:'Qui gagne la Finale Supercar ?', options:opts,
       totalVotes:148, tally:{d11:77,d2:40,d77:8,d4:6,d33:11,d9:6} } };
 }
