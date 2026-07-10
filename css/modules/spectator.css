@@ -413,7 +413,9 @@
 .spc-bar.mine .spc-fill { background: linear-gradient(90deg, rgba(255,85,0,0.5), rgba(255,85,0,0.16)); }
 .spc-bar.correct .spc-fill { background: linear-gradient(90deg, rgba(30,215,96,0.45), rgba(30,215,96,0.12)); }
 .spc-bar > * { position: relative; z-index: 1; }
-.spc-pct { font-family: var(--font-display); font-weight: 700; font-size: 1rem; min-width: 44px; text-align: right; }
+.spc-pct { font-family: var(--font-display); font-weight: 700; font-size: 1rem; min-width: 52px; text-align: right;
+  display: flex; flex-direction: column; align-items: flex-end; line-height: 1.05; }
+.spc-cnt { font-family: var(--font-condensed); font-weight: 600; font-size: 0.58rem; opacity: 0.62; letter-spacing: 0.02em; }
 .spc-bar.correct .spc-pct { color: var(--clr-success); }
 .spc-tag {
   font-family: var(--font-condensed); font-weight: 700; font-size: 0.64rem; letter-spacing: 0.06em;
