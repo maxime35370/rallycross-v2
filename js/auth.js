@@ -9,13 +9,17 @@ import { toast, showView } from './app.js';
 let auth = null;
 let currentUser = null;
 
-// Vues qui necessitent une authentification (ecriture)
+// Vues réservées à l'ADMIN (édition + configuration) : masquées dans le menu et
+// l'accueil, et bloquées à l'accès pour tout autre visiteur (anonyme ou e-mail
+// non-admin). Lecture libre pour tous : home, standings, championship, stats, spectator.
 const PROTECTED_VIEWS = [
   'persons', 'drivers', 'meetings', 'engagements', 'sessions', 'timing',
+  'audit', 'config', 'settings',
 ];
 
-// Vues en lecture seule (pas besoin d'auth)
-// home, standings, championship, stats, spectator, config
+// ⚠️ DOIT correspondre à l'allowlist des RÈGLES FIRESTORE (fonction isRegie()).
+// Le(s) e-mail(s) avec le(s)quel(s) tu te connectes en administrateur.
+const ADMIN_EMAILS = ['maxime.theard@gmail.com'];
 
 // ─────────────────────────────────────────────────────────
 // GETTERS
@@ -29,6 +33,14 @@ export function isAuthenticated() {
   return currentUser !== null;
 }
 
+/** Vrai UNIQUEMENT pour l'administrateur : connecté, NON anonyme, e-mail autorisé.
+ *  C'est ce qui débloque l'édition, la config et les vues réservées. */
+export function isAdmin() {
+  return !!currentUser
+      && !currentUser.isAnonymous
+      && ADMIN_EMAILS.includes((currentUser.email || '').toLowerCase());
+}
+
 export function isProtectedView(viewId) {
   return PROTECTED_VIEWS.includes(viewId);
 }
@@ -39,8 +51,8 @@ export function isProtectedView(viewId) {
  * @returns {boolean} true si authentifie, false sinon
  */
 export function requireAuth() {
-  if (currentUser) return true;
-  toast('Connexion requise pour cette action', 'error');
+  if (isAdmin()) return true;
+  toast("Action réservée à l'administrateur.", 'error');
   return false;
 }
 
@@ -52,7 +64,7 @@ function renderAuthUI() {
   const container = document.getElementById('menu-auth');
   if (!container) return;
 
-  if (currentUser) {
+  if (currentUser && !currentUser.isAnonymous) {
     container.innerHTML = `
       <div class="auth-logged">
         <span class="auth-user-icon">👤</span>
@@ -138,8 +150,8 @@ function onViewChange(e) {
   const viewId = e.detail?.view;
   if (!viewId) return;
 
-  if (isProtectedView(viewId) && !isAuthenticated()) {
-    // Afficher un overlay d'avertissement dans la vue
+  if (isProtectedView(viewId) && !isAdmin()) {
+    // Afficher un overlay : section reservee a l'administrateur
     const viewEl = document.getElementById(`view-${viewId}`);
     if (!viewEl) return;
 
@@ -151,13 +163,19 @@ function onViewChange(e) {
     gate.innerHTML = `
       <div class="auth-gate-content">
         <div class="auth-gate-icon">🔒</div>
-        <h3>Connexion requise</h3>
-        <p>Connectez-vous via le menu pour acceder a cette section en ecriture.</p>
-        <p class="auth-gate-hint">Mode lecture seule actif — les modifications sont desactivees.</p>
+        <h3>Accès réservé</h3>
+        <p>Cette section est réservée à l'administrateur.</p>
+        <p class="auth-gate-hint">Connecte-toi avec le compte admin via le menu pour y accéder.</p>
       </div>
     `;
     viewEl.prepend(gate);
   }
+}
+
+/** Masque/affiche les entrées réservées à l'admin (menu, accueil, statut Firebase)
+ *  en basculant la classe `is-admin` sur <body> (le CSS fait le reste). */
+function applyAdminVisibility() {
+  document.body.classList.toggle('is-admin', isAdmin());
 }
 
 function removeAuthGates() {
@@ -172,6 +190,7 @@ export async function initAuth() {
   // Toujours afficher l'UI d'auth dans le menu
   document.addEventListener('viewchange', onViewChange);
   renderAuthUI();
+  applyAdminVisibility();   // état initial : non-admin → entrées d'édition/config masquées
 
   // Initialiser Firebase Auth si Firebase est pret
   try {
@@ -189,9 +208,12 @@ export async function initAuth() {
     onAuthStateChanged(auth, (user) => {
       currentUser = user;
       renderAuthUI();
+      applyAdminVisibility();
 
-      if (user) {
-        toast(`Connecte : ${user.email}`, 'success');
+      // Toast + retrait des blocages UNIQUEMENT pour l'admin (une session anonyme
+      // — votes pronostics — ne doit rien débloquer ni notifier).
+      if (isAdmin()) {
+        toast(`Connecté : ${user.email}`, 'success');
         removeAuthGates();
       }
 
