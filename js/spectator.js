@@ -383,7 +383,7 @@ let _pronoErr        = {};   // pid -> message d'erreur du dernier vote (affich�
 let _unsubPronostics = null;
 let _pronoClickBound = false;
 
-const PRONO_ICON      = { manche_winner: '🏆', interim_m2: '📊', ec_best: '⏱️', serie_winner: '🏁', final_winner: '🏆', custom: '🎯' };
+const PRONO_ICON      = { manche_winner: '🏆', interim_m2: '📊', interim_final: '📊', ec_best: '⏱️', serie_winner: '🏁', final_winner: '🏆', custom: '🎯' };
 const PRONO_STATUS_FR = { open: 'Ouvert', closed: 'Votes clos', revealed: 'Résultat' };
 
 async function initPronostics() {

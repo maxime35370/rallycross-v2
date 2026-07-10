@@ -241,6 +241,7 @@
         <select class="sel" id="pronoType" style="max-width:none;width:100%;margin-bottom:9px">
           <option value="manche_winner">🏆 Vainqueur de la manche (tous les engagés)</option>
           <option value="interim_m2">📊 Leader du classement intermédiaire après M2</option>
+          <option value="interim_final">📊 Leader du classement intermédiaire (après toutes les manches)</option>
           <option value="ec_best">⏱️ Meilleur temps des essais chronos</option>
           <option value="serie_winner">🏁 Vainqueur d'une série (pilotes en ligne)</option>
           <option value="final_winner">🏆 Vainqueur de la finale</option>
@@ -601,6 +602,10 @@
     switch (document.getElementById('pronoType').value) {
       case 'manche_winner': return `Qui gagne ${phaseLabelLong()} ${cat} ?`;
       case 'interim_m2':    return `Qui sera leader du classement intermédiaire ${cat} après la manche 2 ?`;
+      case 'interim_final': {
+        const n = meetings.find(m => m.id === state.meetingId)?.nbMQ || 4;
+        return `Qui sera leader du classement intermédiaire ${cat} à l'issue des ${n} manches ?`;
+      }
       case 'ec_best':       return `Qui signe le meilleur temps aux essais chronos ${cat} ?`;
       case 'serie_winner':  return `Qui gagne cette série ${cat} ?`;
       case 'final_winner':  return `Qui gagne la finale ${cat} ?`;
@@ -618,6 +623,7 @@
       case 'manche_winner':
       case 'serie_winner':  return { kind: 'session', sessionType: state.sessionType, sessionNum: state.sessionNum };
       case 'interim_m2':    return { kind: 'interim_after', sessionType: 'MQ', sessionNum: 2 };
+      case 'interim_final': return { kind: 'interim_after', sessionType: 'MQ', sessionNum: meetings.find(m => m.id === state.meetingId)?.nbMQ || 4 };
       default:              return { kind: 'manual' };
     }
   }
