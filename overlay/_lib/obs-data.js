@@ -491,6 +491,54 @@ export async function getPhaseRank(session, regulation) {
   return out;
 }
 
+/**
+ * Données « fiche pilote / duel » pour un ou deux pilotes (même catégorie) :
+ * position championnat (+points, écart au leader), position épreuve, meilleur
+ * chrono du meeting, nb de victoires de manche et « forme » (place par manche).
+ * Standings championnat/épreuve calculés une seule fois pour tous les pilotes.
+ * @returns {{ drivers: Array }}
+ */
+export async function getFicheData(meetingId, category, regulation, driverIds, meetings) {
+  const ids = [...new Set((driverIds || []).filter(Boolean))];
+  if (!ids.length) return { drivers: [] };
+  const sessions = await getSessions(meetingId, category);
+  const mqs = sessions.filter(s => s.type === 'MQ').sort((a, b) => (a.num ?? 0) - (b.num ?? 0));
+  const [champ, meet, mqRanks, mqResults] = await Promise.all([
+    getChampionshipStandings(meetings || [], category, regulation).catch(() => []),
+    getMeetingStandings(meetingId, category, regulation).catch(() => []),
+    Promise.all(mqs.map(m => getMqRank(m, regulation).catch(() => []))),
+    Promise.all(mqs.map(m => getResults(m.id).catch(() => []))),
+  ]);
+  const leaderPts = champ[0]?.grandTotal ?? 0;
+  const cMap = {}, mMap = {};
+  champ.forEach(r => { cMap[r.driverId] = r; });
+  meet.forEach(r => { mMap[r.driverId] = r; });
+
+  const drivers = ids.map(id => {
+    const c = cMap[id], m = mMap[id];
+    let carNumber, lastName, firstName, bestMs = null, wins = 0;
+    const forme = mqs.map((mq, i) => {
+      const rk = mqRanks[i].find(x => x.driverId === id);
+      if (rk && rk.position === 1) wins++;
+      return { manche: mq.num ?? i + 1, pos: rk?.position ?? null, status: rk?.status ?? null };
+    });
+    mqResults.forEach(res => res.forEach(r => {
+      if (r.driverId === id) {
+        carNumber = r.carNumber; lastName = r.lastName; firstName = r.firstName;
+        if (r.ms && !r.status && (bestMs === null || r.ms < bestMs)) bestMs = r.ms;
+      }
+    }));
+    return {
+      driverId: id, carNumber: carNumber ?? c?.carNumber ?? m?.carNumber,
+      lastName: lastName ?? c?.lastName ?? m?.lastName, firstName,
+      champPos: c?.position ?? null, champPts: c?.grandTotal ?? 0,
+      champGap: c ? Math.max(0, leaderPts - c.grandTotal) : null,
+      meetPos: m?.position ?? null, bestMs, wins, forme,
+    };
+  });
+  return { drivers };
+}
+
 /** Récupère le gridLayout du règlement pour un type de session. */
 export function getGridLayout(regulation, sessionType) {
   return regulation?.sessionConfig?.[sessionType]?.gridLayout

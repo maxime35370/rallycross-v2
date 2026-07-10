@@ -186,6 +186,16 @@ data['dash-df'] = {
 
 data['ending'] = { countdownEnd: Date.now()+5*60000, nextText:'PROCHAIN MEETING — DIMANCHE 10H30', social:'📺 twitch.tv/mawrxime · #RallycrossFR' };
 
+// Fiche pilote / duel (rendu réel renderFiche)
+data['fiche'] = { headerText:'CIRCUIT DE LOHÉAC · SUPERCAR', category:'Supercar',
+  drivers:[{ carNumber:11, lastName:'Grondin', champPos:1, champPts:285, champGap:0, meetPos:2, bestMs:168500,
+    wins:3, forme:[{manche:1,pos:1},{manche:2,pos:2},{manche:3,pos:1},{manche:4,pos:1}] }] };
+data['duel'] = { headerText:'CIRCUIT DE LOHÉAC · SUPERCAR', category:'Supercar',
+  drivers:[
+    { carNumber:11, lastName:'Grondin', champPos:1, champPts:285, meetPos:2, bestMs:168500, wins:3 },
+    { carNumber:2,  lastName:'Boulbès', champPos:2, champPts:278, champGap:7, meetPos:1, bestMs:168900, wins:1 },
+  ] };
+
 // ── BANDEAU PRÉDICTION (scénario d'objectif). Le moteur (obs-predict.js) calcule
 //    le scénario à partir d'un classement ; on l'affiche sous les colonnes.
 //    Données cohérentes : le pilote du bandeau figure dans les colonnes affichées.
@@ -245,6 +255,7 @@ const scene = params.get('scene')||'dashboard';
 const vl = params.get('vl');   // test placement vidéo : hg|hd|bg|bd|full
 const type = (scene === 'ordre' || scene === 'df-combo' || scene === 'fin-combo') ? 'grid'
   : (scene === 'dash-fin' || scene === 'dash-df' || scene === 'dash-mq2' || scene === 'dash-predict' || scene === 'dash-fin-predict') ? 'dashboard'
+  : (scene === 'fiche' || scene === 'duel') ? 'fiche'
   : scene.startsWith('session') ? 'session' : scene;
 const sceneData = data[scene] || data.dashboard;
 if (vl) sceneData.videoLayout = vl;

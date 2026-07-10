@@ -70,6 +70,11 @@
     border:1px solid var(--line);border-radius:12px;font-family:'Barlow Condensed';font-size:18px;color:var(--mut);flex-wrap:wrap}
   .status .chip{background:var(--card2);border:1px solid var(--line);border-radius:20px;padding:5px 13px;font-weight:600;color:#fff}
   .status .chip.o{color:var(--orange);border-color:rgba(255,85,0,.4)}
+  /* aperçu antenne (moniteur) */
+  .preview{position:relative;width:600px;max-width:100%;aspect-ratio:16/9;background:#000;border:1px solid var(--line);border-radius:14px;overflow:hidden;margin-bottom:20px}
+  .preview iframe{position:absolute;top:0;left:0;width:1920px;height:1080px;border:0;transform:scale(.3125);transform-origin:top left}
+  .pv-label{position:absolute;top:8px;left:10px;z-index:2;display:flex;align-items:center;gap:7px;background:rgba(225,29,42,.92);color:#fff;font-family:'Orbitron';font-weight:800;font-size:12px;letter-spacing:2px;padding:5px 11px;border-radius:6px}
+  .pv-label .d{width:9px;height:9px;border-radius:50%;background:#fff;animation:bl 1.2s infinite}
   /* gate auth */
   .gate{position:fixed;inset:0;background:rgba(6,8,12,.92);display:flex;align-items:center;justify-content:center;z-index:50}
   .gate .box{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:30px 34px;width:360px;text-align:center}
@@ -97,6 +102,8 @@
 
   <div id="errBar" style="display:none;background:#3a1012;border:1px solid #e11d2a;color:#ffb3b3;border-radius:10px;padding:12px 16px;margin-bottom:16px;font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:17px"></div>
 
+  <div class="preview"><span class="pv-label"><span class="d"></span>APERÇU ANTENNE</span><iframe id="pvFrame" title="Aperçu antenne" loading="lazy"></iframe></div>
+
   <div class="grid" id="panel">
     <div style="display:flex;flex-direction:column;gap:20px">
       <div class="card">
@@ -104,6 +111,7 @@
         <div class="btns" id="scenes">
           <div class="b scene" data-scene="dashboard">📊 Dashboard</div>
           <div class="b scene" data-scene="grid">🏁 Grille</div>
+          <div class="b scene" data-scene="fiche">👤 Fiche / Duel</div>
           <div class="b scene" data-scene="next-heat">⏭️ À suivre</div>
           <div class="b scene" data-scene="intermission">⏸️ Attente</div>
           <div class="b scene" data-scene="ending">🔚 Fin de stream</div>
@@ -176,6 +184,12 @@
           <input type="range" id="vidVol" min="0" max="100" value="0" style="flex:1;accent-color:var(--orange)">
         </div>
         <div class="note" style="margin:10px 0 0;background:rgba(255,255,255,.04);border-color:var(--line);color:var(--mut)">Volume du son d'un lien (YouTube). La caméra n'a pas d'audio ici — le son du R50 se gère dans OBS.</div>
+      </div>
+      <div class="card">
+        <h3>👤 Fiche / Duel <span class="n" id="ficheN">—</span></h3>
+        <div class="note">Scène « 👤 Fiche / Duel » : 1 pilote → fiche · 2 pilotes (même catégorie) → duel comparatif. Vider le pilote 2 → retour en fiche.</div>
+        <select class="sel" id="fiche1" style="max-width:none;width:100%;margin-bottom:10px"></select>
+        <select class="sel" id="fiche2" style="max-width:none;width:100%"></select>
       </div>
     </div>
 
@@ -308,7 +322,7 @@
     document.getElementById('gridN').textContent = `${catName()} · ${document.getElementById('phN').textContent}`;
     if (meetSel.value !== state.meetingId) meetSel.value = state.meetingId;
     document.getElementById('status').innerHTML =
-      `À l'antenne : <span class="chip">${({dashboard:'📊 Dashboard',grid:'🏁 Grille','next-heat':'⏭️ À suivre',intermission:'⏸️ Attente',ending:'🔚 Fin de stream'})[state.scene]}</span>
+      `À l'antenne : <span class="chip">${({dashboard:'📊 Dashboard',grid:'🏁 Grille',fiche:'👤 Fiche / Duel','next-heat':'⏭️ À suivre',intermission:'⏸️ Attente',ending:'🔚 Fin de stream'})[state.scene]||state.scene}</span>
        <span class="chip o">${catName()}</span>
        <span class="chip">${document.getElementById('phN').textContent}</span>
        · <b style="color:${state.visible?'var(--green)':'#888'}">${state.visible?'visible':'masqué'}</b>`;
@@ -334,6 +348,13 @@
     if (document.activeElement !== volInput) volInput.value = vv;
     document.getElementById('vidVolVal').textContent = vv;
     document.getElementById('vidN').textContent = vlay === 'none' ? 'off' : vlay.toUpperCase();
+    // fiche / duel
+    const fi = state.fiche || {};
+    const f1 = document.getElementById('fiche1'), f2 = document.getElementById('fiche2');
+    if (f1.querySelector(`option[value="${(fi.driverId1 || '').replace(/"/g, '')}"]`)) f1.value = fi.driverId1 || '';
+    if (f2.querySelector(`option[value="${(fi.driverId2 || '').replace(/"/g, '')}"]`)) f2.value = fi.driverId2 || '';
+    const nFi = [fi.driverId1, fi.driverId2].filter(Boolean).length;
+    document.getElementById('ficheN').textContent = nFi === 0 ? '—' : nFi === 1 ? 'fiche' : 'duel';
     renderSlots();
   }
 
@@ -370,13 +391,22 @@
       } catch { parts = []; }
     }
     predictDrivers = parts.slice().sort((a, b) => (Number(a.carNumber) || 0) - (Number(b.carNumber) || 0));
-    sel.innerHTML = '<option value="">— Choisir un pilote —</option>' +
-      predictDrivers.map(p => `<option value="${p.driverId}">N°${p.carNumber} ${(p.lastName || '').toUpperCase()}</option>`).join('');
+    const opts = predictDrivers.map(p => `<option value="${p.driverId}">N°${p.carNumber} ${(p.lastName || '').toUpperCase()}</option>`).join('');
+    sel.innerHTML = '<option value="">— Choisir un pilote —</option>' + opts;
     if (predictDrivers.some(p => p.driverId === cur)) sel.value = cur;
+    // mêmes pilotes (catégorie courante) pour la fiche/duel → même catégorie garantie
+    const f = state.fiche || {};
+    const f1 = document.getElementById('fiche1'), f2 = document.getElementById('fiche2');
+    if (f1) { f1.innerHTML = '<option value="">— Pilote 1 —</option>' + opts; if (predictDrivers.some(p => p.driverId === f.driverId1)) f1.value = f.driverId1; }
+    if (f2) { f2.innerHTML = '<option value="">— Pilote 2 (duel, optionnel) —</option>' + opts; if (predictDrivers.some(p => p.driverId === f.driverId2)) f2.value = f.driverId2; }
     lastPredSelKey = [state.meetingId, state.category, state.sessionType, state.sessionNum].join('|');
   }
   function pushPredict(patch) {
     push({ predict: { ...(state.predict || DEFAULT_CONTROL.predict), ...patch } });
+    paint();
+  }
+  function pushFiche(patch) {
+    push({ fiche: { ...(state.fiche || DEFAULT_CONTROL.fiche), ...patch } });
     paint();
   }
 
@@ -393,6 +423,10 @@
   document.getElementById('vidUrlBtn').onclick = () => push({ videoSource: { type: 'url', value: document.getElementById('vidUrl').value.trim() } });
   document.getElementById('vidVol').oninput = e => { document.getElementById('vidVolVal').textContent = e.target.value; };
   document.getElementById('vidVol').onchange = e => push({ videoVolume: +e.target.value });
+  document.getElementById('fiche1').onchange = e => pushFiche({ driverId1: e.target.value });
+  document.getElementById('fiche2').onchange = e => pushFiche({ driverId2: e.target.value });
+  // moniteur d'aperçu : overlay/live en mode preview (pas de caméra) — lit le même doc Firestore
+  document.getElementById('pvFrame').src = 'live?preview=1';
   document.querySelectorAll('#scenes .b').forEach(b => b.onclick = () => { push({ scene: b.dataset.scene }); paint(); });
   // (boutons catégories/phases : liés dans renderCats()/renderPhases(), car re-rendus au changement de championnat)
   meetSel.onchange = () => { push({ meetingId: meetSel.value }); paint(); loadPredictDrivers(); };
