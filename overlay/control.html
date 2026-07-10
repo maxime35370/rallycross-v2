@@ -282,7 +282,7 @@
 <script type="module">
   import { initFirebase, fsQuery, watchQuery } from './_lib/obs-firebase.js';
   import { watchControl, setControl, sessionKey, DEFAULT_CONTROL } from './_lib/obs-control.js';
-  import { getSessions, findSession, getGridOrder, getInterim, getParticipants, computePronoWinner, pronoTargetSessionId } from './_lib/obs-data.js';
+  import { getSessions, findSession, getGridOrder, getInterim, getParticipants, computePronoWinner, pronoWatchSessionIds } from './_lib/obs-data.js';
   import { watchPronostics, watchVotes, createPronostic, updatePronostic, openPronostic, closePronostic, revealPronostic, deletePronostic } from './_lib/obs-pronostics.js';
 
   const SDK = 'https://www.gstatic.com/firebasejs/10.12.0/';
@@ -547,6 +547,7 @@
   const voteWatchers = {};            // id -> unsub (décompte live des pronostics ouverts)
   const voteTallies  = {};            // id -> { counts, total }
   let lastAutoTitle = '';
+  const AUTO_KINDS = ['session', 'interim_after'];   // types dont le gagnant est calculé auto (vs 'manual')
 
   function phaseLabelLong() {
     const t = state.sessionType, n = state.sessionNum;
@@ -640,19 +641,24 @@
     if (p.status === 'draft') return `<button class="sbtn go" data-act="open" data-id="${p.id}">▶ Ouvrir les votes</button><button class="sbtn" data-act="del" data-id="${p.id}">🗑️ Supprimer</button>`;
     if (p.status === 'open')  return `<button class="sbtn stop" data-act="close" data-id="${p.id}">■ Fermer les votes</button>${air}`;
     if (p.status === 'closed') {
-      // Pronostic « au résultat » : gagnant calculé depuis les chronos (suit les pénalités) → pas de choix manuel.
-      if (p.resultTarget?.kind === 'session') {
+      // Pronostic « au résultat » : gagnant calculé depuis les données (suit les pénalités) → pas de choix manuel.
+      if (AUTO_KINDS.includes(p.resultTarget?.kind)) {
+        const isInterim = p.resultTarget.kind === 'interim_after';
         const w = (p.options || []).find(o => o.driverId === p.correctDriverId);
-        const wl = w ? `Vainqueur (chrono) : <b>${pEsc(w.num)} ${pEsc((w.name || '').toUpperCase())}</b>` : '⏳ Série en cours — gagnant figé quand tous les pilotes seront saisis…';
+        const lbl  = isInterim ? 'Leader intermédiaire' : 'Vainqueur (chrono)';
+        const wait = isInterim
+          ? '⏳ Manches en cours — leader figé quand M1 & M2 seront complètes…'
+          : '⏳ Série en cours — gagnant figé quand tous les pilotes seront saisis…';
+        const wl = w ? `${lbl} : <b>${pEsc(w.num)} ${pEsc((w.name || '').toUpperCase())}</b>` : wait;
         return `<div class="pit-auto">🔄 ${wl}</div><button class="sbtn" data-act="reveal" data-id="${p.id}">🏆 Révéler le résultat</button>${air}<button class="sbtn go" data-act="open" data-id="${p.id}">▶ Rouvrir</button>`;
       }
-      // Question libre / leader intermédiaire : désignation manuelle.
+      // Question libre : désignation manuelle.
       const opts = (p.options || []).map(o => `<option value="${pEsc(o.driverId)}">${pEsc(o.num)} ${pEsc((o.name || '').toUpperCase())}</option>`).join('');
       return `<select class="sel" data-rev="${p.id}" style="max-width:none;font-size:15px;padding:8px 10px;flex:1"><option value="">— désigner le gagnant réel —</option>${opts}</select>`
         + `<button class="sbtn" data-act="reveal" data-id="${p.id}">🏆 Révéler</button>${air}<button class="sbtn go" data-act="open" data-id="${p.id}">▶ Rouvrir</button>`;
     }
     if (p.status === 'revealed') {
-      const note = p.resultTarget?.kind === 'session' ? `<div class="pit-auto">🔄 Résultat synchronisé avec les chronos</div>` : '';
+      const note = AUTO_KINDS.includes(p.resultTarget?.kind) ? `<div class="pit-auto">🔄 Résultat synchronisé avec les classements</div>` : '';
       return `${note}${air}<button class="sbtn go" data-act="open" data-id="${p.id}">▶ Rouvrir</button><button class="sbtn" data-act="del" data-id="${p.id}">🗑️ Supprimer</button>`;
     }
     return '';
@@ -690,8 +696,8 @@
       } else if (act === 'reveal') {
         const p = pronoDocs.find(x => x.id === id);
         let win = '';
-        if (p?.resultTarget?.kind === 'session') {
-          win = p.correctDriverId || '';   // gagnant auto (synchro chrono) ; la synchro le complètera si vide
+        if (AUTO_KINDS.includes(p?.resultTarget?.kind)) {
+          win = p.correctDriverId || '';   // gagnant auto (synchro) ; la synchro le complètera si vide
         } else {
           const sel = document.querySelector(`select[data-rev="${id}"]`);
           win = sel ? sel.value : '';
@@ -707,29 +713,33 @@
   // correctDriverId à chaque changement. Une pénalité de la direction de course qui
   // change le P1 change donc le gagnant du pronostic — en direct, sur l'overlay ET
   // chez les spectateurs (qui lisent tous ce champ). (Tant que cette page régie reste ouverte.)
-  const winnerWatchers = {};   // id -> unsub (résultats de la session cible)
+  const winnerWatchers = {};   // id -> unsubAll (résultats des sessions concernées)
   async function syncPronoWinners(list) {
-    const need = list.filter(p => ['closed', 'revealed'].includes(p.status) && p.resultTarget?.kind === 'session');
+    const need = list.filter(p => ['closed', 'revealed'].includes(p.status) && AUTO_KINDS.includes(p.resultTarget?.kind));
     const needIds = new Set(need.map(p => p.id));
     Object.keys(winnerWatchers).forEach(id => {
       if (!needIds.has(id)) { try { winnerWatchers[id](); } catch {} delete winnerWatchers[id]; }
     });
     for (const p of need) {
       if (p.id in winnerWatchers) continue;
-      winnerWatchers[p.id] = () => {};   // réserve la place le temps de créer l'abonnement
-      let sid = null;
-      try { sid = await pronoTargetSessionId(p); } catch {}
-      if (!sid) { delete winnerWatchers[p.id]; continue; }
+      winnerWatchers[p.id] = () => {};   // réserve la place le temps de créer les abonnements
+      let sids = [];
+      try { sids = await pronoWatchSessionIds(p); } catch {}
+      if (!sids.length) { delete winnerWatchers[p.id]; continue; }
       const recompute = async () => {
         try {
-          const win = await computePronoWinner(p);
+          const reg = champs.find(c => c.id === p.championshipId) || champ;   // règlement (points) pour l'intermédiaire
+          const win = await computePronoWinner(p, reg);
           const cur = pronoDocs.find(x => x.id === p.id);
           if (win && cur && cur.correctDriverId !== win) await updatePronostic(p.id, { correctDriverId: win });
         } catch {}
       };
-      let unsub = () => {};
-      try { unsub = await watchQuery('results', [['sessionId', '==', sid]], recompute, () => {}); } catch {}
-      if (p.id in winnerWatchers) winnerWatchers[p.id] = unsub; else unsub();
+      const unsubs = [];
+      for (const sid of sids) {
+        try { unsubs.push(await watchQuery('results', [['sessionId', '==', sid]], recompute, () => {})); } catch {}
+      }
+      const unsubAll = () => unsubs.forEach(u => { try { u(); } catch {} });
+      if (p.id in winnerWatchers) winnerWatchers[p.id] = unsubAll; else unsubAll();
       recompute();
     }
   }
