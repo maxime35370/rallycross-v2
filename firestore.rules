@@ -1,17 +1,21 @@
 rules_version = '2';
 
 // ═══════════════════════════════════════════════════════════════════
-//  RÈGLES FIRESTORE — RX Chrono
-//  Version FUSIONNÉE : tes règles existantes + les pronostics + 1 correctif.
-//  À coller en entier dans la console Firebase : Firestore → Règles → Publier.
+//  RÈGLES FIRESTORE — RX Chrono  (version VERROUILLÉE)
+//  À coller en entier dans la console : Firestore → Règles → Publier.
 //
-//  Ajouts / changements par rapport à ta version :
-//   1. fonction isRegie() (compte authentifié NON anonyme = la régie) ;
-//   2. bloc /pronostics/{id} (+ sous-collection votes) pour les votes ;
-//   3. obsControl : write passe de « auth != null » à « isRegie() »
-//      → sinon, une fois l'auth anonyme activée, un spectateur (anonyme,
-//        donc auth != null) pourrait écrire dans obsControl et détourner
-//        l'overlay. isRegie() ferme cette porte. Le reste est INCHANGÉ.
+//  Modèle :
+//   • LECTURE publique partout (overlays + mode spectateur, sans connexion).
+//   • ÉCRITURE (create / update / delete) réservée à la RÉGIE = isRegie()
+//     (compte authentifié NON anonyme = ta connexion email/mot de passe).
+//     → plus personne ne peut modifier/supprimer tes saisies sans être toi.
+//   • VOTES pronostics : le spectateur (anonyme) n'écrit QUE son propre vote,
+//     et seulement tant que le pronostic est « open ».
+//
+//  Sûr pour ton appli : toutes tes vues d'écriture (timing, drivers,
+//  meetings, sessions, engagements, persons, réglages) passent déjà par une
+//  connexion (requireAuth). Ces règles ne font que l'exiger aussi côté serveur.
+//  La validation de champs que tu avais est conservée (défense en profondeur).
 // ═══════════════════════════════════════════════════════════════════
 
 service cloud.firestore {
@@ -26,7 +30,7 @@ service cloud.firestore {
     function inRange(val, min, max) {
       return val is int && val >= min && val <= max;
     }
-    // Régie = authentifié ET non anonyme (connexion email/mot de passe de /control).
+    // Régie = authentifié ET non anonyme (connexion email/mot de passe).
     function isRegie() {
       return request.auth != null
           && request.auth.token.firebase.sign_in_provider != 'anonymous';
@@ -34,8 +38,8 @@ service cloud.firestore {
 
     match /drivers/{docId} {
       allow read:   if true;
-      allow delete: if true;
-      allow create: if
+      allow delete: if isRegie();
+      allow create: if isRegie() &&
         hasFields(request.resource.data, ['firstName','lastName','carNumber','category','year']) &&
         validString(request.resource.data.firstName, 50) &&
         validString(request.resource.data.lastName, 50) &&
@@ -43,7 +47,7 @@ service cloud.firestore {
         request.resource.data.carNumber >= 1 &&
         validString(request.resource.data.category, 50) &&
         inRange(request.resource.data.year, 2020, 2030);
-      allow update: if
+      allow update: if isRegie() &&
         validString(request.resource.data.firstName, 50) &&
         validString(request.resource.data.lastName, 50) &&
         request.resource.data.carNumber is int &&
@@ -52,43 +56,43 @@ service cloud.firestore {
 
     match /meetings/{docId} {
       allow read:   if true;
-      allow delete: if true;
-      allow create: if
+      allow delete: if isRegie();
+      allow create: if isRegie() &&
         hasFields(request.resource.data, ['date','location','year','categories','nbMQ']) &&
         validString(request.resource.data.location, 80) &&
         inRange(request.resource.data.year, 2020, 2030) &&
         inRange(request.resource.data.nbMQ, 1, 4) &&
         request.resource.data.categories is list &&
         request.resource.data.categories.size() > 0;
-      allow update: if true;
+      allow update: if isRegie();
     }
 
     match /sessions/{docId} {
       allow read:   if true;
-      allow delete: if true;
-      allow create, update: if
+      allow delete: if isRegie();
+      allow create, update: if isRegie() &&
         hasFields(request.resource.data, ['meetingId','category','type']) &&
         request.resource.data.type in ['EC','MQ','QF','DF','FIN'];
     }
 
     match /engagements/{docId} {
       allow read:   if true;
-      allow delete: if true;
-      allow create, update: if
+      allow delete: if isRegie();
+      allow create, update: if isRegie() &&
         hasFields(request.resource.data, ['meetingId','driverId','category','year']);
     }
 
     match /sessionParticipants/{docId} {
       allow read:   if true;
-      allow delete: if true;
-      allow create, update: if
+      allow delete: if isRegie();
+      allow create, update: if isRegie() &&
         hasFields(request.resource.data, ['sessionId','driverId','carNumber']);
     }
 
     match /results/{docId} {
       allow read:   if true;
-      allow delete: if true;
-      allow create, update: if
+      allow delete: if isRegie();
+      allow create, update: if isRegie() &&
         hasFields(request.resource.data, ['sessionId','driverId','sessionType']) &&
         request.resource.data.sessionType in ['EC','MQ','QF','DF','FIN'] &&
         (request.resource.data.ms == null || request.resource.data.ms is int) &&
@@ -98,73 +102,67 @@ service cloud.firestore {
 
     match /interimStandings/{docId} {
       allow read:   if true;
-      allow delete: if true;
-      allow create, update: if
+      allow delete: if isRegie();
+      allow create, update: if isRegie() &&
         hasFields(request.resource.data, ['meetingId','category','year','driverId','position']);
     }
 
     match /meetingStandings/{docId} {
       allow read:   if true;
-      allow delete: if true;
-      allow create, update: if
+      allow delete: if isRegie();
+      allow create, update: if isRegie() &&
         hasFields(request.resource.data, ['meetingId','category','year','driverId','totalPts']);
     }
 
     match /championshipStandings/{docId} {
       allow read:   if true;
-      allow delete: if true;
-      allow create, update: if
+      allow delete: if isRegie();
+      allow create, update: if isRegie() &&
         hasFields(request.resource.data, ['year','category','driverId']);
     }
 
     match /championships/{docId} {
-      allow read, write: if true;
+      allow read:  if true;
+      allow write: if isRegie();
     }
 
     match /persons/{docId} {
       allow read:   if true;
-      allow delete: if true;
-      allow create: if
+      allow delete: if isRegie();
+      allow create: if isRegie() &&
         hasFields(request.resource.data, ['firstName','lastName']) &&
         validString(request.resource.data.firstName, 50) &&
         validString(request.resource.data.lastName, 50);
-      allow update: if
+      allow update: if isRegie() &&
         validString(request.resource.data.firstName, 50) &&
         validString(request.resource.data.lastName, 50);
     }
 
     match /auditLog/{docId} {
       allow read:           if true;
-      allow create:         if true;
+      allow create:         if isRegie();
       allow update, delete: if false;
     }
 
     match /reglements/{docId} {
       allow read:   if true;
-      allow create, update: if
+      allow delete: if isRegie();
+      allow create, update: if isRegie() &&
         hasFields(request.resource.data, ['name']);
-      allow delete: if true;
     }
 
     match /obsControl/{doc} {
       allow read:  if true;         // l'overlay (non connecté) peut lire
-      allow write: if isRegie();    // ⬅ CHANGÉ : la régie SEULE (compte non anonyme) écrit
+      allow write: if isRegie();    // la régie seule (compte non anonyme) écrit
     }
 
     // ── PRONOSTICS SPECTATEURS ──────────────────────────────────────
-    // Le doc (question, pilotes, statut, décompte figé à la fermeture) est
-    // public en lecture ; seule la régie le crée/ouvre/ferme/révèle.
     match /pronostics/{pid} {
       allow read:  if true;
       allow write: if isRegie();
 
-      // Votes : 1 doc par spectateur (id = son uid anonyme). Il ne lit/écrit
-      // QUE son vote, et seulement tant que le pronostic est « open ». Il ne
-      // peut jamais LISTER les votes (aucune tendance avant la fermeture) ;
-      // la régie, elle, lit tout (décompte live privé).
       match /votes/{uid} {
-        allow get:  if isRegie()
-                    || (request.auth != null && request.auth.uid == uid);
+        allow get:  if isRegie() || (request.auth != null && request.auth.uid == uid);
         allow list: if isRegie();
         allow create, update: if request.auth != null
             && request.auth.uid == uid
