@@ -629,3 +629,19 @@ export function getGridLayout(regulation, sessionType) {
   return regulation?.sessionConfig?.[sessionType]?.gridLayout
       || { lanes: 5, rows: 3, positions: {} };
 }
+
+/**
+ * Nombre de qualifiés pour la phase finale (cutoff « place qualificative »),
+ * d'après le RÈGLEMENT : capacité de la phase qui suit directement les manches
+ * (quarts si activés, sinon demi-finales) = nb de séries × places par série.
+ * Ex. FFSA : 2 demi-finales × 8 = 16. Renvoie 0 si indéterminable.
+ */
+export function getQualifCutoff(regulation) {
+  const sc = regulation?.sessionConfig || {};
+  const cap = cfg => cfg?.gridSize
+    || Object.keys(cfg?.gridLayout?.positions || {}).length
+    || ((cfg?.gridLayout?.lanes || 0) * (cfg?.gridLayout?.rows || 0));
+  if (sc.QF?.enabled) { const c = cap(sc.QF); if (c) return (sc.QF.count || 4) * c; }
+  const c = cap(sc.DF); if (c) return (sc.DF?.count || 2) * c;
+  return 0;
+}

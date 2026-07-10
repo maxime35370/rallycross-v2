@@ -199,8 +199,8 @@
           <option value="champ_top3">🥉 Championnat — entrer dans le top 3</option>
           <option value="champ_gap">🎯 Championnat — recoller au leader</option>
         </select>
-        <div class="field" id="predCutoffRow" style="margin-top:10px">
-          <input id="predCutoff" type="number" min="1" placeholder="Nombre de qualifiés (top N)">
+        <div id="predCutoffRow" style="margin-top:10px;background:var(--card2);border:1px solid var(--line);border-radius:10px;padding:11px 14px;font-family:'Barlow Condensed';font-weight:600;font-size:16px;color:#cfe0ff">
+          <span id="predCutoffHint">Place qualificative : —</span>
         </div>
       </div>
       <div class="card">
@@ -315,7 +315,7 @@
 <script type="module">
   import { initFirebase, fsQuery, watchQuery } from './_lib/obs-firebase.js';
   import { watchControl, setControl, sessionKey, DEFAULT_CONTROL } from './_lib/obs-control.js';
-  import { getSessions, findSession, getGridOrder, getInterim, getParticipants, computePronoWinner, pronoWatchSessionIds } from './_lib/obs-data.js';
+  import { getSessions, findSession, getGridOrder, getInterim, getParticipants, computePronoWinner, pronoWatchSessionIds, getQualifCutoff } from './_lib/obs-data.js';
   import { watchPronostics, watchVotes, createPronostic, updatePronostic, openPronostic, closePronostic, revealPronostic, deletePronostic } from './_lib/obs-pronostics.js';
   import { qrDataUrl, spectatorUrl } from './_lib/obs-qr.js';
 
@@ -425,8 +425,11 @@
     document.getElementById('predToggle').classList.toggle('on', !!pr.enabled);
     document.getElementById('predN').textContent = pr.enabled ? 'actif' : 'off';
     document.getElementById('predObj').value = pr.objective || 'p1';
-    document.getElementById('predCutoff').value = pr.cutoff || '';
     document.getElementById('predCutoffRow').style.display = (pr.objective === 'qualif') ? '' : 'none';
+    const autoCut = getQualifCutoff(champ);
+    document.getElementById('predCutoffHint').textContent = autoCut
+      ? `Place qualificative : top ${autoCut} (auto · règlement)`
+      : 'Place qualificative : non détectée dans le règlement';
     const drvSel = document.getElementById('predDrv');
     if (drvSel.querySelector(`option[value="${(pr.driverId || '').replace(/"/g, '')}"]`)) drvSel.value = pr.driverId || '';
     // source vidéo
@@ -515,7 +518,6 @@
   document.getElementById('predToggle').onclick = () => pushPredict({ enabled: !(state.predict?.enabled) });
   document.getElementById('predDrv').onchange = e => pushPredict({ driverId: e.target.value });
   document.getElementById('predObj').onchange = e => pushPredict({ objective: e.target.value });
-  document.getElementById('predCutoff').onchange = e => pushPredict({ cutoff: +e.target.value || 6 });
   // source vidéo : placement + type de source + URL
   document.querySelectorAll('#vidLayout .b').forEach(b => b.onclick = () => { push({ videoLayout: b.dataset.vl }); paint(); });
   document.querySelectorAll('#vidSrc .b').forEach(b => b.onclick = () => {
