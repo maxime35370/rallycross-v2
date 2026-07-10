@@ -294,7 +294,12 @@ function init() {
   document.addEventListener('viewchange', (e) => {
     const v = e.detail?.view;
     if (v && v !== 'home') {
-      history.replaceState(null, '', '#' + v);
+      // Conserver la query (#spectator?meeting=…&category=…) tant qu'on reste
+      // sur la même vue, pour que le deep-link pré-remplisse les listes.
+      const cur = window.location.hash.replace('#', '');
+      const q = cur.split('?')[1];
+      const sameView = cur.split('?')[0] === v;
+      history.replaceState(null, '', '#' + v + (sameView && q ? '?' + q : ''));
     } else {
       history.replaceState(null, '', window.location.pathname);
     }

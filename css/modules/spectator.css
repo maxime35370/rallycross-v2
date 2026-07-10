@@ -395,6 +395,7 @@
 .spc-opt.sel .spc-rd { border-color: var(--clr-accent); background: var(--clr-accent); box-shadow: inset 0 0 0 4px var(--clr-bg-3); }
 .spc-opt.sel .spc-nm { color: #fff; }
 .spc-pc-hint { font-size: 0.78rem; color: var(--clr-text-3); text-align: center; margin-top: 8px; }
+.spc-pc-hint.spc-pc-err { color: #ff6b6b; font-weight: 600; }
 
 /* barres (vote fermé / révélé) */
 .spc-bar {

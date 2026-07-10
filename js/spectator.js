@@ -379,6 +379,7 @@ function stopRefresh() {
 let _pronoUid        = null;
 let _pronoDocs       = [];
 let _myVotes         = {};
+let _pronoErr        = {};   // pid -> message d'erreur du dernier vote (affiché dans la carte)
 let _unsubPronostics = null;
 let _pronoClickBound = false;
 
@@ -411,12 +412,30 @@ async function onPronoClick(e) {
   const pid = opt.dataset.pid, did = opt.dataset.did; if (!pid || !did) return;
   const p = _pronoDocs.find(x => x.id === pid);
   if (!p || p.status !== 'open') return;              // sécurité : plus de vote une fois fermé
-  if (!_pronoUid) { try { _pronoUid = await ensureAnon(); } catch { return; } }
   const prev = _myVotes[pid];
   if (prev === did) return;
-  _myVotes[pid] = did; renderPronostics();            // maj optimiste
-  try { await castVote(pid, _pronoUid, did); }
-  catch { _myVotes[pid] = prev; renderPronostics(); }  // rollback si refus
+  // Sélection optimiste IMMÉDIATE : l'UI répond au 1er tap, même si l'auth
+  // anonyme ou l'écriture prennent un instant (ou échouent → on annule ensuite).
+  _myVotes[pid] = did; delete _pronoErr[pid]; renderPronostics();
+  try {
+    if (!_pronoUid) _pronoUid = await ensureAnon();
+    await castVote(pid, _pronoUid, did);
+  } catch (err) {
+    _myVotes[pid] = prev;                             // rollback si refus
+    _pronoErr[pid] = voteErrMsg(err);
+    console.error('[prono] vote refusé', err?.code, err?.message);
+    renderPronostics();
+  }
+}
+
+/** Message clair selon la cause de l'échec (aide au diagnostic côté spectateur). */
+function voteErrMsg(err) {
+  const code = err?.code || '';
+  if (code === 'permission-denied')
+    return 'Vote refusé par le serveur — règles Firestore à republier (permission-denied).';
+  if (code.startsWith('auth/'))
+    return `Connexion anonyme indisponible (${code}) — active « Anonyme » dans Firebase Auth.`;
+  return `Vote impossible (${code || 'erreur'}). Réessaie.`;
 }
 
 function pronoCardHtml(p) {
@@ -430,8 +449,11 @@ function pronoCardHtml(p) {
     const mine = _myVotes[p.id] || '';
     const rows = opts.map(o => `<button class="spc-opt ${o.driverId === mine ? 'sel' : ''}" data-pid="${escHtml(p.id)}" data-did="${escHtml(o.driverId)}">
       <span class="spc-rn">${escHtml(String(o.num ?? ''))}</span><span class="spc-nm">${escHtml((o.name || '').toUpperCase())}</span><span class="spc-rd"></span></button>`).join('');
-    return `<div class="spc-pcard open">${head}${rows}
-      <div class="spc-pc-hint">${mine ? "✅ Vote enregistré — modifiable tant que c'est ouvert." : 'Touche un pilote pour voter (facultatif).'}</div></div>`;
+    const err = _pronoErr[p.id];
+    const hint = err
+      ? `<div class="spc-pc-hint spc-pc-err">⚠️ ${escHtml(err)}</div>`
+      : `<div class="spc-pc-hint">${mine ? "✅ Vote enregistré — modifiable tant que c'est ouvert." : 'Touche un pilote pour voter (facultatif).'}</div>`;
+    return `<div class="spc-pcard open">${head}${rows}${hint}</div>`;
   }
 
   // ── Vote fermé / révélé : tendances ──
@@ -458,8 +480,16 @@ function pronoCardHtml(p) {
 function renderPronostics() {
   const box = document.getElementById('spc-pronostics');
   if (!box) return;
+  // Filtrage par event : on ne montre que les pronostics du meeting sélectionné
+  // (toutes catégories si aucune n'est choisie ; focus sur la catégorie si une l'est).
+  // → un spectateur arrivé via un lien ne voit pas les pronostics d'un autre event.
+  let docs = _pronoDocs;
+  if (selectedMeetingId) {
+    docs = docs.filter(p => p.meetingId === selectedMeetingId);
+    if (selectedCategory) docs = docs.filter(p => p.category === selectedCategory);
+  }
   const rank = p => (p.status === 'open' ? 0 : p.status === 'closed' ? 1 : 2);
-  const ordered = [..._pronoDocs].sort((a, b) => rank(a) - rank(b) || (b.createdAt || 0) - (a.createdAt || 0));
+  const ordered = [...docs].sort((a, b) => rank(a) - rank(b) || (b.createdAt || 0) - (a.createdAt || 0));
   if (!ordered.length) { box.innerHTML = ''; box.style.display = 'none'; return; }
   const nOpen = ordered.filter(p => p.status === 'open').length;
   box.style.display = '';
@@ -476,13 +506,16 @@ function bindEvents() {
     selectedYear = parseInt(e.target.value);
     selectedMeetingId = '';
     await loadMeetings();
+    renderPronostics();             // re-filtre (meeting réinitialisé)
   });
   document.getElementById('spc-meeting')?.addEventListener('change', async e => {
     selectedMeetingId = e.target.value;
+    renderPronostics();             // re-filtre par event sélectionné
     await renderContent();
   });
   document.getElementById('spc-category')?.addEventListener('change', async e => {
     selectedCategory = e.target.value;
+    renderPronostics();             // focus catégorie (ou toutes si vide)
     await renderContent();
   });
 
