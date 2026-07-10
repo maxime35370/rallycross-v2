@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="fr"><head><meta charset="UTF-8">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;700;800;900&family=Barlow+Condensed:wght@400;500;600;700&family=Exo+2:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{--orange:#ff5500;--orange2:#ff8a3d;--panel:rgba(9,12,17,.94);--line:rgba(255,255,255,.09);--gold:#ffcc33;--green:#39d98a;--blue:#38a0ff;--mut:#8b95a4}
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{width:1920px;height:1080px;overflow:hidden;background:radial-gradient(1200px 800px at 50% 20%,#141a24,#0a0c11 60%);font-family:'Exo 2',sans-serif;color:#fff}
+  .stage{position:absolute;inset:0;display:flex;flex-direction:column}
+  .hdr{height:88px;display:flex;align-items:center;gap:20px;padding:0 40px;background:linear-gradient(100deg,#141a24,#0a0c11);border-bottom:3px solid var(--orange);flex:none}
+  .hdr .brand{font-family:'Orbitron';font-weight:900;font-size:28px}.hdr .brand b{color:var(--orange)}
+  .hdr .sep{width:2px;height:38px;background:var(--line)}
+  .hdr .info{font-family:'Barlow Condensed';font-weight:600;font-size:24px;letter-spacing:2px;text-transform:uppercase;color:#dbe3ee}
+  .hdr .live{margin-left:auto;display:flex;align-items:center;gap:8px;background:#e11d2a;padding:7px 13px;border-radius:6px;font-family:'Orbitron';font-weight:800;font-size:14px;letter-spacing:2px}
+  .hdr .live i{width:10px;height:10px;border-radius:50%;background:#fff}
+  .body{flex:1;display:flex;align-items:center;justify-content:center;padding:40px 56px;min-height:0}
+  /* ---- carte pilote ---- */
+  .card{display:flex;background:var(--panel);border-radius:20px;overflow:hidden;box-shadow:0 30px 80px rgba(0,0,0,.6),0 0 0 1px rgba(255,255,255,.06);border-left:8px solid var(--orange)}
+  .photo{width:300px;flex:none;background:linear-gradient(160deg,#232f40,#10151f);display:flex;align-items:center;justify-content:center;position:relative}
+  .photo .big{font-family:'Orbitron';font-weight:900;font-size:150px;color:rgba(255,255,255,.10)}
+  .photo .cam{position:absolute;font-size:40px;opacity:.35}
+  .info{flex:1;padding:34px 40px;display:flex;flex-direction:column;justify-content:center;gap:20px;min-width:0}
+  .top{display:flex;align-items:center;gap:20px}
+  .num{display:inline-flex;align-items:center;justify-content:center;min-width:96px;height:96px;padding:0 14px;border-radius:16px;
+    background:linear-gradient(150deg,var(--orange),#c23d00);font-family:'Orbitron';font-weight:800;font-size:52px;box-shadow:0 10px 26px rgba(255,85,0,.35)}
+  .name{font-family:'Barlow Condensed';font-weight:700;font-size:66px;line-height:.95;text-transform:uppercase}
+  .cat{margin-left:auto;font-family:'Barlow Condensed';font-weight:600;font-size:22px;letter-spacing:3px;color:var(--mut);text-transform:uppercase;
+    border:1px solid var(--line);border-radius:8px;padding:8px 14px}
+  .tagline{font-family:'Orbitron';font-weight:700;font-size:22px;letter-spacing:1px;color:var(--orange2);text-transform:uppercase}
+  .stats{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px}
+  .stat{background:#141a24;border:1px solid var(--line);border-radius:13px;padding:16px 18px}
+  .stat .k{font-family:'Barlow Condensed';font-weight:600;font-size:16px;letter-spacing:2px;color:var(--mut);text-transform:uppercase}
+  .stat .v{font-family:'Orbitron';font-weight:800;font-size:38px;margin-top:6px;display:flex;align-items:baseline;gap:8px}
+  .stat .v small{font-family:'Barlow Condensed';font-weight:600;font-size:20px;color:var(--gold)}
+  .stat.p1 .v{color:var(--orange)}
+  .forme{display:flex;align-items:center;gap:12px}
+  .forme .fk{font-family:'Barlow Condensed';font-weight:600;font-size:17px;letter-spacing:2px;color:var(--mut);text-transform:uppercase}
+  .fchip{display:flex;flex-direction:column;align-items:center;gap:3px}
+  .fchip b{font-family:'Orbitron';font-weight:800;font-size:22px}
+  .fchip span{font-family:'Barlow Condensed';font-weight:500;font-size:14px;color:var(--mut)}
+  .fchip.win b{color:var(--gold)}
+  /* ---- duel ---- */
+  .duel{display:flex;align-items:stretch;gap:0;width:100%;max-width:1760px}
+  .duel .side{flex:1;background:var(--panel);box-shadow:0 0 0 1px rgba(255,255,255,.06);padding:30px 34px;display:flex;flex-direction:column;gap:18px}
+  .duel .side.l{border-radius:20px 0 0 20px;border-left:8px solid var(--orange)}
+  .duel .side.r{border-radius:0 20px 20px 0;border-right:8px solid var(--blue);text-align:right}
+  .duel .side.r .dtop{flex-direction:row-reverse}
+  .duel .side.r .num{background:linear-gradient(150deg,var(--blue),#1c6fb8)}
+  .dtop{display:flex;align-items:center;gap:18px}
+  .duel .name{font-size:52px}
+  .vs{flex:none;width:120px;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    background:linear-gradient(180deg,#1a2130,#0c1017);box-shadow:inset 0 0 0 1px rgba(255,255,255,.06)}
+  .vs b{font-family:'Orbitron';font-weight:900;font-size:44px;color:var(--orange)}
+  .vs span{font-family:'Barlow Condensed';font-weight:600;font-size:15px;letter-spacing:3px;color:var(--mut)}
+  .cmp{display:flex;flex-direction:column;gap:2px;margin-top:6px}
+  .crow{display:grid;grid-template-columns:1fr 200px 1fr;align-items:center;height:56px}
+  .crow .cl{font-family:'Orbitron';font-weight:800;font-size:26px;text-align:right;padding-right:20px}
+  .crow .cr{font-family:'Orbitron';font-weight:800;font-size:26px;text-align:left;padding-left:20px}
+  .crow .ck{font-family:'Barlow Condensed';font-weight:600;font-size:15px;letter-spacing:2px;color:var(--mut);text-transform:uppercase;text-align:center}
+  .crow .win{color:var(--gold)}
+  .crow + .crow{border-top:1px solid var(--line)}
+</style></head>
+<body>
+<div class="stage" id="stage"></div>
+<script>
+const mode = new URLSearchParams(location.search).get('mode') || 'fiche';
+const S = document.getElementById('stage');
+const hdr = `<div class="hdr"><span class="brand">RX<b>CHRONO</b></span><span class="sep"></span><span class="info">📍 Lohéac · Supercar</span><span class="live"><i></i>LIVE</span></div>`;
+const forme = arr => `<div class="forme"><span class="fk">Forme (M1→M4)</span>${arr.map(p=>`<div class="fchip ${p===1?'win':''}"><b>P${p}</b></div>`).join('')}</div>`;
+
+if (mode === 'fiche') {
+  S.innerHTML = hdr + `<div class="body">
+    <div class="card" style="width:1180px">
+      <div class="photo"><span class="big">11</span><span class="cam">📷 photo pilote</span></div>
+      <div class="info">
+        <div class="top"><span class="num">11</span><span class="name">Grondin</span><span class="cat">Supercar</span></div>
+        <div class="tagline">🏆 Leader du championnat</div>
+        <div class="stats">
+          <div class="stat p1"><div class="k">Championnat</div><div class="v">P1 <small>285 pts</small></div></div>
+          <div class="stat"><div class="k">Épreuve (meeting)</div><div class="v">P2</div></div>
+          <div class="stat"><div class="k">Meilleur chrono</div><div class="v" style="font-size:30px">2:48.5</div></div>
+        </div>
+        ${forme([1,2,1,1])}
+      </div>
+    </div></div>`;
+} else {
+  const stat = (k,l,r,win)=>`<div class="crow"><span class="cl ${win==='l'?'win':''}">${l}</span><span class="ck">${k}</span><span class="cr ${win==='r'?'win':''}">${r}</span></div>`;
+  S.innerHTML = hdr + `<div class="body"><div class="duel">
+    <div class="side l">
+      <div class="dtop"><span class="num">11</span><span class="name">Grondin</span></div>
+      <div class="tagline">🏆 Leader du championnat</div>
+    </div>
+    <div class="vs"><b>VS</b><span>DUEL</span></div>
+    <div class="side r">
+      <div class="dtop"><span class="num">2</span><span class="name">Boulbès</span></div>
+      <div class="tagline" style="color:var(--blue)">🎯 À 7 pts du leader</div>
+    </div>
+  </div></div>
+  <div class="body" style="flex:none;padding:0 120px 46px"><div style="flex:1"><div class="cmp">
+    ${stat('Championnat','P1','P2','l')}
+    ${stat('Points','285','278','l')}
+    ${stat('Épreuve','P2','P1','r')}
+    ${stat('Meilleur chrono','2:48.5','2:48.9','l')}
+    ${stat('Victoires manches','3','1','l')}
+  </div></div></div>`;
+}
+</script>
+</body></html>
