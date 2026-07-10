@@ -146,44 +146,32 @@ async function logout() {
 // PROTECTION DES VUES
 // ─────────────────────────────────────────────────────────
 
-let _currentView = 'home';
+let _currentView  = 'home';
+let _authResolved = false;   // true dès que Firebase a donné l'état d'auth initial
 
 function onViewChange(e) {
   const viewId = e.detail?.view;
   if (!viewId) return;
   _currentView = viewId;
-  applyViewGate();
+  enforceViewAccess();
 }
 
 /**
- * Affiche/retire l'écran « Accès réservé » selon la vue courante et le statut admin.
- * L'overlay est attaché à <body> (et NON à la vue) : ainsi un re-render de la vue
- * (ex. timing qui réécrit tout son innerHTML) ne peut pas l'effacer.
+ * Contrôle d'accès aux vues réservées. Pour un non-admin, l'accès est simplement
+ * impossible : au lieu d'un écran qui inviterait à se connecter, on le renvoie
+ * directement au mode spectateur (vue publique).
+ * On attend l'état d'auth réel (_authResolved) avant d'agir, pour ne pas
+ * rediriger l'administrateur pendant le chargement de sa session.
  */
-function applyViewGate() {
-  const blocked = isProtectedView(_currentView) && !isAdmin();
-  let gate = document.getElementById('auth-gate');
-  if (blocked) {
-    if (!gate) {
-      gate = document.createElement('div');
-      gate.id = 'auth-gate';
-      gate.className = 'auth-gate';
-      gate.innerHTML = `
-        <div class="auth-gate-content">
-          <div class="auth-gate-icon">🔒</div>
-          <h3>Accès réservé</h3>
-          <p>Cette section est réservée à l'administrateur.</p>
-          <p class="auth-gate-hint">Connecte-toi avec le compte admin pour y accéder.</p>
-          <button class="btn btn-primary" id="auth-gate-home">Retour à l'accueil</button>
-        </div>
-      `;
-      document.body.appendChild(gate);
-      document.getElementById('auth-gate-home')
-        ?.addEventListener('click', () => showView('home'));
-    }
-  } else if (gate) {
-    gate.remove();
-  }
+function enforceViewAccess() {
+  if (!_authResolved) return;                                  // statut pas encore connu → on attend
+  if (!isProtectedView(_currentView) || isAdmin()) return;     // vue libre ou admin → rien à faire
+  toast('Accès impossible.', 'error');
+  // Différé : on laisse le dispatch 'viewchange' courant se terminer avant de
+  // rediriger (évite une ré-entrance showView → viewchange imbriqué).
+  setTimeout(() => {
+    if (_authResolved && isProtectedView(_currentView) && !isAdmin()) showView('spectator');
+  }, 0);
 }
 
 /** Masque/affiche les entrées réservées à l'admin (menu, accueil, statut Firebase)
@@ -227,9 +215,10 @@ export async function initAuth() {
 
     onAuthStateChanged(auth, (user) => {
       currentUser = user;
+      _authResolved = true;
       renderAuthUI();
       applyAdminVisibility();
-      applyViewGate();   // ré-évalue le blocage de la vue courante (login/logout)
+      enforceViewAccess();   // statut connu : un non-admin sur une vue réservée est renvoyé au spectateur
 
       // Toast UNIQUEMENT pour l'admin (une session anonyme — votes pronostics —
       // ne doit rien notifier).
