@@ -309,6 +309,9 @@ body:not(.is-admin) #home-alert {
   display: none !important;
 }
 
+/* Formulaire de connexion : masqué au public, révélé seulement via l'URL ?login. */
+body:not(.show-login) .auth-login-form { display: none !important; }
+
 /* ════════════════════════════════
    MAIN CONTENT
 ════════════════════════════════ */

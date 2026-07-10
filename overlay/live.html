@@ -43,6 +43,7 @@
   // Caches (évitent de recharger ce qui ne change pas)
   let championships = [];
   let cacheKey = '';          // sélection courante (meeting|cat|type|num|scene)
+  let reloadGen = 0;          // jeton anti-course : seul le reload le plus récent peut peindre / s'abonner
   let unsubResults = null;    // listener live des résultats de la session courante
   let pronoUnsub = null;      // listener live du doc pronostic (scène « pronostic »)
   let champTimer = null;
@@ -339,6 +340,8 @@
 
   // Recharge complète sur changement de sélection
   async function reload(ctrl) {
+    const gen = ++reloadGen;                 // ce reload supersede tout reload précédent encore en vol
+    const alive = () => gen === reloadGen;   // false dès qu'un reload plus récent démarre (2e clic de scène)
     if (unsubResults) { unsubResults(); unsubResults = null; }
     if (champTimer)   { clearInterval(champTimer); champTimer = null; }
     if (cdTimer)      { clearInterval(cdTimer); cdTimer = null; }
@@ -367,6 +370,7 @@
       const pid = ctrl.pronosticId || '';
       const reg0 = await resolveRegulation(ctrl.championshipId).catch(() => null);
       const paint = (p) => {
+        if (!alive()) return;                   // reload superseded (changement de scène) → ne repeint pas
         const catId = (p && p.category) || ctrl.category || '';
         const cName = reg0 ? catLabel(reg0, catId) : catId;
         const url = spectatorUrl(ctrl.spectatorBaseUrl, ctrl.meetingId);   // event-global (toutes catégories)
@@ -379,11 +383,14 @@
         });
       };
       if (!pid) { paint(null); return; }
-      pronoUnsub = await watchPronostic(pid, paint, () => paint(null));
+      const pu = await watchPronostic(pid, paint, () => paint(null));
+      if (!alive()) { pu(); return; }           // périmé → jette l'abonnement
+      pronoUnsub = pu;
       return;
     }
 
     const reg = await resolveRegulation(ctrl.championshipId);
+    if (!alive()) return;                       // 2e clic arrivé pendant l'attente → ce reload est périmé
     if (!reg || !ctrl.meetingId || !ctrl.category) {
       root.innerHTML = renderScene(ctrl.scene, { headerText: ctrl.headerText, category: ctrl.category });
       return;
@@ -402,6 +409,7 @@
       const ids = [ctrl.fiche?.driverId1, ctrl.fiche?.driverId2].filter(Boolean);
       const fHeader = ctrl.headerText || [meeting?.location, catName].filter(Boolean).join(' · ');
       const fd = await getFicheData(ctrl.meetingId, ctrl.category, reg, ids, await meetingsOf(reg)).catch(() => ({ drivers: [] }));
+      if (!alive()) return;                     // 2e clic pendant getFicheData → ne pas écraser la nouvelle scène
       root.innerHTML = renderScene('fiche', { headerText: fHeader, category: catName, drivers: fd.drivers });
       return;
     }
@@ -476,6 +484,7 @@
           const evo = await getInterimEvolution(ctrl.meetingId, ctrl.category, reg, session).catch(() => null);
           if (evo && evo.series.length >= 2) data.graph = { ...evo, mode: ctrl.graphMode === 'points' ? 'points' : 'places' };
         }
+        if (!alive()) return;
         root.innerHTML = renderScene('session', data);
         prevIds = curIds;
         // dernier de la manche (plus personne à passer) → effacer la surbrillance après 10 s
@@ -483,7 +492,9 @@
           sessTimer = setTimeout(() => { lastAddedId = null; sessTimer = null; renderSess(null); }, 10000);
         }
       };
-      unsubResults = await watchQuery('results', [['sessionId', '==', session.id]], freshThenDebounce(rows => renderSess(rows)));
+      const uSess = await watchQuery('results', [['sessionId', '==', session.id]], freshThenDebounce(rows => renderSess(rows)));
+      if (!alive()) { uSess(); return; }
+      unsubResults = uSess;
       return;
     }
 
@@ -501,13 +512,16 @@
       const qualify  = reg.sessionConfig?.DF?.qualifiedPerDF;
       const renderCombo = async () => {
         const results = await getPhaseRank(session, reg).catch(() => []);
+        if (!alive()) return;
         root.innerHTML = renderScene('grid', {
           phase: ctrl.sessionType, qualify,
           headerText, sessionLabel: `${sLabel} · ${catName}`,
           layout, slots, poleSide, results,
         });
       };
-      unsubResults = await watchQuery('results', [['sessionId', '==', session.id]], freshThenDebounce(() => renderCombo()));
+      const uCombo = await watchQuery('results', [['sessionId', '==', session.id]], freshThenDebounce(() => renderCombo()));
+      if (!alive()) { uCombo(); return; }
+      unsubResults = uCombo;
       return;
     }
 
@@ -591,12 +605,15 @@
         // bandeau prédiction recalculé en direct (abandons figés)
         data.predict = await computePredict(ctrl, reg, session).catch(() => null);
       }
+      if (!alive()) return;
       root.innerHTML = renderScene(ctrl.scene, data);
     };
 
     if (ctrl.scene === 'dashboard' && session) {
       // Live : on s'abonne aux résultats de la session courante
-      unsubResults = await watchQuery('results', [['sessionId', '==', session.id]], freshThenDebounce(rows => renderNow(rows)));
+      const uDash = await watchQuery('results', [['sessionId', '==', session.id]], freshThenDebounce(rows => renderNow(rows)));
+      if (!alive()) { uDash(); return; }
+      unsubResults = uDash;
     } else {
       await renderNow(session ? await getResults(session.id) : []);
     }
