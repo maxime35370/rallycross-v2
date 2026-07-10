@@ -2,65 +2,181 @@ rules_version = '2';
 
 // ═══════════════════════════════════════════════════════════════════
 //  RÈGLES FIRESTORE — RX Chrono
-//  À coller dans la console Firebase : Firestore Database → Règles → Publier.
+//  Version FUSIONNÉE : tes règles existantes + les pronostics + 1 correctif.
+//  À coller en entier dans la console Firebase : Firestore → Règles → Publier.
 //
-//  Modèle de sécurité :
-//   • LECTURE publique partout (les overlays et le mode spectateur lisent
-//     sans être connectés) ;
-//   • ÉCRITURE réservée à la RÉGIE (compte authentifié NON anonyme, via la
-//     connexion email/mot de passe de la page /control) ;
-//   • VOTES des pronostics : un spectateur (session anonyme) ne peut lire et
-//     écrire QUE son propre vote, et seulement tant que le pronostic est
-//     « open ». Il ne peut jamais lister les votes des autres → aucune
-//     tendance visible avant la fermeture.
-//
-//  ⚠️  IMPORTANT — pourquoi ces règles sont nécessaires :
-//  activer l'authentification anonyme (indispensable pour les votes) fait
-//  qu'un visiteur devient « authentifié ». Si vos anciennes règles
-//  autorisaient l'écriture avec « if request.auth != null », n'importe quel
-//  visiteur anonyme pourrait alors écrire dans results / sessions / etc.
-//  La fonction isRegie() ci-dessous ferme cette faille : seule une session
-//  NON anonyme (la régie) peut écrire les données de course.
+//  Ajouts / changements par rapport à ta version :
+//   1. fonction isRegie() (compte authentifié NON anonyme = la régie) ;
+//   2. bloc /pronostics/{id} (+ sous-collection votes) pour les votes ;
+//   3. obsControl : write passe de « auth != null » à « isRegie() »
+//      → sinon, une fois l'auth anonyme activée, un spectateur (anonyme,
+//        donc auth != null) pourrait écrire dans obsControl et détourner
+//        l'overlay. isRegie() ferme cette porte. Le reste est INCHANGÉ.
 // ═══════════════════════════════════════════════════════════════════
 
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Régie = authentifié ET non anonyme (connexion email/mot de passe).
+    function hasFields(data, fields) {
+      return data.keys().hasAll(fields);
+    }
+    function validString(val, maxLen) {
+      return val is string && val.size() > 0 && val.size() <= maxLen;
+    }
+    function inRange(val, min, max) {
+      return val is int && val >= min && val <= max;
+    }
+    // Régie = authentifié ET non anonyme (connexion email/mot de passe de /control).
     function isRegie() {
       return request.auth != null
           && request.auth.token.firebase.sign_in_provider != 'anonymous';
     }
 
-    // ── Votes des pronostics (sous-collection) ──
-    // Placé avant la règle générique ; comme les votes sont à 4 segments de
-    // chemin, ils ne sont PAS couverts par /{col}/{id} (2 segments) : leur
-    // confidentialité ne dépend que de ce bloc.
-    match /pronostics/{pid}/votes/{uid} {
-      // Le spectateur ne lit que SON vote ; la régie lit tout (décompte live privé).
-      allow get:  if isRegie()
-                  || (request.auth != null && request.auth.uid == uid);
-      allow list: if isRegie();
-
-      // Voter / changer d'avis : uniquement son propre doc, pronostic ouvert,
-      // et rien d'autre que { driverId, at }.
-      allow create, update: if request.auth != null
-          && request.auth.uid == uid
-          && get(/databases/$(database)/documents/pronostics/$(pid)).data.status == 'open'
-          && request.resource.data.driverId is string
-          && request.resource.data.keys().hasOnly(['driverId', 'at']);
-
-      allow delete: if false;
+    match /drivers/{docId} {
+      allow read:   if true;
+      allow delete: if true;
+      allow create: if
+        hasFields(request.resource.data, ['firstName','lastName','carNumber','category','year']) &&
+        validString(request.resource.data.firstName, 50) &&
+        validString(request.resource.data.lastName, 50) &&
+        request.resource.data.carNumber is int &&
+        request.resource.data.carNumber >= 1 &&
+        validString(request.resource.data.category, 50) &&
+        inRange(request.resource.data.year, 2020, 2030);
+      allow update: if
+        validString(request.resource.data.firstName, 50) &&
+        validString(request.resource.data.lastName, 50) &&
+        request.resource.data.carNumber is int &&
+        request.resource.data.carNumber >= 1;
     }
 
-    // ── Tout le reste : données de course, obsControl, pronostics (le doc),
-    //    reglements, championships, drivers, etc. ──
-    // Lecture publique, écriture régie uniquement. Cette règle générique à
-    // 2 segments couvre toutes les collections de premier niveau, présentes
-    // et futures, sans risquer d'en oublier une.
-    match /{col}/{id} {
+    match /meetings/{docId} {
+      allow read:   if true;
+      allow delete: if true;
+      allow create: if
+        hasFields(request.resource.data, ['date','location','year','categories','nbMQ']) &&
+        validString(request.resource.data.location, 80) &&
+        inRange(request.resource.data.year, 2020, 2030) &&
+        inRange(request.resource.data.nbMQ, 1, 4) &&
+        request.resource.data.categories is list &&
+        request.resource.data.categories.size() > 0;
+      allow update: if true;
+    }
+
+    match /sessions/{docId} {
+      allow read:   if true;
+      allow delete: if true;
+      allow create, update: if
+        hasFields(request.resource.data, ['meetingId','category','type']) &&
+        request.resource.data.type in ['EC','MQ','QF','DF','FIN'];
+    }
+
+    match /engagements/{docId} {
+      allow read:   if true;
+      allow delete: if true;
+      allow create, update: if
+        hasFields(request.resource.data, ['meetingId','driverId','category','year']);
+    }
+
+    match /sessionParticipants/{docId} {
+      allow read:   if true;
+      allow delete: if true;
+      allow create, update: if
+        hasFields(request.resource.data, ['sessionId','driverId','carNumber']);
+    }
+
+    match /results/{docId} {
+      allow read:   if true;
+      allow delete: if true;
+      allow create, update: if
+        hasFields(request.resource.data, ['sessionId','driverId','sessionType']) &&
+        request.resource.data.sessionType in ['EC','MQ','QF','DF','FIN'] &&
+        (request.resource.data.ms == null || request.resource.data.ms is int) &&
+        (request.resource.data.status == null ||
+         request.resource.data.status in ['DNS','DNF','DSQ','DSQ_RACE']);
+    }
+
+    match /interimStandings/{docId} {
+      allow read:   if true;
+      allow delete: if true;
+      allow create, update: if
+        hasFields(request.resource.data, ['meetingId','category','year','driverId','position']);
+    }
+
+    match /meetingStandings/{docId} {
+      allow read:   if true;
+      allow delete: if true;
+      allow create, update: if
+        hasFields(request.resource.data, ['meetingId','category','year','driverId','totalPts']);
+    }
+
+    match /championshipStandings/{docId} {
+      allow read:   if true;
+      allow delete: if true;
+      allow create, update: if
+        hasFields(request.resource.data, ['year','category','driverId']);
+    }
+
+    match /championships/{docId} {
+      allow read, write: if true;
+    }
+
+    match /persons/{docId} {
+      allow read:   if true;
+      allow delete: if true;
+      allow create: if
+        hasFields(request.resource.data, ['firstName','lastName']) &&
+        validString(request.resource.data.firstName, 50) &&
+        validString(request.resource.data.lastName, 50);
+      allow update: if
+        validString(request.resource.data.firstName, 50) &&
+        validString(request.resource.data.lastName, 50);
+    }
+
+    match /auditLog/{docId} {
+      allow read:           if true;
+      allow create:         if true;
+      allow update, delete: if false;
+    }
+
+    match /reglements/{docId} {
+      allow read:   if true;
+      allow create, update: if
+        hasFields(request.resource.data, ['name']);
+      allow delete: if true;
+    }
+
+    match /obsControl/{doc} {
+      allow read:  if true;         // l'overlay (non connecté) peut lire
+      allow write: if isRegie();    // ⬅ CHANGÉ : la régie SEULE (compte non anonyme) écrit
+    }
+
+    // ── PRONOSTICS SPECTATEURS ──────────────────────────────────────
+    // Le doc (question, pilotes, statut, décompte figé à la fermeture) est
+    // public en lecture ; seule la régie le crée/ouvre/ferme/révèle.
+    match /pronostics/{pid} {
       allow read:  if true;
       allow write: if isRegie();
+
+      // Votes : 1 doc par spectateur (id = son uid anonyme). Il ne lit/écrit
+      // QUE son vote, et seulement tant que le pronostic est « open ». Il ne
+      // peut jamais LISTER les votes (aucune tendance avant la fermeture) ;
+      // la régie, elle, lit tout (décompte live privé).
+      match /votes/{uid} {
+        allow get:  if isRegie()
+                    || (request.auth != null && request.auth.uid == uid);
+        allow list: if isRegie();
+        allow create, update: if request.auth != null
+            && request.auth.uid == uid
+            && get(/databases/$(database)/documents/pronostics/$(pid)).data.status == 'open'
+            && request.resource.data.driverId is string
+            && request.resource.data.keys().hasOnly(['driverId', 'at']);
+        allow delete: if false;
+      }
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }

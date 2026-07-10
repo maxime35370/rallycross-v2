@@ -70,6 +70,7 @@ export async function createPronostic(data, nowMs) {
     meetingId:      data.meetingId || '',
     championshipId: data.championshipId || '',
     options:        Array.isArray(data.options) ? data.options : [],
+    resultTarget:   data.resultTarget || { kind: 'manual' },   // d'où vient le vrai gagnant
     status:         data.status || PRONO_STATUS.DRAFT,
     correctDriverId:'',
     tally:          {},

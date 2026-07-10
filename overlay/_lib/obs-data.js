@@ -53,6 +53,35 @@ export function sortRace(results) {
   });
 }
 
+/**
+ * Résout l'id de la session-cible d'un pronostic « au résultat » (resultTarget
+ * de type 'session'). Sert à s'abonner aux chronos de cette session.
+ */
+export async function pronoTargetSessionId(prono) {
+  const t = prono?.resultTarget || {};
+  if (t.kind !== 'session') return null;
+  const sessions = await getSessions(prono.meetingId, prono.category);
+  return findSession(sessions, t.sessionType, t.sessionNum)?.id || null;
+}
+
+/**
+ * Vainqueur RÉEL d'un pronostic « au résultat » (kind 'session'), calculé depuis
+ * les chronos → suit l'évolution des classements (une pénalité de la direction de
+ * course qui change le P1 change le gagnant du pronostic). Renvoie le driverId du
+ * vainqueur (meilleur chrono, hors DNF/DNS/DSQ) ou null si pas encore décidable.
+ * Ne dépend PAS du règlement (tri au chrono uniquement).
+ */
+export async function computePronoWinner(prono) {
+  const t = prono?.resultTarget || {};
+  if (t.kind !== 'session') return null;   // 'interim_after' / 'manual' → géré ailleurs
+  const sessions = await getSessions(prono.meetingId, prono.category);
+  const s = findSession(sessions, t.sessionType, t.sessionNum);
+  if (!s) return null;
+  const w = sortRace(await getResults(s.id))[0];
+  if (!w || w.status || w.ms == null) return null;   // pas de vainqueur valide (aucun chrono)
+  return w.driverId || null;
+}
+
 // ─────────────────────────────────────────────────────────
 // POINTS D'UNE PHASE (QF / DF / FIN) — copie fidèle de championship.js
 // ─────────────────────────────────────────────────────────
