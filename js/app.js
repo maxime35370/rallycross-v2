@@ -357,17 +357,20 @@ async function loadApp() {
   const { initStats }          = await import('./stats.js');
   const { initSettings } = await import('./settings.js');
   const { initAudit }    = await import('./audit.js');
-  initSessions();
-  initTiming();
-  initStandings();
-  initChampionship();
-  initSpectator();
-  initStats();
-  initSettings();
-  initAudit();
-
-  // Initialiser le QR code sur la page d'accueil
-  initHomeQr();
+  // Enregistrement des modules de vue. Chaque init est isolé : si l'un échoue
+  // (ex. génération du QR d'accueil), il ne doit PAS empêcher la ré-émission
+  // finale du 'viewchange' — sinon un accès direct par lien (#spectator…) resterait
+  // figé sur « Chargement… » car sa vue ne s'initialiserait jamais.
+  const safeInit = (fn, name) => { try { fn(); } catch (e) { console.error('[loadApp] init', name, e); } };
+  safeInit(initSessions, 'sessions');
+  safeInit(initTiming, 'timing');
+  safeInit(initStandings, 'standings');
+  safeInit(initChampionship, 'championship');
+  safeInit(initSpectator, 'spectator');
+  safeInit(initStats, 'stats');
+  safeInit(initSettings, 'settings');
+  safeInit(initAudit, 'audit');
+  safeInit(initHomeQr, 'homeQr');   // QR d'accueil (isolé : ne doit pas bloquer la vue courante)
 
   // La vue initiale (showView au démarrage — ex. deep-link #spectator via QR /
   // lien direct) a été émise AVANT que les modules de vue n'enregistrent leurs
