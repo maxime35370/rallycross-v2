@@ -244,6 +244,7 @@
           <option value="interim_final">📊 Leader du classement intermédiaire (après toutes les manches)</option>
           <option value="ec_best">⏱️ Meilleur temps des essais chronos</option>
           <option value="serie_winner">🏁 Vainqueur d'une série (pilotes en ligne)</option>
+          <option value="df_winner">🥈 Vainqueur de la demi-finale (sélectionne ½ A ou ½ B)</option>
           <option value="final_winner">🏆 Vainqueur de la finale</option>
           <option value="custom">✏️ Question libre</option>
         </select>
@@ -608,6 +609,7 @@
       }
       case 'ec_best':       return `Qui signe le meilleur temps aux essais chronos ${cat} ?`;
       case 'serie_winner':  return `Qui gagne cette série ${cat} ?`;
+      case 'df_winner':     return `Qui gagne ${phaseLabelLong()} ${cat} ?`;
       case 'final_winner':  return `Qui gagne la finale ${cat} ?`;
       default:              return '';
     }
@@ -621,7 +623,8 @@
       case 'ec_best':       return { kind: 'session', sessionType: 'EC',  sessionNum: 1 };
       case 'final_winner':  return { kind: 'session', sessionType: 'FIN', sessionNum: 1 };
       case 'manche_winner':
-      case 'serie_winner':  return { kind: 'session', sessionType: state.sessionType, sessionNum: state.sessionNum };
+      case 'serie_winner':
+      case 'df_winner':     return { kind: 'session', sessionType: state.sessionType, sessionNum: state.sessionNum };
       case 'interim_m2':    return { kind: 'interim_after', sessionType: 'MQ', sessionNum: 2 };
       case 'interim_final': return { kind: 'interim_after', sessionType: 'MQ', sessionNum: meetings.find(m => m.id === state.meetingId)?.nbMQ || 4 };
       default:              return { kind: 'manual' };
