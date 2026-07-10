@@ -154,7 +154,19 @@ export async function watchVotes(id, cb, onErr) {
  * - Page régie : déjà connecté (email/mot de passe) → ne fait rien, renvoie l'uid régie.
  * @returns {Promise<string>} uid
  */
-export async function ensureAnon() {
+let _anonPromise = null;
+export function ensureAnon() {
+  // Mémoïsé : deux appels concurrents (init en tâche de fond + 1er vote) doivent
+  // partager LA MÊME connexion anonyme. Sinon deux signInAnonymously créent deux
+  // comptes → le vote est écrit sous un uid, mais le jeton d'auth est l'autre uid
+  // → la règle `request.auth.uid == uid` échoue → vote refusé/annulé.
+  if (!_anonPromise) {
+    _anonPromise = _doEnsureAnon().catch(err => { _anonPromise = null; throw err; });
+  }
+  return _anonPromise;
+}
+
+async function _doEnsureAnon() {
   await initFirebase();
   const { getAuth, signInAnonymously, onAuthStateChanged } = await authMod();
   const auth = getAuth();
