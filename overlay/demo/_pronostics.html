@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="fr"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Maquette — Pronostics spectateurs</title>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;800;900&family=Barlow+Condensed:wght@400;500;600;700&family=Exo+2:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --clr-bg:#0d0f14;--clr-bg-2:#13161e;--clr-bg-3:#1a1e28;--clr-surface:#1e2230;--clr-surface-2:#252a3a;
+    --clr-border:rgba(255,255,255,.08);--clr-border-2:rgba(255,255,255,.14);
+    --clr-accent:#ff5500;--clr-accent-2:#ff7730;--clr-accent-dim:rgba(255,85,0,.18);
+    --clr-text:#e8ecf4;--clr-text-2:#9aa0b4;--clr-text-3:#5c6278;
+    --clr-success:#1ed760;--clr-success-dim:rgba(30,215,96,.15);--clr-warning:#ffd23f;
+    --clr-danger:#ff3b3b;--clr-danger-dim:rgba(255,59,59,.15);--clr-info:#3b9eff;--clr-info-dim:rgba(59,158,255,.15);
+    --font-display:'Orbitron',monospace;--font-body:'Exo 2',sans-serif;--font-condensed:'Barlow Condensed',sans-serif;
+    --r-sm:4px;--r-md:8px;--r-lg:12px;--r-xl:16px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#07090d;font-family:var(--font-body);color:var(--clr-text);padding:80px 20px 60px;min-height:100vh}
+
+  /* ── switcher ── */
+  .switch{position:fixed;top:0;left:0;right:0;height:60px;z-index:100;display:flex;align-items:center;gap:10px;
+    padding:0 20px;background:rgba(10,13,18,.96);border-bottom:1px solid var(--clr-border-2);backdrop-filter:blur(8px)}
+  .switch .lbl{font-family:var(--font-condensed);font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--clr-text-3);font-size:.8rem;margin-right:6px}
+  .switch button{font-family:var(--font-condensed);font-weight:600;font-size:.95rem;letter-spacing:1px;text-transform:uppercase;
+    padding:9px 18px;border-radius:8px;border:1px solid var(--clr-border-2);background:var(--clr-bg-3);color:var(--clr-text-2);cursor:pointer;transition:.15s}
+  .switch button:hover{color:#fff;border-color:var(--clr-accent)}
+  .switch button.on{background:linear-gradient(150deg,var(--clr-accent),#c23d00);color:#fff;border-color:transparent;box-shadow:0 6px 18px rgba(255,85,0,.35)}
+  .view{display:none}.view.on{display:block}
+  .caption{max-width:900px;margin:0 auto 26px;text-align:center;color:var(--clr-text-2);font-size:.95rem;line-height:1.5}
+  .caption b{color:var(--clr-accent-2)}
+  .caption code{font-family:var(--font-display);font-size:.82rem;background:var(--clr-bg-3);padding:2px 7px;border-radius:5px;color:var(--clr-text)}
+
+  /* ══════════════ 1 · SPECTATEUR (mobile) ══════════════ */
+  .phone{width:392px;margin:0 auto;background:var(--clr-bg);border:8px solid #1a1d25;border-radius:38px;
+    box-shadow:0 40px 90px rgba(0,0,0,.7);overflow:hidden}
+  .phone-in{height:812px;overflow-y:auto;padding:16px 14px 40px;scrollbar-width:none}
+  .phone-in::-webkit-scrollbar{display:none}
+  .spc-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;padding:2px}
+  .spc-title{display:flex;align-items:center;gap:8px;font-family:var(--font-display);font-weight:700;font-size:1.05rem}
+  .spc-title .fl{font-size:1.25rem}
+  .spc-title b{color:var(--clr-accent)}
+  .spc-live{display:flex;align-items:center;gap:6px;padding:4px 10px;background:var(--clr-surface);border:1px solid var(--clr-border);border-radius:20px}
+  .spc-live i{width:8px;height:8px;border-radius:50%;background:var(--clr-success);box-shadow:0 0 6px var(--clr-success);animation:pulse 2s infinite}
+  .spc-live span{font-family:var(--font-condensed);font-weight:700;font-size:.7rem;letter-spacing:1px;color:var(--clr-success)}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+  .sect{font-family:var(--font-condensed);font-weight:700;letter-spacing:2px;text-transform:uppercase;color:var(--clr-text-2);
+    font-size:.85rem;margin:6px 4px 12px;display:flex;align-items:center;gap:8px}
+  .sect .pill{margin-left:auto;background:var(--clr-accent-dim);color:var(--clr-accent-2);border-radius:20px;padding:2px 10px;font-size:.72rem;letter-spacing:1px}
+
+  /* carte pronostic */
+  .pc{background:var(--clr-surface);border:1px solid var(--clr-border);border-radius:var(--r-xl);padding:15px 15px 13px;margin-bottom:16px;
+    border-top:3px solid var(--clr-accent);animation:rise .4s ease}
+  @keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+  .pc.closed{border-top-color:var(--clr-text-3);opacity:.97}
+  .pc-h{display:flex;align-items:flex-start;gap:9px;margin-bottom:4px}
+  .pc-ic{font-size:1.15rem;line-height:1.3}
+  .pc-q{font-family:var(--font-condensed);font-weight:700;font-size:1.12rem;line-height:1.1;flex:1}
+  .pc-meta{display:flex;align-items:center;gap:8px;margin:6px 0 12px;font-size:.76rem;color:var(--clr-text-3)}
+  .pc-cat{font-family:var(--font-condensed);font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--clr-accent-2)}
+  .badge{font-family:var(--font-condensed);font-weight:700;font-size:.7rem;letter-spacing:1px;text-transform:uppercase;padding:3px 9px;border-radius:20px;margin-left:auto}
+  .badge.open{background:var(--clr-success-dim);color:var(--clr-success)}
+  .badge.closed{background:var(--clr-danger-dim);color:var(--clr-danger)}
+  .badge.reveal{background:var(--clr-warning-dim);color:var(--clr-warning)}
+
+  /* option pilote (non voté) */
+  .opt{display:flex;align-items:center;gap:11px;padding:11px 12px;border:1.5px solid var(--clr-border-2);border-radius:12px;margin-bottom:8px;
+    cursor:pointer;transition:.15s;background:var(--clr-bg-3);position:relative;overflow:hidden}
+  .opt:hover{border-color:var(--clr-accent);transform:translateX(2px)}
+  .opt .rn{min-width:40px;height:36px;display:flex;align-items:center;justify-content:center;font-family:var(--font-display);font-weight:700;
+    font-size:.95rem;background:var(--clr-bg);border:1px solid var(--clr-border-2);border-radius:8px;color:var(--clr-accent-2)}
+  .opt .nm{font-family:var(--font-condensed);font-weight:600;font-size:1.08rem;flex:1;letter-spacing:.3px}
+  .opt .rd{width:22px;height:22px;border-radius:50%;border:2px solid var(--clr-text-3);flex:none}
+  .opt.sel{border-color:var(--clr-accent);background:linear-gradient(90deg,rgba(255,85,0,.16),var(--clr-bg-3))}
+  .opt.sel .rd{border-color:var(--clr-accent);background:var(--clr-accent);box-shadow:inset 0 0 0 4px var(--clr-bg-3)}
+  .opt.sel .nm{color:#fff}
+
+  /* option en mode résultat (barres) */
+  .bar{position:relative;display:flex;align-items:center;gap:11px;padding:11px 12px;border-radius:12px;margin-bottom:8px;
+    background:var(--clr-bg-3);border:1.5px solid var(--clr-border);overflow:hidden}
+  .bar .fill{position:absolute;inset:0 auto 0 0;background:linear-gradient(90deg,rgba(255,85,0,.28),rgba(255,85,0,.10));border-radius:12px 0 0 12px;transition:width .8s cubic-bezier(.2,.8,.2,1)}
+  .bar.mine .fill{background:linear-gradient(90deg,rgba(255,85,0,.55),rgba(255,85,0,.22))}
+  .bar.correct .fill{background:linear-gradient(90deg,rgba(30,215,96,.5),rgba(30,215,96,.16))}
+  .bar>*{position:relative;z-index:1}
+  .bar .rn{min-width:40px;height:36px;display:flex;align-items:center;justify-content:center;font-family:var(--font-display);font-weight:700;
+    font-size:.95rem;background:rgba(0,0,0,.35);border:1px solid var(--clr-border-2);border-radius:8px;color:#fff}
+  .bar .nm{font-family:var(--font-condensed);font-weight:600;font-size:1.08rem;flex:1;letter-spacing:.3px;display:flex;align-items:center;gap:7px}
+  .bar .tag{font-family:var(--font-condensed);font-weight:700;font-size:.66rem;letter-spacing:1px;text-transform:uppercase;padding:2px 7px;border-radius:20px}
+  .bar .tag.mine{background:var(--clr-accent);color:#fff}
+  .bar .tag.ok{background:var(--clr-success);color:#04240f}
+  .bar .pct{font-family:var(--font-display);font-weight:700;font-size:1rem;min-width:44px;text-align:right}
+  .bar.correct .pct{color:var(--clr-success)}
+
+  .pc-foot{display:flex;align-items:center;gap:8px;margin-top:6px;font-size:.78rem;color:var(--clr-text-3)}
+  .pc-foot .edit{margin-left:auto;font-family:var(--font-condensed);font-weight:700;letter-spacing:.5px;color:var(--clr-accent-2);cursor:pointer;
+    border:1px solid var(--clr-border-2);border-radius:8px;padding:5px 12px}
+  .pc-hint{font-size:.74rem;color:var(--clr-text-3);margin-top:9px;text-align:center;font-style:italic}
+  .pc-verdict{display:flex;align-items:center;gap:8px;margin-top:10px;padding:9px 12px;border-radius:10px;font-family:var(--font-condensed);font-weight:700;font-size:.92rem}
+  .pc-verdict.ko{background:var(--clr-danger-dim);color:#ff8a8a}
+  .pc-verdict.ok{background:var(--clr-success-dim);color:#7bf0a8}
+
+  /* ══════════════ 2 · RÉGIE ══════════════ */
+  .regie{max-width:460px;margin:0 auto;background:var(--clr-surface);border:1px solid var(--clr-border);border-radius:var(--r-xl);overflow:hidden}
+  .regie-h{background:linear-gradient(100deg,#1a1e28,#13161e);padding:15px 18px;border-bottom:1px solid var(--clr-border);display:flex;align-items:center;gap:10px}
+  .regie-h .t{font-family:var(--font-condensed);font-weight:700;letter-spacing:1.5px;text-transform:uppercase;font-size:1rem}
+  .regie-h .t b{color:var(--clr-accent)}
+  .regie-body{padding:16px 18px}
+  .rlabel{font-family:var(--font-condensed);font-weight:700;letter-spacing:1px;text-transform:uppercase;font-size:.76rem;color:var(--clr-text-3);margin:14px 0 7px}
+  .rlabel:first-child{margin-top:0}
+  .rrow{display:flex;gap:8px;margin-bottom:8px}
+  select.rf,input.rf{width:100%;background:var(--clr-bg-3);border:1px solid var(--clr-border-2);color:var(--clr-text);border-radius:9px;padding:10px 12px;font-family:var(--font-body);font-size:.92rem}
+  .chips{display:flex;flex-wrap:wrap;gap:6px;margin:2px 0 4px}
+  .chip{display:flex;align-items:center;gap:6px;background:var(--clr-bg-3);border:1px solid var(--clr-border-2);border-radius:20px;padding:4px 6px 4px 10px;font-size:.82rem;font-family:var(--font-condensed);font-weight:600}
+  .chip b{color:var(--clr-accent-2);font-family:var(--font-display);font-size:.78rem}
+  .chip x{cursor:pointer;color:var(--clr-text-3);font-style:normal;width:16px;height:16px;display:flex;align-items:center;justify-content:center;border-radius:50%}
+  .chip x:hover{background:var(--clr-danger-dim);color:var(--clr-danger)}
+  .btn{font-family:var(--font-condensed);font-weight:700;letter-spacing:1px;text-transform:uppercase;font-size:.86rem;border:none;border-radius:9px;padding:11px 14px;cursor:pointer;transition:.15s}
+  .btn.primary{background:linear-gradient(150deg,var(--clr-accent),#c23d00);color:#fff;width:100%;box-shadow:0 6px 18px rgba(255,85,0,.3)}
+  .btn.primary:hover{filter:brightness(1.08)}
+  .rdiv{height:1px;background:var(--clr-border);margin:20px -18px}
+
+  .plist{display:flex;flex-direction:column;gap:10px}
+  .pit{background:var(--clr-bg-3);border:1px solid var(--clr-border);border-radius:12px;padding:12px 13px}
+  .pit.open{border-left:3px solid var(--clr-success)}
+  .pit.draft{border-left:3px solid var(--clr-text-3)}
+  .pit.closed{border-left:3px solid var(--clr-warning)}
+  .pit-top{display:flex;align-items:center;gap:8px;margin-bottom:3px}
+  .pit-q{font-family:var(--font-condensed);font-weight:700;font-size:1rem;flex:1;line-height:1.1}
+  .pit-sub{font-size:.75rem;color:var(--clr-text-3);margin-bottom:10px}
+  .pit-sub b{color:var(--clr-text-2)}
+  .mini{display:flex;flex-direction:column;gap:4px;margin:9px 0}
+  .mrow{display:flex;align-items:center;gap:8px;font-size:.8rem}
+  .mrow .mn{font-family:var(--font-display);font-weight:700;font-size:.72rem;color:var(--clr-accent-2);min-width:26px}
+  .mrow .mnm{min-width:78px;font-family:var(--font-condensed);font-weight:600}
+  .mrow .mtrack{flex:1;height:8px;background:var(--clr-bg);border-radius:20px;overflow:hidden}
+  .mrow .mfill{height:100%;background:linear-gradient(90deg,var(--clr-accent),var(--clr-accent-2));border-radius:20px}
+  .mrow .mpct{min-width:52px;text-align:right;font-family:var(--font-display);font-weight:700;font-size:.74rem;color:var(--clr-text-2)}
+  .pit-btns{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap}
+  .sbtn{font-family:var(--font-condensed);font-weight:700;font-size:.78rem;letter-spacing:.5px;padding:7px 11px;border-radius:8px;border:1px solid var(--clr-border-2);background:var(--clr-surface);color:var(--clr-text-2);cursor:pointer}
+  .sbtn:hover{color:#fff;border-color:var(--clr-accent)}
+  .sbtn.go{background:var(--clr-success-dim);color:var(--clr-success);border-color:transparent}
+  .sbtn.stop{background:var(--clr-danger-dim);color:var(--clr-danger);border-color:transparent}
+  .sbtn.air{background:var(--clr-accent);color:#fff;border-color:transparent}
+  .pit-badge{font-family:var(--font-condensed);font-weight:700;font-size:.68rem;letter-spacing:1px;text-transform:uppercase;padding:3px 9px;border-radius:20px}
+  .pit-badge.open{background:var(--clr-success-dim);color:var(--clr-success)}
+  .pit-badge.draft{background:rgba(255,255,255,.06);color:var(--clr-text-2)}
+  .pit-badge.closed{background:var(--clr-warning-dim);color:var(--clr-warning)}
+  .votes-n{font-family:var(--font-display);font-weight:700;font-size:.72rem;color:var(--clr-text-3)}
+
+  /* ══════════════ 3 · OVERLAY ══════════════ */
+  .ovwrap{width:960px;height:540px;margin:0 auto;border-radius:12px;overflow:hidden;box-shadow:0 30px 80px rgba(0,0,0,.7);position:relative}
+  .ov{width:1920px;height:1080px;transform:scale(.5);transform-origin:top left;
+    background:radial-gradient(1200px 800px at 50% 15%,#141a24,#0a0c11 60%);font-family:'Exo 2',sans-serif;color:#fff;position:absolute;top:0;left:0}
+  .ovh{height:88px;display:flex;align-items:center;gap:20px;padding:0 40px;background:linear-gradient(100deg,#141a24,#0a0c11);border-bottom:3px solid var(--clr-accent)}
+  .ovh .brand{font-family:'Orbitron';font-weight:900;font-size:28px}.ovh .brand b{color:var(--clr-accent)}
+  .ovh .sep{width:2px;height:38px;background:rgba(255,255,255,.09)}
+  .ovh .info{font-family:'Barlow Condensed';font-weight:600;font-size:24px;letter-spacing:2px;text-transform:uppercase;color:#dbe3ee}
+  .ovh .live{margin-left:auto;display:flex;align-items:center;gap:8px;background:#e11d2a;padding:7px 13px;border-radius:6px;font-family:'Orbitron';font-weight:800;font-size:14px;letter-spacing:2px}
+  .ovh .live i{width:10px;height:10px;border-radius:50%;background:#fff}
+  .ovbody{padding:52px 90px 0}
+  .ovkick{font-family:'Barlow Condensed';font-weight:700;font-size:26px;letter-spacing:6px;text-transform:uppercase;color:var(--clr-accent-2);margin-bottom:10px;display:flex;align-items:center;gap:14px}
+  .ovkick .vt{background:var(--clr-accent);color:#fff;font-family:'Orbitron';font-weight:800;font-size:16px;letter-spacing:2px;padding:5px 12px;border-radius:6px}
+  .ovq{font-family:'Barlow Condensed';font-weight:700;font-size:58px;line-height:1;text-transform:uppercase;margin-bottom:36px}
+  .ovbars{display:flex;flex-direction:column;gap:16px;max-width:1500px}
+  .ovbar{position:relative;height:72px;border-radius:14px;overflow:hidden;background:rgba(255,255,255,.05);box-shadow:inset 0 0 0 1px rgba(255,255,255,.06);display:flex;align-items:center}
+  .ovbar .of{position:absolute;inset:0 auto 0 0;background:linear-gradient(90deg,rgba(255,85,0,.85),rgba(255,85,0,.35));transition:width 1s cubic-bezier(.2,.8,.2,1)}
+  .ovbar.lead .of{background:linear-gradient(90deg,#ff5500,#ff8a3d)}
+  .ovbar.win .of{background:linear-gradient(90deg,#1ed760,#12933f)}
+  .ovbar>*{position:relative;z-index:1}
+  .ovbar .onum{margin:0 22px 0 20px;min-width:74px;height:52px;display:flex;align-items:center;justify-content:center;font-family:'Orbitron';font-weight:800;font-size:30px;background:rgba(0,0,0,.4);border-radius:10px}
+  .ovbar .onm{font-family:'Barlow Condensed';font-weight:700;font-size:40px;letter-spacing:1px;text-transform:uppercase;flex:1;display:flex;align-items:center;gap:16px}
+  .ovbar . owin{font-size:30px}
+  .ovbar .opct{font-family:'Orbitron';font-weight:800;font-size:40px;margin-right:28px}
+  .ovbar .ocnt{font-family:'Barlow Condensed';font-weight:500;font-size:20px;color:#c7cfdb;margin-right:30px;min-width:120px;text-align:right}
+  .ovfoot{position:absolute;bottom:34px;left:90px;right:90px;display:flex;align-items:center;font-family:'Barlow Condensed';font-weight:600;font-size:24px;letter-spacing:2px;color:#8b95a4}
+  .ovfoot .tot b{color:#fff;font-family:'Orbitron';font-weight:800}
+  .ovfoot .qr{margin-left:auto;display:flex;align-items:center;gap:14px;text-transform:uppercase}
+  .ovfoot .qrbox{width:64px;height:64px;background:#fff;border-radius:8px;display:grid;grid-template-columns:repeat(5,1fr);grid-template-rows:repeat(5,1fr);padding:6px;gap:2px}
+  .ovfoot .qrbox b{background:#0a0c11;border-radius:1px}
+</style></head>
+<body>
+
+<div class="switch">
+  <span class="lbl">Maquette pronostics</span>
+  <button data-v="spc" class="on">📱 Spectateur</button>
+  <button data-v="regie">🎛️ Régie</button>
+  <button data-v="ov">📺 Overlay résultats</button>
+</div>
+
+<!-- ═══ 1 · SPECTATEUR ═══ -->
+<section class="view on" id="v-spc">
+  <p class="caption">Ce que voit le spectateur sur son téléphone (mode lecture seule, accès par <b>QR code</b>). Plusieurs pronostics empilés, chacun <b>facultatif</b> et <b>modifiable tant qu'il est ouvert</b>. Voici les 3 états : <b>à voter</b> · <b>voté (résultat live)</b> · <b>terminé</b>.</p>
+  <div class="phone"><div class="phone-in">
+    <div class="spc-head">
+      <div class="spc-title"><span class="fl">📍</span>RX<b>Chrono</b> · Lohéac</div>
+      <div class="spc-live"><i></i><span>LIVE</span></div>
+    </div>
+    <div class="sect">🎯 Pronostics <span class="pill">3 ouverts</span></div>
+
+    <!-- carte A : voté, résultat live, modifiable -->
+    <div class="pc">
+      <div class="pc-h"><span class="pc-ic">🏁</span><span class="pc-q">Qui gagne la Finale&nbsp;Supercar&nbsp;?</span></div>
+      <div class="pc-meta"><span class="pc-cat">Supercar · Finale</span><span class="badge open">Ouvert</span></div>
+      <div class="bar mine"><span class="fill" style="width:52%"></span><span class="rn">11</span><span class="nm">Grondin <span class="tag mine">Ton vote</span></span><span class="pct">52%</span></div>
+      <div class="bar"><span class="fill" style="width:27%"></span><span class="rn">2</span><span class="nm">Boulbès</span><span class="pct">27%</span></div>
+      <div class="bar"><span class="fill" style="width:14%"></span><span class="rn">5</span><span class="nm">Anodeau</span><span class="pct">14%</span></div>
+      <div class="bar"><span class="fill" style="width:7%"></span><span class="rn">21</span><span class="nm">De Sousa</span><span class="pct">7%</span></div>
+      <div class="pc-foot"><span>🗳️ 148 votes</span><span class="edit">Changer mon vote</span></div>
+    </div>
+
+    <!-- carte B : pas encore voté -->
+    <div class="pc">
+      <div class="pc-h"><span class="pc-ic">🏆</span><span class="pc-q">Qui gagne la Manche&nbsp;1 Supercar&nbsp;?</span></div>
+      <div class="pc-meta"><span class="pc-cat">Supercar · Tous les engagés</span><span class="badge open">Ouvert</span></div>
+      <div class="opt sel"><span class="rn">11</span><span class="nm">Grondin</span><span class="rd"></span></div>
+      <div class="opt"><span class="rn">2</span><span class="nm">Boulbès</span><span class="rd"></span></div>
+      <div class="opt"><span class="rn">5</span><span class="nm">Anodeau</span><span class="rd"></span></div>
+      <div class="opt"><span class="rn">21</span><span class="nm">De Sousa</span><span class="rd"></span></div>
+      <div class="opt"><span class="rn">7</span><span class="nm">Fébreau</span><span class="rd"></span></div>
+      <div class="opt"><span class="rn">32</span><span class="nm">Pailler</span><span class="rd"></span></div>
+      <div class="pc-hint">Touche un pilote pour voter — tu pourras changer d'avis tant que c'est ouvert.</div>
+    </div>
+
+    <!-- carte C : terminé / révélé -->
+    <div class="pc closed">
+      <div class="pc-h"><span class="pc-ic">⏱️</span><span class="pc-q">Meilleur temps des Essais&nbsp;Chronos&nbsp;?</span></div>
+      <div class="pc-meta"><span class="pc-cat">Supercar · EC</span><span class="badge reveal">Résultat</span></div>
+      <div class="bar correct"><span class="fill" style="width:31%"></span><span class="rn">2</span><span class="nm">Boulbès <span class="tag ok">✓ Gagnant</span></span><span class="pct">31%</span></div>
+      <div class="bar mine"><span class="fill" style="width:44%"></span><span class="rn">11</span><span class="nm">Grondin <span class="tag mine">Ton vote</span></span><span class="pct">44%</span></div>
+      <div class="bar"><span class="fill" style="width:25%"></span><span class="rn">5</span><span class="nm">Anodeau</span><span class="pct">25%</span></div>
+      <div class="pc-verdict ko">😅 Raté — tu avais misé sur Grondin (P2). 56 spectateurs avaient trouvé&nbsp;!</div>
+    </div>
+
+  </div></div>
+</section>
+
+<!-- ═══ 2 · RÉGIE ═══ -->
+<section class="view" id="v-regie">
+  <p class="caption">Panneau <b>régie</b> (dans <code>control.html</code>). Tu composes un pronostic : le <b>type</b> pré-remplit les pilotes selon le règlement, tu ajustes, tu ouvres. En dessous, la liste de tes pronostics avec <b>décompte live</b> et les boutons <b>Ouvrir / Fermer / Révéler / → Antenne</b>.</p>
+  <div class="regie">
+    <div class="regie-h"><span style="font-size:1.2rem">🎯</span><span class="t">Pronostics <b>spectateurs</b></span></div>
+    <div class="regie-body">
+      <!-- composer -->
+      <div class="rlabel">Nouveau pronostic — type</div>
+      <select class="rf">
+        <option>🏆 Vainqueur de la manche (tous les engagés)</option>
+        <option>📊 Leader du classement intermédiaire après M2</option>
+        <option>⏱️ Meilleur temps des essais chronos</option>
+        <option>🏁 Vainqueur d'une série (pilotes en ligne)</option>
+        <option>🏆 Vainqueur de la finale (tous les engagés)</option>
+      </select>
+      <div class="rrow" style="margin-top:8px">
+        <select class="rf"><option>Catégorie : Supercar</option><option>Super1600</option><option>Division 5</option></select>
+      </div>
+      <div class="rlabel">Pilotes proposés <span style="color:var(--clr-text-2);font-weight:400;text-transform:none;letter-spacing:0">— pré-remplis, retire ceux que tu veux</span></div>
+      <div class="chips">
+        <span class="chip"><b>11</b> Grondin <x>×</x></span>
+        <span class="chip"><b>2</b> Boulbès <x>×</x></span>
+        <span class="chip"><b>5</b> Anodeau <x>×</x></span>
+        <span class="chip"><b>21</b> De Sousa <x>×</x></span>
+        <span class="chip"><b>7</b> Fébreau <x>×</x></span>
+        <span class="chip"><b>32</b> Pailler <x>×</x></span>
+        <span class="chip" style="border-style:dashed;color:var(--clr-text-3)"><x style="color:var(--clr-accent-2)">＋</x> ajouter</span>
+      </div>
+      <div class="rlabel">Intitulé affiché <span style="color:var(--clr-text-2);font-weight:400;text-transform:none;letter-spacing:0">— modifiable</span></div>
+      <input class="rf" value="Qui gagne la Manche 1 Supercar ?">
+      <div style="margin-top:12px"><button class="btn primary">＋ Créer le pronostic (brouillon)</button></div>
+
+      <div class="rdiv"></div>
+      <div class="rlabel" style="margin-top:0">Mes pronostics</div>
+      <div class="plist">
+
+        <!-- ouvert -->
+        <div class="pit open">
+          <div class="pit-top"><span class="pit-q">🏁 Qui gagne la Finale Supercar ?</span><span class="pit-badge open">Ouvert</span></div>
+          <div class="pit-sub">Finale · <b>148 votes</b> · en direct</div>
+          <div class="mini">
+            <div class="mrow"><span class="mn">11</span><span class="mnm">Grondin</span><span class="mtrack"><span class="mfill" style="width:52%"></span></span><span class="mpct">52% · 77</span></div>
+            <div class="mrow"><span class="mn">2</span><span class="mnm">Boulbès</span><span class="mtrack"><span class="mfill" style="width:27%"></span></span><span class="mpct">27% · 40</span></div>
+            <div class="mrow"><span class="mn">5</span><span class="mnm">Anodeau</span><span class="mtrack"><span class="mfill" style="width:14%"></span></span><span class="mpct">14% · 21</span></div>
+            <div class="mrow"><span class="mn">21</span><span class="mnm">De Sousa</span><span class="mtrack"><span class="mfill" style="width:7%"></span></span><span class="mpct">7% · 10</span></div>
+          </div>
+          <div class="pit-btns">
+            <button class="sbtn stop">■ Fermer les votes</button>
+            <button class="sbtn">🏆 Révéler le gagnant</button>
+            <button class="sbtn air">→ Antenne</button>
+          </div>
+        </div>
+
+        <!-- brouillon -->
+        <div class="pit draft">
+          <div class="pit-top"><span class="pit-q">🏆 Qui gagne la Manche 1 Supercar ?</span><span class="pit-badge draft">Brouillon</span></div>
+          <div class="pit-sub">Tous les engagés · <b>6 pilotes</b> · pas encore ouvert</div>
+          <div class="pit-btns">
+            <button class="sbtn go">▶ Ouvrir les votes</button>
+            <button class="sbtn">✏️ Modifier</button>
+            <button class="sbtn">🗑️ Supprimer</button>
+          </div>
+        </div>
+
+        <!-- fermé, à révéler -->
+        <div class="pit closed">
+          <div class="pit-top"><span class="pit-q">⏱️ Meilleur temps des EC Supercar ?</span><span class="pit-badge closed">Fermé</span></div>
+          <div class="pit-sub">EC · <b>127 votes</b> · votes clos, en attente du résultat</div>
+          <div class="pit-btns">
+            <button class="sbtn">🏆 Désigner le gagnant → révéler</button>
+            <button class="sbtn air">→ Antenne</button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ 3 · OVERLAY ═══ -->
+<section class="view" id="v-ov">
+  <p class="caption">Scène OBS <b>« Résultats du pronostic »</b> (dans <code>overlay/live.html</code>), envoyée à l'antenne par la régie. Barres animées, gagnant surligné en vert quand tu révèles. Le <b>QR code</b> en bas invite les spectateurs à jouer.</p>
+  <div class="ovwrap"><div class="ov">
+    <div class="ovh">
+      <span class="brand">RX<b>CHRONO</b></span><span class="sep"></span>
+      <span class="info">📍 Lohéac · Supercar</span>
+      <span class="live"><i></i>LIVE</span>
+    </div>
+    <div class="ovbody">
+      <div class="ovkick"><span class="vt">PRONOSTIC</span> Le pronostic des spectateurs</div>
+      <div class="ovq">Qui gagne la Finale Supercar ?</div>
+      <div class="ovbars">
+        <div class="ovbar lead"><span class="of" style="width:52%"></span><span class="onum">11</span><span class="onm">Grondin</span><span class="ocnt">77 votes</span><span class="opct">52%</span></div>
+        <div class="ovbar"><span class="of" style="width:27%"></span><span class="onum">2</span><span class="onm">Boulbès</span><span class="ocnt">40 votes</span><span class="opct">27%</span></div>
+        <div class="ovbar"><span class="of" style="width:14%"></span><span class="onum">5</span><span class="onm">Anodeau</span><span class="ocnt">21 votes</span><span class="opct">14%</span></div>
+        <div class="ovbar"><span class="of" style="width:7%"></span><span class="onum">21</span><span class="onm">De Sousa</span><span class="ocnt">10 votes</span><span class="opct">7%</span></div>
+      </div>
+    </div>
+    <div class="ovfoot">
+      <span class="tot">🗳️ <b>148</b> votes</span>
+      <span class="qr"><span class="qrbox"><b></b><b></b><b></b><b></b><b></b><b></b><b></b><b></b><b></b><b></b><b></b><b></b><b></b><b></b><b></b><b></b><b></b><b></b><b></b><b></b><b></b><b></b><b></b><b></b><b></b></span>Scanne&nbsp;&&nbsp;vote&nbsp;!</span>
+    </div>
+  </div></div>
+</section>
+
+<script>
+  const btns=document.querySelectorAll('.switch button[data-v]');
+  const views={spc:'v-spc',regie:'v-regie',ov:'v-ov'};
+  btns.forEach(b=>b.onclick=()=>{
+    btns.forEach(x=>x.classList.remove('on'));b.classList.add('on');
+    Object.values(views).forEach(id=>document.getElementById(id).classList.remove('on'));
+    document.getElementById(views[b.dataset.v]).classList.add('on');
+    scrollTo(0,0);
+  });
+  // interactions démo : sélection d'une option
+  document.querySelectorAll('.pc .opt').forEach(o=>o.onclick=()=>{
+    o.parentNode.querySelectorAll('.opt').forEach(x=>x.classList.remove('sel'));o.classList.add('sel');
+  });
+</script>
+</body></html>
