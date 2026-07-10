@@ -146,29 +146,43 @@ async function logout() {
 // PROTECTION DES VUES
 // ─────────────────────────────────────────────────────────
 
+let _currentView = 'home';
+
 function onViewChange(e) {
   const viewId = e.detail?.view;
   if (!viewId) return;
+  _currentView = viewId;
+  applyViewGate();
+}
 
-  if (isProtectedView(viewId) && !isAdmin()) {
-    // Afficher un overlay : section reservee a l'administrateur
-    const viewEl = document.getElementById(`view-${viewId}`);
-    if (!viewEl) return;
-
-    // Ne pas bloquer si un overlay existe deja
-    if (viewEl.querySelector('.auth-gate')) return;
-
-    const gate = document.createElement('div');
-    gate.className = 'auth-gate';
-    gate.innerHTML = `
-      <div class="auth-gate-content">
-        <div class="auth-gate-icon">🔒</div>
-        <h3>Accès réservé</h3>
-        <p>Cette section est réservée à l'administrateur.</p>
-        <p class="auth-gate-hint">Connecte-toi avec le compte admin via le menu pour y accéder.</p>
-      </div>
-    `;
-    viewEl.prepend(gate);
+/**
+ * Affiche/retire l'écran « Accès réservé » selon la vue courante et le statut admin.
+ * L'overlay est attaché à <body> (et NON à la vue) : ainsi un re-render de la vue
+ * (ex. timing qui réécrit tout son innerHTML) ne peut pas l'effacer.
+ */
+function applyViewGate() {
+  const blocked = isProtectedView(_currentView) && !isAdmin();
+  let gate = document.getElementById('auth-gate');
+  if (blocked) {
+    if (!gate) {
+      gate = document.createElement('div');
+      gate.id = 'auth-gate';
+      gate.className = 'auth-gate';
+      gate.innerHTML = `
+        <div class="auth-gate-content">
+          <div class="auth-gate-icon">🔒</div>
+          <h3>Accès réservé</h3>
+          <p>Cette section est réservée à l'administrateur.</p>
+          <p class="auth-gate-hint">Connecte-toi avec le compte admin pour y accéder.</p>
+          <button class="btn btn-primary" id="auth-gate-home">Retour à l'accueil</button>
+        </div>
+      `;
+      document.body.appendChild(gate);
+      document.getElementById('auth-gate-home')
+        ?.addEventListener('click', () => showView('home'));
+    }
+  } else if (gate) {
+    gate.remove();
   }
 }
 
@@ -185,10 +199,6 @@ function applyAdminVisibility() {
 function applyLoginVisibility() {
   const show = /[?&]login(=|&|$)/.test(window.location.search);
   document.body.classList.toggle('show-login', show);
-}
-
-function removeAuthGates() {
-  document.querySelectorAll('.auth-gate').forEach((el) => el.remove());
 }
 
 // ─────────────────────────────────────────────────────────
@@ -219,12 +229,12 @@ export async function initAuth() {
       currentUser = user;
       renderAuthUI();
       applyAdminVisibility();
+      applyViewGate();   // ré-évalue le blocage de la vue courante (login/logout)
 
-      // Toast + retrait des blocages UNIQUEMENT pour l'admin (une session anonyme
-      // — votes pronostics — ne doit rien débloquer ni notifier).
+      // Toast UNIQUEMENT pour l'admin (une session anonyme — votes pronostics —
+      // ne doit rien notifier).
       if (isAdmin()) {
         toast(`Connecté : ${user.email}`, 'success');
-        removeAuthGates();
       }
 
       document.dispatchEvent(

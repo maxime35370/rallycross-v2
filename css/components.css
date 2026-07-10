@@ -512,14 +512,30 @@ tbody tr:hover { background: var(--clr-surface-2); }
 /* ════════════════════════════════
    AUTH GATE (protection des vues)
 ════════════════════════════════ */
+/* Overlay plein écran attaché à <body> : il masque totalement la vue protégée
+   et survit à ses re-render (un re-render de #view-timing ne peut pas l'effacer). */
 .auth-gate {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--sp-lg);
+  background: var(--clr-bg);
+}
+
+.auth-gate-content {
   background: var(--clr-warning-dim);
   border: 1px solid var(--clr-warning);
   border-radius: var(--r-lg);
   padding: var(--sp-lg);
-  margin-bottom: var(--sp-lg);
+  max-width: 420px;
+  width: 100%;
   text-align: center;
 }
+
+.auth-gate-content .btn { margin-top: var(--sp-md); }
 
 .auth-gate-content h3 {
   margin: var(--sp-sm) 0;

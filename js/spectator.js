@@ -389,18 +389,30 @@ const PRONO_STATUS_FR = { open: 'Ouvert', closed: 'Votes clos', revealed: 'Résu
 async function initPronostics() {
   if (_unsubPronostics) return;                       // déjà abonné
   if (!_pronoClickBound) { document.addEventListener('click', onPronoClick); _pronoClickBound = true; }
-  try { _pronoUid = await ensureAnon(); } catch { _pronoUid = null; }
+
+  // 1) AFFICHAGE : lecture PUBLIQUE, indépendante de l'auth anonyme. On s'abonne
+  //    immédiatement pour que les pronostics apparaissent même si la connexion
+  //    anonyme (utile seulement pour VOTER) est lente ou indisponible.
   try {
     _unsubPronostics = await watchPronostics(async list => {
       _pronoDocs = (list || []).filter(p => p.status && p.status !== 'draft');
-      if (_pronoUid) {
-        await Promise.all(_pronoDocs
-          .filter(p => p.status === 'open' && !(p.id in _myVotes))
-          .map(async p => { try { _myVotes[p.id] = await myVote(p.id, _pronoUid); } catch {} }));
-      }
+      await refreshMyVotes();
       renderPronostics();
     }, () => {});
   } catch {}
+
+  // 2) VOTE : session anonyme en tâche de fond (n'empêche jamais l'affichage).
+  ensureAnon()
+    .then(async uid => { _pronoUid = uid; await refreshMyVotes(); renderPronostics(); })
+    .catch(() => { _pronoUid = null; });
+}
+
+/** Charge le vote déjà émis par ce spectateur pour chaque pronostic ouvert (si session prête). */
+async function refreshMyVotes() {
+  if (!_pronoUid) return;
+  await Promise.all(_pronoDocs
+    .filter(p => p.status === 'open' && !(p.id in _myVotes))
+    .map(async p => { try { _myVotes[p.id] = await myVote(p.id, _pronoUid); } catch {} }));
 }
 
 function stopPronostics() {
