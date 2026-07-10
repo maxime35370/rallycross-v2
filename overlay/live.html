@@ -17,7 +17,7 @@
   import {
     getSessions, getResults, getParticipants, findSession, sortRace, getInterim, getInterimLive, getInterimBefore,
     getCumulBefore, getInterimEvolution, getChampionshipStandings, getMeetingPoints, getMeetingStandings, getGridOrder, getGridLayout,
-    getFicheData, getEcRank, getMqRank, getPhaseRank,
+    getFicheData, getQualifCutoff, getEcRank, getMqRank, getPhaseRank,
   } from './_lib/obs-data.js';
   import { renderScene, countdownText } from './_lib/obs-scenes.js';
   import { buildPrediction } from './_lib/obs-predict.js';
@@ -297,6 +297,8 @@
 
     if (obj === 'p1' || obj === 'qualif') {
       if (!session || session.type !== 'MQ') return null;   // objectifs manche : pendant les MQ
+      // place qualificative = cutoff du RÈGLEMENT (auto) ; valeur régie = secours si indéterminable
+      const cutoff = getQualifCutoff(reg) || (p.cutoff > 0 ? p.cutoff : 6);
       const before = await cumulBeforeOf(ctrl, reg, session);
       const dInfo = before.find(b => b.driverId === p.driverId);
       if (!dInfo) return null;
@@ -305,7 +307,7 @@
       const dr = rmap[p.driverId];
       if (dr && OUT_STATUS.has(dr.status)) {   // pilote choisi a abandonné → bandeau neutre
         return { ok: true, scope: 'INTERMÉDIAIRE',
-          objectiveLabel: obj === 'qualif' ? `Place qualificative · top ${p.cutoff || 6}` : "Tête de l'intermédiaire",
+          objectiveLabel: obj === 'qualif' ? `Place qualificative · top ${cutoff}` : "Tête de l'intermédiaire",
           driver: dInfo, meta: `Abandon · +${typeof dr.points === 'number' ? dr.points : 0} pts cette manche`,
           state: 'lost', pill: { text: 'ABANDON', tone: 'bad' },
           lines: [{ icon: '🚩', text: `N°${dInfo.carNumber} ${(dInfo.lastName || '').toUpperCase()} a abandonné la manche — classement à figer en fin de manche.` }] };
@@ -317,7 +319,7 @@
           total: (b.total ?? 0) + (out ? (typeof r.points === 'number' ? r.points : 0) : 0), _out: out };
       });
       const movingIds = standings.filter(s => !s._out).map(s => s.driverId);
-      return buildPrediction({ objective: obj, standings, driverId: p.driverId, regulation: reg, cutoff: p.cutoff || 6, movingIds });
+      return buildPrediction({ objective: obj, standings, driverId: p.driverId, regulation: reg, cutoff, movingIds });
     }
 
     // niveau 2 — championnat (phases finales)
