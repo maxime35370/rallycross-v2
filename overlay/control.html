@@ -643,7 +643,7 @@
       // Pronostic « au résultat » : gagnant calculé depuis les chronos (suit les pénalités) → pas de choix manuel.
       if (p.resultTarget?.kind === 'session') {
         const w = (p.options || []).find(o => o.driverId === p.correctDriverId);
-        const wl = w ? `Vainqueur (chrono) : <b>${pEsc(w.num)} ${pEsc((w.name || '').toUpperCase())}</b>` : '⏳ En attente du chrono de la session…';
+        const wl = w ? `Vainqueur (chrono) : <b>${pEsc(w.num)} ${pEsc((w.name || '').toUpperCase())}</b>` : '⏳ Série en cours — gagnant figé quand tous les pilotes seront saisis…';
         return `<div class="pit-auto">🔄 ${wl}</div><button class="sbtn" data-act="reveal" data-id="${p.id}">🏆 Révéler le résultat</button>${air}<button class="sbtn go" data-act="open" data-id="${p.id}">▶ Rouvrir</button>`;
       }
       // Question libre / leader intermédiaire : désignation manuelle.

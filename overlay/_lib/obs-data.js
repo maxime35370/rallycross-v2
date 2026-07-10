@@ -66,19 +66,36 @@ export async function pronoTargetSessionId(prono) {
 
 /**
  * Vainqueur RÉEL d'un pronostic « au résultat » (kind 'session'), calculé depuis
- * les chronos → suit l'évolution des classements (une pénalité de la direction de
- * course qui change le P1 change le gagnant du pronostic). Renvoie le driverId du
- * vainqueur (meilleur chrono, hors DNF/DNS/DSQ) ou null si pas encore décidable.
- * Ne dépend PAS du règlement (tri au chrono uniquement).
+ * les chronos → suit l'évolution des classements (une pénalité qui change le P1
+ * change le gagnant du pronostic).
+ *
+ * ANTI-FLICKER : on ne décide le gagnant QUE lorsque la série est COMPLÈTE, càd
+ * que TOUS les pilotes proposés du pronostic ont un résultat (chrono ou statut).
+ * Tant qu'il manque une saisie → renvoie null (pas de gagnant, pas de bascule à
+ * chaque amélioration). Le gagnant = le pilote proposé le mieux placé (meilleur
+ * chrono, hors DNF/DNS/DSQ). Ne dépend PAS du règlement (tri au chrono).
+ *
+ * @returns {Promise<string|null>} driverId du vainqueur, ou null si indécis / série en cours
  */
 export async function computePronoWinner(prono) {
   const t = prono?.resultTarget || {};
   if (t.kind !== 'session') return null;   // 'interim_after' / 'manual' → géré ailleurs
+  const opts = Array.isArray(prono.options) ? prono.options : [];
+  if (!opts.length) return null;
+  const optIds = new Set(opts.map(o => o.driverId));
+
   const sessions = await getSessions(prono.meetingId, prono.category);
   const s = findSession(sessions, t.sessionType, t.sessionNum);
   if (!s) return null;
-  const w = sortRace(await getResults(s.id))[0];
-  if (!w || w.status || w.ms == null) return null;   // pas de vainqueur valide (aucun chrono)
+  const results = await getResults(s.id);
+
+  // Série complète ? chaque pilote PROPOSÉ doit avoir un résultat (chrono ou statut).
+  const entered = new Set(results.filter(r => r.ms != null || r.status).map(r => r.driverId));
+  if (!opts.every(o => entered.has(o.driverId))) return null;   // saisie en cours → on attend
+
+  // Gagnant = pilote proposé le mieux placé (meilleur chrono, hors DNF/DNS/DSQ).
+  const w = sortRace(results.filter(r => optIds.has(r.driverId)))[0];
+  if (!w || w.status || w.ms == null) return null;
   return w.driverId || null;
 }
 
