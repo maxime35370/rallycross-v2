@@ -5,7 +5,7 @@
    Compatible GitHub Pages (sous-dossier) et racine.
 ═══════════════════════════════════════════════ */
 
-const CACHE_NAME = 'rx-chrono-v23';
+const CACHE_NAME = 'rx-chrono-v24';
 
 // Assets relatifs au scope du SW (pas de / en prefixe)
 const ASSET_PATHS = [
@@ -129,17 +129,16 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Assets statiques locaux : cache-first, fallback réseau
+  // Assets statiques locaux (HTML/JS/CSS) : NETWORK-FIRST → les mises à jour
+  // déployées sont prises en compte immédiatement (fini le JS servi périmé après
+  // un merge). Repli sur le cache uniquement hors-ligne.
   event.respondWith(
-    caches.match(req).then((cached) =>
-      cached ||
-      fetch(req).then((response) => {
-        if (response.status === 200 && response.type === 'basic') {
-          const clone = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(req, clone));
-        }
-        return response;
-      })
-    )
+    fetch(req).then((response) => {
+      if (response.status === 200 && response.type === 'basic') {
+        const clone = response.clone();
+        caches.open(CACHE_NAME).then((cache) => cache.put(req, clone));
+      }
+      return response;
+    }).catch(() => caches.match(req))
   );
 });
