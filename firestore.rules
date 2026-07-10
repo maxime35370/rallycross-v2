@@ -1,0 +1,66 @@
+rules_version = '2';
+
+// ═══════════════════════════════════════════════════════════════════
+//  RÈGLES FIRESTORE — RX Chrono
+//  À coller dans la console Firebase : Firestore Database → Règles → Publier.
+//
+//  Modèle de sécurité :
+//   • LECTURE publique partout (les overlays et le mode spectateur lisent
+//     sans être connectés) ;
+//   • ÉCRITURE réservée à la RÉGIE (compte authentifié NON anonyme, via la
+//     connexion email/mot de passe de la page /control) ;
+//   • VOTES des pronostics : un spectateur (session anonyme) ne peut lire et
+//     écrire QUE son propre vote, et seulement tant que le pronostic est
+//     « open ». Il ne peut jamais lister les votes des autres → aucune
+//     tendance visible avant la fermeture.
+//
+//  ⚠️  IMPORTANT — pourquoi ces règles sont nécessaires :
+//  activer l'authentification anonyme (indispensable pour les votes) fait
+//  qu'un visiteur devient « authentifié ». Si vos anciennes règles
+//  autorisaient l'écriture avec « if request.auth != null », n'importe quel
+//  visiteur anonyme pourrait alors écrire dans results / sessions / etc.
+//  La fonction isRegie() ci-dessous ferme cette faille : seule une session
+//  NON anonyme (la régie) peut écrire les données de course.
+// ═══════════════════════════════════════════════════════════════════
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Régie = authentifié ET non anonyme (connexion email/mot de passe).
+    function isRegie() {
+      return request.auth != null
+          && request.auth.token.firebase.sign_in_provider != 'anonymous';
+    }
+
+    // ── Votes des pronostics (sous-collection) ──
+    // Placé avant la règle générique ; comme les votes sont à 4 segments de
+    // chemin, ils ne sont PAS couverts par /{col}/{id} (2 segments) : leur
+    // confidentialité ne dépend que de ce bloc.
+    match /pronostics/{pid}/votes/{uid} {
+      // Le spectateur ne lit que SON vote ; la régie lit tout (décompte live privé).
+      allow get:  if isRegie()
+                  || (request.auth != null && request.auth.uid == uid);
+      allow list: if isRegie();
+
+      // Voter / changer d'avis : uniquement son propre doc, pronostic ouvert,
+      // et rien d'autre que { driverId, at }.
+      allow create, update: if request.auth != null
+          && request.auth.uid == uid
+          && get(/databases/$(database)/documents/pronostics/$(pid)).data.status == 'open'
+          && request.resource.data.driverId is string
+          && request.resource.data.keys().hasOnly(['driverId', 'at']);
+
+      allow delete: if false;
+    }
+
+    // ── Tout le reste : données de course, obsControl, pronostics (le doc),
+    //    reglements, championships, drivers, etc. ──
+    // Lecture publique, écriture régie uniquement. Cette règle générique à
+    // 2 segments couvre toutes les collections de premier niveau, présentes
+    // et futures, sans risquer d'en oublier une.
+    match /{col}/{id} {
+      allow read:  if true;
+      allow write: if isRegie();
+    }
+  }
+}

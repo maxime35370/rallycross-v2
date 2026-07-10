@@ -21,6 +21,7 @@
   } from './_lib/obs-data.js';
   import { renderScene, countdownText } from './_lib/obs-scenes.js';
   import { buildPrediction } from './_lib/obs-predict.js';
+  import { watchPronostic } from './_lib/obs-pronostics.js';
 
   const root = document.getElementById('root');
   const qs = new URLSearchParams(location.search);
@@ -42,6 +43,7 @@
   let championships = [];
   let cacheKey = '';          // sélection courante (meeting|cat|type|num|scene)
   let unsubResults = null;    // listener live des résultats de la session courante
+  let pronoUnsub = null;      // listener live du doc pronostic (scène « pronostic »)
   let champTimer = null;
   let cdTimer = null;         // ticker du compte à rebours (écran d'attente)
   let sessTimer = null;       // effacement différé de la surbrillance (dernier de la manche)
@@ -311,6 +313,7 @@
     if (cdTimer)      { clearInterval(cdTimer); cdTimer = null; }
     if (sessTimer)    { clearTimeout(sessTimer); sessTimer = null; }
     if (renderTimer)  { clearTimeout(renderTimer); renderTimer = null; }   // annule un recalcul de saisie en attente
+    if (pronoUnsub)   { pronoUnsub(); pronoUnsub = null; }
 
     // Écran d'attente / Fin de stream : indépendants du meeting/catégorie + compte à rebours
     if (ctrl.scene === 'intermission' || ctrl.scene === 'ending') {
@@ -322,6 +325,26 @@
         const tick = () => { const el = document.getElementById('ov-cd'); if (el) el.textContent = countdownText(ctrl.countdownEnd); };
         tick(); cdTimer = setInterval(tick, 1000);
       }
+      return;
+    }
+
+    // Scène "Pronostic" : résultats des votes spectateurs. Indépendante de la
+    // sélection courante — on suit le doc pronostic en direct (statut + décompte
+    // figé à la fermeture). Aucun chiffre tant que le vote est ouvert
+    // (l'affichage est géré dans renderPronostic selon p.status).
+    if (ctrl.scene === 'pronostic') {
+      const pid = ctrl.pronosticId || '';
+      const reg0 = await resolveRegulation(ctrl.championshipId).catch(() => null);
+      const paint = (p) => {
+        const catId = (p && p.category) || ctrl.category || '';
+        const cName = reg0 ? catLabel(reg0, catId) : catId;
+        root.innerHTML = renderScene('pronostic', {
+          headerText: ctrl.headerText || ['RX Chrono', cName].filter(Boolean).join(' · '),
+          category: cName, voteUrl: ctrl.pronosticUrl || '', pronostic: p,
+        });
+      };
+      if (!pid) { paint(null); return; }
+      pronoUnsub = await watchPronostic(pid, paint, () => paint(null));
       return;
     }
 
@@ -554,7 +577,7 @@
       const key = [ctrl.scene, ctrl.championshipId, ctrl.meetingId, ctrl.category,
                    ctrl.sessionType, ctrl.sessionNum, JSON.stringify(ctrl.gridOverride),
                    ctrl.headerText, ctrl.nextText, ctrl.countdownEnd, ctrl.graphMode,
-                   JSON.stringify(ctrl.predict), ctrl.videoLayout, JSON.stringify(ctrl.fiche)].join('|');
+                   JSON.stringify(ctrl.predict), ctrl.videoLayout, JSON.stringify(ctrl.fiche), ctrl.pronosticId].join('|');
       if (key === cacheKey) return;   // rien de pertinent n'a changé
       cacheKey = key;
       lastControl = ctrl;

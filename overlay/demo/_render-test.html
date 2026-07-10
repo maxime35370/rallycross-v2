@@ -196,6 +196,23 @@ data['duel'] = { headerText:'CIRCUIT DE LOHÉAC · SUPERCAR', category:'Supercar
     { carNumber:2,  lastName:'Boulbès', champPos:2, champPts:278, champGap:7, meetPos:1, bestMs:168900, wins:1 },
   ] };
 
+// Pronostic spectateurs (renderPronostic) — 3 états : ouvert (appel à voter) / fermé / révélé
+{
+  const opts = [
+    {driverId:'d11',num:'11',name:'Grondin'},{driverId:'d2',num:'2',name:'Boulbès'},
+    {driverId:'d77',num:'77',name:'Lefebvre'},{driverId:'d4',num:'4',name:'Dubourg'},
+    {driverId:'d33',num:'33',name:'Mailloux'},{driverId:'d9',num:'9',name:'André'},
+  ];
+  data['prono-open'] = { headerText:'RX CHRONO · SUPERCAR', category:'Supercar', voteUrl:'rxchrono.netlify.app',
+    pronostic:{ status:'open', question:'Qui gagne la Finale Supercar ?', options:opts } };
+  data['prono-closed'] = { headerText:'RX CHRONO · SUPERCAR', category:'Supercar',
+    pronostic:{ status:'closed', question:'Qui gagne la Finale Supercar ?', options:opts,
+      totalVotes:148, tally:{d11:77,d2:40,d77:8,d4:6,d33:11,d9:6} } };
+  data['prono-revealed'] = { headerText:'RX CHRONO · SUPERCAR', category:'Supercar',
+    pronostic:{ status:'revealed', correctDriverId:'d2', question:'Qui gagne la Finale Supercar ?', options:opts,
+      totalVotes:148, tally:{d11:77,d2:40,d77:8,d4:6,d33:11,d9:6} } };
+}
+
 // ── BANDEAU PRÉDICTION (scénario d'objectif). Le moteur (obs-predict.js) calcule
 //    le scénario à partir d'un classement ; on l'affiche sous les colonnes.
 //    Données cohérentes : le pilote du bandeau figure dans les colonnes affichées.
@@ -256,6 +273,7 @@ const vl = params.get('vl');   // test placement vidéo : hg|hd|bg|bd|full
 const type = (scene === 'ordre' || scene === 'df-combo' || scene === 'fin-combo') ? 'grid'
   : (scene === 'dash-fin' || scene === 'dash-df' || scene === 'dash-mq2' || scene === 'dash-predict' || scene === 'dash-fin-predict') ? 'dashboard'
   : (scene === 'fiche' || scene === 'duel') ? 'fiche'
+  : scene.startsWith('prono') ? 'pronostic'
   : scene.startsWith('session') ? 'session' : scene;
 const sceneData = data[scene] || data.dashboard;
 if (vl) sceneData.videoLayout = vl;

@@ -87,6 +87,45 @@
   .gate .err{color:#ff7a7a;font-size:14px;min-height:18px;margin-top:8px}
   .hidden{display:none!important}
   .muted{opacity:.4;pointer-events:none}
+  /* pronostics */
+  .pchips{display:flex;flex-wrap:wrap;gap:7px;margin:4px 0 12px}
+  .pchip{display:flex;align-items:center;gap:7px;background:var(--card2);border:1px solid var(--line);border-radius:20px;
+    padding:5px 7px 5px 12px;font-family:'Barlow Condensed';font-weight:600;font-size:16px}
+  .pchip b{color:var(--orange);font-family:'Orbitron';font-weight:700;font-size:13px}
+  .pchip i{cursor:pointer;color:var(--mut);font-style:normal;width:18px;height:18px;display:flex;align-items:center;justify-content:center;border-radius:50%}
+  .pchip i:hover{background:rgba(225,29,42,.2);color:#ff7a7a}
+  .pchip.mut{opacity:.45}
+  .pdiv{height:1px;background:var(--line);margin:16px 0}
+  .plist{display:flex;flex-direction:column;gap:11px}
+  .pit{background:var(--card2);border:1px solid var(--line);border-radius:12px;padding:12px 14px;border-left:3px solid var(--mut)}
+  .pit.open{border-left-color:var(--green)} .pit.draft{border-left-color:#5c6478}
+  .pit.closed,.pit.revealed{border-left-color:#ffcc33}
+  .pit-top{display:flex;align-items:center;gap:9px;margin-bottom:3px}
+  .pit-q{font-family:'Barlow Condensed';font-weight:700;font-size:19px;flex:1;line-height:1.05}
+  .pit-badge{font-family:'Barlow Condensed';font-weight:700;font-size:12px;letter-spacing:1.5px;text-transform:uppercase;padding:3px 10px;border-radius:20px;white-space:nowrap}
+  .pit-badge.open{background:rgba(57,217,138,.15);color:var(--green)}
+  .pit-badge.draft{background:rgba(255,255,255,.06);color:var(--mut)}
+  .pit-badge.closed,.pit-badge.revealed{background:rgba(255,204,51,.15);color:#ffcc33}
+  .pit-sub{font-family:'Barlow Condensed';font-size:14px;color:var(--mut);margin-bottom:8px}
+  .pit-sub b{color:#c4ccd8}
+  .pmini{display:flex;flex-direction:column;gap:5px;margin:8px 0 4px}
+  .pmrow{display:flex;align-items:center;gap:9px;font-family:'Barlow Condensed';font-size:15px}
+  .pmrow .mn{font-family:'Orbitron';font-weight:700;font-size:12px;color:var(--orange);min-width:26px}
+  .pmrow .mnm{min-width:96px;font-weight:600}
+  .pmrow.win .mnm{color:#ffcc33}
+  .pmtrack{flex:1;height:8px;background:#0c0f16;border-radius:20px;overflow:hidden}
+  .pmfill{height:100%;background:linear-gradient(90deg,var(--orange),#ff8a3d);border-radius:20px;transition:width .5s}
+  .pmrow.win .pmfill{background:linear-gradient(90deg,#ffcc33,#e0a800)}
+  .pmpct{min-width:60px;text-align:right;font-family:'Orbitron';font-weight:700;font-size:12px;color:#c4ccd8}
+  .pit-btns{display:flex;gap:7px;margin-top:10px;flex-wrap:wrap}
+  .sbtn{font-family:'Barlow Condensed';font-weight:700;font-size:15px;letter-spacing:.5px;padding:8px 12px;border-radius:9px;
+    border:1px solid var(--line);background:var(--card);color:#dfe6f0;cursor:pointer;transition:.12s}
+  .sbtn:hover{border-color:#3a4760}
+  .sbtn.go{background:rgba(57,217,138,.12);border-color:rgba(57,217,138,.4);color:#9af0c4}
+  .sbtn.stop{background:rgba(225,29,42,.12);border-color:rgba(225,29,42,.4);color:#ff9a9a}
+  .sbtn.air{background:var(--orange);border-color:transparent;color:#fff;font-family:'Orbitron';font-weight:700;font-size:13px;letter-spacing:1px}
+  .sbtn.air.on{background:#39414f;box-shadow:inset 0 0 0 1px var(--green)}
+  .pempty{font-family:'Barlow Condensed';font-size:16px;color:var(--mut);padding:6px 2px}
 </style>
 </head>
 <body>
@@ -191,6 +230,23 @@
         <select class="sel" id="fiche1" style="max-width:none;width:100%;margin-bottom:10px"></select>
         <select class="sel" id="fiche2" style="max-width:none;width:100%"></select>
       </div>
+      <div class="card">
+        <h3>🎯 Pronostics spectateurs <span class="n" id="pronoN">—</span></h3>
+        <div class="note">Le public vote depuis le mode spectateur (QR). Aucun score visible côté public tant que le vote est ouvert — toi seul vois le décompte live ici. Les pilotes proposés = les engagés de la catégorie + phase sélectionnées ci-dessus.</div>
+        <select class="sel" id="pronoType" style="max-width:none;width:100%;margin-bottom:9px">
+          <option value="manche_winner">🏆 Vainqueur de la manche (tous les engagés)</option>
+          <option value="interim_m2">📊 Leader du classement intermédiaire après M2</option>
+          <option value="ec_best">⏱️ Meilleur temps des essais chronos</option>
+          <option value="serie_winner">🏁 Vainqueur d'une série (pilotes en ligne)</option>
+          <option value="final_winner">🏆 Vainqueur de la finale</option>
+          <option value="custom">✏️ Question libre</option>
+        </select>
+        <div class="field" style="margin-bottom:4px"><input id="pronoQ" placeholder="Intitulé affiché aux spectateurs…"></div>
+        <div class="pchips" id="pronoChips"></div>
+        <div class="actions"><button class="ghost primary" id="pronoCreate">＋ Créer le pronostic (brouillon)</button></div>
+        <div class="pdiv"></div>
+        <div class="plist" id="pronoList"><div class="pempty">Aucun pronostic pour le moment.</div></div>
+      </div>
     </div>
 
     <div class="card">
@@ -224,6 +280,7 @@
   import { initFirebase, fsQuery } from './_lib/obs-firebase.js';
   import { watchControl, setControl, sessionKey, DEFAULT_CONTROL } from './_lib/obs-control.js';
   import { getSessions, findSession, getGridOrder, getInterim, getParticipants } from './_lib/obs-data.js';
+  import { watchPronostics, watchVotes, createPronostic, openPronostic, closePronostic, revealPronostic, deletePronostic } from './_lib/obs-pronostics.js';
 
   const SDK = 'https://www.gstatic.com/firebasejs/10.12.0/';
   await initFirebase();
@@ -322,7 +379,7 @@
     document.getElementById('gridN').textContent = `${catName()} · ${document.getElementById('phN').textContent}`;
     if (meetSel.value !== state.meetingId) meetSel.value = state.meetingId;
     document.getElementById('status').innerHTML =
-      `À l'antenne : <span class="chip">${({dashboard:'📊 Dashboard',grid:'🏁 Grille',fiche:'👤 Fiche / Duel','next-heat':'⏭️ À suivre',intermission:'⏸️ Attente',ending:'🔚 Fin de stream'})[state.scene]||state.scene}</span>
+      `À l'antenne : <span class="chip">${({dashboard:'📊 Dashboard',grid:'🏁 Grille',fiche:'👤 Fiche / Duel',pronostic:'🎯 Pronostic','next-heat':'⏭️ À suivre',intermission:'⏸️ Attente',ending:'🔚 Fin de stream'})[state.scene]||state.scene}</span>
        <span class="chip o">${catName()}</span>
        <span class="chip">${document.getElementById('phN').textContent}</span>
        · <b style="color:${state.visible?'var(--green)':'#888'}">${state.visible?'visible':'masqué'}</b>`;
@@ -403,6 +460,8 @@
     if (f1) { f1.innerHTML = '<option value="">— Pilote 1 —</option>' + opts; if (predictDrivers.some(p => p.driverId === f.driverId1)) f1.value = f.driverId1; }
     if (f2) { f2.innerHTML = '<option value="">— Pilote 2 (duel, optionnel) —</option>' + opts; if (predictDrivers.some(p => p.driverId === f.driverId2)) f2.value = f.driverId2; }
     lastPredSelKey = [state.meetingId, state.category, state.sessionType, state.sessionNum].join('|');
+    // le vivier du composer pronostic suit la catégorie + phase sélectionnées
+    pronoRemoved.clear(); renderPronoComposer();
   }
   function pushPredict(patch) {
     push({ predict: { ...(state.predict || DEFAULT_CONTROL.predict), ...patch } });
@@ -471,6 +530,160 @@
   document.getElementById('pushBtn').onclick = () => {
     push({ gridOverride: { key: sessionKey(state), slots: gridSlots.map((s, i) => ({ pos: i + 1, carNumber: s.carNumber, lastName: s.lastName, edited: true })) } });
   };
+
+  // ---------- PRONOSTICS (régie) ----------
+  const pEsc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const catLabel = id => categories.find(c => c.id === id)?.name || id || '—';
+  function flashErr(msg) {
+    const bar = document.getElementById('errBar');
+    if (bar) { bar.textContent = '⚠️ ' + msg; bar.style.display = ''; clearTimeout(flashErr._t); flashErr._t = setTimeout(() => { bar.style.display = 'none'; }, 6000); }
+  }
+
+  const pronoRemoved = new Set();     // driverId retirés du composer
+  let pronoDocs = [];                 // pronostics (temps réel)
+  const voteWatchers = {};            // id -> unsub (décompte live des pronostics ouverts)
+  const voteTallies  = {};            // id -> { counts, total }
+  let lastAutoTitle = '';
+
+  function phaseLabelLong() {
+    const t = state.sessionType, n = state.sessionNum;
+    if (t === 'EC')  return 'les essais chronos';
+    if (t === 'MQ')  return 'la manche ' + n;
+    if (t === 'QF')  return 'le quart ' + n;
+    if (t === 'DF')  return 'la ½ finale ' + (n === 1 ? 'A' : 'B');
+    if (t === 'FIN') return 'la finale';
+    return 'la course';
+  }
+  function autoTitle() {
+    const cat = catName();
+    switch (document.getElementById('pronoType').value) {
+      case 'manche_winner': return `Qui gagne ${phaseLabelLong()} ${cat} ?`;
+      case 'interim_m2':    return `Qui sera leader du classement intermédiaire ${cat} après la manche 2 ?`;
+      case 'ec_best':       return `Qui signe le meilleur temps aux essais chronos ${cat} ?`;
+      case 'serie_winner':  return `Qui gagne cette série ${cat} ?`;
+      case 'final_winner':  return `Qui gagne la finale ${cat} ?`;
+      default:              return '';
+    }
+  }
+  function pronoIncluded() { return predictDrivers.filter(p => !pronoRemoved.has(p.driverId)); }
+
+  function renderPronoComposer() {
+    const box = document.getElementById('pronoChips'); if (!box) return;
+    if (!predictDrivers.length) {
+      box.innerHTML = '<span class="pempty">Sélectionne une catégorie + une phase ci-dessus pour charger les pilotes.</span>';
+    } else {
+      const inc = pronoIncluded();
+      box.innerHTML = inc.map(p =>
+        `<span class="pchip"><b>${pEsc(p.carNumber)}</b>${pEsc((p.lastName || '').toUpperCase())}<i data-prm="${pEsc(p.driverId)}">×</i></span>`).join('')
+        + (pronoRemoved.size ? `<span class="pchip mut" id="pronoReset" style="cursor:pointer"><i style="color:var(--green)">＋</i>tout réinclure</span>` : '');
+    }
+    const q = document.getElementById('pronoQ');
+    if (q && (q.value.trim() === '' || q.value === lastAutoTitle)) { const t = autoTitle(); q.value = t; lastAutoTitle = t; }
+  }
+
+  document.getElementById('pronoChips').addEventListener('click', e => {
+    const rm = e.target.closest('[data-prm]');
+    if (rm) { pronoRemoved.add(rm.dataset.prm); renderPronoComposer(); return; }
+    if (e.target.closest('#pronoReset')) { pronoRemoved.clear(); renderPronoComposer(); }
+  });
+  document.getElementById('pronoType').onchange = () => { const t = autoTitle(); const q = document.getElementById('pronoQ'); q.value = t; lastAutoTitle = t; };
+
+  document.getElementById('pronoCreate').onclick = async () => {
+    const inc = pronoIncluded();
+    if (inc.length < 2) { flashErr('Il faut au moins 2 pilotes pour un pronostic.'); return; }
+    const q = document.getElementById('pronoQ').value.trim() || autoTitle() || 'Pronostic';
+    try {
+      await createPronostic({
+        question: q, type: document.getElementById('pronoType').value,
+        category: state.category, meetingId: state.meetingId, championshipId: state.championshipId,
+        options: inc.map(p => ({ driverId: p.driverId, num: String(p.carNumber ?? ''), name: (p.lastName || '').trim() })),
+      });
+      lastAutoTitle = ''; document.getElementById('pronoQ').value = ''; renderPronoComposer();
+    } catch (err) { flashErr('Création refusée : ' + (err.code || err.message)); }
+  };
+
+  const pronoStatusLabel = s => ({ draft: 'Brouillon', open: 'Ouvert', closed: 'Fermé', revealed: 'Résultat' }[s] || s);
+  function pronoMini(p) {
+    if (p.status === 'draft') return '';
+    let counts = {}, total = 0;
+    if (p.status === 'open') { const t = voteTallies[p.id] || {}; counts = t.counts || {}; total = t.total || 0; }
+    else { counts = p.tally || {}; total = p.totalVotes || 0; }
+    const rows = (p.options || []).map(o => ({ o, c: counts[o.driverId] || 0 })).sort((a, b) => b.c - a.c);
+    return `<div class="pmini">${rows.map(r => {
+      const pct = total ? Math.round(r.c / total * 100) : 0;
+      const win = p.status === 'revealed' && p.correctDriverId === r.o.driverId;
+      return `<div class="pmrow ${win ? 'win' : ''}"><span class="mn">${pEsc(r.o.num)}</span><span class="mnm">${pEsc((r.o.name || '').toUpperCase())}</span><span class="pmtrack"><span class="pmfill" style="width:${pct}%"></span></span><span class="pmpct">${pct}% · ${r.c}</span></div>`;
+    }).join('')}</div>`;
+  }
+  function pronoButtons(p) {
+    const onAir = state.scene === 'pronostic' && state.pronosticId === p.id;
+    const air = `<button class="sbtn air ${onAir ? 'on' : ''}" data-act="air" data-id="${p.id}">${onAir ? "● À l'antenne" : '→ Antenne'}</button>`;
+    if (p.status === 'draft') return `<button class="sbtn go" data-act="open" data-id="${p.id}">▶ Ouvrir les votes</button><button class="sbtn" data-act="del" data-id="${p.id}">🗑️ Supprimer</button>`;
+    if (p.status === 'open')  return `<button class="sbtn stop" data-act="close" data-id="${p.id}">■ Fermer les votes</button>${air}`;
+    if (p.status === 'closed') {
+      const opts = (p.options || []).map(o => `<option value="${pEsc(o.driverId)}">${pEsc(o.num)} ${pEsc((o.name || '').toUpperCase())}</option>`).join('');
+      return `<select class="sel" data-rev="${p.id}" style="max-width:none;font-size:15px;padding:8px 10px;flex:1"><option value="">— désigner le gagnant réel —</option>${opts}</select>`
+        + `<button class="sbtn" data-act="reveal" data-id="${p.id}">🏆 Révéler</button>${air}<button class="sbtn go" data-act="open" data-id="${p.id}">▶ Rouvrir</button>`;
+    }
+    if (p.status === 'revealed') return `${air}<button class="sbtn go" data-act="open" data-id="${p.id}">▶ Rouvrir</button><button class="sbtn" data-act="del" data-id="${p.id}">🗑️ Supprimer</button>`;
+    return '';
+  }
+  function renderPronoList() {
+    const box = document.getElementById('pronoList'); if (!box) return;
+    const nOpen = pronoDocs.filter(p => p.status === 'open').length;
+    document.getElementById('pronoN').textContent = pronoDocs.length ? (nOpen ? nOpen + ' ouvert' + (nOpen > 1 ? 's' : '') : pronoDocs.length + ' au total') : '—';
+    if (!pronoDocs.length) { box.innerHTML = '<div class="pempty">Aucun pronostic pour le moment.</div>'; return; }
+    box.innerHTML = pronoDocs.map(p => {
+      const total = p.status === 'open' ? (voteTallies[p.id]?.total || 0) : (p.totalVotes || 0);
+      const sub = p.status === 'draft'
+        ? `${(p.options || []).length} pilotes · pas encore ouvert`
+        : `${pEsc(catLabel(p.category))} · <b>${total} vote${total > 1 ? 's' : ''}</b>${p.status === 'open' ? ' · en direct (privé régie)' : ''}`;
+      return `<div class="pit ${p.status}">
+        <div class="pit-top"><span class="pit-q">${pEsc(p.question)}</span><span class="pit-badge ${p.status}">${pronoStatusLabel(p.status)}</span></div>
+        <div class="pit-sub">${sub}</div>
+        ${pronoMini(p)}
+        <div class="pit-btns">${pronoButtons(p)}</div>
+      </div>`;
+    }).join('');
+  }
+
+  document.getElementById('pronoList').addEventListener('click', async e => {
+    const btn = e.target.closest('[data-act]'); if (!btn) return;
+    const id = btn.dataset.id, act = btn.dataset.act;
+    try {
+      if (act === 'open') await openPronostic(id);
+      else if (act === 'close') await closePronostic(id);
+      else if (act === 'del') { if (confirm('Supprimer ce pronostic ?')) await deletePronostic(id); }
+      else if (act === 'air') {
+        const onAir = state.scene === 'pronostic' && state.pronosticId === id;
+        push(onAir ? { scene: 'dashboard' } : { scene: 'pronostic', pronosticId: id });
+        paint(); renderPronoList();
+      } else if (act === 'reveal') {
+        const sel = document.querySelector(`select[data-rev="${id}"]`);
+        const win = sel ? sel.value : '';
+        if (!win) { flashErr('Choisis le gagnant réel dans la liste avant de révéler.'); return; }
+        await revealPronostic(id, win);
+      }
+    } catch (err) { flashErr('Action refusée : ' + (err.code || err.message)); }
+  });
+
+  watchPronostics(list => {
+    pronoDocs = list;
+    const openIds = new Set(list.filter(p => p.status === 'open').map(p => p.id));
+    // coupe les watchers des pronostics qui ne sont plus ouverts
+    Object.keys(voteWatchers).forEach(id => {
+      if (!openIds.has(id)) { try { voteWatchers[id](); } catch {} delete voteWatchers[id]; delete voteTallies[id]; }
+    });
+    // abonne les nouveaux pronostics ouverts (décompte live privé régie)
+    openIds.forEach(id => {
+      if (!(id in voteWatchers)) {
+        voteWatchers[id] = () => {};  // réserve la place le temps que l'abonnement se crée
+        watchVotes(id, tally => { voteTallies[id] = tally; renderPronoList(); }, () => {})
+          .then(unsub => { if (id in voteWatchers) voteWatchers[id] = unsub; else unsub(); });
+      }
+    });
+    renderPronoList();
+  }, err => { flashErr('Lecture pronostics : ' + (err.code || err.message)); });
 
   // ---------- INIT DEPUIS LE DOC EXISTANT ----------
   watchControl(c => {
