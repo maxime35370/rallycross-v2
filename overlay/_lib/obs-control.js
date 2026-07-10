@@ -31,6 +31,8 @@ export const DEFAULT_CONTROL = {
   videoLayout:   'none',        // 'none' | 'hg' | 'hd' | 'bg' | 'bd' (coins) | 'full' (plein écran)
   videoSource:   { type: 'camera', value: '' },  // 'camera' (deviceId, choisi côté overlay) | 'url' (YouTube / VDO.Ninja / iframe)
   videoVolume:   0,             // volume du son d'un lien (0-100 ; 0 = muet). Caméra : audio géré dans OBS.
+  // scène fiche pilote / duel (1 pilote → fiche ; 2 → duel, même catégorie) :
+  fiche:         { driverId1: '', driverId2: '' },
   // calque d'AFFICHAGE seulement — n'écrit jamais dans results/sessionParticipants :
   gridOverride:  null,          // { key, slots:[{pos, carNumber, lastName}] }
   updatedAt:     0,

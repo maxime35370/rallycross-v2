@@ -453,6 +453,85 @@ export function renderSession(d) {
 }
 
 // ─────────────────────────────────────────────────────────
+// SCÈNE : FICHE PILOTE / DUEL
+//   1 pilote → fiche ; 2 pilotes (même catégorie) → duel comparatif.
+//   data.drivers = [{ carNumber, lastName, champPos, champPts, champGap,
+//                     meetPos, bestMs, wins, forme:[{manche,pos,status}] }]
+// ─────────────────────────────────────────────────────────
+
+function ficheTagline(dr) {
+  if (dr.champPos === 1) return '🏆 Leader du championnat';
+  if (dr.champGap != null && dr.champGap > 0) return `🎯 À ${dr.champGap} pts du leader`;
+  return dr.champPos ? `P${dr.champPos} au championnat` : '';
+}
+const fPos = p => (p != null ? 'P' + p : '—');
+const fChrono = ms => (ms != null ? msToDisplay(ms) : '—');
+function ficheForme(forme) {
+  if (!forme || !forme.length) return '';
+  return `<div class="fi-forme"><span class="fi-fk">Forme</span>${forme.map(f =>
+    `<div class="fi-fchip ${f.pos === 1 ? 'win' : ''}"><b>${f.status ? escHtml(f.status) : fPos(f.pos)}</b><span>M${f.manche}</span></div>`).join('')}</div>`;
+}
+function ficheHead(headerText) {
+  return `<div class="dash-top">
+    <span class="brand">RX<b>CHRONO</b></span><span class="sep"></span>
+    <span class="info"><span class="pin">📍</span><span>${escHtml(headerText || '')}</span></span>
+    <span class="live"><span class="d"></span>LIVE</span></div>`;
+}
+function ficheHero(dr) {
+  return `<span class="fi-num">${escHtml(String(dr.carNumber ?? ''))}</span>
+    <span class="fi-name">${escHtml((dr.lastName || '').toUpperCase())}</span>`;
+}
+
+export function renderFiche(d) {
+  const drivers = (d.drivers || []).filter(Boolean);
+  const header = ficheHead(d.headerText);
+  if (!drivers.length) {
+    return `<div class="dash">${header}<div class="fi-body"><div class="empty">Sélectionne un pilote en régie…</div></div></div>`;
+  }
+
+  // DUEL (2 pilotes)
+  if (drivers.length >= 2) {
+    const [a, b] = drivers;
+    const cmp = (label, la, ra, betterLow) => {
+      const na = parseFloat(la), nb = parseFloat(ra);
+      let win = '';
+      if (la !== '—' && ra !== '—' && !isNaN(na) && !isNaN(nb) && na !== nb) win = (betterLow ? na < nb : na > nb) ? 'l' : 'r';
+      return `<div class="fi-crow"><span class="cl ${win === 'l' ? 'win' : ''}">${escHtml(la)}</span>
+        <span class="ck">${label}</span><span class="cr ${win === 'r' ? 'win' : ''}">${escHtml(ra)}</span></div>`;
+    };
+    return `<div class="dash">${header}<div class="fi-body duel">
+      <div class="fi-duel">
+        <div class="fi-side l"><div class="fi-dtop">${ficheHero(a)}</div><div class="fi-tag">${escHtml(ficheTagline(a))}</div></div>
+        <div class="fi-vs"><b>VS</b><span>${escHtml(d.category || 'DUEL')}</span></div>
+        <div class="fi-side r"><div class="fi-dtop">${ficheHero(b)}</div><div class="fi-tag alt">${escHtml(ficheTagline(b))}</div></div>
+      </div>
+      <div class="fi-cmp">
+        ${cmp('Championnat', fPos(a.champPos), fPos(b.champPos), true)}
+        ${cmp('Points', String(a.champPts ?? '—'), String(b.champPts ?? '—'), false)}
+        ${cmp('Épreuve', fPos(a.meetPos), fPos(b.meetPos), true)}
+        ${cmp('Meilleur chrono', fChrono(a.bestMs), fChrono(b.bestMs), true)}
+        ${cmp('Victoires manches', String(a.wins ?? 0), String(b.wins ?? 0), false)}
+      </div>
+    </div></div>`;
+  }
+
+  // FICHE (1 pilote)
+  const dr = drivers[0];
+  return `<div class="dash">${header}<div class="fi-body">
+    <div class="fi-card">
+      <div class="fi-top">${ficheHero(dr)}<span class="fi-cat">${escHtml(d.category || '')}</span></div>
+      <div class="fi-tag">${escHtml(ficheTagline(dr))}</div>
+      <div class="fi-stats">
+        <div class="fi-stat ${dr.champPos === 1 ? 'p1' : ''}"><div class="k">Championnat</div><div class="v">${fPos(dr.champPos)} <small>${dr.champPts ?? 0} pts</small></div></div>
+        <div class="fi-stat"><div class="k">Épreuve</div><div class="v">${fPos(dr.meetPos)}</div></div>
+        <div class="fi-stat"><div class="k">Meilleur chrono</div><div class="v sm">${fChrono(dr.bestMs)}</div></div>
+      </div>
+      ${ficheForme(dr.forme)}
+    </div>
+  </div></div>`;
+}
+
+// ─────────────────────────────────────────────────────────
 // AIGUILLAGE
 // ─────────────────────────────────────────────────────────
 
@@ -463,6 +542,7 @@ export function renderScene(scene, data) {
     case 'next-heat':    return renderNextHeat(data);
     case 'intermission': return renderIntermission(data);
     case 'ending':       return renderEnding(data);
+    case 'fiche':        return renderFiche(data);
     case 'dashboard':
     default:             return renderDashboard(data);
   }

@@ -17,14 +17,17 @@
   import {
     getSessions, getResults, getParticipants, findSession, sortRace, getInterim, getInterimLive, getInterimBefore,
     getCumulBefore, getInterimEvolution, getChampionshipStandings, getMeetingPoints, getMeetingStandings, getGridOrder, getGridLayout,
-    getEcRank, getMqRank, getPhaseRank,
+    getFicheData, getEcRank, getMqRank, getPhaseRank,
   } from './_lib/obs-data.js';
   import { renderScene, countdownText } from './_lib/obs-scenes.js';
   import { buildPrediction } from './_lib/obs-predict.js';
 
   const root = document.getElementById('root');
+  const qs = new URLSearchParams(location.search);
   // fond sombre par défaut ; ?transparent=1 → fond transparent (superposition vidéo OBS)
-  if (new URLSearchParams(location.search).get('transparent')) document.body.classList.add('transparent');
+  if (qs.get('transparent')) document.body.classList.add('transparent');
+  // ?preview=1 → moniteur d'aperçu régie : on n'active PAS la caméra (pas de getUserMedia)
+  const PREVIEW = !!qs.get('preview');
 
   function diag(msg, sub) {
     root.innerHTML = `<div class="ov-diag"><div class="t">🏁 RX CHRONO</div>
@@ -180,6 +183,10 @@
       setStageIframe(emb, emb.includes('youtube.com/embed'));
       vidVolume = Math.max(0, Math.min(100, ctrl.videoVolume ?? 0));
       applyVolume();
+    } else if (PREVIEW) {
+      // aperçu régie : on ne déclenche pas la caméra, juste un repère
+      vidStage.innerHTML = '<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:#7a8699;font-family:Orbitron,sans-serif;font-weight:800;font-size:20px;letter-spacing:2px">📷 CAM</div>';
+      vidMode = 'preview'; showStart(false);
     } else {
       setStageVideo();
       const want = src.value || localStorage.getItem(CAM_KEY) || '';
@@ -331,6 +338,15 @@
     const meeting  = await getDocById('meetings', ctrl.meetingId).catch(() => null);
     // en-tête : texte saisi, sinon par défaut « Circuit · Catégorie · Phase »
     const headerText = ctrl.headerText || [meeting?.location, catName, sLabel].filter(Boolean).join(' · ');
+
+    // Scène "Fiche pilote / Duel" : 1 pilote → fiche ; 2 → duel (même catégorie).
+    if (ctrl.scene === 'fiche') {
+      const ids = [ctrl.fiche?.driverId1, ctrl.fiche?.driverId2].filter(Boolean);
+      const fHeader = ctrl.headerText || [meeting?.location, catName].filter(Boolean).join(' · ');
+      const fd = await getFicheData(ctrl.meetingId, ctrl.category, reg, ids, await meetingsOf(reg)).catch(() => ({ drivers: [] }));
+      root.innerHTML = renderScene('fiche', { headerText: fHeader, category: catName, drivers: fd.drivers });
+      return;
+    }
 
     // Scène "Grille" pour ESSAIS / MANCHES : vue multi-colonnes en direct
     // (à passer | classement | intermédiaire). Le pilote quitte "à passer"
@@ -538,7 +554,7 @@
       const key = [ctrl.scene, ctrl.championshipId, ctrl.meetingId, ctrl.category,
                    ctrl.sessionType, ctrl.sessionNum, JSON.stringify(ctrl.gridOverride),
                    ctrl.headerText, ctrl.nextText, ctrl.countdownEnd, ctrl.graphMode,
-                   JSON.stringify(ctrl.predict), ctrl.videoLayout].join('|');
+                   JSON.stringify(ctrl.predict), ctrl.videoLayout, JSON.stringify(ctrl.fiche)].join('|');
       if (key === cacheKey) return;   // rien de pertinent n'a changé
       cacheKey = key;
       lastControl = ctrl;

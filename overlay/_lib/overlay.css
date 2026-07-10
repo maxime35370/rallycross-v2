@@ -339,6 +339,53 @@ body.transparent{background:transparent}
 .pill-bad{background:linear-gradient(120deg,rgba(255,107,107,.24),rgba(255,107,107,.05));color:#ff8585}
 .pill-neutral{background:rgba(255,255,255,.06);color:var(--mut)}
 
+/* ============ FICHE PILOTE / DUEL ============ */
+.fi-body{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:30px;padding:40px 56px;min-height:0}
+.fi-body.duel{justify-content:center}
+.fi-card{width:1180px;max-width:92%;background:var(--panel);border-radius:20px;padding:34px 44px;display:flex;flex-direction:column;gap:22px;
+  border-left:8px solid var(--orange);box-shadow:0 30px 80px rgba(0,0,0,.6),0 0 0 1px rgba(255,255,255,.06)}
+.fi-top{display:flex;align-items:center;gap:22px}
+.fi-num{display:inline-flex;align-items:center;justify-content:center;min-width:96px;height:96px;padding:0 14px;border-radius:16px;
+  background:linear-gradient(150deg,var(--orange),#c23d00);font-family:'Orbitron',sans-serif;font-weight:800;font-size:52px;box-shadow:0 10px 26px rgba(255,85,0,.35)}
+.fi-name{font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:64px;line-height:.95;text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.fi-cat{margin-left:auto;font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:22px;letter-spacing:3px;color:var(--mut);
+  text-transform:uppercase;border:1px solid var(--line);border-radius:8px;padding:8px 14px}
+.fi-tag{font-family:'Orbitron',sans-serif;font-weight:700;font-size:22px;letter-spacing:1px;color:var(--orange-2);text-transform:uppercase}
+.fi-tag.alt{color:#5ab4ff}
+.fi-stats{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px}
+.fi-stat{background:#141a24;border:1px solid var(--line);border-radius:13px;padding:16px 18px}
+.fi-stat .k{font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:16px;letter-spacing:2px;color:var(--mut);text-transform:uppercase}
+.fi-stat .v{font-family:'Orbitron',sans-serif;font-weight:800;font-size:38px;margin-top:6px;display:flex;align-items:baseline;gap:8px}
+.fi-stat .v.sm{font-size:30px}
+.fi-stat .v small{font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:20px;color:var(--gold)}
+.fi-stat.p1 .v{color:var(--orange)}
+.fi-forme{display:flex;align-items:center;gap:12px}
+.fi-forme .fi-fk{font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:17px;letter-spacing:2px;color:var(--mut);text-transform:uppercase}
+.fi-fchip{display:flex;flex-direction:column;align-items:center;gap:2px}
+.fi-fchip b{font-family:'Orbitron',sans-serif;font-weight:800;font-size:22px}
+.fi-fchip span{font-family:'Barlow Condensed',sans-serif;font-weight:500;font-size:14px;color:var(--mut)}
+.fi-fchip.win b{color:var(--gold)}
+/* duel */
+.fi-duel{display:flex;align-items:stretch;width:100%;max-width:1720px}
+.fi-side{flex:1;background:var(--panel);box-shadow:0 0 0 1px rgba(255,255,255,.06);padding:30px 36px;display:flex;flex-direction:column;gap:14px;justify-content:center}
+.fi-side.l{border-radius:20px 0 0 20px;border-left:8px solid var(--orange)}
+.fi-side.r{border-radius:0 20px 20px 0;border-right:8px solid #38a0ff;text-align:right}
+.fi-side.r .fi-dtop{flex-direction:row-reverse}
+.fi-side.r .fi-num{background:linear-gradient(150deg,#38a0ff,#1c6fb8)}
+.fi-dtop{display:flex;align-items:center;gap:20px}
+.fi-duel .fi-name{font-size:52px}
+.fi-vs{flex:none;width:120px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;
+  background:linear-gradient(180deg,#1a2130,#0c1017);box-shadow:inset 0 0 0 1px rgba(255,255,255,.06)}
+.fi-vs b{font-family:'Orbitron',sans-serif;font-weight:900;font-size:44px;color:var(--orange)}
+.fi-vs span{font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:14px;letter-spacing:2px;color:var(--mut);text-transform:uppercase}
+.fi-cmp{width:100%;max-width:1200px;display:flex;flex-direction:column}
+.fi-crow{display:grid;grid-template-columns:1fr 220px 1fr;align-items:center;height:58px}
+.fi-crow + .fi-crow{border-top:1px solid var(--line)}
+.fi-crow .cl{font-family:'Orbitron',sans-serif;font-weight:800;font-size:27px;text-align:right;padding-right:22px;color:#cfd8e4}
+.fi-crow .cr{font-family:'Orbitron',sans-serif;font-weight:800;font-size:27px;text-align:left;padding-left:22px;color:#cfd8e4}
+.fi-crow .ck{font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:15px;letter-spacing:2px;color:var(--mut);text-transform:uppercase;text-align:center}
+.fi-crow .win{color:var(--gold)}
+
 /* ============ ENTRE DEUX MANCHES ============ */
 .inter{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:30px;
   background:radial-gradient(900px 600px at 50% 40%,rgba(255,85,0,.10),transparent 60%)}
