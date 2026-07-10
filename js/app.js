@@ -305,6 +305,16 @@ function init() {
     }
   });
 
+  // Réagir au changement de hash (URL tapée à la main, bouton précédent, lien
+  // direct #timing…) : basculer sur la vue correspondante. Sans ça, modifier
+  // l'URL ne changeait RIEN — d'où « Accès réservé » qui ne s'affichait pas sur
+  // une page déjà chargée. (replaceState ci-dessus ne déclenche pas hashchange.)
+  window.addEventListener('hashchange', () => {
+    const raw = window.location.hash.replace('#', '');
+    const view = raw.split('?')[0];
+    showView(VIEW_TITLES[view] ? view : 'home');
+  });
+
   // Charger Firebase et les modules au démarrage
   loadApp();
 }
