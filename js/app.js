@@ -353,6 +353,15 @@ async function loadApp() {
 
   // Initialiser le QR code sur la page d'accueil
   initHomeQr();
+
+  // La vue initiale (showView au démarrage — ex. deep-link #spectator via QR /
+  // lien direct) a été émise AVANT que les modules de vue n'enregistrent leurs
+  // écouteurs 'viewchange'. On la ré-émet maintenant pour que la vue courante
+  // s'initialise vraiment (sinon accès direct = écran figé sur « Chargement… »).
+  const initView = window.location.hash.replace('#', '').split('?')[0];
+  document.dispatchEvent(new CustomEvent('viewchange', {
+    detail: { view: VIEW_TITLES[initView] ? initView : 'home' },
+  }));
 }
 
 // ─────────────────────────────────────────────────────────

@@ -178,6 +178,15 @@ function applyAdminVisibility() {
   document.body.classList.toggle('is-admin', isAdmin());
 }
 
+/** Le formulaire de connexion est masqué au public. Il n'apparaît que si l'URL
+ *  contient `?login` (URL « secrète » à garder pour l'admin) — évite d'inviter
+ *  n'importe qui à tenter de se connecter. Une fois connecté, l'UI « Déconnexion »
+ *  s'affiche normalement (sans le paramètre). */
+function applyLoginVisibility() {
+  const show = /[?&]login(=|&|$)/.test(window.location.search);
+  document.body.classList.toggle('show-login', show);
+}
+
 function removeAuthGates() {
   document.querySelectorAll('.auth-gate').forEach((el) => el.remove());
 }
@@ -190,7 +199,8 @@ export async function initAuth() {
   // Toujours afficher l'UI d'auth dans le menu
   document.addEventListener('viewchange', onViewChange);
   renderAuthUI();
-  applyAdminVisibility();   // état initial : non-admin → entrées d'édition/config masquées
+  applyAdminVisibility();    // état initial : non-admin → entrées d'édition/config masquées
+  applyLoginVisibility();    // formulaire de connexion masqué sauf URL ?login
 
   // Initialiser Firebase Auth si Firebase est pret
   try {
