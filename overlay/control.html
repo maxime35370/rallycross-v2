@@ -353,6 +353,9 @@
     const f1 = document.getElementById('fiche1'), f2 = document.getElementById('fiche2');
     if (f1.querySelector(`option[value="${(fi.driverId1 || '').replace(/"/g, '')}"]`)) f1.value = fi.driverId1 || '';
     if (f2.querySelector(`option[value="${(fi.driverId2 || '').replace(/"/g, '')}"]`)) f2.value = fi.driverId2 || '';
+    // pas 2× le même pilote : on grise dans chaque liste celui déjà choisi dans l'autre
+    Array.from(f1.options).forEach(o => { o.disabled = !!o.value && o.value === fi.driverId2; });
+    Array.from(f2.options).forEach(o => { o.disabled = !!o.value && o.value === fi.driverId1; });
     const nFi = [fi.driverId1, fi.driverId2].filter(Boolean).length;
     document.getElementById('ficheN').textContent = nFi === 0 ? '—' : nFi === 1 ? 'fiche' : 'duel';
     renderSlots();
@@ -423,8 +426,16 @@
   document.getElementById('vidUrlBtn').onclick = () => push({ videoSource: { type: 'url', value: document.getElementById('vidUrl').value.trim() } });
   document.getElementById('vidVol').oninput = e => { document.getElementById('vidVolVal').textContent = e.target.value; };
   document.getElementById('vidVol').onchange = e => push({ videoVolume: +e.target.value });
-  document.getElementById('fiche1').onchange = e => pushFiche({ driverId1: e.target.value });
-  document.getElementById('fiche2').onchange = e => pushFiche({ driverId2: e.target.value });
+  document.getElementById('fiche1').onchange = e => {
+    const v = e.target.value, patch = { driverId1: v };
+    if (v && v === state.fiche?.driverId2) patch.driverId2 = '';   // évite le doublon
+    pushFiche(patch);
+  };
+  document.getElementById('fiche2').onchange = e => {
+    const v = e.target.value;
+    if (v && v === state.fiche?.driverId1) { paint(); return; }    // même pilote interdit → on annule
+    pushFiche({ driverId2: v });
+  };
   // moniteur d'aperçu : overlay/live en mode preview (pas de caméra) — lit le même doc Firestore
   document.getElementById('pvFrame').src = 'live?preview=1';
   document.querySelectorAll('#scenes .b').forEach(b => b.onclick = () => { push({ scene: b.dataset.scene }); paint(); });
