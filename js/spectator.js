@@ -8,8 +8,6 @@ import { db } from './firebase.js';
 import { msToDisplay, escHtml } from './utils.js';
 import { getActiveChampionship, getActiveChampionshipId } from './context.js';
 import { watchPronostics, myVote, castVote, ensureAnon } from '../overlay/_lib/obs-pronostics.js';
-import { watchControl } from '../overlay/_lib/obs-control.js';
-import { initFirebase } from '../overlay/_lib/obs-firebase.js';
 
 // ─────────────────────────────────────────────────────────
 // ÉTAT LOCAL
@@ -382,9 +380,7 @@ let _pronoUid        = null;
 let _pronoDocs       = [];
 let _myVotes         = {};
 let _pronoErr        = {};   // pid -> message d'erreur du dernier vote (affiché dans la carte)
-let _ctrl            = null; // état régie (obsControl/live) — pour le miroir de l'antenne
 let _unsubPronostics = null;
-let _unsubControl    = null;
 let _pronoClickBound = false;
 
 const PRONO_ICON      = { manche_winner: '🏆', interim_m2: '📊', ec_best: '⏱️', serie_winner: '🏁', final_winner: '🏆', custom: '🎯' };
@@ -405,13 +401,6 @@ async function initPronostics() {
     }, () => {});
   } catch {}
 
-  // Miroir de l'antenne : on suit l'état régie pour n'afficher QUE le pronostic
-  // actuellement diffusé (cf. renderPronostics). Retiré de l'antenne → masqué ici.
-  try {
-    await initFirebase();
-    _unsubControl = await watchControl(ctrl => { _ctrl = ctrl; renderPronostics(); }, () => {});
-  } catch {}
-
   // 2) VOTE : session anonyme en tâche de fond (n'empêche jamais l'affichage).
   ensureAnon()
     .then(async uid => { _pronoUid = uid; await refreshMyVotes(); renderPronostics(); })
@@ -428,7 +417,6 @@ async function refreshMyVotes() {
 
 function stopPronostics() {
   if (_unsubPronostics) { _unsubPronostics(); _unsubPronostics = null; }
-  if (_unsubControl) { _unsubControl(); _unsubControl = null; }
 }
 
 async function onPronoClick(e) {
@@ -504,12 +492,17 @@ function pronoCardHtml(p) {
 function renderPronostics() {
   const box = document.getElementById('spc-pronostics');
   if (!box) return;
-  // Miroir de l'antenne : le spectateur ne voit QUE le pronostic actuellement
-  // diffusé à l'antenne par la régie — même condition que l'overlay OBS
-  // (scene === 'pronostic' && pronosticId). Dès qu'il est retiré de l'antenne
-  // (autre scène, ou bouton « À l'antenne » désactivé), il disparaît ici aussi.
-  const onAirId = (_ctrl && _ctrl.scene === 'pronostic') ? _ctrl.pronosticId : '';
-  const ordered = onAirId ? _pronoDocs.filter(p => p.id === onAirId) : [];
+  // Pronostics du meeting sélectionné :
+  //  • une catégorie est choisie → tous les pronostics de cette catégorie
+  //    (votes ouverts ET résultats) — cohérent avec la catégorie affichée ;
+  //  • aucune catégorie → seulement les votes OUVERTS en cours (toutes catégories)
+  //    pour ne pas empiler tous les résultats passés du meeting.
+  let docs = _pronoDocs.filter(p => p.meetingId === selectedMeetingId);
+  docs = selectedCategory
+    ? docs.filter(p => p.category === selectedCategory)
+    : docs.filter(p => p.status === 'open');
+  const rank = p => (p.status === 'open' ? 0 : p.status === 'closed' ? 1 : 2);
+  const ordered = [...docs].sort((a, b) => rank(a) - rank(b) || (b.createdAt || 0) - (a.createdAt || 0));
   if (!ordered.length) { box.innerHTML = ''; box.style.display = 'none'; return; }
   const nOpen = ordered.filter(p => p.status === 'open').length;
   box.style.display = '';
