@@ -87,6 +87,50 @@
   .gate .err{color:#ff7a7a;font-size:14px;min-height:18px;margin-top:8px}
   .hidden{display:none!important}
   .muted{opacity:.4;pointer-events:none}
+  /* pronostics */
+  .pchips{display:flex;flex-wrap:wrap;gap:7px;margin:4px 0 12px}
+  .pchip{display:flex;align-items:center;gap:7px;background:var(--card2);border:1px solid var(--line);border-radius:20px;
+    padding:5px 7px 5px 12px;font-family:'Barlow Condensed';font-weight:600;font-size:16px}
+  .pchip b{color:var(--orange);font-family:'Orbitron';font-weight:700;font-size:13px}
+  .pchip i{cursor:pointer;color:var(--mut);font-style:normal;width:18px;height:18px;display:flex;align-items:center;justify-content:center;border-radius:50%}
+  .pchip i:hover{background:rgba(225,29,42,.2);color:#ff7a7a}
+  .pchip.mut{opacity:.45}
+  .pdiv{height:1px;background:var(--line);margin:16px 0}
+  .plist{display:flex;flex-direction:column;gap:11px}
+  .pit{background:var(--card2);border:1px solid var(--line);border-radius:12px;padding:12px 14px;border-left:3px solid var(--mut)}
+  .pit.open{border-left-color:var(--green)} .pit.draft{border-left-color:#5c6478}
+  .pit.closed,.pit.revealed{border-left-color:#ffcc33}
+  .pit-top{display:flex;align-items:center;gap:9px;margin-bottom:3px}
+  .pit-q{font-family:'Barlow Condensed';font-weight:700;font-size:19px;flex:1;line-height:1.05}
+  .pit-badge{font-family:'Barlow Condensed';font-weight:700;font-size:12px;letter-spacing:1.5px;text-transform:uppercase;padding:3px 10px;border-radius:20px;white-space:nowrap}
+  .pit-badge.open{background:rgba(57,217,138,.15);color:var(--green)}
+  .pit-badge.draft{background:rgba(255,255,255,.06);color:var(--mut)}
+  .pit-badge.closed,.pit-badge.revealed{background:rgba(255,204,51,.15);color:#ffcc33}
+  .pit-sub{font-family:'Barlow Condensed';font-size:14px;color:var(--mut);margin-bottom:8px}
+  .pit-sub b{color:#c4ccd8}
+  .pmini{display:flex;flex-direction:column;gap:5px;margin:8px 0 4px}
+  .pmrow{display:flex;align-items:center;gap:9px;font-family:'Barlow Condensed';font-size:15px}
+  .pmrow .mn{font-family:'Orbitron';font-weight:700;font-size:12px;color:var(--orange);min-width:26px}
+  .pmrow .mnm{min-width:96px;font-weight:600}
+  .pmrow.win .mnm{color:#ffcc33}
+  .pmtrack{flex:1;height:14px;background:#0c0f16;border-radius:20px;overflow:hidden;box-shadow:inset 0 0 0 1px var(--line)}
+  .pmfill{display:block;height:100%;background:linear-gradient(90deg,var(--orange),#ff8a3d);border-radius:20px;transition:width .5s;box-shadow:0 0 12px rgba(255,85,0,.4)}
+  .pmrow.win .pmfill{background:linear-gradient(90deg,#ffcc33,#e0a800);box-shadow:0 0 12px rgba(255,204,51,.4)}
+  .pmpct{min-width:66px;text-align:right;font-family:'Orbitron';font-weight:700;font-size:13px;color:#eef2f7}
+  .pit-auto{font-family:'Barlow Condensed';font-weight:600;font-size:15px;color:#9fb4d8;background:rgba(56,160,255,.1);
+    border:1px solid rgba(56,160,255,.28);border-radius:8px;padding:8px 11px;margin-bottom:9px}
+  .pit-auto b{color:#dbe8f8}
+  .pit-btns{display:flex;gap:7px;margin-top:10px;flex-wrap:wrap}
+  .sbtn{font-family:'Barlow Condensed';font-weight:700;font-size:15px;letter-spacing:.5px;padding:8px 12px;border-radius:9px;
+    border:1px solid var(--line);background:var(--card);color:#dfe6f0;cursor:pointer;transition:.12s}
+  .sbtn:hover{border-color:#3a4760}
+  .sbtn.go{background:rgba(57,217,138,.12);border-color:rgba(57,217,138,.4);color:#9af0c4}
+  .sbtn.stop{background:rgba(225,29,42,.12);border-color:rgba(225,29,42,.4);color:#ff9a9a}
+  .sbtn.air{background:var(--orange);border-color:transparent;color:#fff;font-family:'Orbitron';font-weight:700;font-size:13px;letter-spacing:1px}
+  .sbtn.air.on{background:#39414f;box-shadow:inset 0 0 0 1px var(--green)}
+  .pempty{font-family:'Barlow Condensed';font-size:16px;color:var(--mut);padding:6px 2px}
+  .ta{width:100%;background:var(--card2);border:1px solid var(--line);color:#fff;border-radius:10px;padding:12px 14px;
+    font-family:'Exo 2',sans-serif;font-weight:400;font-size:16px;resize:vertical;min-height:58px}
 </style>
 </head>
 <body>
@@ -191,6 +235,54 @@
         <select class="sel" id="fiche1" style="max-width:none;width:100%;margin-bottom:10px"></select>
         <select class="sel" id="fiche2" style="max-width:none;width:100%"></select>
       </div>
+      <div class="card">
+        <h3>🎯 Pronostics spectateurs <span class="n" id="pronoN">—</span></h3>
+        <div class="note">Le public vote depuis le mode spectateur (QR). Aucun score visible côté public tant que le vote est ouvert — toi seul vois le décompte live ici. Les pilotes proposés = les engagés de la catégorie + phase sélectionnées ci-dessus.</div>
+        <select class="sel" id="pronoType" style="max-width:none;width:100%;margin-bottom:9px">
+          <option value="manche_winner">🏆 Vainqueur de la manche (tous les engagés)</option>
+          <option value="interim_m2">📊 Leader du classement intermédiaire après M2</option>
+          <option value="ec_best">⏱️ Meilleur temps des essais chronos</option>
+          <option value="serie_winner">🏁 Vainqueur d'une série (pilotes en ligne)</option>
+          <option value="final_winner">🏆 Vainqueur de la finale</option>
+          <option value="custom">✏️ Question libre</option>
+        </select>
+        <div class="field" style="margin-bottom:4px"><input id="pronoQ" placeholder="Intitulé affiché aux spectateurs…"></div>
+        <div class="pchips" id="pronoChips"></div>
+        <div class="actions"><button class="ghost primary" id="pronoCreate">＋ Créer le pronostic (brouillon)</button></div>
+        <div class="pdiv"></div>
+        <div class="plist" id="pronoList"><div class="pempty">Aucun pronostic pour le moment.</div></div>
+      </div>
+      <div class="card">
+        <h3>📱 Accès spectateur <span class="n">QR</span></h3>
+        <div class="note">Lien public en lecture seule (pronostics + classements du meeting sélectionné). Le QR s'affiche aussi à l'antenne sur la scène pronostic. Partage-le ou imprime-le pour le public.</div>
+        <div class="field" style="margin-bottom:12px">
+          <input id="specBase" placeholder="https://rxchrono.netlify.app"><button class="apply" id="specBaseBtn">OK</button>
+        </div>
+        <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">
+          <img id="specQr" alt="QR accès spectateur" style="width:150px;height:150px;background:#fff;border-radius:10px;padding:8px;image-rendering:pixelated;flex:none">
+          <div style="flex:1;min-width:190px;display:flex;flex-direction:column;gap:10px">
+            <div id="specUrl" style="font-family:'Barlow Condensed';font-weight:600;font-size:15px;color:#c4ccd8;word-break:break-all;line-height:1.3"></div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <button class="sbtn" id="specCopy">📋 Copier le lien</button>
+              <button class="sbtn" id="specDl">⬇️ Télécharger le QR</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <h3>📢 Bandeau info / sponsors <span class="n" id="ibN">off</span></h3>
+        <div class="note">Bandeau bas d'écran par-dessus la scène : un message libre et/ou des logos partenaires. Message trop long → défilement automatique.</div>
+        <div class="row2" style="justify-content:flex-start;margin:0 0 12px">
+          <div class="toggle" id="ibToggle"><span>Afficher le bandeau</span><span class="pill"></span></div>
+        </div>
+        <div class="field" style="margin-bottom:10px"><input id="ibLabel" placeholder="Label (ex. INFO, PARTENAIRES)"><button class="apply" id="ibLabelBtn">OK</button></div>
+        <textarea id="ibMsg" class="ta" placeholder="Message libre à afficher…" rows="2"></textarea>
+        <div class="actions" style="margin-top:8px"><button class="ghost primary" id="ibMsgBtn">Appliquer le message</button></div>
+        <div style="font-family:'Barlow Condensed';font-weight:600;font-size:14px;letter-spacing:1px;color:var(--mut);text-transform:uppercase;margin:14px 0 8px">Logos partenaires</div>
+        <div class="pchips" id="ibLogos"><span class="pempty">Aucun logo</span></div>
+        <div class="actions"><button class="ghost" id="ibAddFile">📁 Ajouter un logo (image)</button></div>
+        <input type="file" id="ibFile" accept="image/*" multiple style="display:none">
+      </div>
     </div>
 
     <div class="card">
@@ -221,9 +313,11 @@
 </div>
 
 <script type="module">
-  import { initFirebase, fsQuery } from './_lib/obs-firebase.js';
+  import { initFirebase, fsQuery, watchQuery } from './_lib/obs-firebase.js';
   import { watchControl, setControl, sessionKey, DEFAULT_CONTROL } from './_lib/obs-control.js';
-  import { getSessions, findSession, getGridOrder, getInterim, getParticipants } from './_lib/obs-data.js';
+  import { getSessions, findSession, getGridOrder, getInterim, getParticipants, computePronoWinner, pronoWatchSessionIds } from './_lib/obs-data.js';
+  import { watchPronostics, watchVotes, createPronostic, updatePronostic, openPronostic, closePronostic, revealPronostic, deletePronostic } from './_lib/obs-pronostics.js';
+  import { qrDataUrl, spectatorUrl } from './_lib/obs-qr.js';
 
   const SDK = 'https://www.gstatic.com/firebasejs/10.12.0/';
   await initFirebase();
@@ -322,7 +416,7 @@
     document.getElementById('gridN').textContent = `${catName()} · ${document.getElementById('phN').textContent}`;
     if (meetSel.value !== state.meetingId) meetSel.value = state.meetingId;
     document.getElementById('status').innerHTML =
-      `À l'antenne : <span class="chip">${({dashboard:'📊 Dashboard',grid:'🏁 Grille',fiche:'👤 Fiche / Duel','next-heat':'⏭️ À suivre',intermission:'⏸️ Attente',ending:'🔚 Fin de stream'})[state.scene]||state.scene}</span>
+      `À l'antenne : <span class="chip">${({dashboard:'📊 Dashboard',grid:'🏁 Grille',fiche:'👤 Fiche / Duel',pronostic:'🎯 Pronostic','next-heat':'⏭️ À suivre',intermission:'⏸️ Attente',ending:'🔚 Fin de stream'})[state.scene]||state.scene}</span>
        <span class="chip o">${catName()}</span>
        <span class="chip">${document.getElementById('phN').textContent}</span>
        · <b style="color:${state.visible?'var(--green)':'#888'}">${state.visible?'visible':'masqué'}</b>`;
@@ -359,6 +453,8 @@
     const nFi = [fi.driverId1, fi.driverId2].filter(Boolean).length;
     document.getElementById('ficheN').textContent = nFi === 0 ? '—' : nFi === 1 ? 'fiche' : 'duel';
     renderSlots();
+    renderSpectatorAccess();
+    renderInfoBand();
   }
 
   function renderSlots() {
@@ -403,6 +499,8 @@
     if (f1) { f1.innerHTML = '<option value="">— Pilote 1 —</option>' + opts; if (predictDrivers.some(p => p.driverId === f.driverId1)) f1.value = f.driverId1; }
     if (f2) { f2.innerHTML = '<option value="">— Pilote 2 (duel, optionnel) —</option>' + opts; if (predictDrivers.some(p => p.driverId === f.driverId2)) f2.value = f.driverId2; }
     lastPredSelKey = [state.meetingId, state.category, state.sessionType, state.sessionNum].join('|');
+    // le vivier du composer pronostic suit la catégorie + phase sélectionnées
+    pronoRemoved.clear(); renderPronoComposer();
   }
   function pushPredict(patch) {
     push({ predict: { ...(state.predict || DEFAULT_CONTROL.predict), ...patch } });
@@ -471,6 +569,316 @@
   document.getElementById('pushBtn').onclick = () => {
     push({ gridOverride: { key: sessionKey(state), slots: gridSlots.map((s, i) => ({ pos: i + 1, carNumber: s.carNumber, lastName: s.lastName, edited: true })) } });
   };
+
+  // ---------- PRONOSTICS (régie) ----------
+  const pEsc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  const catLabel = id => categories.find(c => c.id === id)?.name || id || '—';
+  function flashErr(msg) {
+    const bar = document.getElementById('errBar');
+    if (bar) { bar.textContent = '⚠️ ' + msg; bar.style.display = ''; clearTimeout(flashErr._t); flashErr._t = setTimeout(() => { bar.style.display = 'none'; }, 6000); }
+  }
+
+  const pronoRemoved = new Set();     // driverId retirés du composer
+  let pronoDocs = [];                 // pronostics (temps réel)
+  const voteWatchers = {};            // id -> unsub (décompte live des pronostics ouverts)
+  const voteTallies  = {};            // id -> { counts, total }
+  let lastAutoTitle = '';
+  const AUTO_KINDS = ['session', 'interim_after'];   // types dont le gagnant est calculé auto (vs 'manual')
+
+  function phaseLabelLong() {
+    const t = state.sessionType, n = state.sessionNum;
+    if (t === 'EC')  return 'les essais chronos';
+    if (t === 'MQ')  return 'la manche ' + n;
+    if (t === 'QF')  return 'le quart ' + n;
+    if (t === 'DF')  return 'la ½ finale ' + (n === 1 ? 'A' : 'B');
+    if (t === 'FIN') return 'la finale';
+    return 'la course';
+  }
+  function autoTitle() {
+    const cat = catName();
+    switch (document.getElementById('pronoType').value) {
+      case 'manche_winner': return `Qui gagne ${phaseLabelLong()} ${cat} ?`;
+      case 'interim_m2':    return `Qui sera leader du classement intermédiaire ${cat} après la manche 2 ?`;
+      case 'ec_best':       return `Qui signe le meilleur temps aux essais chronos ${cat} ?`;
+      case 'serie_winner':  return `Qui gagne cette série ${cat} ?`;
+      case 'final_winner':  return `Qui gagne la finale ${cat} ?`;
+      default:              return '';
+    }
+  }
+  // Cible de résultat : d'où vient le vrai gagnant (suivi live des chronos).
+  //  'session'       → P1 (au chrono) d'une session → synchro auto avec les pénalités.
+  //  'interim_after' → leader intermédiaire après la manche N (désignation manuelle pour l'instant).
+  //  'manual'        → question libre : la régie désigne le gagnant.
+  function pronoTargetFor(type) {
+    switch (type) {
+      case 'ec_best':       return { kind: 'session', sessionType: 'EC',  sessionNum: 1 };
+      case 'final_winner':  return { kind: 'session', sessionType: 'FIN', sessionNum: 1 };
+      case 'manche_winner':
+      case 'serie_winner':  return { kind: 'session', sessionType: state.sessionType, sessionNum: state.sessionNum };
+      case 'interim_m2':    return { kind: 'interim_after', sessionType: 'MQ', sessionNum: 2 };
+      default:              return { kind: 'manual' };
+    }
+  }
+  function pronoIncluded() { return predictDrivers.filter(p => !pronoRemoved.has(p.driverId)); }
+
+  function renderPronoComposer() {
+    const box = document.getElementById('pronoChips'); if (!box) return;
+    if (!predictDrivers.length) {
+      box.innerHTML = '<span class="pempty">Sélectionne une catégorie + une phase ci-dessus pour charger les pilotes.</span>';
+    } else {
+      const inc = pronoIncluded();
+      box.innerHTML = inc.map(p =>
+        `<span class="pchip"><b>${pEsc(p.carNumber)}</b>${pEsc((p.lastName || '').toUpperCase())}<i data-prm="${pEsc(p.driverId)}">×</i></span>`).join('')
+        + (pronoRemoved.size ? `<span class="pchip mut" id="pronoReset" style="cursor:pointer"><i style="color:var(--green)">＋</i>tout réinclure</span>` : '');
+    }
+    const q = document.getElementById('pronoQ');
+    if (q && (q.value.trim() === '' || q.value === lastAutoTitle)) { const t = autoTitle(); q.value = t; lastAutoTitle = t; }
+  }
+
+  document.getElementById('pronoChips').addEventListener('click', e => {
+    const rm = e.target.closest('[data-prm]');
+    if (rm) { pronoRemoved.add(rm.dataset.prm); renderPronoComposer(); return; }
+    if (e.target.closest('#pronoReset')) { pronoRemoved.clear(); renderPronoComposer(); }
+  });
+  document.getElementById('pronoType').onchange = () => { const t = autoTitle(); const q = document.getElementById('pronoQ'); q.value = t; lastAutoTitle = t; };
+
+  document.getElementById('pronoCreate').onclick = async () => {
+    const inc = pronoIncluded();
+    if (inc.length < 2) { flashErr('Il faut au moins 2 pilotes pour un pronostic.'); return; }
+    const q = document.getElementById('pronoQ').value.trim() || autoTitle() || 'Pronostic';
+    try {
+      const type = document.getElementById('pronoType').value;
+      await createPronostic({
+        question: q, type,
+        category: state.category, meetingId: state.meetingId, championshipId: state.championshipId,
+        options: inc.map(p => ({ driverId: p.driverId, num: String(p.carNumber ?? ''), name: (p.lastName || '').trim() })),
+        resultTarget: pronoTargetFor(type),
+      });
+      lastAutoTitle = ''; document.getElementById('pronoQ').value = ''; renderPronoComposer();
+    } catch (err) { flashErr('Création refusée : ' + (err.code || err.message)); }
+  };
+
+  const pronoStatusLabel = s => ({ draft: 'Brouillon', open: 'Ouvert', closed: 'Fermé', revealed: 'Résultat' }[s] || s);
+  function pronoMini(p) {
+    if (p.status === 'draft') return '';
+    let counts = {}, total = 0;
+    if (p.status === 'open') { const t = voteTallies[p.id] || {}; counts = t.counts || {}; total = t.total || 0; }
+    else { counts = p.tally || {}; total = p.totalVotes || 0; }
+    const rows = (p.options || []).map(o => ({ o, c: counts[o.driverId] || 0 })).sort((a, b) => b.c - a.c);
+    return `<div class="pmini">${rows.map(r => {
+      const pct = total ? Math.round(r.c / total * 100) : 0;
+      const win = p.status === 'revealed' && p.correctDriverId === r.o.driverId;
+      return `<div class="pmrow ${win ? 'win' : ''}"><span class="mn">${pEsc(r.o.num)}</span><span class="mnm">${pEsc((r.o.name || '').toUpperCase())}</span><span class="pmtrack"><span class="pmfill" style="width:${pct}%"></span></span><span class="pmpct">${pct}% · ${r.c}</span></div>`;
+    }).join('')}</div>`;
+  }
+  function pronoButtons(p) {
+    const onAir = state.scene === 'pronostic' && state.pronosticId === p.id;
+    const air = `<button class="sbtn air ${onAir ? 'on' : ''}" data-act="air" data-id="${p.id}">${onAir ? "● À l'antenne" : '→ Antenne'}</button>`;
+    if (p.status === 'draft') return `<button class="sbtn go" data-act="open" data-id="${p.id}">▶ Ouvrir les votes</button><button class="sbtn" data-act="del" data-id="${p.id}">🗑️ Supprimer</button>`;
+    if (p.status === 'open')  return `<button class="sbtn stop" data-act="close" data-id="${p.id}">■ Fermer les votes</button>${air}`;
+    if (p.status === 'closed') {
+      // Pronostic « au résultat » : gagnant calculé depuis les données (suit les pénalités) → pas de choix manuel.
+      if (AUTO_KINDS.includes(p.resultTarget?.kind)) {
+        const isInterim = p.resultTarget.kind === 'interim_after';
+        const w = (p.options || []).find(o => o.driverId === p.correctDriverId);
+        const lbl  = isInterim ? 'Leader intermédiaire' : 'Vainqueur (chrono)';
+        const wait = isInterim
+          ? '⏳ Manches en cours — leader figé quand M1 & M2 seront complètes…'
+          : '⏳ Série en cours — gagnant figé quand tous les pilotes seront saisis…';
+        const wl = w ? `${lbl} : <b>${pEsc(w.num)} ${pEsc((w.name || '').toUpperCase())}</b>` : wait;
+        return `<div class="pit-auto">🔄 ${wl}</div><button class="sbtn" data-act="reveal" data-id="${p.id}">🏆 Révéler le résultat</button>${air}<button class="sbtn go" data-act="open" data-id="${p.id}">▶ Rouvrir</button>`;
+      }
+      // Question libre : désignation manuelle.
+      const opts = (p.options || []).map(o => `<option value="${pEsc(o.driverId)}">${pEsc(o.num)} ${pEsc((o.name || '').toUpperCase())}</option>`).join('');
+      return `<select class="sel" data-rev="${p.id}" style="max-width:none;font-size:15px;padding:8px 10px;flex:1"><option value="">— désigner le gagnant réel —</option>${opts}</select>`
+        + `<button class="sbtn" data-act="reveal" data-id="${p.id}">🏆 Révéler</button>${air}<button class="sbtn go" data-act="open" data-id="${p.id}">▶ Rouvrir</button>`;
+    }
+    if (p.status === 'revealed') {
+      const note = AUTO_KINDS.includes(p.resultTarget?.kind) ? `<div class="pit-auto">🔄 Résultat synchronisé avec les classements</div>` : '';
+      return `${note}${air}<button class="sbtn go" data-act="open" data-id="${p.id}">▶ Rouvrir</button><button class="sbtn" data-act="del" data-id="${p.id}">🗑️ Supprimer</button>`;
+    }
+    return '';
+  }
+  function renderPronoList() {
+    const box = document.getElementById('pronoList'); if (!box) return;
+    const nOpen = pronoDocs.filter(p => p.status === 'open').length;
+    document.getElementById('pronoN').textContent = pronoDocs.length ? (nOpen ? nOpen + ' ouvert' + (nOpen > 1 ? 's' : '') : pronoDocs.length + ' au total') : '—';
+    if (!pronoDocs.length) { box.innerHTML = '<div class="pempty">Aucun pronostic pour le moment.</div>'; return; }
+    box.innerHTML = pronoDocs.map(p => {
+      const total = p.status === 'open' ? (voteTallies[p.id]?.total || 0) : (p.totalVotes || 0);
+      const sub = p.status === 'draft'
+        ? `${(p.options || []).length} pilotes · pas encore ouvert`
+        : `${pEsc(catLabel(p.category))} · <b>${total} vote${total > 1 ? 's' : ''}</b>${p.status === 'open' ? ' · en direct (privé régie)' : ''}`;
+      return `<div class="pit ${p.status}">
+        <div class="pit-top"><span class="pit-q">${pEsc(p.question)}</span><span class="pit-badge ${p.status}">${pronoStatusLabel(p.status)}</span></div>
+        <div class="pit-sub">${sub}</div>
+        ${pronoMini(p)}
+        <div class="pit-btns">${pronoButtons(p)}</div>
+      </div>`;
+    }).join('');
+  }
+
+  document.getElementById('pronoList').addEventListener('click', async e => {
+    const btn = e.target.closest('[data-act]'); if (!btn) return;
+    const id = btn.dataset.id, act = btn.dataset.act;
+    try {
+      if (act === 'open') await openPronostic(id);
+      else if (act === 'close') await closePronostic(id);
+      else if (act === 'del') { if (confirm('Supprimer ce pronostic ?')) await deletePronostic(id); }
+      else if (act === 'air') {
+        const onAir = state.scene === 'pronostic' && state.pronosticId === id;
+        push(onAir ? { scene: 'dashboard' } : { scene: 'pronostic', pronosticId: id });
+        paint(); renderPronoList();
+      } else if (act === 'reveal') {
+        const p = pronoDocs.find(x => x.id === id);
+        let win = '';
+        if (AUTO_KINDS.includes(p?.resultTarget?.kind)) {
+          win = p.correctDriverId || '';   // gagnant auto (synchro) ; la synchro le complètera si vide
+        } else {
+          const sel = document.querySelector(`select[data-rev="${id}"]`);
+          win = sel ? sel.value : '';
+          if (!win) { flashErr('Choisis le gagnant réel dans la liste avant de révéler.'); return; }
+        }
+        await revealPronostic(id, win);
+      }
+    } catch (err) { flashErr('Action refusée : ' + (err.code || err.message)); }
+  });
+
+  // Synchro du VRAI gagnant avec les chronos : pour les pronostics « au résultat »
+  // fermés/révélés, on suit les résultats de la session cible et on réécrit
+  // correctDriverId à chaque changement. Une pénalité de la direction de course qui
+  // change le P1 change donc le gagnant du pronostic — en direct, sur l'overlay ET
+  // chez les spectateurs (qui lisent tous ce champ). (Tant que cette page régie reste ouverte.)
+  const winnerWatchers = {};   // id -> unsubAll (résultats des sessions concernées)
+  async function syncPronoWinners(list) {
+    const need = list.filter(p => ['closed', 'revealed'].includes(p.status) && AUTO_KINDS.includes(p.resultTarget?.kind));
+    const needIds = new Set(need.map(p => p.id));
+    Object.keys(winnerWatchers).forEach(id => {
+      if (!needIds.has(id)) { try { winnerWatchers[id](); } catch {} delete winnerWatchers[id]; }
+    });
+    for (const p of need) {
+      if (p.id in winnerWatchers) continue;
+      winnerWatchers[p.id] = () => {};   // réserve la place le temps de créer les abonnements
+      let sids = [];
+      try { sids = await pronoWatchSessionIds(p); } catch {}
+      if (!sids.length) { delete winnerWatchers[p.id]; continue; }
+      const recompute = async () => {
+        try {
+          const reg = champs.find(c => c.id === p.championshipId) || champ;   // règlement (points) pour l'intermédiaire
+          const win = await computePronoWinner(p, reg);
+          const cur = pronoDocs.find(x => x.id === p.id);
+          if (win && cur && cur.correctDriverId !== win) await updatePronostic(p.id, { correctDriverId: win });
+        } catch {}
+      };
+      const unsubs = [];
+      for (const sid of sids) {
+        try { unsubs.push(await watchQuery('results', [['sessionId', '==', sid]], recompute, () => {})); } catch {}
+      }
+      const unsubAll = () => unsubs.forEach(u => { try { u(); } catch {} });
+      if (p.id in winnerWatchers) winnerWatchers[p.id] = unsubAll; else unsubAll();
+      recompute();
+    }
+  }
+
+  watchPronostics(list => {
+    pronoDocs = list;
+    syncPronoWinners(list);
+    const openIds = new Set(list.filter(p => p.status === 'open').map(p => p.id));
+    // coupe les watchers des pronostics qui ne sont plus ouverts
+    Object.keys(voteWatchers).forEach(id => {
+      if (!openIds.has(id)) { try { voteWatchers[id](); } catch {} delete voteWatchers[id]; delete voteTallies[id]; }
+    });
+    // abonne les nouveaux pronostics ouverts (décompte live privé régie)
+    openIds.forEach(id => {
+      if (!(id in voteWatchers)) {
+        voteWatchers[id] = () => {};  // réserve la place le temps que l'abonnement se crée
+        watchVotes(id, tally => { voteTallies[id] = tally; renderPronoList(); }, () => {})
+          .then(unsub => { if (id in voteWatchers) voteWatchers[id] = unsub; else unsub(); });
+      }
+    });
+    renderPronoList();
+  }, err => { flashErr('Lecture pronostics : ' + (err.code || err.message)); });
+
+  // ---------- ACCÈS SPECTATEUR (QR) ----------
+  let _lastSpecUrl = '';
+  function renderSpectatorAccess() {
+    const base = state.spectatorBaseUrl || 'https://rxchrono.netlify.app';
+    const baseInput = document.getElementById('specBase');
+    if (baseInput && document.activeElement !== baseInput) baseInput.value = base;
+    const url = spectatorUrl(base, state.meetingId, state.category);
+    const urlEl = document.getElementById('specUrl');
+    if (urlEl) urlEl.textContent = url;
+    if (url !== _lastSpecUrl) {   // ne régénère le QR que si le lien change
+      _lastSpecUrl = url;
+      const img = document.getElementById('specQr');
+      if (img) img.src = qrDataUrl(url, { cell: 8, margin: 2 });
+    }
+  }
+  document.getElementById('specBaseBtn').onclick = () => {
+    push({ spectatorBaseUrl: document.getElementById('specBase').value.trim() || 'https://rxchrono.netlify.app' });
+    renderSpectatorAccess();
+  };
+  document.getElementById('specCopy').onclick = async () => {
+    try {
+      await navigator.clipboard.writeText(_lastSpecUrl);
+      const b = document.getElementById('specCopy'), t = b.textContent;
+      b.textContent = '✓ Copié'; setTimeout(() => { b.textContent = t; }, 1500);
+    } catch { flashErr('Copie impossible — sélectionne le lien à la main.'); }
+  };
+  document.getElementById('specDl').onclick = () => {
+    const a = document.createElement('a');
+    a.href = qrDataUrl(_lastSpecUrl, { cell: 10, margin: 3 });
+    a.download = 'qr-rxchrono-spectateur.png'; a.click();
+  };
+
+  // ---------- BANDEAU INFO / SPONSORS ----------
+  function pushInfoBand(patch) { push({ infoBand: { ...(state.infoBand || DEFAULT_CONTROL.infoBand), ...patch } }); paint(); }
+  // redimensionne un fichier image → data-URI léger (hauteur max) pour tenir dans le doc de contrôle
+  function fileToLogo(file, maxH = 130) {
+    return new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => {
+        const img = new Image();
+        img.onload = () => {
+          const scale = Math.min(1, maxH / img.height);
+          const w = Math.max(1, Math.round(img.width * scale)), h = Math.max(1, Math.round(img.height * scale));
+          const c = document.createElement('canvas'); c.width = w; c.height = h;
+          c.getContext('2d').drawImage(img, 0, 0, w, h);
+          resolve(c.toDataURL('image/png'));
+        };
+        img.onerror = reject; img.src = r.result;
+      };
+      r.onerror = reject; r.readAsDataURL(file);
+    });
+  }
+  function renderInfoBand() {
+    const ib = state.infoBand || {};
+    document.getElementById('ibToggle').classList.toggle('on', !!ib.enabled);
+    document.getElementById('ibN').textContent = ib.enabled ? 'actif' : 'off';
+    const lbl = document.getElementById('ibLabel'); if (document.activeElement !== lbl) lbl.value = ib.label || '';
+    const msg = document.getElementById('ibMsg'); if (document.activeElement !== msg) msg.value = ib.message || '';
+    const box = document.getElementById('ibLogos');
+    const arr = Array.isArray(ib.logos) ? ib.logos : [];
+    box.innerHTML = arr.length
+      ? arr.map((src, i) => `<span class="pchip" style="padding:4px 6px 4px 4px"><img src="${src}" style="height:28px;max-width:78px;object-fit:contain;background:#fff;border-radius:4px;padding:2px"><i data-iblogo="${i}">×</i></span>`).join('')
+      : '<span class="pempty">Aucun logo</span>';
+  }
+  document.getElementById('ibToggle').onclick = () => pushInfoBand({ enabled: !(state.infoBand?.enabled) });
+  document.getElementById('ibLabelBtn').onclick = () => pushInfoBand({ label: document.getElementById('ibLabel').value });
+  document.getElementById('ibMsgBtn').onclick = () => pushInfoBand({ message: document.getElementById('ibMsg').value });
+  document.getElementById('ibAddFile').onclick = () => document.getElementById('ibFile').click();
+  document.getElementById('ibFile').onchange = async e => {
+    const files = Array.from(e.target.files || []);
+    const logos = [...(state.infoBand?.logos || [])];
+    for (const f of files) { try { logos.push(await fileToLogo(f)); } catch {} }
+    if (logos.join('').length > 800000) flashErr('Logos trop lourds au total — retires-en ou prends des images plus légères.');
+    else pushInfoBand({ logos });
+    e.target.value = '';
+  };
+  document.getElementById('ibLogos').addEventListener('click', e => {
+    const rm = e.target.closest('[data-iblogo]'); if (!rm) return;
+    const logos = [...(state.infoBand?.logos || [])]; logos.splice(+rm.dataset.iblogo, 1); pushInfoBand({ logos });
+  });
 
   // ---------- INIT DEPUIS LE DOC EXISTANT ----------
   watchControl(c => {

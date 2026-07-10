@@ -12,7 +12,7 @@ export const CTRL_ID  = 'live';
 
 /** État par défaut (si le doc n'existe pas encore). */
 export const DEFAULT_CONTROL = {
-  scene:         'dashboard',   // 'dashboard' | 'grid' | 'next-heat' | 'intermission'
+  scene:         'dashboard',   // 'dashboard' | 'grid' | 'next-heat' | 'intermission' | 'fiche' | 'pronostic' | 'outro'
   visible:       true,          // afficher / masquer l'overlay
   championshipId:'',
   meetingId:     '',
@@ -33,6 +33,14 @@ export const DEFAULT_CONTROL = {
   videoVolume:   0,             // volume du son d'un lien (0-100 ; 0 = muet). Caméra : audio géré dans OBS.
   // scène fiche pilote / duel (1 pilote → fiche ; 2 → duel, même catégorie) :
   fiche:         { driverId1: '', driverId2: '' },
+  // scène « Résultats du pronostic » : id du pronostic à afficher à l'antenne
+  // (scene === 'pronostic'). Le décompte n'apparaît qu'une fois le vote fermé.
+  pronosticId:   '',
+  // base du lien d'accès spectateur (QR pronostics + classements) :
+  spectatorBaseUrl: 'https://rxchrono.netlify.app',
+  // bandeau bas d'écran : message libre + logos partenaires (par-dessus la scène) :
+  //  logos = tableau de data-URIs (images redimensionnées côté régie).
+  infoBand:      { enabled: false, label: 'INFO', message: '', logos: [] },
   // calque d'AFFICHAGE seulement — n'écrit jamais dans results/sessionParticipants :
   gridOverride:  null,          // { key, slots:[{pos, carNumber, lastName}] }
   updatedAt:     0,

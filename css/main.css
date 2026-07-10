@@ -283,6 +283,33 @@ ul { list-style: none; }
 .status-dot.pending      { background: var(--clr-warning); }
 
 /* ════════════════════════════════
+   ACCÈS ADMIN — masqué tant que <body> n'a pas .is-admin
+   (édition, configuration, réglages, journal d'audit, statut Firebase).
+   La sécurité réelle = règles Firestore ; ceci masque l'UI aux non-admins.
+════════════════════════════════ */
+body:not(.is-admin) .menu-item[data-view="persons"],
+body:not(.is-admin) .menu-item[data-view="drivers"],
+body:not(.is-admin) .menu-item[data-view="meetings"],
+body:not(.is-admin) .menu-item[data-view="engagements"],
+body:not(.is-admin) .menu-item[data-view="sessions"],
+body:not(.is-admin) .menu-item[data-view="timing"],
+body:not(.is-admin) .menu-item[data-view="audit"],
+body:not(.is-admin) .menu-item[data-view="config"],
+body:not(.is-admin) .menu-item[data-view="settings"],
+body:not(.is-admin) .menu-section--admin,
+body:not(.is-admin) .home-card[data-view="persons"],
+body:not(.is-admin) .home-card[data-view="drivers"],
+body:not(.is-admin) .home-card[data-view="meetings"],
+body:not(.is-admin) .home-card[data-view="engagements"],
+body:not(.is-admin) .home-card[data-view="sessions"],
+body:not(.is-admin) .home-card[data-view="timing"],
+body:not(.is-admin) .home-card[data-view="config"],
+body:not(.is-admin) #menu-firebase-status,
+body:not(.is-admin) #home-alert {
+  display: none !important;
+}
+
+/* ════════════════════════════════
    MAIN CONTENT
 ════════════════════════════════ */
 .app-main {

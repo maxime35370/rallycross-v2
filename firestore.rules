@@ -1,0 +1,183 @@
+rules_version = '2';
+
+// ═══════════════════════════════════════════════════════════════════
+//  RÈGLES FIRESTORE — RX Chrono  (version VERROUILLÉE)
+//  À coller en entier dans la console : Firestore → Règles → Publier.
+//
+//  Modèle :
+//   • LECTURE publique partout (overlays + mode spectateur, sans connexion).
+//   • ÉCRITURE (create / update / delete) réservée à la RÉGIE = isRegie()
+//     (compte authentifié NON anonyme = ta connexion email/mot de passe).
+//     → plus personne ne peut modifier/supprimer tes saisies sans être toi.
+//   • VOTES pronostics : le spectateur (anonyme) n'écrit QUE son propre vote,
+//     et seulement tant que le pronostic est « open ».
+//
+//  Sûr pour ton appli : toutes tes vues d'écriture (timing, drivers,
+//  meetings, sessions, engagements, persons, réglages) passent déjà par une
+//  connexion (requireAuth). Ces règles ne font que l'exiger aussi côté serveur.
+//  La validation de champs que tu avais est conservée (défense en profondeur).
+// ═══════════════════════════════════════════════════════════════════
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function hasFields(data, fields) {
+      return data.keys().hasAll(fields);
+    }
+    function validString(val, maxLen) {
+      return val is string && val.size() > 0 && val.size() <= maxLen;
+    }
+    function inRange(val, min, max) {
+      return val is int && val >= min && val <= max;
+    }
+    // Régie = TON (tes) compte(s) précis, PAS « n'importe quel compte non anonyme »
+    // (n'importe qui peut s'auto-inscrire en email/mot de passe). On restreint donc
+    // à une liste d'e-mails de confiance. ⬇ REMPLACE par le/les e-mail(s) exact(s)
+    // avec le(s)quel(s) tu te connectes à la régie.
+    function isRegie() {
+      return request.auth != null
+          && request.auth.token.email in ['maxime.theard@gmail.com'];
+    }
+
+    match /drivers/{docId} {
+      allow read:   if true;
+      allow delete: if isRegie();
+      allow create: if isRegie() &&
+        hasFields(request.resource.data, ['firstName','lastName','carNumber','category','year']) &&
+        validString(request.resource.data.firstName, 50) &&
+        validString(request.resource.data.lastName, 50) &&
+        request.resource.data.carNumber is int &&
+        request.resource.data.carNumber >= 1 &&
+        validString(request.resource.data.category, 50) &&
+        inRange(request.resource.data.year, 2020, 2030);
+      allow update: if isRegie() &&
+        validString(request.resource.data.firstName, 50) &&
+        validString(request.resource.data.lastName, 50) &&
+        request.resource.data.carNumber is int &&
+        request.resource.data.carNumber >= 1;
+    }
+
+    match /meetings/{docId} {
+      allow read:   if true;
+      allow delete: if isRegie();
+      allow create: if isRegie() &&
+        hasFields(request.resource.data, ['date','location','year','categories','nbMQ']) &&
+        validString(request.resource.data.location, 80) &&
+        inRange(request.resource.data.year, 2020, 2030) &&
+        inRange(request.resource.data.nbMQ, 1, 4) &&
+        request.resource.data.categories is list &&
+        request.resource.data.categories.size() > 0;
+      allow update: if isRegie();
+    }
+
+    match /sessions/{docId} {
+      allow read:   if true;
+      allow delete: if isRegie();
+      allow create, update: if isRegie() &&
+        hasFields(request.resource.data, ['meetingId','category','type']) &&
+        request.resource.data.type in ['EC','MQ','QF','DF','FIN'];
+    }
+
+    match /engagements/{docId} {
+      allow read:   if true;
+      allow delete: if isRegie();
+      allow create, update: if isRegie() &&
+        hasFields(request.resource.data, ['meetingId','driverId','category','year']);
+    }
+
+    match /sessionParticipants/{docId} {
+      allow read:   if true;
+      allow delete: if isRegie();
+      allow create, update: if isRegie() &&
+        hasFields(request.resource.data, ['sessionId','driverId','carNumber']);
+    }
+
+    match /results/{docId} {
+      allow read:   if true;
+      allow delete: if isRegie();
+      allow create, update: if isRegie() &&
+        hasFields(request.resource.data, ['sessionId','driverId','sessionType']) &&
+        request.resource.data.sessionType in ['EC','MQ','QF','DF','FIN'] &&
+        (request.resource.data.ms == null || request.resource.data.ms is int) &&
+        (request.resource.data.status == null ||
+         request.resource.data.status in ['DNS','DNF','DSQ','DSQ_RACE']);
+    }
+
+    match /interimStandings/{docId} {
+      allow read:   if true;
+      allow delete: if isRegie();
+      allow create, update: if isRegie() &&
+        hasFields(request.resource.data, ['meetingId','category','year','driverId','position']);
+    }
+
+    match /meetingStandings/{docId} {
+      allow read:   if true;
+      allow delete: if isRegie();
+      allow create, update: if isRegie() &&
+        hasFields(request.resource.data, ['meetingId','category','year','driverId','totalPts']);
+    }
+
+    match /championshipStandings/{docId} {
+      allow read:   if true;
+      allow delete: if isRegie();
+      allow create, update: if isRegie() &&
+        hasFields(request.resource.data, ['year','category','driverId']);
+    }
+
+    match /championships/{docId} {
+      allow read:  if true;
+      allow write: if isRegie();
+    }
+
+    match /persons/{docId} {
+      allow read:   if true;
+      allow delete: if isRegie();
+      allow create: if isRegie() &&
+        hasFields(request.resource.data, ['firstName','lastName']) &&
+        validString(request.resource.data.firstName, 50) &&
+        validString(request.resource.data.lastName, 50);
+      allow update: if isRegie() &&
+        validString(request.resource.data.firstName, 50) &&
+        validString(request.resource.data.lastName, 50);
+    }
+
+    match /auditLog/{docId} {
+      allow read:           if true;
+      allow create:         if isRegie();
+      allow update, delete: if false;
+    }
+
+    match /reglements/{docId} {
+      allow read:   if true;
+      allow delete: if isRegie();
+      allow create, update: if isRegie() &&
+        hasFields(request.resource.data, ['name']);
+    }
+
+    match /obsControl/{doc} {
+      allow read:  if true;         // l'overlay (non connecté) peut lire
+      allow write: if isRegie();    // la régie seule (compte non anonyme) écrit
+    }
+
+    // ── PRONOSTICS SPECTATEURS ──────────────────────────────────────
+    match /pronostics/{pid} {
+      allow read:  if true;
+      allow write: if isRegie();
+
+      match /votes/{uid} {
+        allow get:  if isRegie() || (request.auth != null && request.auth.uid == uid);
+        allow list: if isRegie();
+        allow create, update: if request.auth != null
+            && request.auth.uid == uid
+            && get(/databases/$(database)/documents/pronostics/$(pid)).data.status == 'open'
+            && request.resource.data.driverId is string
+            && request.resource.data.keys().hasOnly(['driverId', 'at']);
+        allow delete: if false;
+      }
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

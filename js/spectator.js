@@ -7,6 +7,7 @@
 import { db } from './firebase.js';
 import { msToDisplay, escHtml } from './utils.js';
 import { getActiveChampionship, getActiveChampionshipId } from './context.js';
+import { watchPronostics, myVote, castVote, ensureAnon } from '../overlay/_lib/obs-pronostics.js';
 
 // ─────────────────────────────────────────────────────────
 // ÉTAT LOCAL
@@ -183,6 +184,8 @@ function renderView() {
       </select>
       <button class="btn btn-ghost btn-sm" id="spc-fullscreen-btn" title="Plein ecran">⛶</button>
     </div>
+
+    <div id="spc-pronostics" class="spc-pronostics" style="display:none"></div>
 
     <div id="spc-content">
       <div class="tim-placeholder">
@@ -364,6 +367,104 @@ function stopRefresh() {
   if (_interimRefreshTimer) { clearInterval(_interimRefreshTimer); _interimRefreshTimer = null; }
   const dot = document.getElementById('spc-live-dot');
   if (dot) dot.classList.remove('spc-live-dot--active');
+}
+
+// ─────────────────────────────────────────────────────────
+// PRONOSTICS SPECTATEURS (vote depuis le mobile)
+//   • Aucun score visible tant que le vote est OUVERT (anti-influence).
+//   • Vote facultatif et modifiable jusqu'à la fermeture.
+//   • 1 vote / navigateur (session anonyme persistante → recharger ne
+//     recrée pas de vote). Les tendances n'apparaissent qu'à la fermeture.
+// ─────────────────────────────────────────────────────────
+let _pronoUid        = null;
+let _pronoDocs       = [];
+let _myVotes         = {};
+let _unsubPronostics = null;
+let _pronoClickBound = false;
+
+const PRONO_ICON      = { manche_winner: '🏆', interim_m2: '📊', ec_best: '⏱️', serie_winner: '🏁', final_winner: '🏆', custom: '🎯' };
+const PRONO_STATUS_FR = { open: 'Ouvert', closed: 'Votes clos', revealed: 'Résultat' };
+
+async function initPronostics() {
+  if (_unsubPronostics) return;                       // déjà abonné
+  if (!_pronoClickBound) { document.addEventListener('click', onPronoClick); _pronoClickBound = true; }
+  try { _pronoUid = await ensureAnon(); } catch { _pronoUid = null; }
+  try {
+    _unsubPronostics = await watchPronostics(async list => {
+      _pronoDocs = (list || []).filter(p => p.status && p.status !== 'draft');
+      if (_pronoUid) {
+        await Promise.all(_pronoDocs
+          .filter(p => p.status === 'open' && !(p.id in _myVotes))
+          .map(async p => { try { _myVotes[p.id] = await myVote(p.id, _pronoUid); } catch {} }));
+      }
+      renderPronostics();
+    }, () => {});
+  } catch {}
+}
+
+function stopPronostics() {
+  if (_unsubPronostics) { _unsubPronostics(); _unsubPronostics = null; }
+}
+
+async function onPronoClick(e) {
+  const opt = e.target.closest('.spc-opt'); if (!opt) return;
+  const pid = opt.dataset.pid, did = opt.dataset.did; if (!pid || !did) return;
+  const p = _pronoDocs.find(x => x.id === pid);
+  if (!p || p.status !== 'open') return;              // sécurité : plus de vote une fois fermé
+  if (!_pronoUid) { try { _pronoUid = await ensureAnon(); } catch { return; } }
+  const prev = _myVotes[pid];
+  if (prev === did) return;
+  _myVotes[pid] = did; renderPronostics();            // maj optimiste
+  try { await castVote(pid, _pronoUid, did); }
+  catch { _myVotes[pid] = prev; renderPronostics(); }  // rollback si refus
+}
+
+function pronoCardHtml(p) {
+  const icon = PRONO_ICON[p.type] || '🎯';
+  const opts = Array.isArray(p.options) ? p.options : [];
+  const head = `<div class="spc-pc-h"><span class="spc-pc-ic">${icon}</span><span class="spc-pc-q">${escHtml(p.question || '')}</span></div>
+    <div class="spc-pc-meta"><span class="spc-pc-cat">${escHtml(p.category || '')}</span><span class="spc-pbadge ${p.status}">${PRONO_STATUS_FR[p.status] || p.status}</span></div>`;
+
+  // ── Vote ouvert : options seules, aucun score ──
+  if (p.status === 'open') {
+    const mine = _myVotes[p.id] || '';
+    const rows = opts.map(o => `<button class="spc-opt ${o.driverId === mine ? 'sel' : ''}" data-pid="${escHtml(p.id)}" data-did="${escHtml(o.driverId)}">
+      <span class="spc-rn">${escHtml(String(o.num ?? ''))}</span><span class="spc-nm">${escHtml((o.name || '').toUpperCase())}</span><span class="spc-rd"></span></button>`).join('');
+    return `<div class="spc-pcard open">${head}${rows}
+      <div class="spc-pc-hint">${mine ? "✅ Vote enregistré — modifiable tant que c'est ouvert." : 'Touche un pilote pour voter (facultatif).'}</div></div>`;
+  }
+
+  // ── Vote fermé / révélé : tendances ──
+  const counts = p.tally || {};
+  const total  = p.totalVotes || opts.reduce((s, o) => s + (counts[o.driverId] || 0), 0);
+  const mine   = _myVotes[p.id] || '';
+  const rows   = opts.map(o => ({ o, c: counts[o.driverId] || 0 })).sort((a, b) => b.c - a.c);
+  const bars = rows.map(r => {
+    const pct    = total ? Math.round(r.c / total * 100) : 0;
+    const isMine = r.o.driverId === mine;
+    const isWin  = p.status === 'revealed' && p.correctDriverId === r.o.driverId;
+    const tags   = `${isWin ? '<span class="spc-tag ok">✓</span>' : ''}${isMine ? '<span class="spc-tag mine">Toi</span>' : ''}`;
+    return `<div class="spc-bar ${isMine ? 'mine' : ''} ${isWin ? 'correct' : ''}"><span class="spc-fill" style="width:${pct}%"></span>
+      <span class="spc-rn">${escHtml(String(r.o.num ?? ''))}</span><span class="spc-nm">${escHtml((r.o.name || '').toUpperCase())}${tags}</span><span class="spc-pct">${pct}%</span></div>`;
+  }).join('');
+  let verdict = '';
+  if (p.status === 'revealed' && mine) {
+    const ok = mine === p.correctDriverId;
+    verdict = `<div class="spc-verdict ${ok ? 'ok' : 'ko'}">${ok ? '🎉 Bien vu, tu avais raison !' : '😅 Raté cette fois !'}</div>`;
+  }
+  return `<div class="spc-pcard ${p.status}">${head}${bars}${verdict}</div>`;
+}
+
+function renderPronostics() {
+  const box = document.getElementById('spc-pronostics');
+  if (!box) return;
+  const rank = p => (p.status === 'open' ? 0 : p.status === 'closed' ? 1 : 2);
+  const ordered = [..._pronoDocs].sort((a, b) => rank(a) - rank(b) || (b.createdAt || 0) - (a.createdAt || 0));
+  if (!ordered.length) { box.innerHTML = ''; box.style.display = 'none'; return; }
+  const nOpen = ordered.filter(p => p.status === 'open').length;
+  box.style.display = '';
+  box.innerHTML = `<div class="spc-prono-sect">🎯 Pronostics${nOpen ? `<span class="spc-prono-count">${nOpen} ouvert${nOpen > 1 ? 's' : ''}</span>` : ''}</div>`
+    + ordered.map(pronoCardHtml).join('');
 }
 
 // ─────────────────────────────────────────────────────────
@@ -842,6 +943,7 @@ export function initSpectator() {
       if (params.fullscreen === '1') applyFullscreen(true);
 
       renderView();
+      initPronostics();               // pronostics (indépendant du meeting/catégorie sélectionnés)
       await loadMeetings();
 
       // Auto-detect year from meeting if deep-linked
@@ -864,6 +966,7 @@ export function initSpectator() {
     } else {
       stopRefresh();
       stopCarousel();
+      stopPronostics();
       if (_isFullscreen) applyFullscreen(false);
     }
   });

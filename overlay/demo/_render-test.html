@@ -10,6 +10,7 @@
 <script type="module">
 import { renderScene } from '../_lib/obs-scenes.js';
 import { predictManche, predictChampSession, predictChampGap } from '../_lib/obs-predict.js';
+import { qrDataUrl, spectatorUrl } from '../_lib/obs-qr.js';
 
 const race = [
   {carNumber:11,lastName:'Grondin',ms:41892,status:null},{carNumber:2,lastName:'Boulbès',ms:42404,status:null},
@@ -196,6 +197,24 @@ data['duel'] = { headerText:'CIRCUIT DE LOHÉAC · SUPERCAR', category:'Supercar
     { carNumber:2,  lastName:'Boulbès', champPos:2, champPts:278, champGap:7, meetPos:1, bestMs:168900, wins:1 },
   ] };
 
+// Pronostic spectateurs (renderPronostic) — 3 états : ouvert (appel à voter) / fermé / révélé
+{
+  const opts = [
+    {driverId:'d11',num:'11',name:'Grondin'},{driverId:'d2',num:'2',name:'Boulbès'},
+    {driverId:'d77',num:'77',name:'Lefebvre'},{driverId:'d4',num:'4',name:'Dubourg'},
+    {driverId:'d33',num:'33',name:'Mailloux'},{driverId:'d9',num:'9',name:'André'},
+  ];
+  const _qr = qrDataUrl(spectatorUrl('https://rxchrono.netlify.app', 'demo123', 'Supercar'));
+  data['prono-open'] = { headerText:'RX CHRONO · SUPERCAR', category:'Supercar', voteUrl:'rxchrono.netlify.app/#spectator', qrDataUrl:_qr,
+    pronostic:{ status:'open', question:'Qui gagne la Finale Supercar ?', options:opts } };
+  data['prono-closed'] = { headerText:'RX CHRONO · SUPERCAR', category:'Supercar', qrDataUrl:_qr,
+    pronostic:{ status:'closed', question:'Qui gagne la Finale Supercar ?', options:opts,
+      totalVotes:148, tally:{d11:77,d2:40,d77:8,d4:6,d33:11,d9:6} } };
+  data['prono-revealed'] = { headerText:'RX CHRONO · SUPERCAR', category:'Supercar', qrDataUrl:_qr,
+    pronostic:{ status:'revealed', correctDriverId:'d2', question:'Qui gagne la Finale Supercar ?', options:opts,
+      totalVotes:148, tally:{d11:77,d2:40,d77:8,d4:6,d33:11,d9:6} } };
+}
+
 // ── BANDEAU PRÉDICTION (scénario d'objectif). Le moteur (obs-predict.js) calcule
 //    le scénario à partir d'un classement ; on l'affiche sous les colonnes.
 //    Données cohérentes : le pilote du bandeau figure dans les colonnes affichées.
@@ -256,6 +275,7 @@ const vl = params.get('vl');   // test placement vidéo : hg|hd|bg|bd|full
 const type = (scene === 'ordre' || scene === 'df-combo' || scene === 'fin-combo') ? 'grid'
   : (scene === 'dash-fin' || scene === 'dash-df' || scene === 'dash-mq2' || scene === 'dash-predict' || scene === 'dash-fin-predict') ? 'dashboard'
   : (scene === 'fiche' || scene === 'duel') ? 'fiche'
+  : scene.startsWith('prono') ? 'pronostic'
   : scene.startsWith('session') ? 'session' : scene;
 const sceneData = data[scene] || data.dashboard;
 if (vl) sceneData.videoLayout = vl;
@@ -267,6 +287,15 @@ if (vl) {
   s.style.cssText = 'background:linear-gradient(135deg,#1b2735,#0c1119)';
   s.innerHTML = '<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-family:Orbitron;color:#9fb4d8;font-size:22px;letter-spacing:2px">📹 CAMÉRA</div>';
   document.body.appendChild(s);
+}
+// bandeau info / sponsors (test : ?ib=1)
+if (params.get('ib')) {
+  const mk = (t, c) => 'data:image/svg+xml,' + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="220" height="80"><rect width="220" height="80" rx="10" fill="${c}"/><text x="110" y="52" font-family="Arial" font-size="34" font-weight="bold" fill="#fff" text-anchor="middle">${t}</text></svg>`);
+  const band = document.createElement('div'); band.id = 'info-band'; band.className = 'on';
+  band.innerHTML = `<div class="ib-badge">INFO</div><div class="ib-msg"><span class="ib-scroll">Bienvenue au Rallycross de Lohéac — merci à nos partenaires · prochaine épreuve à Tours en septembre&nbsp;!</span></div><div class="ib-logos"></div>`;
+  const lg = band.querySelector('.ib-logos');
+  [['MICHELIN', '#0b3d91'], ['MOTUL', '#d81e2c'], ['GoPro', '#111'], ['GORDINI', '#0a7d34']].forEach(([t, c]) => { const im = document.createElement('img'); im.src = mk(t, c); lg.appendChild(im); });
+  document.body.appendChild(band);
 }
 </script>
 </body></html>

@@ -532,6 +532,68 @@ export function renderFiche(d) {
 }
 
 // ─────────────────────────────────────────────────────────
+// SCÈNE : PRONOSTIC (résultats des votes spectateurs)
+//   Vote OUVERT   → appel à voter, AUCUN chiffre (pas d'influence).
+//   Vote FERMÉ    → barres de résultats (tendances figées à la fermeture).
+//   RÉVÉLÉ        → gagnant réel surligné en vert.
+//   Données : { headerText, category, voteUrl, pronostic }
+// ─────────────────────────────────────────────────────────
+function qrCells() {
+  // QR décoratif (le vrai QR = lien scope spectateur, à câbler). Motif fixe.
+  const pat = '1101011100101101001011010110010111010001101010011';
+  let cells = '';
+  for (let i = 0; i < 49; i++) cells += pat[i % pat.length] === '1' ? '<b></b>' : '<i></i>';
+  return `<div class="po-qrbox">${cells}</div>`;
+}
+
+export function renderPronostic(d) {
+  const header = ficheHead(d.headerText || d.category || '');
+  const p = d.pronostic;
+  if (!p) return `<div class="dash">${header}<div class="po-body"><div class="empty">Aucun pronostic sélectionné en régie…</div></div></div>`;
+  const opts = Array.isArray(p.options) ? p.options : [];
+  const kick = `<div class="po-kick"><span class="po-vt">PRONOSTIC</span><span>Le pronostic des spectateurs</span></div>`;
+  const q    = `<div class="po-q">${escHtml(p.question || '')}</div>`;
+
+  // ── Vote ouvert (ou brouillon) : appel à voter, pas de chiffres ──
+  if (p.status === 'open' || p.status === 'draft') {
+    const grid = opts.map(o =>
+      `<div class="po-opt"><span class="po-onum">${escHtml(String(o.num ?? ''))}</span><span class="po-onm">${escHtml((o.name || '').toUpperCase())}</span></div>`).join('');
+    return `<div class="dash">${header}<div class="po-body po-open">
+      ${kick}${q}
+      <div class="po-grid">${grid || '<div class="empty">—</div>'}</div>
+      <div class="po-cta">
+        ${d.qrDataUrl ? `<img class="po-qrimg" src="${escHtml(d.qrDataUrl)}" alt="QR vote">` : qrCells()}
+        <div class="po-ctatxt"><b>Scanne &amp; vote&nbsp;!</b><span>${escHtml(d.voteUrl || 'Rejoins le mode spectateur RX Chrono')}</span></div>
+      </div>
+    </div></div>`;
+  }
+
+  // ── Vote fermé / révélé : barres de résultats ──
+  const counts   = p.tally || {};
+  const total    = p.totalVotes || opts.reduce((s, o) => s + (counts[o.driverId] || 0), 0);
+  const revealed = p.status === 'revealed';
+  const rows = opts.map(o => ({ o, c: counts[o.driverId] || 0 })).sort((a, b) => b.c - a.c);
+  const maxC = rows.length ? rows[0].c : 0;
+  const bars = rows.map(r => {
+    const pct  = total ? Math.round(r.c / total * 100) : 0;
+    const win  = revealed && p.correctDriverId === r.o.driverId;
+    const lead = !revealed && r.c === maxC && maxC > 0;
+    return `<div class="po-bar ${win ? 'win' : ''} ${lead ? 'lead' : ''}"><span class="po-f" style="width:${pct}%"></span>
+      <span class="po-num">${escHtml(String(r.o.num ?? ''))}</span>
+      <span class="po-nm">${escHtml((r.o.name || '').toUpperCase())}${win ? '<span class="po-ok">✓ gagnant</span>' : ''}</span>
+      <span class="po-cnt">${r.c} vote${r.c > 1 ? 's' : ''}</span>
+      <span class="po-pct">${pct}%</span></div>`;
+  }).join('');
+  return `<div class="dash">${header}<div class="po-body">
+    ${kick}${q}
+    <div class="po-bars">${bars || '<div class="empty">Aucun vote enregistré.</div>'}</div>
+    <div class="po-foot"><span class="po-tot">🗳️ <b>${total}</b> vote${total > 1 ? 's' : ''}</span>
+      <span class="po-res ${revealed ? '' : 'muted'}">${revealed ? 'Résultat officiel' : 'Votes clos'}</span>
+      ${d.qrDataUrl ? `<span class="po-footqr"><img src="${escHtml(d.qrDataUrl)}" alt="QR"><span>Scanne&nbsp;&amp;&nbsp;joue</span></span>` : ''}</div>
+  </div></div>`;
+}
+
+// ─────────────────────────────────────────────────────────
 // AIGUILLAGE
 // ─────────────────────────────────────────────────────────
 
@@ -543,6 +605,7 @@ export function renderScene(scene, data) {
     case 'intermission': return renderIntermission(data);
     case 'ending':       return renderEnding(data);
     case 'fiche':        return renderFiche(data);
+    case 'pronostic':    return renderPronostic(data);
     case 'dashboard':
     default:             return renderDashboard(data);
   }

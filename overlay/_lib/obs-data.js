@@ -53,6 +53,91 @@ export function sortRace(results) {
   });
 }
 
+/**
+ * Sessions dont les données influent sur le résultat d'un pronostic « au résultat »
+ * → à surveiller en temps réel pour re-synchroniser le gagnant.
+ *  'session'       → la session cible.
+ *  'interim_after' → EC + manches 1..N (une pénalité sur l'une d'elles peut changer
+ *                    le leader intermédiaire après la manche N).
+ * @returns {Promise<string[]>} ids de sessions
+ */
+export async function pronoWatchSessionIds(prono) {
+  const t = prono?.resultTarget || {};
+  const sessions = await getSessions(prono.meetingId, prono.category);
+  if (t.kind === 'session') {
+    const s = findSession(sessions, t.sessionType, t.sessionNum);
+    return s ? [s.id] : [];
+  }
+  if (t.kind === 'interim_after') {
+    const n = t.sessionNum || 2;
+    const mqs = sessions.filter(s => s.type === 'MQ').sort((a, b) => (a.num ?? 0) - (b.num ?? 0));
+    const target = mqs.filter(s => (s.num ?? 0) <= n).slice(-1)[0];
+    if (!target) return [];
+    return sessions.filter(s => sessionRank(s) <= sessionRank(target)).map(s => s.id);
+  }
+  return [];
+}
+
+/**
+ * Classement intermédiaire APRÈS la manche N (ordonné par position), ou null si les
+ * manches 1..N ne sont pas TOUTES complètes (anti-flicker : on n'affiche pas de
+ * leader tant qu'une manche est en cours de saisie). Nécessite le règlement (points).
+ */
+async function interimStandingsAfter(meetingId, category, regulation, mqNum) {
+  const sessions = await getSessions(meetingId, category);
+  const mqs = sessions.filter(s => s.type === 'MQ').sort((a, b) => (a.num ?? 0) - (b.num ?? 0));
+  const upToMqs = mqs.filter(s => (s.num ?? 0) <= mqNum);
+  if (upToMqs.length < mqNum) return null;   // pas encore assez de manches créées
+  for (const m of upToMqs) {   // chaque manche 1..N doit être entièrement saisie
+    const [res, parts] = await Promise.all([getResults(m.id), getParticipants(m.id)]);
+    if (!parts.length) return null;
+    const entered = new Set(res.filter(r => r.ms != null || r.status).map(r => r.driverId));
+    if (!parts.every(p => entered.has(p.driverId))) return null;   // manche en cours → on attend
+  }
+  const target = upToMqs[upToMqs.length - 1];
+  const upto = sessions.filter(s => sessionRank(s) <= sessionRank(target));
+  const rows = await calcInterimStandings(db, upto, regulation);
+  return rows.slice().sort((a, b) => (a.position ?? 99) - (b.position ?? 99));
+}
+
+/**
+ * Vainqueur RÉEL d'un pronostic « au résultat », calculé depuis les données live
+ * → suit l'évolution des classements (pénalités comprises).
+ *  'session'       → P1 au chrono de la session, PARMI les pilotes proposés (sans règlement).
+ *  'interim_after' → leader du classement intermédiaire après la manche N, PARMI les
+ *                    pilotes proposés (nécessite `regulation` pour les points).
+ * ANTI-FLICKER : ne renvoie un gagnant que lorsque la/les session(s) concernée(s)
+ * sont COMPLÈTES (tous les pilotes attendus saisis). Sinon null.
+ * @returns {Promise<string|null>}
+ */
+export async function computePronoWinner(prono, regulation) {
+  const t = prono?.resultTarget || {};
+  const opts = Array.isArray(prono.options) ? prono.options : [];
+  if (!opts.length) return null;
+  const optIds = new Set(opts.map(o => o.driverId));
+
+  if (t.kind === 'session') {
+    const sessions = await getSessions(prono.meetingId, prono.category);
+    const s = findSession(sessions, t.sessionType, t.sessionNum);
+    if (!s) return null;
+    const results = await getResults(s.id);
+    const entered = new Set(results.filter(r => r.ms != null || r.status).map(r => r.driverId));
+    if (!opts.every(o => entered.has(o.driverId))) return null;   // série en cours → on attend
+    const w = sortRace(results.filter(r => optIds.has(r.driverId)))[0];
+    if (!w || w.status || w.ms == null) return null;
+    return w.driverId || null;
+  }
+
+  if (t.kind === 'interim_after') {
+    const ordered = await interimStandingsAfter(prono.meetingId, prono.category, regulation, t.sessionNum || 2);
+    if (!ordered) return null;   // manches pas encore toutes complètes
+    const best = ordered.find(r => optIds.has(r.driverId));   // mieux classé parmi les pilotes proposés
+    return best?.driverId || null;
+  }
+
+  return null;   // 'manual'
+}
+
 // ─────────────────────────────────────────────────────────
 // POINTS D'UNE PHASE (QF / DF / FIN) — copie fidèle de championship.js
 // ─────────────────────────────────────────────────────────
