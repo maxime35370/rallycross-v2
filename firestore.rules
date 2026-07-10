@@ -30,10 +30,13 @@ service cloud.firestore {
     function inRange(val, min, max) {
       return val is int && val >= min && val <= max;
     }
-    // Régie = authentifié ET non anonyme (connexion email/mot de passe).
+    // Régie = TON (tes) compte(s) précis, PAS « n'importe quel compte non anonyme »
+    // (n'importe qui peut s'auto-inscrire en email/mot de passe). On restreint donc
+    // à une liste d'e-mails de confiance. ⬇ REMPLACE par le/les e-mail(s) exact(s)
+    // avec le(s)quel(s) tu te connectes à la régie.
     function isRegie() {
       return request.auth != null
-          && request.auth.token.firebase.sign_in_provider != 'anonymous';
+          && request.auth.token.email in ['maxime.theard@gmail.com'];
     }
 
     match /drivers/{docId} {
