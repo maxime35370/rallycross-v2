@@ -38,6 +38,9 @@ export const DEFAULT_CONTROL = {
   pronosticId:   '',
   // base du lien d'accès spectateur (QR pronostics + classements) :
   spectatorBaseUrl: 'https://rxchrono.netlify.app',
+  // bandeau bas d'écran : message libre + logos partenaires (par-dessus la scène) :
+  //  logos = tableau de data-URIs (images redimensionnées côté régie).
+  infoBand:      { enabled: false, label: 'INFO', message: '', logos: [] },
   // calque d'AFFICHAGE seulement — n'écrit jamais dans results/sessionParticipants :
   gridOverride:  null,          // { key, slots:[{pos, carNumber, lastName}] }
   updatedAt:     0,

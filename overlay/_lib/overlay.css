@@ -446,3 +446,18 @@ body.transparent{background:transparent}
 .po-ctatxt{display:flex;flex-direction:column;gap:4px}
 .po-ctatxt b{font-family:'Orbitron';font-weight:900;font-size:38px;color:var(--orange-2)}
 .po-ctatxt span{font-family:'Barlow Condensed';font-weight:500;font-size:26px;color:#c7cfdb;letter-spacing:1px}
+
+/* ============ BANDEAU INFO / SPONSORS (lower-third, par-dessus la scène) ============ */
+#info-band{position:absolute;left:0;right:0;bottom:0;height:78px;display:none;align-items:stretch;z-index:6;
+  background:linear-gradient(0deg,rgba(6,8,14,.98),rgba(10,13,20,.93));border-top:3px solid var(--orange);
+  box-shadow:0 -12px 34px rgba(0,0,0,.55)}
+#info-band.on{display:flex}
+.ib-badge{display:flex;align-items:center;padding:0 30px;background:linear-gradient(120deg,var(--orange),#c23d00);
+  font-family:'Orbitron',sans-serif;font-weight:900;font-size:25px;letter-spacing:3px;text-transform:uppercase;white-space:nowrap;flex:none}
+.ib-msg{flex:1;display:flex;align-items:center;overflow:hidden;padding:0 32px;min-width:0}
+.ib-scroll{font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:33px;letter-spacing:.5px;color:#eef3fa;white-space:nowrap}
+.ib-msg.scroll{padding:0}
+.ib-msg.scroll .ib-scroll{padding-left:100%;animation:ib-marquee 22s linear infinite}
+@keyframes ib-marquee{from{transform:translateX(0)}to{transform:translateX(-100%)}}
+.ib-logos{display:flex;align-items:center;gap:30px;padding:0 36px;background:rgba(255,255,255,.97);flex:none}
+.ib-logos img{height:54px;max-width:170px;object-fit:contain;display:block}

@@ -198,6 +198,36 @@
     }
   }
 
+  // Bandeau info / sponsors (persistant, par-dessus la scène). Ne se reconstruit
+  // que si le contenu change (évite le clignotement à chaque changement de scène).
+  let _lastIbSig = '';
+  function applyInfoBand(ctrl) {
+    const ib = ctrl.infoBand || {};
+    const on = !!ib.enabled && ctrl.visible !== false;
+    let el = document.getElementById('info-band');
+    if (!on) { if (el) el.classList.remove('on'); _lastIbSig = ''; return; }
+    if (!el) {
+      el = document.createElement('div'); el.id = 'info-band';
+      el.innerHTML = '<div class="ib-badge"></div><div class="ib-msg"><span class="ib-scroll"></span></div><div class="ib-logos"></div>';
+      document.body.appendChild(el);
+    }
+    const label = (ib.label || '').trim(), msg = (ib.message || '').trim();
+    const arr = Array.isArray(ib.logos) ? ib.logos : [];
+    const sig = label + '|' + msg + '|' + arr.map(s => (s || '').length).join(',');
+    if (sig !== _lastIbSig) {
+      _lastIbSig = sig;
+      const badge = el.querySelector('.ib-badge'), msgWrap = el.querySelector('.ib-msg');
+      const scroll = el.querySelector('.ib-scroll'), logos = el.querySelector('.ib-logos');
+      badge.textContent = label; badge.style.display = label ? '' : 'none';
+      scroll.textContent = msg; msgWrap.style.display = msg ? '' : 'none';
+      logos.innerHTML = '';
+      arr.forEach(src => { const img = document.createElement('img'); img.src = src; img.alt = ''; logos.appendChild(img); });
+      logos.style.display = arr.length ? '' : 'none';
+      requestAnimationFrame(() => { msgWrap.classList.toggle('scroll', scroll.scrollWidth > msgWrap.clientWidth + 4); });
+    }
+    el.classList.add('on');
+  }
+
   async function resolveRegulation(champId) {
     if (!championships.length) championships = await fsQuery('championships', []);
     return championships.find(c => c.id === champId)
@@ -579,6 +609,7 @@
     ctrlUnsub = await watchControl(async (ctrl) => {
       applyVisibility(ctrl.visible);
       applyVideo(ctrl);   // source/placement vidéo : appliqué en direct (sans recharger la scène)
+      applyInfoBand(ctrl);   // bandeau info / sponsors : appliqué en direct, par-dessus la scène
       const key = [ctrl.scene, ctrl.championshipId, ctrl.meetingId, ctrl.category,
                    ctrl.sessionType, ctrl.sessionNum, JSON.stringify(ctrl.gridOverride),
                    ctrl.headerText, ctrl.nextText, ctrl.countdownEnd, ctrl.graphMode,

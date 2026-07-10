@@ -129,6 +129,8 @@
   .sbtn.air{background:var(--orange);border-color:transparent;color:#fff;font-family:'Orbitron';font-weight:700;font-size:13px;letter-spacing:1px}
   .sbtn.air.on{background:#39414f;box-shadow:inset 0 0 0 1px var(--green)}
   .pempty{font-family:'Barlow Condensed';font-size:16px;color:var(--mut);padding:6px 2px}
+  .ta{width:100%;background:var(--card2);border:1px solid var(--line);color:#fff;border-radius:10px;padding:12px 14px;
+    font-family:'Exo 2',sans-serif;font-weight:400;font-size:16px;resize:vertical;min-height:58px}
 </style>
 </head>
 <body>
@@ -266,6 +268,20 @@
             </div>
           </div>
         </div>
+      </div>
+      <div class="card">
+        <h3>📢 Bandeau info / sponsors <span class="n" id="ibN">off</span></h3>
+        <div class="note">Bandeau bas d'écran par-dessus la scène : un message libre et/ou des logos partenaires. Message trop long → défilement automatique.</div>
+        <div class="row2" style="justify-content:flex-start;margin:0 0 12px">
+          <div class="toggle" id="ibToggle"><span>Afficher le bandeau</span><span class="pill"></span></div>
+        </div>
+        <div class="field" style="margin-bottom:10px"><input id="ibLabel" placeholder="Label (ex. INFO, PARTENAIRES)"><button class="apply" id="ibLabelBtn">OK</button></div>
+        <textarea id="ibMsg" class="ta" placeholder="Message libre à afficher…" rows="2"></textarea>
+        <div class="actions" style="margin-top:8px"><button class="ghost primary" id="ibMsgBtn">Appliquer le message</button></div>
+        <div style="font-family:'Barlow Condensed';font-weight:600;font-size:14px;letter-spacing:1px;color:var(--mut);text-transform:uppercase;margin:14px 0 8px">Logos partenaires</div>
+        <div class="pchips" id="ibLogos"><span class="pempty">Aucun logo</span></div>
+        <div class="actions"><button class="ghost" id="ibAddFile">📁 Ajouter un logo (image)</button></div>
+        <input type="file" id="ibFile" accept="image/*" multiple style="display:none">
       </div>
     </div>
 
@@ -438,6 +454,7 @@
     document.getElementById('ficheN').textContent = nFi === 0 ? '—' : nFi === 1 ? 'fiche' : 'duel';
     renderSlots();
     renderSpectatorAccess();
+    renderInfoBand();
   }
 
   function renderSlots() {
@@ -813,6 +830,55 @@
     a.href = qrDataUrl(_lastSpecUrl, { cell: 10, margin: 3 });
     a.download = 'qr-rxchrono-spectateur.png'; a.click();
   };
+
+  // ---------- BANDEAU INFO / SPONSORS ----------
+  function pushInfoBand(patch) { push({ infoBand: { ...(state.infoBand || DEFAULT_CONTROL.infoBand), ...patch } }); paint(); }
+  // redimensionne un fichier image → data-URI léger (hauteur max) pour tenir dans le doc de contrôle
+  function fileToLogo(file, maxH = 130) {
+    return new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => {
+        const img = new Image();
+        img.onload = () => {
+          const scale = Math.min(1, maxH / img.height);
+          const w = Math.max(1, Math.round(img.width * scale)), h = Math.max(1, Math.round(img.height * scale));
+          const c = document.createElement('canvas'); c.width = w; c.height = h;
+          c.getContext('2d').drawImage(img, 0, 0, w, h);
+          resolve(c.toDataURL('image/png'));
+        };
+        img.onerror = reject; img.src = r.result;
+      };
+      r.onerror = reject; r.readAsDataURL(file);
+    });
+  }
+  function renderInfoBand() {
+    const ib = state.infoBand || {};
+    document.getElementById('ibToggle').classList.toggle('on', !!ib.enabled);
+    document.getElementById('ibN').textContent = ib.enabled ? 'actif' : 'off';
+    const lbl = document.getElementById('ibLabel'); if (document.activeElement !== lbl) lbl.value = ib.label || '';
+    const msg = document.getElementById('ibMsg'); if (document.activeElement !== msg) msg.value = ib.message || '';
+    const box = document.getElementById('ibLogos');
+    const arr = Array.isArray(ib.logos) ? ib.logos : [];
+    box.innerHTML = arr.length
+      ? arr.map((src, i) => `<span class="pchip" style="padding:4px 6px 4px 4px"><img src="${src}" style="height:28px;max-width:78px;object-fit:contain;background:#fff;border-radius:4px;padding:2px"><i data-iblogo="${i}">×</i></span>`).join('')
+      : '<span class="pempty">Aucun logo</span>';
+  }
+  document.getElementById('ibToggle').onclick = () => pushInfoBand({ enabled: !(state.infoBand?.enabled) });
+  document.getElementById('ibLabelBtn').onclick = () => pushInfoBand({ label: document.getElementById('ibLabel').value });
+  document.getElementById('ibMsgBtn').onclick = () => pushInfoBand({ message: document.getElementById('ibMsg').value });
+  document.getElementById('ibAddFile').onclick = () => document.getElementById('ibFile').click();
+  document.getElementById('ibFile').onchange = async e => {
+    const files = Array.from(e.target.files || []);
+    const logos = [...(state.infoBand?.logos || [])];
+    for (const f of files) { try { logos.push(await fileToLogo(f)); } catch {} }
+    if (logos.join('').length > 800000) flashErr('Logos trop lourds au total — retires-en ou prends des images plus légères.');
+    else pushInfoBand({ logos });
+    e.target.value = '';
+  };
+  document.getElementById('ibLogos').addEventListener('click', e => {
+    const rm = e.target.closest('[data-iblogo]'); if (!rm) return;
+    const logos = [...(state.infoBand?.logos || [])]; logos.splice(+rm.dataset.iblogo, 1); pushInfoBand({ logos });
+  });
 
   // ---------- INIT DEPUIS LE DOC EXISTANT ----------
   watchControl(c => {

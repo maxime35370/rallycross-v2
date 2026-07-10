@@ -288,5 +288,14 @@ if (vl) {
   s.innerHTML = '<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-family:Orbitron;color:#9fb4d8;font-size:22px;letter-spacing:2px">📹 CAMÉRA</div>';
   document.body.appendChild(s);
 }
+// bandeau info / sponsors (test : ?ib=1)
+if (params.get('ib')) {
+  const mk = (t, c) => 'data:image/svg+xml,' + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="220" height="80"><rect width="220" height="80" rx="10" fill="${c}"/><text x="110" y="52" font-family="Arial" font-size="34" font-weight="bold" fill="#fff" text-anchor="middle">${t}</text></svg>`);
+  const band = document.createElement('div'); band.id = 'info-band'; band.className = 'on';
+  band.innerHTML = `<div class="ib-badge">INFO</div><div class="ib-msg"><span class="ib-scroll">Bienvenue au Rallycross de Lohéac — merci à nos partenaires · prochaine épreuve à Tours en septembre&nbsp;!</span></div><div class="ib-logos"></div>`;
+  const lg = band.querySelector('.ib-logos');
+  [['MICHELIN', '#0b3d91'], ['MOTUL', '#d81e2c'], ['GoPro', '#111'], ['GORDINI', '#0a7d34']].forEach(([t, c]) => { const im = document.createElement('img'); im.src = mk(t, c); lg.appendChild(im); });
+  document.body.appendChild(band);
+}
 </script>
 </body></html>
