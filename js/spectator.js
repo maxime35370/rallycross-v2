@@ -383,7 +383,7 @@ let _pronoErr        = {};   // pid -> message d'erreur du dernier vote (affich�
 let _unsubPronostics = null;
 let _pronoClickBound = false;
 
-const PRONO_ICON      = { manche_winner: '🏆', interim_m2: '📊', interim_final: '📊', ec_best: '⏱️', serie_winner: '🏁', final_winner: '🏆', custom: '🎯' };
+const PRONO_ICON      = { manche_winner: '🏆', interim_m2: '📊', interim_final: '📊', ec_best: '⏱️', serie_winner: '🏁', df_winner: '🥈', final_winner: '🏆', custom: '🎯' };
 const PRONO_STATUS_FR = { open: 'Ouvert', closed: 'Votes clos', revealed: 'Résultat' };
 
 async function initPronostics() {
@@ -479,7 +479,7 @@ function pronoCardHtml(p) {
     const isWin  = p.status === 'revealed' && p.correctDriverId === r.o.driverId;
     const tags   = `${isWin ? '<span class="spc-tag ok">✓</span>' : ''}${isMine ? '<span class="spc-tag mine">Toi</span>' : ''}`;
     return `<div class="spc-bar ${isMine ? 'mine' : ''} ${isWin ? 'correct' : ''}"><span class="spc-fill" style="width:${pct}%"></span>
-      <span class="spc-rn">${escHtml(String(r.o.num ?? ''))}</span><span class="spc-nm">${escHtml((r.o.name || '').toUpperCase())}${tags}</span><span class="spc-pct">${pct}%</span></div>`;
+      <span class="spc-rn">${escHtml(String(r.o.num ?? ''))}</span><span class="spc-nm">${escHtml((r.o.name || '').toUpperCase())}${tags}</span><span class="spc-pct">${pct}%<span class="spc-cnt">${r.c} vote${r.c > 1 ? 's' : ''}</span></span></div>`;
   }).join('');
   let verdict = '';
   if (p.status === 'revealed' && mine) {

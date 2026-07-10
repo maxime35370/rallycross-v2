@@ -244,6 +244,7 @@
           <option value="interim_final">📊 Leader du classement intermédiaire (après toutes les manches)</option>
           <option value="ec_best">⏱️ Meilleur temps des essais chronos</option>
           <option value="serie_winner">🏁 Vainqueur d'une série (pilotes en ligne)</option>
+          <option value="df_winner">🥈 Vainqueur de la demi-finale (sélectionne ½ A ou ½ B)</option>
           <option value="final_winner">🏆 Vainqueur de la finale</option>
           <option value="custom">✏️ Question libre</option>
         </select>
@@ -364,7 +365,7 @@
   function renderCats() {
     // data-cat = id (valeur stockée dans les sessions) ; texte = nom (affichage)
     document.getElementById('cats').innerHTML = categories.map(c => `<div class="b" data-cat="${c.id}">${c.name}</div>`).join('');
-    document.querySelectorAll('#cats .b').forEach(b => b.onclick = () => { push({ category: b.dataset.cat }); paint(); loadPredictDrivers(); });
+    document.querySelectorAll('#cats .b').forEach(b => b.onclick = () => { push({ category: b.dataset.cat }); paint(); renderPronoList(); loadPredictDrivers(); });
   }
   function renderPhases() {
     document.getElementById('phases').innerHTML = phases.map(p => `<div class="b" data-ph="${p.t}-${p.n}">${p.l}</div>`).join('');
@@ -541,7 +542,7 @@
   document.getElementById('pvFrame').src = 'live?preview=1';
   document.querySelectorAll('#scenes .b').forEach(b => b.onclick = () => { push({ scene: b.dataset.scene }); paint(); });
   // (boutons catégories/phases : liés dans renderCats()/renderPhases(), car re-rendus au changement de championnat)
-  meetSel.onchange = () => { push({ meetingId: meetSel.value }); paint(); loadPredictDrivers(); };
+  meetSel.onchange = () => { push({ meetingId: meetSel.value }); paint(); renderPronoList(); loadPredictDrivers(); };
   champSel.onchange = async () => {
     const c = champs.find(x => x.id === champSel.value) || null;
     await loadChampionship(c);
@@ -608,6 +609,7 @@
       }
       case 'ec_best':       return `Qui signe le meilleur temps aux essais chronos ${cat} ?`;
       case 'serie_winner':  return `Qui gagne cette série ${cat} ?`;
+      case 'df_winner':     return `Qui gagne ${phaseLabelLong()} ${cat} ?`;
       case 'final_winner':  return `Qui gagne la finale ${cat} ?`;
       default:              return '';
     }
@@ -621,7 +623,8 @@
       case 'ec_best':       return { kind: 'session', sessionType: 'EC',  sessionNum: 1 };
       case 'final_winner':  return { kind: 'session', sessionType: 'FIN', sessionNum: 1 };
       case 'manche_winner':
-      case 'serie_winner':  return { kind: 'session', sessionType: state.sessionType, sessionNum: state.sessionNum };
+      case 'serie_winner':
+      case 'df_winner':     return { kind: 'session', sessionType: state.sessionType, sessionNum: state.sessionNum };
       case 'interim_m2':    return { kind: 'interim_after', sessionType: 'MQ', sessionNum: 2 };
       case 'interim_final': return { kind: 'interim_after', sessionType: 'MQ', sessionNum: meetings.find(m => m.id === state.meetingId)?.nbMQ || 4 };
       default:              return { kind: 'manual' };
@@ -709,10 +712,14 @@
   }
   function renderPronoList() {
     const box = document.getElementById('pronoList'); if (!box) return;
-    const nOpen = pronoDocs.filter(p => p.status === 'open').length;
-    document.getElementById('pronoN').textContent = pronoDocs.length ? (nOpen ? nOpen + ' ouvert' + (nOpen > 1 ? 's' : '') : pronoDocs.length + ' au total') : '—';
-    if (!pronoDocs.length) { box.innerHTML = '<div class="pempty">Aucun pronostic pour le moment.</div>'; return; }
-    box.innerHTML = pronoDocs.map(p => {
+    // Filtre : meeting courant + catégorie sélectionnée (si une l'est) — évite
+    // d'empiler les pronostics de toutes les catégories / de tous les events.
+    let docs = pronoDocs.filter(p => p.meetingId === state.meetingId);
+    if (state.category) docs = docs.filter(p => p.category === state.category);
+    const nOpen = docs.filter(p => p.status === 'open').length;
+    document.getElementById('pronoN').textContent = docs.length ? (nOpen ? nOpen + ' ouvert' + (nOpen > 1 ? 's' : '') : docs.length + ' au total') : '—';
+    if (!docs.length) { box.innerHTML = '<div class="pempty">Aucun pronostic pour cette catégorie.</div>'; return; }
+    box.innerHTML = docs.map(p => {
       const total = p.status === 'open' ? (voteTallies[p.id]?.total || 0) : (p.totalVotes || 0);
       const sub = p.status === 'draft'
         ? `${(p.options || []).length} pilotes · pas encore ouvert`
