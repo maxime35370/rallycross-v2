@@ -492,15 +492,16 @@ function pronoCardHtml(p) {
 function renderPronostics() {
   const box = document.getElementById('spc-pronostics');
   if (!box) return;
-  // Pronostics du meeting sélectionné :
-  //  • une catégorie est choisie → tous les pronostics de cette catégorie
-  //    (votes ouverts ET résultats) — cohérent avec la catégorie affichée ;
-  //  • aucune catégorie → seulement les votes OUVERTS en cours (toutes catégories)
-  //    pour ne pas empiler tous les résultats passés du meeting.
-  let docs = _pronoDocs.filter(p => p.meetingId === selectedMeetingId);
-  docs = selectedCategory
-    ? docs.filter(p => p.category === selectedCategory)
-    : docs.filter(p => p.status === 'open');
+  // Cycle de vie côté spectateur (identique avec ou sans catégorie) :
+  //  • OUVERT   → visible, on peut voter ;
+  //  • VOTES CLOS → MASQUÉ (la session est en cours, résultat pas encore révélé)
+  //    → le pronostic « disparaît » pendant la course ;
+  //  • RÉSULTAT (révélé par la régie) → RÉVISIBLE, pour que les gens voient l'issue.
+  // Une catégorie sélectionnée ne fait que restreindre à cette catégorie.
+  let docs = _pronoDocs.filter(p =>
+    p.meetingId === selectedMeetingId &&
+    (p.status === 'open' || p.status === 'revealed'));
+  if (selectedCategory) docs = docs.filter(p => p.category === selectedCategory);
   const rank = p => (p.status === 'open' ? 0 : p.status === 'closed' ? 1 : 2);
   const ordered = [...docs].sort((a, b) => rank(a) - rank(b) || (b.createdAt || 0) - (a.createdAt || 0));
   if (!ordered.length) { box.innerHTML = ''; box.style.display = 'none'; return; }
