@@ -393,7 +393,10 @@ function evolutionSvg(drivers, series, mode) {
   const greys = drivers.map((_, idx) => isTop(idx) ? '' : polyline(idx)).join('');
   const tops  = order.filter(isTop).map(polyline).join('');
 
-  return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" class="ev-svg">${grid}${xax}${greys}${tops}</svg>`;
+  // preserveAspectRatio="none" : le graphe s'étire pour REMPLIR tout le bloc (hauteur
+  // comprise) au lieu d'être centré avec des marges vides → écarts bien lisibles.
+  // Les traits gardent une épaisseur constante grâce à vector-effect (voir CSS .ev-svg).
+  return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" class="ev-svg">${grid}${xax}${greys}${tops}</svg>`;
 }
 
 export function renderSession(d) {
