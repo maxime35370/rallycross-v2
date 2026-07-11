@@ -442,6 +442,14 @@ export function renderSession(d) {
       </div>
     </div>${pb}</div>`;
   }
+  // Manche terminée mais graphique d'évolution masqué (choix régie) : 2 colonnes
+  // manche + intermédiaire (sans « À passer » vide ni graphe) → affichage plus aéré.
+  if (d.mancheDone && Array.isArray(d.interim)) {
+    return `<div class="dash${vl}">${header}<div class="sess-body sess-mq-done">
+      ${col(d.sessionLabel || 'Classement manche', '', d.rank || [], rankRow, false, false)}
+      ${col('Classement intermédiaire', '', d.interim, ptsRow, true, false)}
+    </div>${pb}</div>`;
+  }
   // Manche : 3 colonnes dès qu'un intermédiaire est fourni (manche ≥ 2),
   // sinon 2 colonnes (manche 1 : l'intermédiaire n'a pas encore de sens).
   const showInterim = Array.isArray(d.interim);
