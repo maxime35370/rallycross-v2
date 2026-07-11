@@ -120,12 +120,21 @@ export async function computePronoWinner(prono, regulation) {
     const sessions = await getSessions(prono.meetingId, prono.category);
     const s = findSession(sessions, t.sessionType, t.sessionNum);
     if (!s) return null;
-    const results = await getResults(s.id);
+    const [results, participants] = await Promise.all([getResults(s.id), getParticipants(s.id)]);
     const entered = new Set(results.filter(r => r.ms != null || r.status).map(r => r.driverId));
-    if (!opts.every(o => entered.has(o.driverId))) return null;   // série en cours → on attend
-    const w = sortRace(results.filter(r => optIds.has(r.driverId)))[0];
-    if (!w || w.status || w.ms == null) return null;
-    return w.driverId || null;
+    // Série complète = tous les pilotes proposés QUI PARTICIPENT à la session ont un
+    // résultat (temps ou statut). On n'attend PAS un pilote proposé absent des engagés
+    // (ex. un favori DNS jamais aligné → aucun résultat ne viendra, aucune ligne à taguer) :
+    // sinon le gagnant ne se calcule jamais. Repli sur les proposés si la liste d'engagés
+    // n'est pas disponible.
+    const partIds = participants.length ? new Set(participants.map(p => p.driverId)) : null;
+    const waiting = partIds ? opts.filter(o => partIds.has(o.driverId)) : opts;
+    if (!waiting.every(o => entered.has(o.driverId))) return null;   // saisie en cours → on attend
+    // Gagnant = meilleur chrono PARMI les proposés ayant un temps valide (finisher « propre »).
+    // On IGNORE les pilotes en statut (DNF / DNS / DSQ) au lieu d'abandonner le calcul quand
+    // le tri en fait remonter un en tête. Vaut pour TOUTES les phases (EC / MQ / QF / DF / FIN).
+    const w = sortRace(results.filter(r => optIds.has(r.driverId) && r.ms != null && !r.status))[0];
+    return w?.driverId || null;   // aucun proposé n'a de temps valide → pas de gagnant auto
   }
 
   if (t.kind === 'interim_after') {
