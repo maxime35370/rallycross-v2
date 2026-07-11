@@ -193,6 +193,8 @@ function renderView() {
         <div class="placeholder-title">Sélectionnez un meeting et une catégorie</div>
       </div>
     </div>
+
+    <div id="spc-pronostics-past" class="spc-pronostics" style="display:none;margin-top:var(--sp-lg)"></div>
   `;
 
   bindEvents();
@@ -490,25 +492,43 @@ function pronoCardHtml(p) {
 }
 
 function renderPronostics() {
-  const box = document.getElementById('spc-pronostics');
+  const box     = document.getElementById('spc-pronostics');       // haut : sondages EN COURS
+  const pastBox = document.getElementById('spc-pronostics-past');   // bas  : résultats RÉVÉLÉS
   if (!box) return;
   // Cycle de vie côté spectateur (identique avec ou sans catégorie) :
-  //  • OUVERT   → visible, on peut voter ;
+  //  • OUVERT   → visible EN HAUT, on peut voter (appel à voter dès l'arrivée) ;
   //  • VOTES CLOS → MASQUÉ (la session est en cours, résultat pas encore révélé)
   //    → le pronostic « disparaît » pendant la course ;
-  //  • RÉSULTAT (révélé par la régie) → RÉVISIBLE, pour que les gens voient l'issue.
+  //  • RÉSULTAT (révélé par la régie) → visible EN BAS, SOUS les classements, pour
+  //    que les gens voient l'issue sans que ça pousse les classements vers le bas.
   // Une catégorie sélectionnée ne fait que restreindre à cette catégorie.
   let docs = _pronoDocs.filter(p =>
     p.meetingId === selectedMeetingId &&
     (p.status === 'open' || p.status === 'revealed'));
   if (selectedCategory) docs = docs.filter(p => p.category === selectedCategory);
-  const rank = p => (p.status === 'open' ? 0 : p.status === 'closed' ? 1 : 2);
-  const ordered = [...docs].sort((a, b) => rank(a) - rank(b) || (b.createdAt || 0) - (a.createdAt || 0));
-  if (!ordered.length) { box.innerHTML = ''; box.style.display = 'none'; return; }
-  const nOpen = ordered.filter(p => p.status === 'open').length;
-  box.style.display = '';
-  box.innerHTML = `<div class="spc-prono-sect">🎯 Pronostics${nOpen ? `<span class="spc-prono-count">${nOpen} ouvert${nOpen > 1 ? 's' : ''}</span>` : ''}</div>`
-    + ordered.map(pronoCardHtml).join('');
+  const byRecent = (a, b) => (b.createdAt || 0) - (a.createdAt || 0);
+
+  // EN COURS → en haut
+  const open = docs.filter(p => p.status === 'open').sort(byRecent);
+  if (open.length) {
+    box.style.display = '';
+    box.innerHTML = `<div class="spc-prono-sect">🎯 Pronostics<span class="spc-prono-count">${open.length} ouvert${open.length > 1 ? 's' : ''}</span></div>`
+      + open.map(pronoCardHtml).join('');
+  } else {
+    box.innerHTML = ''; box.style.display = 'none';
+  }
+
+  // RÉVÉLÉS (résultats) → en bas, après les classements
+  if (pastBox) {
+    const past = docs.filter(p => p.status === 'revealed').sort(byRecent);
+    if (past.length) {
+      pastBox.style.display = '';
+      pastBox.innerHTML = `<div class="spc-prono-sect">🏁 Résultats des pronostics</div>`
+        + past.map(pronoCardHtml).join('');
+    } else {
+      pastBox.innerHTML = ''; pastBox.style.display = 'none';
+    }
+  }
 }
 
 // ─────────────────────────────────────────────────────────
