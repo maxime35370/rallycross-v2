@@ -481,10 +481,14 @@
           interim.forEach(mark);
           data.interim = interim;
         }
-        // manche terminée (plus personne à passer) → graphique d'évolution à droite
+        // manche terminée (plus personne à passer) → graphique d'évolution à droite,
+        // SAUF si masqué en régie (graphMode 'none') : on bascule alors en 2 colonnes aérées.
         if (ctrl.sessionType === 'MQ' && todo.length === 0) {
-          const evo = await getInterimEvolution(ctrl.meetingId, ctrl.category, reg, session).catch(() => null);
-          if (evo && evo.series.length >= 2) data.graph = { ...evo, mode: ctrl.graphMode === 'points' ? 'points' : 'places' };
+          data.mancheDone = true;
+          if (ctrl.graphMode !== 'none') {
+            const evo = await getInterimEvolution(ctrl.meetingId, ctrl.category, reg, session).catch(() => null);
+            if (evo && evo.series.length >= 2) data.graph = { ...evo, mode: ctrl.graphMode === 'points' ? 'points' : 'places' };
+          }
         }
         if (!alive()) return;
         root.innerHTML = renderScene('session', data);

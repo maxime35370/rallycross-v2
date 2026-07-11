@@ -156,6 +156,7 @@ body.transparent{background:transparent}
 .sess-mq{grid-template-columns:.8fr 1.1fr 1.1fr}
 .sess-mq2{grid-template-columns:1fr 1.5fr}   /* manche 1 : à passer | classement (sans intermédiaire) */
 .sess-graph{grid-template-columns:1fr 1fr 2fr}   /* manche finie : manche | intermédiaire | graphique */
+.sess-mq-done{grid-template-columns:1fr 1fr}   /* manche finie, graphique masqué : manche | intermédiaire */
 .graph-cb{padding:8px 14px !important}
 .ev-svg{width:100%;height:100%;display:block}
 .ev-svg .gl{stroke:rgba(255,255,255,.07)}
