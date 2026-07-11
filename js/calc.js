@@ -451,6 +451,11 @@ export async function calcInterimStandings(db, sessions, regulation) {
   //    plus recent au plus ancien.
   eligible.sort((a, b) => {
     if (b.totalPoints !== a.totalPoints) return b.totalPoints - a.totalPoints;
+    // 1er départage : BONUS ESSAIS CHRONOS (règle officielle FFSA — la feuille
+    // « classement intermédiaire » départage les ex æquo aux points par le résultat
+    // des essais avant les critères de manche). Neutre pour les championnats sans
+    // bonus EC : tout le monde à 0 → aucun effet, on passe au critère suivant.
+    if (b.ecBonus !== a.ecBonus) return b.ecBonus - a.ecBonus;
     if (tiebreakerMode) {
       return compareInterimTiebreaker(a, b, regulation, mqNumsDescending);
     }
@@ -467,7 +472,10 @@ export async function calcInterimStandings(db, sessions, regulation) {
   eligible.forEach((d, i) => {
     if (i > 0) {
       const prev = eligible[i - 1];
-      let sameAll = d.totalPoints === prev.totalPoints;
+      // Ex æquo => même total ET même bonus EC (le bonus EC départage désormais
+      // en 1er : deux pilotes à points égaux mais bonus EC différents ne sont pas
+      // ex æquo). Si bonus EC identiques, on s'appuie sur les critères de manche.
+      let sameAll = d.totalPoints === prev.totalPoints && d.ecBonus === prev.ecBonus;
       if (sameAll && tiebreakerMode) {
         // Si tiebreaker defini, on s'appuie uniquement sur lui pour
         // l'ex aequo : sameAll si compareInterimTiebreaker == 0.
