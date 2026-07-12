@@ -12,16 +12,7 @@
 *{box-sizing:border-box;margin:0;padding:0}
 /* Dark mode par défaut (fond sombre uniforme). Pour superposer sur une vidéo
    en OBS, ouvrir l'overlay avec ?transparent=1 (le routeur rend le fond transparent). */
-/* La fenêtre réelle (html) prend tout le viewport et centre le canvas. */
-html{width:100vw;height:100vh;overflow:hidden;position:relative;
-  background:radial-gradient(1400px 820px at 50% -8%, #12161f, #0a0c11 55%, #070809)}
-html.transparent{background:transparent}
-/* Canvas fixe 1920×1080 mis à l'échelle pour TENIR dans la fenêtre : --ovscale est
-   calculé en JS = min(largeur/1920, hauteur/1080). En OBS réglé en 1920×1080 → échelle 1
-   (aucun changement). Dans une fenêtre plus petite (demi-écran) → réduit et centré, donc
-   tout reste visible (grilles ½/finales comprises). */
-body{position:absolute;top:50%;left:50%;width:1920px;height:1080px;overflow:hidden;
-  transform:translate(-50%,-50%) scale(var(--ovscale,1));transform-origin:center center;
+html,body{width:1920px;height:1080px;overflow:hidden;
   background:radial-gradient(1400px 820px at 50% -8%, #12161f, #0a0c11 55%, #070809);
   font-family:'Exo 2',system-ui,sans-serif;color:#fff}
 body.transparent{background:transparent}
