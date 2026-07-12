@@ -27,19 +27,9 @@
   const root = document.getElementById('root');
   const qs = new URLSearchParams(location.search);
   // fond sombre par défaut ; ?transparent=1 → fond transparent (superposition vidéo OBS)
-  // (classe posée sur html ET body : sinon le fond de html transparaîtrait sous le body).
-  if (qs.get('transparent')) { document.body.classList.add('transparent'); document.documentElement.classList.add('transparent'); }
+  if (qs.get('transparent')) document.body.classList.add('transparent');
   // ?preview=1 → moniteur d'aperçu régie : on n'active PAS la caméra (pas de getUserMedia)
   const PREVIEW = !!qs.get('preview');
-
-  // Adapte le canvas 1920×1080 à la taille de la fenêtre (demi-écran, aperçu…). En OBS
-  // réglé en 1920×1080, l'échelle vaut 1 → rendu inchangé ; sinon réduit/agrandi et centré.
-  function fitOverlay() {
-    const s = Math.min(window.innerWidth / 1920, window.innerHeight / 1080);
-    document.documentElement.style.setProperty('--ovscale', s > 0 ? s : 1);
-  }
-  fitOverlay();
-  window.addEventListener('resize', fitOverlay);
 
   function diag(msg, sub) {
     root.innerHTML = `<div class="ov-diag"><div class="t">🏁 RX CHRONO</div>
