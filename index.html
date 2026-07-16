@@ -25,6 +25,22 @@
   <link rel="stylesheet" href="css/modules/engagements.css">
   <link rel="stylesheet" href="css/modules/spectator.css">
   <link rel="stylesheet" href="css/modules/settings.css">
+
+  <!-- Cloudflare Web Analytics — visiteurs uniques du site, GRATUIT et SANS cookie (pas de bandeau RGPD).
+       Étapes : 1) compte gratuit sur dash.cloudflare.com → « Web Analytics » → Add a site : rxchrono.netlify.app
+                2) copie le token fourni et colle-le dans CF_TOKEN ci-dessous.
+       Tant que CF_TOKEN est vide, RIEN n'est chargé ni envoyé (aucun impact, aucun coût). -->
+  <script>
+    (function () {
+      var CF_TOKEN = "";               // ← colle ici ton token Cloudflare Web Analytics
+      if (!CF_TOKEN) return;
+      var s = document.createElement('script');
+      s.defer = true;
+      s.src = 'https://static.cloudflareinsights.com/beacon.min.js';
+      s.setAttribute('data-cf-beacon', JSON.stringify({ token: CF_TOKEN }));
+      document.head.appendChild(s);
+    })();
+  </script>
 </head>
 <body>
 

@@ -112,6 +112,31 @@ export async function tallyVotes(id) {
   return { counts, total };
 }
 
+/**
+ * Bilan des votes d'une ÉPREUVE (meeting) : votants UNIQUES (un pilote qui vote sur
+ * plusieurs pronostics ne compte qu'une fois), total de votes, et détail par pronostic.
+ * Lit les sous-collections `votes` (réservé à la régie / compte non-anonyme).
+ * @returns {Promise<{uniqueVoters:number,totalVotes:number,nbPronostics:number,pronostics:Array}>}
+ */
+export async function meetingVoteBilan(meetingId) {
+  await initFirebase();
+  const { collection, getDocs, query, where } = await fs();
+  const psnap = await getDocs(query(collection(db, PRONO_COL), where('meetingId', '==', meetingId)));
+  const uids = new Set();
+  let totalVotes = 0;
+  const pronostics = [];
+  for (const pdoc of psnap.docs) {
+    const vsnap = await getDocs(collection(db, PRONO_COL, pdoc.id, 'votes'));
+    let n = 0;
+    vsnap.forEach(v => { uids.add(v.id); n++; });   // v.id = UID du votant
+    totalVotes += n;
+    const d = pdoc.data();
+    pronostics.push({ id: pdoc.id, question: d.question || '', category: d.category || '', status: d.status || '', votes: n });
+  }
+  pronostics.sort((a, b) => b.votes - a.votes);
+  return { uniqueVoters: uids.size, totalVotes, nbPronostics: pronostics.length, pronostics };
+}
+
 /** Ferme les votes et fige le décompte agrégé dans le doc (lisible par le public). */
 export async function closePronostic(id, nowMs) {
   const t = await tallyVotes(id);

@@ -41,6 +41,14 @@
     box-shadow:0 8px 22px rgba(255,85,0,.32)}
   .b.scene{font-family:'Orbitron';font-weight:700;font-size:15px}
   .b.gm{flex:0 1 auto;min-width:70px;padding:9px 12px;font-size:13px}
+  .bilan-out{margin-top:12px}
+  .bilan-stats{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:6px}
+  .bstat{flex:1;min-width:96px;background:var(--card2);border:1px solid var(--line);border-radius:10px;padding:12px}
+  .bstat .bnum{font-family:'Orbitron';font-weight:800;font-size:26px;color:#fff;line-height:1}
+  .bstat .blbl{font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.6px;margin-top:6px}
+  .bilan-row{display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-top:1px solid var(--line);font-size:14px}
+  .bilan-row .bq{color:#c4ccd8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .bilan-row .bv{font-family:'Orbitron';font-weight:700;color:var(--orange);flex:none}
   .row2{display:flex;justify-content:flex-end;margin-top:12px}
   .toggle{display:flex;align-items:center;gap:10px;background:var(--card2);border:1px solid var(--line);
     border-radius:10px;padding:8px 16px;font-family:'Barlow Condensed';font-weight:600;font-size:18px;cursor:pointer}
@@ -263,6 +271,12 @@
         <div class="plist" id="pronoList"><div class="pempty">Aucun pronostic pour le moment.</div></div>
       </div>
       <div class="card">
+        <h3>📊 Bilan épreuve <span class="n">votes</span></h3>
+        <div class="note">Votants uniques et total de votes sur l'épreuve (meeting) sélectionnée — pour ton bilan sponsors. Un votant qui joue plusieurs pronostics ne compte qu'une fois. Lecture de tes données, rien n'est modifié.</div>
+        <div class="actions"><button class="ghost primary" id="bilanBtn">📊 Calculer le bilan de l'épreuve</button></div>
+        <div id="bilanOut" class="bilan-out"></div>
+      </div>
+      <div class="card">
         <h3>📱 Accès spectateur <span class="n">QR</span></h3>
         <div class="note">Lien public en lecture seule (pronostics + classements du meeting sélectionné). Le QR s'affiche aussi à l'antenne sur la scène pronostic. Partage-le ou imprime-le pour le public.</div>
         <div class="field" style="margin-bottom:12px">
@@ -326,7 +340,7 @@
   import { initFirebase, fsQuery, watchQuery } from './_lib/obs-firebase.js';
   import { watchControl, setControl, sessionKey, DEFAULT_CONTROL } from './_lib/obs-control.js';
   import { getSessions, findSession, getGridOrder, getInterim, getParticipants, computePronoWinner, pronoWatchSessionIds, getQualifCutoff } from './_lib/obs-data.js';
-  import { watchPronostics, watchVotes, createPronostic, updatePronostic, openPronostic, closePronostic, revealPronostic, deletePronostic } from './_lib/obs-pronostics.js';
+  import { watchPronostics, watchVotes, createPronostic, updatePronostic, openPronostic, closePronostic, revealPronostic, deletePronostic, meetingVoteBilan } from './_lib/obs-pronostics.js';
   import { qrDataUrl, spectatorUrl } from './_lib/obs-qr.js';
 
   const SDK = 'https://www.gstatic.com/firebasejs/10.12.0/';
@@ -562,6 +576,34 @@
   document.getElementById('visToggle').onclick = () => { push({ visible: !state.visible }); paint(); };
   document.querySelectorAll('#graphModes .b').forEach(b => b.onclick = () => { push({ graphMode: b.dataset.gm }); paint(); });
   document.getElementById('hdrBtn').onclick = () => push({ headerText: document.getElementById('hdr').value });
+  document.getElementById('bilanBtn').onclick = async () => {
+    const out = document.getElementById('bilanOut');
+    const esc = s => String(s ?? '').replace(/[<>&"]/g, c => ({ '<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;' }[c]));
+    if (!state.meetingId) { out.innerHTML = '<div class="pempty">Sélectionne d\'abord une épreuve (meeting) en haut.</div>'; return; }
+    out.innerHTML = '<div class="pempty">Calcul en cours…</div>';
+    try {
+      const b = await meetingVoteBilan(state.meetingId);
+      const rows = b.pronostics.length
+        ? b.pronostics.map(p => `<div class="bilan-row"><span class="bq">${esc(p.question) || '(sans intitulé)'}</span><span class="bv">${p.votes}</span></div>`).join('')
+        : '<div class="pempty">Aucun pronostic sur cette épreuve.</div>';
+      out.innerHTML = `
+        <div class="bilan-stats">
+          <div class="bstat"><div class="bnum">${b.uniqueVoters}</div><div class="blbl">Votants uniques</div></div>
+          <div class="bstat"><div class="bnum">${b.totalVotes}</div><div class="blbl">Votes au total</div></div>
+          <div class="bstat"><div class="bnum">${b.nbPronostics}</div><div class="blbl">Pronostics</div></div>
+        </div>
+        <div>${rows}</div>
+        <div class="actions" style="margin-top:10px"><button class="sbtn" id="bilanCopy">📋 Copier le bilan</button></div>`;
+      document.getElementById('bilanCopy').onclick = () => {
+        const txt = `Bilan épreuve — Votants uniques : ${b.uniqueVoters} · Votes : ${b.totalVotes} · Pronostics : ${b.nbPronostics}\n`
+          + b.pronostics.map(p => `- ${p.question || '(sans intitulé)'} : ${p.votes} votes`).join('\n');
+        navigator.clipboard?.writeText(txt);
+        const bt = document.getElementById('bilanCopy'); bt.textContent = '✓ Copié'; setTimeout(() => bt.textContent = '📋 Copier le bilan', 1500);
+      };
+    } catch (e) {
+      out.innerHTML = `<div class="pempty">Erreur : ${esc(e.code || e.message || 'inconnue')}</div>`;
+    }
+  };
   document.getElementById('nextBtn').onclick = () => push({ nextText: document.getElementById('nextTxt').value });
   document.querySelectorAll('[data-cd]').forEach(b => b.onclick = () => {
     const m = +b.dataset.cd;
