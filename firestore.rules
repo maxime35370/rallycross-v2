@@ -176,6 +176,26 @@ service cloud.firestore {
       }
     }
 
+    // ── CLASSEMENT DES PRONOSTIQUEURS (points par épreuve) ──────────
+    //  Écrit par la RÉGIE (calcul des points au dévoilement d'un
+    //  pronostic), lu par tout le monde (carte « classement » spectateur).
+    match /pronoScores/{meetingId} {
+      allow read:  if true;
+      allow write: if isRegie();
+    }
+
+    // ── PSEUDOS DES JOUEURS (pronostics) ────────────────────────────
+    //  Lecture publique (affichage au classement). Chaque spectateur
+    //  n'écrit QUE son propre pseudo (≤ 20 caractères, champ unique).
+    match /players/{uid} {
+      allow read:  if true;
+      allow write: if request.auth != null
+          && request.auth.uid == uid
+          && request.resource.data.pseudo is string
+          && request.resource.data.pseudo.size() <= 20
+          && request.resource.data.keys().hasOnly(['pseudo']);
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }
