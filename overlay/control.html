@@ -277,6 +277,12 @@
         <div id="bilanOut" class="bilan-out"></div>
       </div>
       <div class="card">
+        <h3>📸 Image partageable <span class="n">réseaux</span></h3>
+        <div class="note">Génère une image des résultats de la phase/session sélectionnée (podium + branding RX Chrono) à poster sur Insta / Facebook / X — pour faire connaître l'outil et ramener du public.</div>
+        <div class="actions"><button class="ghost primary" id="shareBtn">📸 Générer l'image de la session</button></div>
+        <div id="shareOut" class="bilan-out"></div>
+      </div>
+      <div class="card">
         <h3>📱 Accès spectateur <span class="n">QR</span></h3>
         <div class="note">Lien public en lecture seule (pronostics + classements du meeting sélectionné). Le QR s'affiche aussi à l'antenne sur la scène pronostic. Partage-le ou imprime-le pour le public.</div>
         <div class="field" style="margin-bottom:12px">
@@ -339,7 +345,7 @@
 <script type="module">
   import { initFirebase, fsQuery, watchQuery } from './_lib/obs-firebase.js';
   import { watchControl, setControl, sessionKey, DEFAULT_CONTROL } from './_lib/obs-control.js';
-  import { getSessions, findSession, getGridOrder, getInterim, getParticipants, computePronoWinner, pronoWatchSessionIds, getQualifCutoff } from './_lib/obs-data.js';
+  import { getSessions, findSession, getGridOrder, getInterim, getParticipants, computePronoWinner, pronoWatchSessionIds, getQualifCutoff, getEcRank, getMqRank, getPhaseRank } from './_lib/obs-data.js';
   import { watchPronostics, watchVotes, createPronostic, updatePronostic, openPronostic, closePronostic, revealPronostic, deletePronostic, meetingVoteBilan } from './_lib/obs-pronostics.js';
   import { qrDataUrl, spectatorUrl } from './_lib/obs-qr.js';
 
@@ -602,6 +608,104 @@
       };
     } catch (e) {
       out.innerHTML = `<div class="pempty">Erreur : ${esc(e.code || e.message || 'inconnue')}</div>`;
+    }
+  };
+
+  // ── Image partageable (carte résultats pour les réseaux sociaux) ─────
+  function rrect(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+  function shareTitle() {
+    const t = state.sessionType, n = state.sessionNum;
+    const phase = t === 'EC' ? 'Essais chronos' : t === 'MQ' ? 'Manche ' + n
+      : t === 'QF' ? 'Quart ' + n : t === 'DF' ? 'Demi-finale ' + (n === 1 ? 'A' : 'B')
+      : t === 'FIN' ? 'Finale' : (t || '');
+    return (phase + ' · ' + catName()).toUpperCase();
+  }
+  function drawShareCard(ctx, W, H, d) {
+    const g = ctx.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0, '#0d1220'); g.addColorStop(1, '#080a0f');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    const rg = ctx.createRadialGradient(W / 2, -60, 60, W / 2, -60, W * 0.85);
+    rg.addColorStop(0, 'rgba(255,90,31,.22)'); rg.addColorStop(1, 'rgba(255,90,31,0)');
+    ctx.fillStyle = rg; ctx.fillRect(0, 0, W, 520);
+    const pad = 64;
+    ctx.textBaseline = 'alphabetic'; ctx.textAlign = 'left';
+    ctx.font = '800 42px Orbitron, Arial, sans-serif';
+    ctx.fillStyle = '#eef2f7'; ctx.fillText('RX', pad, 96);
+    const rxW = ctx.measureText('RX').width;
+    ctx.fillStyle = '#ff7a3d'; ctx.fillText('CHRONO', pad + rxW + 8, 96);
+    ctx.textAlign = 'right'; ctx.font = '700 24px "Barlow Condensed", Arial, sans-serif';
+    ctx.fillStyle = '#9aa6b6'; ctx.fillText('RÉSULTATS OFFICIELS', W - pad, 92); ctx.textAlign = 'left';
+    const by = 132, bh = 100;
+    const bg = ctx.createLinearGradient(pad, 0, W - pad, 0);
+    bg.addColorStop(0, '#ff5a1f'); bg.addColorStop(1, '#c23d00');
+    ctx.fillStyle = bg; rrect(ctx, pad, by, W - pad * 2, bh, 16); ctx.fill();
+    ctx.textBaseline = 'middle'; ctx.font = '800 48px Orbitron, Arial, sans-serif'; ctx.fillStyle = '#fff';
+    ctx.fillText(d.title, pad + 30, by + bh / 2 + 2);
+    ctx.textBaseline = 'alphabetic'; ctx.font = '600 32px "Barlow Condensed", Arial, sans-serif'; ctx.fillStyle = '#c4ccd8';
+    ctx.fillText(d.subtitle || '', pad, by + bh + 56);
+    let y = by + bh + 100; const rowH = 100, gap = 12;
+    const pod = ['#ffcc33', '#cfd6e0', '#cd8d56'];
+    d.rows.forEach((r, i) => {
+      const top = i < 3 && r.position != null;
+      ctx.fillStyle = '#141a26'; rrect(ctx, pad, y, W - pad * 2, rowH, 14); ctx.fill();
+      ctx.fillStyle = top ? pod[i] : '#2a3342'; rrect(ctx, pad, y, 9, rowH, 4); ctx.fill();
+      ctx.textBaseline = 'middle';
+      ctx.textAlign = 'center'; ctx.font = '800 46px Orbitron, Arial, sans-serif';
+      ctx.fillStyle = top ? pod[i] : '#8b95a4';
+      ctx.fillText(r.position != null ? String(r.position) : '—', pad + 62, y + rowH / 2);
+      const nx = pad + 118, nw = 96, nh = 54;
+      ctx.fillStyle = '#0e1420'; rrect(ctx, nx, y + (rowH - nh) / 2, nw, nh, 9); ctx.fill();
+      ctx.font = '700 32px Orbitron, Arial, sans-serif'; ctx.fillStyle = '#cfd8e6'; ctx.textAlign = 'center';
+      ctx.fillText(String(r.carNumber ?? ''), nx + nw / 2, y + rowH / 2 + 1);
+      ctx.textAlign = 'left'; ctx.font = '700 44px "Barlow Condensed", Arial, sans-serif'; ctx.fillStyle = '#eef2f7';
+      let nm = (r.lastName || '').toUpperCase();
+      const maxNameW = (W - pad - 28 - 180) - (nx + nw + 30);
+      while (nm.length > 3 && ctx.measureText(nm).width > maxNameW) nm = nm.slice(0, -1);
+      ctx.fillText(nm, nx + nw + 30, y + rowH / 2 + 2);
+      ctx.textAlign = 'right'; ctx.font = '700 34px Orbitron, Arial, sans-serif';
+      ctx.fillStyle = r.status ? '#8b95a4' : '#cdd6e2';
+      ctx.fillText(r.value || '', W - pad - 28, y + rowH / 2 + 1);
+      ctx.textAlign = 'left';
+      y += rowH + gap;
+    });
+    ctx.textBaseline = 'alphabetic'; ctx.textAlign = 'left';
+    ctx.font = '800 28px Orbitron, Arial, sans-serif'; ctx.fillStyle = '#ff7a3d';
+    ctx.fillText('rxchrono.netlify.app', pad, H - 54);
+    ctx.textAlign = 'right'; ctx.font = '600 26px "Barlow Condensed", Arial, sans-serif'; ctx.fillStyle = '#9aa6b6';
+    ctx.fillText('Chrono & pronostics live', W - pad, H - 54); ctx.textAlign = 'left';
+  }
+  document.getElementById('shareBtn').onclick = async () => {
+    const out = document.getElementById('shareOut');
+    if (!state.meetingId || !state.category) { out.innerHTML = '<div class="pempty">Sélectionne meeting + catégorie + phase en haut.</div>'; return; }
+    out.innerHTML = '<div class="pempty">Génération…</div>';
+    try {
+      const reg = champs.find(c => c.id === state.championshipId) || champ;
+      const sessions = await getSessions(state.meetingId, state.category);
+      const session = findSession(sessions, state.sessionType, state.sessionNum);
+      let rows;
+      if (state.sessionType === 'EC') rows = await getEcRank(sessions, reg);
+      else if (!session) rows = null;
+      else if (state.sessionType === 'MQ') rows = await getMqRank(session, reg);
+      else rows = await getPhaseRank(session, reg);
+      if (!rows || !rows.length) { out.innerHTML = '<div class="pempty">Pas de résultats saisis pour cette phase.</div>'; return; }
+      rows = rows.slice(0, 8);
+      const meetLabel = (meetSel.selectedOptions && meetSel.selectedOptions[0]) ? meetSel.selectedOptions[0].textContent.trim() : '';
+      try { await document.fonts.ready; } catch (_) {}
+      const cv = document.createElement('canvas'); cv.width = 1080; cv.height = 1350;
+      drawShareCard(cv.getContext('2d'), 1080, 1350, { title: shareTitle(), subtitle: meetLabel, rows });
+      const url = cv.toDataURL('image/png');
+      out.innerHTML = `<img alt="Carte résultats" src="${url}" style="width:100%;border-radius:12px;border:1px solid var(--line);display:block">
+        <div class="actions" style="margin-top:10px"><a class="sbtn" download="rxchrono-${state.sessionType}${state.sessionNum || ''}.png" href="${url}">⬇️ Télécharger l'image</a></div>`;
+    } catch (e) {
+      out.innerHTML = `<div class="pempty">Erreur : ${(e && (e.code || e.message)) || 'inconnue'}</div>`;
     }
   };
   document.getElementById('nextBtn').onclick = () => push({ nextText: document.getElementById('nextTxt').value });
