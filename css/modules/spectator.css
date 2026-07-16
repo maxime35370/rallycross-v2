@@ -429,3 +429,28 @@
 }
 .spc-verdict.ok { background: var(--clr-success-dim); color: #7bf0a8; }
 .spc-verdict.ko { background: var(--clr-danger-dim); color: #ff9a9a; }
+
+/* Classement des pronostiqueurs (points par épreuve, barème à la rareté) */
+.spc-myscore {
+  background: linear-gradient(150deg, rgba(255,90,20,0.12), rgba(20,26,38,0.55));
+  border: 1px solid rgba(255,255,255,0.08); border-radius: 14px;
+  padding: 14px 16px; margin-bottom: var(--sp-md, 16px);
+}
+.spc-myscore .ms-head {
+  font-family: var(--font-condensed); font-weight: 700; font-size: 0.9rem; letter-spacing: 0.06em;
+  text-transform: uppercase; color: #fff; display: flex; align-items: baseline; gap: 8px;
+}
+.spc-myscore .ms-sub { font-weight: 600; font-size: 0.62rem; letter-spacing: 0.1em; color: #8b95a4; }
+.spc-myscore .ms-mine { margin: 8px 0 12px; font-size: 0.92rem; color: #c4ccd8; }
+.spc-myscore .ms-mine b { color: var(--clr-accent); font-family: var(--font-condensed); font-size: 1.1rem; }
+.spc-myscore .ms-top { display: flex; flex-direction: column; gap: 4px; }
+.spc-myscore .ms-row {
+  display: grid; grid-template-columns: 26px 1fr auto; align-items: center; gap: 10px;
+  padding: 6px 8px; border-radius: 8px; font-size: 0.86rem;
+}
+.spc-myscore .ms-row:nth-child(odd) { background: rgba(255,255,255,0.03); }
+.spc-myscore .ms-row.me { background: rgba(255,90,20,0.16); box-shadow: inset 3px 0 0 var(--clr-accent); }
+.spc-myscore .ms-pos { font-family: var(--font-condensed); font-weight: 700; color: #8b95a4; text-align: center; }
+.spc-myscore .ms-row.me .ms-pos { color: var(--clr-accent); }
+.spc-myscore .ms-name { font-weight: 600; color: #e8edf4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.spc-myscore .ms-v { font-family: var(--font-condensed); font-weight: 700; color: var(--clr-success); font-size: 0.86rem; }

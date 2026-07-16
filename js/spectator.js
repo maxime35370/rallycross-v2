@@ -7,7 +7,7 @@
 import { db } from './firebase.js';
 import { msToDisplay, escHtml } from './utils.js';
 import { getActiveChampionship, getActiveChampionshipId } from './context.js';
-import { watchPronostics, myVote, castVote, ensureAnon } from '../overlay/_lib/obs-pronostics.js';
+import { watchPronostics, myVote, castVote, ensureAnon, watchMeetingScores } from '../overlay/_lib/obs-pronostics.js';
 
 // ─────────────────────────────────────────────────────────
 // ÉTAT LOCAL
@@ -185,6 +185,7 @@ function renderView() {
       <button class="btn btn-ghost btn-sm" id="spc-fullscreen-btn" title="Plein ecran">⛶</button>
     </div>
 
+    <div id="spc-myscore" class="spc-myscore" style="display:none"></div>
     <div id="spc-pronostics" class="spc-pronostics" style="display:none"></div>
 
     <div id="spc-content">
@@ -384,6 +385,9 @@ let _myVotes         = {};
 let _pronoErr        = {};   // pid -> message d'erreur du dernier vote (affiché dans la carte)
 let _unsubPronostics = null;
 let _pronoClickBound = false;
+let _scores          = {};     // classement pronostiqueurs du meeting : uid -> points
+let _scoresMeetingId = null;
+let _unsubScores     = null;
 
 const PRONO_ICON      = { manche_winner: '🏆', interim_m2: '📊', interim_final: '📊', ec_best: '⏱️', serie_winner: '🏁', df_winner: '🥈', final_winner: '🏆', custom: '🎯' };
 const PRONO_STATUS_FR = { open: 'Ouvert', closed: 'Votes clos', revealed: 'Résultat' };
@@ -405,8 +409,44 @@ async function initPronostics() {
 
   // 2) VOTE : session anonyme en tâche de fond (n'empêche jamais l'affichage).
   ensureAnon()
-    .then(async uid => { _pronoUid = uid; await refreshMyVotes(); renderPronostics(); })
+    .then(async uid => { _pronoUid = uid; await refreshMyVotes(); renderPronostics(); renderMyScore(); })
     .catch(() => { _pronoUid = null; });
+}
+
+/** (Ré)abonne au classement des pronostiqueurs de l'épreuve sélectionnée. */
+function watchScoresFor(meetingId) {
+  if (meetingId === _scoresMeetingId) return;
+  if (_unsubScores) { try { _unsubScores(); } catch {} _unsubScores = null; }
+  _scoresMeetingId = meetingId || null;
+  _scores = {};
+  renderMyScore();
+  if (!meetingId) return;
+  watchMeetingScores(meetingId, map => { _scores = map || {}; renderMyScore(); }, () => {})
+    .then(unsub => { if (_scoresMeetingId === meetingId) _unsubScores = unsub; else { try { unsub(); } catch {} } })
+    .catch(() => {});
+}
+
+/** Affiche « tes points » + un petit Top 5 anonymisé du meeting (côté spectateur). */
+function renderMyScore() {
+  const el = document.getElementById('spc-myscore');
+  if (!el) return;
+  const uid = _pronoUid;
+  const entries = Object.entries(_scores || {}).filter(([, p]) => p > 0);
+  if (!entries.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
+  entries.sort((a, b) => b[1] - a[1]);
+  const mine = uid ? (_scores[uid] || 0) : 0;
+  const rank = entries.filter(([, p]) => p > mine).length + 1;
+  const top = entries.slice(0, 5).map(([u, p], i) =>
+    `<div class="ms-row${u === uid ? ' me' : ''}"><span class="ms-pos">${i + 1}</span>`
+    + `<span class="ms-name">${u === uid ? 'Toi' : 'Joueur ' + u.slice(-4).toUpperCase()}</span>`
+    + `<span class="ms-v">${p} pt${p > 1 ? 's' : ''}</span></div>`).join('');
+  const mineLine = uid
+    ? (mine > 0 ? `Tes points : <b>${mine}</b> · ${rank}ᵉ sur ${entries.length}`
+                : `Tes points : <b>0</b> — trouve les gagnants pour marquer !`)
+    : `${entries.length} joueur${entries.length > 1 ? 's' : ''} en lice`;
+  el.style.display = '';
+  el.innerHTML = `<div class="ms-head">🏆 Classement pronostics<span class="ms-sub">ce meeting</span></div>`
+    + `<div class="ms-mine">${mineLine}</div><div class="ms-top">${top}</div>`;
 }
 
 /** Charge le vote déjà émis par ce spectateur pour chaque pronostic ouvert (si session prête). */
@@ -495,6 +535,7 @@ function renderPronostics() {
   const box     = document.getElementById('spc-pronostics');       // haut : sondages EN COURS
   const pastBox = document.getElementById('spc-pronostics-past');   // bas  : résultats RÉVÉLÉS
   if (!box) return;
+  watchScoresFor(selectedMeetingId);   // suit le classement pronostiqueurs de l'épreuve affichée
   // Cycle de vie côté spectateur (identique avec ou sans catégorie) :
   //  • OUVERT   → visible EN HAUT, on peut voter (appel à voter dès l'arrivée) ;
   //  • VOTES CLOS → MASQUÉ (la session est en cours, résultat pas encore révélé)
