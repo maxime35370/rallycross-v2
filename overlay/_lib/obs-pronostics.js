@@ -192,6 +192,42 @@ export async function watchMeetingScores(meetingId, cb, onErr) {
     err => onErr && onErr(err));
 }
 
+// ─────────────────────────────────────────────────────────
+// PSEUDOS PRONOSTIQUEURS
+// A) auto : pseudo « fun » déterministe depuis l'UID (aucune donnée stockée, anonyme).
+// B) perso (option) : le joueur peut choisir son pseudo → players/{uid}.pseudo
+//    (écriture réservée au propriétaire ; lecture publique pour l'afficher au classement).
+// ─────────────────────────────────────────────────────────
+
+const PLAYERS_COL = 'players';
+const _PS_EMO  = ['🦊','🦅','🐺','🐆','🦉','🐂','🦈','🐍','🦡','🐗','🦫','🐎','🐅','🦂'];
+const _PS_ANIM = ['Renard','Aigle','Loup','Lynx','Faucon','Guépard','Taureau','Requin','Cobra','Bison','Panthère','Sanglier','Corbeau','Blaireau','Tigre','Scorpion'];
+
+function _psHash(s) { let h = 0; s = String(s || ''); for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0; return h; }
+
+/** Pseudo auto déterministe (ex. « 🦊 Renard 42 ») — aucune donnée stockée. */
+export function autoPseudo(uid) {
+  const h = _psHash(uid);
+  return `${_PS_EMO[h % _PS_EMO.length]} ${_PS_ANIM[(h >>> 4) % _PS_ANIM.length]} ${(h >>> 9) % 90 + 10}`;
+}
+
+/** Pseudo personnalisé d'un joueur (ou null s'il n'en a pas choisi). Lecture publique. */
+export async function getPlayerPseudo(uid) {
+  await initFirebase();
+  const { doc, getDoc } = await fs();
+  try { const s = await getDoc(doc(db, PLAYERS_COL, uid)); return s.exists() ? (s.data().pseudo || null) : null; }
+  catch { return null; }
+}
+
+/** Enregistre le pseudo perso du joueur (le sien uniquement, cf. règles). Renvoie le pseudo nettoyé. */
+export async function setPlayerPseudo(uid, pseudo) {
+  await initFirebase();
+  const { doc, setDoc } = await fs();
+  const clean = String(pseudo || '').replace(/\s+/g, ' ').trim().slice(0, 20);
+  await setDoc(doc(db, PLAYERS_COL, uid), { pseudo: clean }, { merge: true });
+  return clean;
+}
+
 /** Ferme les votes et fige le décompte agrégé dans le doc (lisible par le public). */
 export async function closePronostic(id, nowMs) {
   const t = await tallyVotes(id);

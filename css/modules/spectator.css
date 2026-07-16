@@ -430,7 +430,7 @@
 .spc-verdict.ok { background: var(--clr-success-dim); color: #7bf0a8; }
 .spc-verdict.ko { background: var(--clr-danger-dim); color: #ff9a9a; }
 
-/* Classement des pronostiqueurs (points par épreuve, barème à la rareté) */
+/* Classement des pronostiqueurs (points par épreuve, barème à la cote de performance) */
 .spc-myscore {
   background: linear-gradient(150deg, rgba(255,90,20,0.12), rgba(20,26,38,0.55));
   border: 1px solid rgba(255,255,255,0.08); border-radius: 14px;
@@ -453,4 +453,27 @@
 .spc-myscore .ms-pos { font-family: var(--font-condensed); font-weight: 700; color: #8b95a4; text-align: center; }
 .spc-myscore .ms-row.me .ms-pos { color: var(--clr-accent); }
 .spc-myscore .ms-name { font-weight: 600; color: #e8edf4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.spc-myscore .ms-name .ms-you { color: var(--clr-accent); font-weight: 700; font-size: 0.72rem; margin-left: 4px; }
 .spc-myscore .ms-v { font-family: var(--font-condensed); font-weight: 700; color: var(--clr-success); font-size: 0.86rem; }
+
+/* Éditeur de pseudo perso (option B) — juste sous la carte classement */
+.spc-pseudo {
+  background: rgba(20,26,38,0.55); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px;
+  padding: 10px 14px; margin-bottom: var(--sp-md, 16px);
+}
+.spc-pseudo .ps-lbl {
+  font-family: var(--font-condensed); font-weight: 700; font-size: 0.78rem; letter-spacing: 0.05em;
+  text-transform: uppercase; color: #c4ccd8; margin-bottom: 8px;
+}
+.spc-pseudo .ps-row { display: flex; gap: 8px; align-items: stretch; }
+.spc-pseudo .ps-row input {
+  flex: 1 1 auto; min-width: 0; background: rgba(0,0,0,0.35); color: #e8edf4;
+  border: 1px solid rgba(255,255,255,0.14); border-radius: 8px; padding: 8px 10px; font-size: 0.9rem;
+}
+.spc-pseudo .ps-row input:focus { outline: none; border-color: var(--clr-accent); }
+.spc-pseudo .ps-row button {
+  flex: 0 0 auto; background: var(--clr-accent); color: #fff; border: none; border-radius: 8px;
+  padding: 0 16px; font-family: var(--font-condensed); font-weight: 700; font-size: 0.9rem; cursor: pointer;
+}
+.spc-pseudo .ps-row button:hover { filter: brightness(1.08); }
+.spc-pseudo .ps-hint { margin-top: 6px; font-size: 0.72rem; color: #8b95a4; }

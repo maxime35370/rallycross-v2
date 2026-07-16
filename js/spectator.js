@@ -7,7 +7,7 @@
 import { db } from './firebase.js';
 import { msToDisplay, escHtml } from './utils.js';
 import { getActiveChampionship, getActiveChampionshipId } from './context.js';
-import { watchPronostics, myVote, castVote, ensureAnon, watchMeetingScores } from '../overlay/_lib/obs-pronostics.js';
+import { watchPronostics, myVote, castVote, ensureAnon, watchMeetingScores, autoPseudo, getPlayerPseudo, setPlayerPseudo } from '../overlay/_lib/obs-pronostics.js';
 
 // ─────────────────────────────────────────────────────────
 // ÉTAT LOCAL
@@ -186,6 +186,7 @@ function renderView() {
     </div>
 
     <div id="spc-myscore" class="spc-myscore" style="display:none"></div>
+    <div id="spc-pseudo" class="spc-pseudo" style="display:none"></div>
     <div id="spc-pronostics" class="spc-pronostics" style="display:none"></div>
 
     <div id="spc-content">
@@ -388,6 +389,40 @@ let _pronoClickBound = false;
 let _scores          = {};     // classement pronostiqueurs du meeting : uid -> points
 let _scoresMeetingId = null;
 let _unsubScores     = null;
+let _pseudos         = {};     // uid -> pseudo perso résolu ('' = aucun / déjà cherché)
+let _pseudoEditorDone = false;
+
+const escName = s => String(s).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
+const pseudoFor = uid => (typeof _pseudos[uid] === 'string' && _pseudos[uid]) ? _pseudos[uid] : autoPseudo(uid);
+
+/** Résout les pseudos perso des UID affichés (une fois chacun), puis re-render si trouvé. */
+function ensurePseudos(uids) {
+  const todo = uids.filter(u => u && !(u in _pseudos));
+  if (!todo.length) return;
+  todo.forEach(u => { _pseudos[u] = ''; });   // marque « cherché » pour éviter les re-fetch en boucle
+  Promise.all(todo.map(async u => { try { const p = await getPlayerPseudo(u); if (p) _pseudos[u] = p; } catch {} }))
+    .then(() => renderMyScore());
+}
+
+/** Éditeur « ton pseudo » (option B) — construit une seule fois pour ne pas réinitialiser la saisie. */
+async function renderPseudoEditor() {
+  const el = document.getElementById('spc-pseudo');
+  if (!el || !_pronoUid) return;
+  if (!(_pronoUid in _pseudos)) { try { _pseudos[_pronoUid] = (await getPlayerPseudo(_pronoUid)) || ''; } catch { _pseudos[_pronoUid] = ''; } }
+  const current = pseudoFor(_pronoUid);
+  const custom  = (typeof _pseudos[_pronoUid] === 'string' && _pseudos[_pronoUid]) ? _pseudos[_pronoUid] : '';
+  el.innerHTML = `<div class="ps-lbl">Ton pseudo au classement</div>`
+    + `<div class="ps-row"><input id="spc-pseudo-in" maxlength="20" placeholder="${escName(current)}" value="${escName(custom)}">`
+    + `<button id="spc-pseudo-save">OK</button></div>`
+    + `<div class="ps-hint">Laisse vide pour garder ton pseudo auto (${escName(autoPseudo(_pronoUid))}).</div>`;
+  document.getElementById('spc-pseudo-save').onclick = async () => {
+    const v = document.getElementById('spc-pseudo-in').value;
+    const btn = document.getElementById('spc-pseudo-save');
+    try { _pseudos[_pronoUid] = await setPlayerPseudo(_pronoUid, v); btn.textContent = '✓'; setTimeout(() => { btn.textContent = 'OK'; }, 1200); renderMyScore(); }
+    catch { btn.textContent = '⚠'; setTimeout(() => { btn.textContent = 'OK'; }, 1200); }
+  };
+  _pseudoEditorDone = true;
+}
 
 const PRONO_ICON      = { manche_winner: '🏆', interim_m2: '📊', interim_final: '📊', ec_best: '⏱️', serie_winner: '🏁', df_winner: '🥈', final_winner: '🏆', custom: '🎯' };
 const PRONO_STATUS_FR = { open: 'Ouvert', closed: 'Votes clos', revealed: 'Résultat' };
@@ -429,16 +464,17 @@ function watchScoresFor(meetingId) {
 /** Affiche « tes points » + un petit Top 5 anonymisé du meeting (côté spectateur). */
 function renderMyScore() {
   const el = document.getElementById('spc-myscore');
+  const pe = document.getElementById('spc-pseudo');
   if (!el) return;
   const uid = _pronoUid;
   const entries = Object.entries(_scores || {}).filter(([, p]) => p > 0);
-  if (!entries.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
+  if (!entries.length) { el.style.display = 'none'; el.innerHTML = ''; if (pe) pe.style.display = 'none'; return; }
   entries.sort((a, b) => b[1] - a[1]);
   const mine = uid ? (_scores[uid] || 0) : 0;
   const rank = entries.filter(([, p]) => p > mine).length + 1;
   const top = entries.slice(0, 5).map(([u, p], i) =>
     `<div class="ms-row${u === uid ? ' me' : ''}"><span class="ms-pos">${i + 1}</span>`
-    + `<span class="ms-name">${u === uid ? 'Toi' : 'Joueur ' + u.slice(-4).toUpperCase()}</span>`
+    + `<span class="ms-name">${escName(pseudoFor(u))}${u === uid ? ' <span class="ms-you">(toi)</span>' : ''}</span>`
     + `<span class="ms-v">${p} pt${p > 1 ? 's' : ''}</span></div>`).join('');
   const mineLine = uid
     ? (mine > 0 ? `Tes points : <b>${mine}</b> · ${rank}ᵉ sur ${entries.length}`
@@ -447,6 +483,9 @@ function renderMyScore() {
   el.style.display = '';
   el.innerHTML = `<div class="ms-head">🏆 Classement pronostics<span class="ms-sub">ce meeting</span></div>`
     + `<div class="ms-mine">${mineLine}</div><div class="ms-top">${top}</div>`;
+  ensurePseudos([...entries.slice(0, 5).map(e => e[0]), uid].filter(Boolean));
+  if (pe && uid) { if (!_pseudoEditorDone) renderPseudoEditor(); pe.style.display = ''; }
+  else if (pe) pe.style.display = 'none';
 }
 
 /** Charge le vote déjà émis par ce spectateur pour chaque pronostic ouvert (si session prête). */
