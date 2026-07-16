@@ -137,6 +137,61 @@ export async function meetingVoteBilan(meetingId) {
   return { uniqueVoters: uids.size, totalVotes, nbPronostics: pronostics.length, pronostics };
 }
 
+// ─────────────────────────────────────────────────────────
+// POINTS PRONOSTIQUEURS (par épreuve) — barème « à la cote »
+// Plus le gagnant trouvé était un outsider (faible cote), plus ça rapporte. La cote
+// (rang de force) combine la FORME DU MEETING (classement intermédiaire/essais, poids
+// fort) et le CHAMPIONNAT (saison) — calculée par la régie et passée ici via strengthByCat.
+// Calculé PAR LA RÉGIE (lecture des votes) → infalsifiable. Écrit dans
+// pronoScores/{meetingId} (lecture publique). Remis à zéro par épreuve.
+// ─────────────────────────────────────────────────────────
+
+const SCORES_COL = 'pronoScores';
+
+/** Barème 5→1 selon la cote du gagnant (rang de force : 1 = grand favori → 1 pt ;
+ *  outsider ou non classé → 5 pts). */
+export function cotePoints(pos) {
+  if (pos == null) return 5;
+  if (pos <= 1) return 1;
+  if (pos <= 3) return 2;
+  if (pos <= 6) return 3;
+  if (pos <= 10) return 4;
+  return 5;
+}
+
+/**
+ * Recalcule les points « pronostiqueurs » d'une épreuve depuis zéro (idempotent) et
+ * les écrit dans pronoScores/{meetingId}. À n'appeler QUE côté régie (lecture des votes).
+ * @param {Object} strengthByCat  { [category]: { [driverId]: rangDeForce } } (1 = favori)
+ * @returns {Promise<Object>} map uid -> points cumulés
+ */
+export async function updateMeetingScores(meetingId, strengthByCat = {}) {
+  await initFirebase();
+  const { collection, getDocs, query, where, doc, setDoc } = await fs();
+  const psnap = await getDocs(query(collection(db, PRONO_COL), where('meetingId', '==', meetingId)));
+  const scores = {};
+  for (const pdoc of psnap.docs) {
+    const p = pdoc.data();
+    if (p.status !== PRONO_STATUS.REVEALED || !p.correctDriverId) continue;   // seuls les révélés comptent
+    const pos = (strengthByCat[p.category] || {})[p.correctDriverId];         // cote du gagnant
+    const pts = cotePoints(pos);
+    if (!pts) continue;
+    const vsnap = await getDocs(collection(db, PRONO_COL, pdoc.id, 'votes'));
+    vsnap.forEach(v => { if (v.data().driverId === p.correctDriverId) scores[v.id] = (scores[v.id] || 0) + pts; });
+  }
+  await setDoc(doc(db, SCORES_COL, meetingId), { meetingId, scores, updatedAt: Date.now() });
+  return scores;
+}
+
+/** Abonnement au tableau des points d'une épreuve (lecture PUBLIQUE). cb reçoit la map uid->points. */
+export async function watchMeetingScores(meetingId, cb, onErr) {
+  await initFirebase();
+  const { doc, onSnapshot } = await fs();
+  return onSnapshot(doc(db, SCORES_COL, meetingId),
+    snap => cb(snap.exists() ? (snap.data().scores || {}) : {}),
+    err => onErr && onErr(err));
+}
+
 /** Ferme les votes et fige le décompte agrégé dans le doc (lisible par le public). */
 export async function closePronostic(id, nowMs) {
   const t = await tallyVotes(id);

@@ -345,8 +345,8 @@
 <script type="module">
   import { initFirebase, fsQuery, watchQuery } from './_lib/obs-firebase.js';
   import { watchControl, setControl, sessionKey, DEFAULT_CONTROL } from './_lib/obs-control.js';
-  import { getSessions, findSession, getGridOrder, getInterim, getParticipants, computePronoWinner, pronoWatchSessionIds, getQualifCutoff, getEcRank, getMqRank, getPhaseRank } from './_lib/obs-data.js';
-  import { watchPronostics, watchVotes, createPronostic, updatePronostic, openPronostic, closePronostic, revealPronostic, deletePronostic, meetingVoteBilan } from './_lib/obs-pronostics.js';
+  import { getSessions, findSession, getGridOrder, getInterim, getParticipants, computePronoWinner, pronoWatchSessionIds, getQualifCutoff, getEcRank, getMqRank, getPhaseRank, getDriverStrength } from './_lib/obs-data.js';
+  import { watchPronostics, watchVotes, createPronostic, updatePronostic, openPronostic, closePronostic, revealPronostic, deletePronostic, meetingVoteBilan, updateMeetingScores } from './_lib/obs-pronostics.js';
   import { qrDataUrl, spectatorUrl } from './_lib/obs-qr.js';
 
   const SDK = 'https://www.gstatic.com/firebasejs/10.12.0/';
@@ -708,6 +708,23 @@
       out.innerHTML = `<div class="pempty">Erreur : ${(e && (e.code || e.message)) || 'inconnue'}</div>`;
     }
   };
+
+  // Points pronostiqueurs : construit la cote (rang de force) par catégorie de l'épreuve,
+  // puis (re)calcule et publie les scores. Appelé à la révélation et sur pénalité.
+  async function computeScores(meetingId) {
+    if (!meetingId) return;
+    try {
+      const cats = [...new Set(pronoDocs
+        .filter(p => p.meetingId === meetingId && p.status === 'revealed' && p.category)
+        .map(p => p.category))];
+      const byCat = {};
+      for (const cat of cats) {
+        try { byCat[cat] = await getDriverStrength(meetingId, cat, meetings, champ); }
+        catch { byCat[cat] = {}; }
+      }
+      await updateMeetingScores(meetingId, byCat);
+    } catch {}
+  }
   document.getElementById('nextBtn').onclick = () => push({ nextText: document.getElementById('nextTxt').value });
   document.querySelectorAll('[data-cd]').forEach(b => b.onclick = () => {
     const m = +b.dataset.cd;
@@ -908,6 +925,7 @@
           if (!win) { flashErr('Choisis le gagnant réel dans la liste avant de révéler.'); return; }
         }
         await revealPronostic(id, win);
+        computeScores(state.meetingId);   // maj des points pronostiqueurs (cote)
       }
     } catch (err) { flashErr('Action refusée : ' + (err.code || err.message)); }
   });
@@ -935,7 +953,10 @@
           const reg = champs.find(c => c.id === p.championshipId) || champ;   // règlement (points) pour l'intermédiaire
           const win = await computePronoWinner(p, reg);
           const cur = pronoDocs.find(x => x.id === p.id);
-          if (win && cur && cur.correctDriverId !== win) await updatePronostic(p.id, { correctDriverId: win });
+          if (win && cur && cur.correctDriverId !== win) {
+            await updatePronostic(p.id, { correctDriverId: win });
+            if (cur.status === 'revealed') computeScores(p.meetingId);   // pénalité → maj points
+          }
         } catch {}
       };
       const unsubs = [];

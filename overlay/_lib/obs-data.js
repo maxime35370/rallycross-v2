@@ -368,6 +368,42 @@ export async function getChampionshipStandings(meetings, category, regulation) {
   return standings;
 }
 
+/**
+ * COTE de performance par pilote (rang de force) pour une épreuve/catégorie.
+ * Combine la FORME DU MEETING (classement intermédiaire ; à défaut les essais chronos) —
+ * pondérée le plus fort (60%) — et le CHAMPIONNAT saison (40%). Rang 1 = plus grand favori.
+ * Sert de « cote » aux points pronostiqueurs : gagnant favori = peu de points, outsider = beaucoup.
+ * @returns {Promise<Object>} { driverId: rangDeForce (1 = favori) }
+ */
+export async function getDriverStrength(meetingId, category, meetings, regulation) {
+  const sessions = await getSessions(meetingId, category);
+  // Forme du meeting : intermédiaire si dispo (≥ 2 manches), sinon essais chronos.
+  const meetingRank = {};
+  try {
+    (await calcInterimStandings(db, sessions, regulation) || [])
+      .forEach(r => { if (r.position != null) meetingRank[r.driverId] = r.position; });
+  } catch {}
+  if (!Object.keys(meetingRank).length) {
+    try { (await getEcRank(sessions, regulation))
+      .forEach(r => { if (r.position != null) meetingRank[r.driverId] = r.position; }); } catch {}
+  }
+  // Championnat (saison) : base de fond.
+  const champRank = {};
+  try { (await getChampionshipStandings(meetings || [], category, regulation))
+    .forEach(d => { if (d.position != null) champRank[d.driverId] = d.position; }); } catch {}
+  // Pondération : forme du meeting 60%, championnat 40% (l'un des deux si l'autre manque).
+  const blended = [];
+  new Set([...Object.keys(meetingRank), ...Object.keys(champRank)]).forEach(id => {
+    const m = meetingRank[id], c = champRank[id];
+    const v = (m != null && c != null) ? (0.6 * m + 0.4 * c) : (m != null ? m : c);
+    if (v != null) blended.push([id, v]);
+  });
+  blended.sort((a, b) => a[1] - b[1]);   // plus fort (rang le plus bas) d'abord
+  const out = {};
+  blended.forEach(([id], i) => { out[id] = i + 1; });
+  return out;
+}
+
 // ─────────────────────────────────────────────────────────
 // GRILLE DE DÉPART — ordre (depuis classement) + disposition (règlement)
 // ─────────────────────────────────────────────────────────
