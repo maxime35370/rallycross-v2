@@ -714,8 +714,10 @@
   async function computeScores(meetingId) {
     if (!meetingId) return;
     try {
+      // toutes les catégories de l'épreuve (pas seulement les révélées : la liste locale
+      // peut être en retard juste après une révélation → on couvre tout, c'est sans risque)
       const cats = [...new Set(pronoDocs
-        .filter(p => p.meetingId === meetingId && p.status === 'revealed' && p.category)
+        .filter(p => p.meetingId === meetingId && p.category)
         .map(p => p.category))];
       const byCat = {};
       for (const cat of cats) {
