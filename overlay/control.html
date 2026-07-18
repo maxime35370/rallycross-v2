@@ -256,7 +256,7 @@
         <div class="note">Le public vote depuis le mode spectateur (QR). Aucun score visible côté public tant que le vote est ouvert — toi seul vois le décompte live ici. Les pilotes proposés = les engagés de la catégorie + phase sélectionnées ci-dessus.</div>
         <select class="sel" id="pronoType" style="max-width:none;width:100%;margin-bottom:9px">
           <option value="manche_winner">🏆 Vainqueur de la manche (tous les engagés)</option>
-          <option value="interim_m2">📊 Leader du classement intermédiaire après M2</option>
+          <option value="interim_m2">📊 Leader du classement intermédiaire (après la manche sélectionnée)</option>
           <option value="interim_final">📊 Leader du classement intermédiaire (après toutes les manches)</option>
           <option value="ec_best">⏱️ Meilleur temps des essais chronos</option>
           <option value="serie_winner">🏁 Vainqueur d'une série (pilotes en ligne)</option>
@@ -770,11 +770,15 @@
     if (t === 'FIN') return 'la finale';
     return 'la course';
   }
+  // Manche visée par un pronostic « leader intermédiaire » : la manche sélectionnée
+  // dans la régie (si on est bien sur une manche), sinon 2 par défaut.
+  function interimManche() { return state.sessionType === 'MQ' ? (state.sessionNum || 2) : 2; }
+
   function autoTitle() {
     const cat = catName();
     switch (document.getElementById('pronoType').value) {
       case 'manche_winner': return `Qui gagne ${phaseLabelLong()} ${cat} ?`;
-      case 'interim_m2':    return `Qui sera leader du classement intermédiaire ${cat} après la manche 2 ?`;
+      case 'interim_m2':    return `Qui sera leader du classement intermédiaire ${cat} après la manche ${interimManche()} ?`;
       case 'interim_final': {
         const n = meetings.find(m => m.id === state.meetingId)?.nbMQ || 4;
         return `Qui sera leader du classement intermédiaire ${cat} à l'issue des ${n} manches ?`;
@@ -788,7 +792,7 @@
   }
   // Cible de résultat : d'où vient le vrai gagnant (suivi live des chronos).
   //  'session'       → P1 (au chrono) d'une session → synchro auto avec les pénalités.
-  //  'interim_after' → leader intermédiaire après la manche N (désignation manuelle pour l'instant).
+  //  'interim_after' → leader intermédiaire après la manche N (calcul auto, anti-flicker).
   //  'manual'        → question libre : la régie désigne le gagnant.
   function pronoTargetFor(type) {
     switch (type) {
@@ -797,7 +801,7 @@
       case 'manche_winner':
       case 'serie_winner':
       case 'df_winner':     return { kind: 'session', sessionType: state.sessionType, sessionNum: state.sessionNum };
-      case 'interim_m2':    return { kind: 'interim_after', sessionType: 'MQ', sessionNum: 2 };
+      case 'interim_m2':    return { kind: 'interim_after', sessionType: 'MQ', sessionNum: interimManche() };
       case 'interim_final': return { kind: 'interim_after', sessionType: 'MQ', sessionNum: meetings.find(m => m.id === state.meetingId)?.nbMQ || 4 };
       default:              return { kind: 'manual' };
     }
@@ -865,8 +869,9 @@
         const isInterim = p.resultTarget.kind === 'interim_after';
         const w = (p.options || []).find(o => o.driverId === p.correctDriverId);
         const lbl  = isInterim ? 'Leader intermédiaire' : 'Vainqueur (chrono)';
+        const upTo = p.resultTarget?.sessionNum || 2;
         const wait = isInterim
-          ? '⏳ Manches en cours — leader figé quand M1 & M2 seront complètes…'
+          ? `⏳ Manches en cours — leader figé quand la manche ${upTo} sera complète…`
           : '⏳ Série en cours — gagnant figé quand tous les pilotes seront saisis…';
         const wl = w ? `${lbl} : <b>${pEsc(w.num)} ${pEsc((w.name || '').toUpperCase())}</b>` : wait;
         return `<div class="pit-auto">🔄 ${wl}</div><button class="sbtn" data-act="reveal" data-id="${p.id}">🏆 Révéler le résultat</button>${air}<button class="sbtn go" data-act="open" data-id="${p.id}">▶ Rouvrir</button>`;
