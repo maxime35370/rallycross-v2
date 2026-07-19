@@ -1859,11 +1859,15 @@ async function renderFinaleStandings(panel, session, assignedParticipants) {
       if (p.first && assignedIds.has(p.first.driverId) && !_finForfaits.has(p.first.driverId)) sortedFinParts.push(p.first);
       if (p.second && assignedIds.has(p.second.driverId) && !_finForfaits.has(p.second.driverId)) sortedFinParts.push(p.second);
     }
-    // Add any assigned participant not in pairs (manual additions)
+    // Ajoute les assignés pas encore placés : ajouts manuels et — SURTOUT quand
+    // il n'y a pas de demi-finale — la totalité des finalistes. On les ordonne
+    // par classement intermédiaire (meilleure position = pole), sinon la grille
+    // sans 1/2 finale suivrait l'ordre d'insertion (les numéros de voiture).
     const pairIds = new Set(sortedFinParts.map(d => d.driverId));
-    assignedParticipants.forEach(p => {
-      if (!pairIds.has(p.driverId) && !_finForfaits.has(p.driverId)) sortedFinParts.push(p);
-    });
+    assignedParticipants
+      .filter(p => !pairIds.has(p.driverId) && !_finForfaits.has(p.driverId))
+      .sort((a, b) => (interimMap[a.driverId] ?? 999) - (interimMap[b.driverId] ?? 999))
+      .forEach(p => sortedFinParts.push(p));
 
     const gPosToDriver = {};
     let gIdx = 0;
