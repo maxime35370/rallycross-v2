@@ -515,6 +515,15 @@ export async function getGridOrder(session, meetingSessions, regulation, meeting
           dfMs[r.driverId]  = resMap[r.driverId]?.ms ?? Infinity;
         });
     });
+    // Effectif réduit : aucune demi-finale disputée (dfPos vide) → la grille
+    // finale suit directement le classement intermédiaire (position départagée),
+    // et non les points/positions de DF inexistants (sinon égalité = ordre numéro).
+    if (!Object.keys(dfPos).length) {
+      const rank = {};
+      interimRows.forEach(r => { rank[r.driverId] = r.position ?? 999; });
+      const numCmp = (a, b) => String(a.carNumber).localeCompare(String(b.carNumber), 'fr', { numeric: true });
+      return [...raw].sort((a, b) => (rank[a.driverId] ?? 999) - (rank[b.driverId] ?? 999) || numCmp(a, b)).map(toSlot);
+    }
     const intPts = {};
     interimRows.forEach(r => { intPts[r.driverId] = r.interimPoints ?? 0; });
     const total = id => (intPts[id] ?? 0) + (dfPts[id] ?? 0);
