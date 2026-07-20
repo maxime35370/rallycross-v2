@@ -54,6 +54,34 @@ async function fsGetParticipants(sessionId) {
 }
 
 // ─────────────────────────────────────────────────────────
+// PÉNALITÉS « POINTS CHAMPIONNAT » (niveau saison, éditables)
+// Un total de points retirés par pilote, appliqué au grand total saison.
+// Doc id = `${championshipId}__${driverId}`. Modifiable à tout moment.
+// ─────────────────────────────────────────────────────────
+
+async function getChampionshipPenalties(championshipId) {
+  if (!championshipId) return {};
+  try {
+    const rows = await fsQuery('championshipPenalties', [['championshipId', '==', championshipId]]);
+    const map = {};
+    rows.forEach(r => { map[r.driverId] = Number(r.points) || 0; });
+    return map;
+  } catch { return {}; }
+}
+
+async function saveChampionshipPenalty(championshipId, category, driverId, points) {
+  if (!championshipId) { toast('Sélectionne d\'abord un championnat', 'error'); return; }
+  const { doc, setDoc } = await import(
+    'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
+  );
+  await setDoc(
+    doc(db, 'championshipPenalties', `${championshipId}__${driverId}`),
+    { championshipId, category, driverId, points: Number(points) || 0, updatedAt: Date.now() },
+    { merge: true }
+  );
+}
+
+// ─────────────────────────────────────────────────────────
 // CALCUL POINTS D'UNE PHASE (DF ou FIN)
 // ─────────────────────────────────────────────────────────
 
@@ -209,6 +237,15 @@ async function calcChampionship() {
     });
   }
 
+  // Pénalités « points championnat » (retirées du total saison, éditables à tout
+  // moment via la colonne Pén.). Appliquées AVANT le tri pour que le rang reflète
+  // la sanction.
+  const penalties = await getChampionshipPenalties(getActiveChampionshipId());
+  Object.values(champMap).forEach(d => {
+    d.penalty = penalties[d.driverId] || 0;
+    d.grandTotal -= d.penalty;
+  });
+
   // Trier par total décroissant
   const standings = Object.values(champMap).sort((a, b) => b.grandTotal - a.grandTotal);
 
@@ -325,6 +362,7 @@ async function renderChampionship() {
               <th>Pilote</th>
               <th class="center" style="width:50px">N°</th>
               ${meetingHeaders}
+              <th class="center chp-pen-col" title="Points de pénalité retirés du total saison (éditable)">Pén.</th>
               <th class="center chp-total-col">Total</th>
             </tr>
           </thead>
@@ -343,6 +381,10 @@ async function renderChampionship() {
                   <td>${escHtml(d.firstName)} <strong>${escHtml(d.lastName)}</strong></td>
                   <td class="center"><span class="tim-num">${escHtml(d.carNumber)}</span></td>
                   ${meetingCells}
+                  <td class="center"><input type="number" inputmode="numeric" min="0"
+                      class="chp-pen-input${d.penalty ? ' has-pen' : ''}"
+                      data-driver="${escHtml(d.driverId)}" value="${d.penalty || ''}"
+                      placeholder="0" title="Points de pénalité retirés du total"></td>
                   <td class="center"><strong class="chp-total">${d.grandTotal}</strong></td>
                 </tr>`;
             }).join('')}
@@ -352,9 +394,28 @@ async function renderChampionship() {
       <div class="chp-legend">
         <span>Points / meeting = intermédiaire${hasQF ? ' + ¼ finale' : ''} + ½ finale + finale</span>
         <span>·</span>
+        <span>Pén. = points retirés du total saison (modifiable à tout moment)</span>
+        <span>·</span>
         <span>${allMeetings.length} meeting${allMeetings.length > 1 ? 's' : ''} · ${standings.length} pilote${standings.length > 1 ? 's' : ''}</span>
       </div>
     `;
+
+    // Saisie inline des pénalités (régie) : enregistre puis recalcule le classement.
+    content.querySelectorAll('.chp-pen-input').forEach(inp => {
+      inp.addEventListener('change', async () => {
+        const driverId = inp.dataset.driver;
+        const points   = Math.max(0, parseInt(inp.value, 10) || 0);
+        inp.disabled = true;
+        try {
+          await saveChampionshipPenalty(getActiveChampionshipId(), selectedCategory, driverId, points);
+          await renderChampionship();   // recalcule le total + re-trie + repositionne
+        } catch (e) {
+          console.error(e);
+          toast('Échec de l\'enregistrement de la pénalité', 'error');
+          inp.disabled = false;
+        }
+      });
+    });
 
   } catch (err) {
     console.error(err);

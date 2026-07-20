@@ -21,6 +21,22 @@
   border-left: 1px solid var(--clr-border);
 }
 
+/* Colonne « Pén. » : points de pénalité championnat, éditable (régie). */
+.chp-pen-col { min-width: 58px; }
+.chp-pen-input {
+  width: 46px; text-align: center; padding: 3px 4px;
+  font-family: var(--font-display); font-size: 0.82rem;
+  background: var(--clr-surface-2, rgba(255,255,255,0.04));
+  color: var(--clr-text); border: 1px solid var(--clr-border); border-radius: 6px;
+  -moz-appearance: textfield;
+}
+.chp-pen-input::-webkit-outer-spin-button,
+.chp-pen-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.chp-pen-input:focus { outline: none; border-color: var(--clr-accent); }
+.chp-pen-input.has-pen {
+  background: rgba(255,80,80,0.14); border-color: rgba(255,80,80,0.5); color: #ff6b6b; font-weight: 700;
+}
+
 .chp-pts {
   font-family: var(--font-display);
   font-size: 0.82rem;
