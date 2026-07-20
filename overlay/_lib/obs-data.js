@@ -345,6 +345,18 @@ export async function getInterimEvolution(meetingId, category, regulation, upTo)
 // CLASSEMENT CHAMPIONNAT (cumul tous meetings) — copie de championship.js
 // ─────────────────────────────────────────────────────────
 
+/** Pénalités « points championnat » (niveau saison) : driverId → points à retirer.
+ *  Doc id = `${championshipId}__${driverId}`, saisi côté régie (js/championship.js). */
+async function getChampionshipPenalties(championshipId) {
+  if (!championshipId) return {};
+  try {
+    const rows = await fsQuery('championshipPenalties', [['championshipId', '==', championshipId]]);
+    const map = {};
+    rows.forEach(r => { map[r.driverId] = Number(r.points) || 0; });
+    return map;
+  } catch { return {}; }
+}
+
 export async function getChampionshipStandings(meetings, category, regulation) {
   // Points de chaque meeting en parallèle (au lieu d'enchaîner les lectures une par une).
   const perMeeting = await Promise.all(meetings.map(m => getMeetingPoints(m.id, category, regulation)));
@@ -359,6 +371,11 @@ export async function getChampionshipStandings(meetings, category, regulation) {
       c.grandTotal += d.total;
     });
   });
+  // Pénalités saison retirées du total AVANT le tri (cohérent avec l'app admin) :
+  // overlay, classement spectateur et cote des pronostics reflètent la sanction.
+  const championshipId = (meetings || []).find(m => m.championshipId)?.championshipId || null;
+  const penalties = await getChampionshipPenalties(championshipId);
+  Object.values(champMap).forEach(d => { d.penalty = penalties[d.driverId] || 0; d.grandTotal -= d.penalty; });
   const standings = Object.values(champMap).sort((a, b) => b.grandTotal - a.grandTotal);
   let pos = 1;
   standings.forEach((d, i) => {
