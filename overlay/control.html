@@ -628,6 +628,12 @@
       : t === 'FIN' ? 'Finale' : (t || '');
     return (phase + ' · ' + catName()).toUpperCase();
   }
+  // Carte partageable : layout des lignes. Hauteur du canvas DYNAMIQUE pour tenir
+  // le classement complet (largeur 1080 fixe, propre pour Insta/FB/X).
+  // SC_ROWS_TOP doit rester = by + bh + 100 dans drawShareCard (début des lignes).
+  const SC_ROW_H = 100, SC_ROW_GAP = 12, SC_ROWS_TOP = 332, SC_BOTTOM_PAD = 96;
+  const shareCardHeight = n => SC_ROWS_TOP + Math.max(1, n) * (SC_ROW_H + SC_ROW_GAP) + SC_BOTTOM_PAD;
+
   function drawShareCard(ctx, W, H, d) {
     const g = ctx.createLinearGradient(0, 0, 0, H);
     g.addColorStop(0, '#0d1220'); g.addColorStop(1, '#080a0f');
@@ -651,7 +657,7 @@
     ctx.fillText(d.title, pad + 30, by + bh / 2 + 2);
     ctx.textBaseline = 'alphabetic'; ctx.font = '600 32px "Barlow Condensed", Arial, sans-serif'; ctx.fillStyle = '#c4ccd8';
     ctx.fillText(d.subtitle || '', pad, by + bh + 56);
-    let y = by + bh + 100; const rowH = 100, gap = 12;
+    let y = by + bh + 100; const rowH = SC_ROW_H, gap = SC_ROW_GAP;
     const pod = ['#ffcc33', '#cfd6e0', '#cd8d56'];
     d.rows.forEach((r, i) => {
       const top = i < 3 && r.position != null;
@@ -696,11 +702,12 @@
       else if (state.sessionType === 'MQ') rows = await getMqRank(session, reg);
       else rows = await getPhaseRank(session, reg);
       if (!rows || !rows.length) { out.innerHTML = '<div class="pempty">Pas de résultats saisis pour cette phase.</div>'; return; }
-      rows = rows.slice(0, 8);
+      // Classement COMPLET : la hauteur du canvas s'adapte au nombre de pilotes.
       const meetLabel = (meetSel.selectedOptions && meetSel.selectedOptions[0]) ? meetSel.selectedOptions[0].textContent.trim() : '';
       try { await document.fonts.ready; } catch (_) {}
-      const cv = document.createElement('canvas'); cv.width = 1080; cv.height = 1350;
-      drawShareCard(cv.getContext('2d'), 1080, 1350, { title: shareTitle(), subtitle: meetLabel, rows });
+      const H = shareCardHeight(rows.length);
+      const cv = document.createElement('canvas'); cv.width = 1080; cv.height = H;
+      drawShareCard(cv.getContext('2d'), 1080, H, { title: shareTitle(), subtitle: meetLabel, rows });
       const url = cv.toDataURL('image/png');
       out.innerHTML = `<img alt="Carte résultats" src="${url}" style="width:100%;border-radius:12px;border:1px solid var(--line);display:block">
         <div class="actions" style="margin-top:10px"><a class="sbtn" download="rxchrono-${state.sessionType}${state.sessionNum || ''}.png" href="${url}">⬇️ Télécharger l'image</a></div>`;
