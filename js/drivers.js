@@ -133,7 +133,7 @@ async function saveDriver(data) {
   if (!db) { toast('Firebase non connecté', 'error'); return false; }
   if (!requireAuth()) return false;
 
-  const { collection, doc, addDoc, updateDoc, query, where, getDocs } =
+  const { collection, doc, addDoc, updateDoc, query, where, getDocs, writeBatch } =
     await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
 
   // Vérifier doublon numéro (même année, même catégorie, même championnat)
@@ -163,6 +163,22 @@ async function saveDriver(data) {
     if (editingId) {
       const ref = doc(db, 'drivers', editingId);
       await updateDoc(ref, { ...data, championshipId: champId || null, personId: personId || null });
+
+      // Répercuter nom / prénom / n° sur les copies dénormalisées (engagements
+      // + participants de session) : sinon les listes déjà créées (« Assignés »,
+      // grilles, overlay) gardent l'ancien nom. results ne stocke pas de nom.
+      const snapshot = { carNumber: data.carNumber, firstName: data.firstName, lastName: data.lastName };
+      for (const col of ['engagements', 'sessionParticipants']) {
+        try {
+          const rs = await getDocs(query(collection(db, col), where('driverId', '==', editingId)));
+          for (let i = 0; i < rs.docs.length; i += 400) {
+            const batch = writeBatch(db);
+            rs.docs.slice(i, i + 400).forEach(d => batch.update(d.ref, snapshot));
+            await batch.commit();
+          }
+        } catch (e) { console.error(`Cascade ${col} après édition pilote`, e); }
+      }
+
       logAudit('update', 'driver', editingId, { label: `${data.firstName} ${data.lastName} #${data.carNumber}` });
       toast('Pilote modifié ✓', 'success');
     } else {
