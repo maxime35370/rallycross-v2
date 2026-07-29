@@ -188,20 +188,6 @@
         <div class="btns" id="phases"></div>
       </div>
       <div class="card">
-        <h3>En-tête à l'écran</h3>
-        <div class="field"><input id="hdr" placeholder="Ex. CIRCUIT DE LOHÉAC · MANCHE 2"><button class="apply" id="hdrBtn">Appliquer</button></div>
-      </div>
-      <div class="card">
-        <h3>Écran d'attente <span class="n">pause</span></h3>
-        <div class="field"><input id="nextTxt" placeholder="À suivre… ex. ½ FINALE SUPERCAR"><button class="apply" id="nextBtn">OK</button></div>
-        <div class="btns" style="margin-top:10px">
-          <div class="b" data-cd="5">⏱ 5 min</div>
-          <div class="b" data-cd="10">⏱ 10 min</div>
-          <div class="b" data-cd="15">⏱ 15 min</div>
-          <div class="b" data-cd="0">Effacer</div>
-        </div>
-      </div>
-      <div class="card">
         <h3>🔮 Bandeau prédiction <span class="n" id="predN">off</span></h3>
         <div class="note">Affiche, sous les colonnes, l'objectif d'un pilote (calculé depuis le règlement). Manche : pendant les MQ · Championnat : pendant les phases finales.</div>
         <div class="row2" style="justify-content:flex-start;margin:0 0 12px">
@@ -217,6 +203,52 @@
         </select>
         <div id="predCutoffRow" style="margin-top:10px;background:var(--card2);border:1px solid var(--line);border-radius:10px;padding:11px 14px;font-family:'Barlow Condensed';font-weight:600;font-size:16px;color:#cfe0ff">
           <span id="predCutoffHint">Place qualificative : —</span>
+        </div>
+      </div>
+      <div class="card">
+        <h3>🎯 Pronostics spectateurs <span class="n" id="pronoN">—</span></h3>
+        <div class="note">Le public vote depuis le mode spectateur (QR). Aucun score visible côté public tant que le vote est ouvert — toi seul vois le décompte live ici. Les pilotes proposés = les engagés de la catégorie + phase sélectionnées ci-dessus.</div>
+        <select class="sel" id="pronoType" style="max-width:none;width:100%;margin-bottom:9px">
+          <option value="manche_winner">🏆 Vainqueur de la manche (tous les engagés)</option>
+          <option value="interim_m2">📊 Leader du classement intermédiaire (après la manche sélectionnée)</option>
+          <option value="interim_final">📊 Leader du classement intermédiaire (après toutes les manches)</option>
+          <option value="ec_best">⏱️ Meilleur temps des essais chronos</option>
+          <option value="serie_winner">🏁 Vainqueur d'une série (pilotes en ligne)</option>
+          <option value="df_winner">🥈 Vainqueur de la demi-finale (sélectionne ½ A ou ½ B)</option>
+          <option value="final_winner">🏆 Vainqueur de la finale</option>
+          <option value="custom">✏️ Question libre</option>
+        </select>
+        <div class="field" style="margin-bottom:4px"><input id="pronoQ" placeholder="Intitulé affiché aux spectateurs…"></div>
+        <div class="pchips" id="pronoChips"></div>
+        <div class="actions"><button class="ghost primary" id="pronoCreate">＋ Créer le pronostic (brouillon)</button></div>
+        <div class="pdiv"></div>
+        <div class="plist" id="pronoList"><div class="pempty">Aucun pronostic pour le moment.</div></div>
+      </div>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:20px">
+      <div class="card">
+        <h3>Grille / série à venir <span class="n" id="gridN">—</span></h3>
+        <div class="note">✏️ Modifs visuelles uniquement — tes vraies données enregistrées ne sont pas affectées.</div>
+        <div class="slots" id="slots"></div>
+        <div class="actions">
+          <button class="ghost primary" id="autoBtn">↻ Auto (depuis le classement)</button>
+          <button class="ghost" id="addBtn">＋ Ajouter</button>
+        </div>
+        <div class="actions"><button class="ghost warn" id="pushBtn">Appliquer la grille à l'écran</button></div>
+      </div>
+      <div class="card">
+        <h3>En-tête à l'écran</h3>
+        <div class="field"><input id="hdr" placeholder="Ex. CIRCUIT DE LOHÉAC · MANCHE 2"><button class="apply" id="hdrBtn">Appliquer</button></div>
+      </div>
+      <div class="card">
+        <h3>Écran d'attente <span class="n">pause</span></h3>
+        <div class="field"><input id="nextTxt" placeholder="À suivre… ex. ½ FINALE SUPERCAR"><button class="apply" id="nextBtn">OK</button></div>
+        <div class="btns" style="margin-top:10px">
+          <div class="b" data-cd="5">⏱ 5 min</div>
+          <div class="b" data-cd="10">⏱ 10 min</div>
+          <div class="b" data-cd="15">⏱ 15 min</div>
+          <div class="b" data-cd="0">Effacer</div>
         </div>
       </div>
       <div class="card">
@@ -250,25 +282,6 @@
         <div class="note">Scène « 👤 Fiche / Duel » : 1 pilote → fiche · 2 pilotes (même catégorie) → duel comparatif. Vider le pilote 2 → retour en fiche.</div>
         <select class="sel" id="fiche1" style="max-width:none;width:100%;margin-bottom:10px"></select>
         <select class="sel" id="fiche2" style="max-width:none;width:100%"></select>
-      </div>
-      <div class="card">
-        <h3>🎯 Pronostics spectateurs <span class="n" id="pronoN">—</span></h3>
-        <div class="note">Le public vote depuis le mode spectateur (QR). Aucun score visible côté public tant que le vote est ouvert — toi seul vois le décompte live ici. Les pilotes proposés = les engagés de la catégorie + phase sélectionnées ci-dessus.</div>
-        <select class="sel" id="pronoType" style="max-width:none;width:100%;margin-bottom:9px">
-          <option value="manche_winner">🏆 Vainqueur de la manche (tous les engagés)</option>
-          <option value="interim_m2">📊 Leader du classement intermédiaire (après la manche sélectionnée)</option>
-          <option value="interim_final">📊 Leader du classement intermédiaire (après toutes les manches)</option>
-          <option value="ec_best">⏱️ Meilleur temps des essais chronos</option>
-          <option value="serie_winner">🏁 Vainqueur d'une série (pilotes en ligne)</option>
-          <option value="df_winner">🥈 Vainqueur de la demi-finale (sélectionne ½ A ou ½ B)</option>
-          <option value="final_winner">🏆 Vainqueur de la finale</option>
-          <option value="custom">✏️ Question libre</option>
-        </select>
-        <div class="field" style="margin-bottom:4px"><input id="pronoQ" placeholder="Intitulé affiché aux spectateurs…"></div>
-        <div class="pchips" id="pronoChips"></div>
-        <div class="actions"><button class="ghost primary" id="pronoCreate">＋ Créer le pronostic (brouillon)</button></div>
-        <div class="pdiv"></div>
-        <div class="plist" id="pronoList"><div class="pempty">Aucun pronostic pour le moment.</div></div>
       </div>
       <div class="card">
         <h3>📊 Bilan épreuve <span class="n">votes</span></h3>
@@ -313,17 +326,6 @@
         <div class="actions"><button class="ghost" id="ibAddFile">📁 Ajouter un logo (image)</button></div>
         <input type="file" id="ibFile" accept="image/*" multiple style="display:none">
       </div>
-    </div>
-
-    <div class="card">
-      <h3>Grille / série à venir <span class="n" id="gridN">—</span></h3>
-      <div class="note">✏️ Modifs visuelles uniquement — tes vraies données enregistrées ne sont pas affectées.</div>
-      <div class="slots" id="slots"></div>
-      <div class="actions">
-        <button class="ghost primary" id="autoBtn">↻ Auto (depuis le classement)</button>
-        <button class="ghost" id="addBtn">＋ Ajouter</button>
-      </div>
-      <div class="actions"><button class="ghost warn" id="pushBtn">Appliquer la grille à l'écran</button></div>
     </div>
   </div>
 
