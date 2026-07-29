@@ -148,7 +148,7 @@ service cloud.firestore {
     }
 
     match /auditLog/{docId} {
-      allow read:           if true;
+      allow read:           if isRegie();   // journal back-office : régie uniquement
       allow create:         if isRegie();
       allow update, delete: if false;
     }
