@@ -272,6 +272,51 @@ export function extractYoutubeId(url) {
 }
 
 /**
+ * Extrait le timecode d'une URL YouTube contenant `?t=…` ou `&t=…`.
+ * Formats acceptés :
+ *   - `?t=1118`      → 1118 secondes
+ *   - `?t=1118s`     → 1118 secondes
+ *   - `?t=18m38s`    → 1118 secondes
+ *   - `?t=1h2m3s`    → 3723 secondes
+ *   - `?start=1118`  → 1118 secondes (alias historique YouTube)
+ * Retourne { seconds, videoId } quand une URL YouTube ET un timecode
+ * sont détectés (videoId peut être null si l'URL n'est pas reconnue).
+ * Retourne null si la chaîne n'est pas une URL YouTube ou n'a pas de timecode.
+ */
+export function extractYoutubeTimecode(str) {
+  if (!str) return null;
+  const s = String(str).trim();
+  if (!s) return null;
+
+  // Ne traite que les entrées qui ressemblent à une URL (ou fragment).
+  if (!/^(https?:\/\/|\/\/|www\.|youtu)/i.test(s) && !s.includes('?t=') && !s.includes('&t=')) {
+    return null;
+  }
+
+  const tMatch = s.match(/[?&](?:t|start)=([^&#\s]+)/);
+  if (!tMatch) return null;
+  const raw = tMatch[1];
+
+  let seconds = null;
+
+  // Format composé h/m/s (ex: "1h2m3s", "18m38s", "90s")
+  const composed = raw.match(/^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s?)?$/i);
+  if (composed && (composed[1] || composed[2] || composed[3])) {
+    const h = Number(composed[1] || 0);
+    const m = Number(composed[2] || 0);
+    const sec = Number(composed[3] || 0);
+    seconds = h * 3600 + m * 60 + sec;
+  } else if (/^\d+$/.test(raw)) {
+    seconds = Number(raw);
+  }
+
+  if (seconds == null || isNaN(seconds) || seconds < 0) return null;
+
+  const videoId = extractYoutubeId(s);
+  return { seconds, videoId };
+}
+
+/**
  * Construit une URL YouTube avec un timecode (en secondes).
  * @param {string} idOrUrl - ID vidéo ou URL complète
  * @param {number} seconds - Secondes depuis le début (0 ou null = pas de timecode)
