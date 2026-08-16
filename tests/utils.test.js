@@ -9,6 +9,11 @@ import {
   categoryKey,
   isSpecialStatus,
   formatDate,
+  parseTimecode,
+  formatTimecode,
+  extractYoutubeId,
+  buildYoutubeUrl,
+  timecodeKey,
 } from '../js/utils.js';
 
 // ─────────────────────────────────────────────────────────
@@ -269,5 +274,159 @@ describe('formatDate', () => {
   it('handles Firestore Timestamp-like objects', () => {
     const fakeTimestamp = { toDate: () => new Date('2026-06-01') };
     expect(formatDate(fakeTimestamp)).toBe('01/06/2026');
+  });
+});
+
+// ─────────────────────────────────────────────────────────
+// parseTimecode
+// ─────────────────────────────────────────────────────────
+
+describe('parseTimecode', () => {
+  it('retourne null pour valeur vide/invalide', () => {
+    expect(parseTimecode(null)).toBe(null);
+    expect(parseTimecode(undefined)).toBe(null);
+    expect(parseTimecode('')).toBe(null);
+    expect(parseTimecode('   ')).toBe(null);
+    expect(parseTimecode('abc')).toBe(null);
+  });
+
+  it('parse le format s (secondes seules)', () => {
+    expect(parseTimecode('45')).toBe(45);
+    expect(parseTimecode('120')).toBe(120);
+  });
+
+  it('parse le format m:s', () => {
+    expect(parseTimecode('1:30')).toBe(90);
+    expect(parseTimecode('0:45')).toBe(45);
+    expect(parseTimecode('42:15')).toBe(2535);
+  });
+
+  it('parse le format h:m:s', () => {
+    expect(parseTimecode('1:00:00')).toBe(3600);
+    expect(parseTimecode('1:23:45')).toBe(5025);
+    expect(parseTimecode('2:15:30')).toBe(8130);
+  });
+
+  it('rejette secondes ou minutes > 59', () => {
+    expect(parseTimecode('1:60')).toBe(null);
+    expect(parseTimecode('1:60:00')).toBe(null);
+    expect(parseTimecode('1:00:60')).toBe(null);
+  });
+
+  it('rejette caractères non numériques', () => {
+    expect(parseTimecode('1:2a')).toBe(null);
+    expect(parseTimecode('a:b:c')).toBe(null);
+  });
+});
+
+// ─────────────────────────────────────────────────────────
+// formatTimecode
+// ─────────────────────────────────────────────────────────
+
+describe('formatTimecode', () => {
+  it('retourne chaîne vide pour valeur invalide', () => {
+    expect(formatTimecode(null)).toBe('');
+    expect(formatTimecode(undefined)).toBe('');
+    expect(formatTimecode(NaN)).toBe('');
+    expect(formatTimecode(-1)).toBe('');
+  });
+
+  it('formate en m:ss quand < 1h', () => {
+    expect(formatTimecode(45)).toBe('0:45');
+    expect(formatTimecode(90)).toBe('1:30');
+    expect(formatTimecode(3599)).toBe('59:59');
+  });
+
+  it('formate en h:mm:ss quand >= 1h', () => {
+    expect(formatTimecode(3600)).toBe('1:00:00');
+    expect(formatTimecode(5025)).toBe('1:23:45');
+    expect(formatTimecode(8130)).toBe('2:15:30');
+  });
+
+  it('tronque les décimales', () => {
+    expect(formatTimecode(90.7)).toBe('1:30');
+  });
+});
+
+// ─────────────────────────────────────────────────────────
+// extractYoutubeId
+// ─────────────────────────────────────────────────────────
+
+describe('extractYoutubeId', () => {
+  it('retourne null pour vide', () => {
+    expect(extractYoutubeId('')).toBe(null);
+    expect(extractYoutubeId(null)).toBe(null);
+  });
+
+  it('extrait depuis youtube.com/watch?v=', () => {
+    expect(extractYoutubeId('https://www.youtube.com/watch?v=dQw4w9WgXcQ')).toBe('dQw4w9WgXcQ');
+    expect(extractYoutubeId('https://youtube.com/watch?v=dQw4w9WgXcQ&list=abc')).toBe('dQw4w9WgXcQ');
+  });
+
+  it('extrait depuis youtu.be/', () => {
+    expect(extractYoutubeId('https://youtu.be/dQw4w9WgXcQ')).toBe('dQw4w9WgXcQ');
+    expect(extractYoutubeId('https://youtu.be/dQw4w9WgXcQ?t=42')).toBe('dQw4w9WgXcQ');
+  });
+
+  it('extrait depuis /embed/, /live/, /shorts/', () => {
+    expect(extractYoutubeId('https://youtube.com/embed/dQw4w9WgXcQ')).toBe('dQw4w9WgXcQ');
+    expect(extractYoutubeId('https://www.youtube.com/live/dQw4w9WgXcQ')).toBe('dQw4w9WgXcQ');
+    expect(extractYoutubeId('https://youtube.com/shorts/dQw4w9WgXcQ')).toBe('dQw4w9WgXcQ');
+  });
+
+  it('accepte un ID brut de 11 chars', () => {
+    expect(extractYoutubeId('dQw4w9WgXcQ')).toBe('dQw4w9WgXcQ');
+  });
+
+  it('retourne null pour URL non-YouTube', () => {
+    expect(extractYoutubeId('https://vimeo.com/12345')).toBe(null);
+    expect(extractYoutubeId('https://example.com/video')).toBe(null);
+  });
+});
+
+// ─────────────────────────────────────────────────────────
+// buildYoutubeUrl
+// ─────────────────────────────────────────────────────────
+
+describe('buildYoutubeUrl', () => {
+  it('retourne null pour URL invalide', () => {
+    expect(buildYoutubeUrl('', 0)).toBe(null);
+    expect(buildYoutubeUrl('not-a-url', 0)).toBe(null);
+  });
+
+  it('construit URL sans timecode', () => {
+    expect(buildYoutubeUrl('https://youtu.be/dQw4w9WgXcQ', 0)).toBe('https://youtu.be/dQw4w9WgXcQ');
+    expect(buildYoutubeUrl('dQw4w9WgXcQ', null)).toBe('https://youtu.be/dQw4w9WgXcQ');
+  });
+
+  it('construit URL avec timecode', () => {
+    expect(buildYoutubeUrl('https://youtu.be/dQw4w9WgXcQ', 90)).toBe('https://youtu.be/dQw4w9WgXcQ?t=90s');
+    expect(buildYoutubeUrl('dQw4w9WgXcQ', 3600)).toBe('https://youtu.be/dQw4w9WgXcQ?t=3600s');
+  });
+
+  it('tronque les décimales sur le timecode', () => {
+    expect(buildYoutubeUrl('dQw4w9WgXcQ', 90.7)).toBe('https://youtu.be/dQw4w9WgXcQ?t=90s');
+  });
+});
+
+// ─────────────────────────────────────────────────────────
+// timecodeKey
+// ─────────────────────────────────────────────────────────
+
+describe('timecodeKey', () => {
+  it('génère clé pour session avec num', () => {
+    expect(timecodeKey('MQ', 1, 'Supercar')).toBe('MQ1__Supercar');
+    expect(timecodeKey('DF', 2, 'Super1600')).toBe('DF2__Super1600');
+    expect(timecodeKey('QF', 3, 'D4')).toBe('QF3__D4');
+  });
+
+  it('génère clé pour session sans num (EC, FIN)', () => {
+    expect(timecodeKey('FIN', null, 'Supercar')).toBe('FIN__Supercar');
+    expect(timecodeKey('EC', null, 'Supercar')).toBe('EC__Supercar');
+  });
+
+  it('normalise les accents et espaces dans la catégorie', () => {
+    expect(timecodeKey('MQ', 1, 'Féminines')).toBe('MQ1__Feminines');
+    expect(timecodeKey('MQ', 1, 'Division 5')).toBe('MQ1__Division_5');
   });
 });
