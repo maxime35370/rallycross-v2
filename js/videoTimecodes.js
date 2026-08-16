@@ -13,7 +13,7 @@ import { logAudit } from './audit.js';
 import { requireAuth } from './auth.js';
 import {
   escHtml, uid,
-  parseTimecode, formatTimecode, extractYoutubeId,
+  parseTimecode, formatTimecode, extractYoutubeId, extractYoutubeTimecode,
   timecodeKey,
 } from './utils.js';
 import { getActiveChampionship } from './context.js';
@@ -208,7 +208,8 @@ function renderTimecodesSection(meeting, videos, timecodes) {
         </div>
       </div>
       <div class="text-muted" style="font-size:0.78rem;margin-bottom:var(--sp-sm)">
-        Format timecode : <code>h:mm:ss</code>, <code>m:ss</code> ou <code>s</code>. Ex : <code>1:23:45</code>, <code>42:15</code>, <code>90</code>.
+        Format timecode : <code>h:mm:ss</code>, <code>m:ss</code> ou <code>s</code>. Ex : <code>1:23:45</code>, <code>42:15</code>, <code>90</code>.<br>
+        Astuce : tu peux aussi coller directement une URL YouTube (clic droit sur la vidéo → « Copier l'URL à l'heure actuelle ») — le timecode et la vidéo sont extraits automatiquement.
       </div>
       <div class="table-wrap" style="max-height:50vh;overflow:auto">
         <table style="min-width:600px">
@@ -334,6 +335,34 @@ function bindEvents() {
         _state.dirty = true;
         return;
       }
+
+      // 1. L'utilisateur a collé une URL YouTube avec ?t=… → extraire
+      //    les secondes ET auto-sélectionner la vidéo si l'ID matche.
+      const yt = extractYoutubeTimecode(raw);
+      if (yt) {
+        const patch = { ...(_state.timecodes[key] || {}), seconds: yt.seconds };
+        let matched = false;
+        if (yt.videoId) {
+          const video = _state.videos.find(v => extractYoutubeId(v.url) === yt.videoId);
+          if (video) {
+            patch.videoId = video.id;
+            matched = true;
+            const sel = document.querySelector(`.tc-video[data-key="${key}"]`);
+            if (sel) sel.value = video.id;
+          }
+        }
+        _state.timecodes[key] = patch;
+        el.value = formatTimecode(yt.seconds);
+        _state.dirty = true;
+        if (yt.videoId && !matched) {
+          toast(`Timecode extrait de l'URL, mais la vidéo (${yt.videoId}) n'est pas dans la liste — sélectionne-la à gauche`, 'warning', 5000);
+        } else {
+          toast(`Timecode extrait : ${formatTimecode(yt.seconds)}${matched ? ' + vidéo auto-sélectionnée' : ''}`, 'success', 2500);
+        }
+        return;
+      }
+
+      // 2. Sinon, parser comme un timecode texte classique (h:mm:ss, m:ss, s)
       const seconds = parseTimecode(raw);
       if (seconds == null) {
         toast(`Timecode invalide : « ${raw} »`, 'error');

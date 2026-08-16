@@ -12,6 +12,7 @@ import {
   parseTimecode,
   formatTimecode,
   extractYoutubeId,
+  extractYoutubeTimecode,
   buildYoutubeUrl,
   timecodeKey,
 } from '../js/utils.js';
@@ -381,6 +382,61 @@ describe('extractYoutubeId', () => {
   it('retourne null pour URL non-YouTube', () => {
     expect(extractYoutubeId('https://vimeo.com/12345')).toBe(null);
     expect(extractYoutubeId('https://example.com/video')).toBe(null);
+  });
+});
+
+// ─────────────────────────────────────────────────────────
+// extractYoutubeTimecode
+// ─────────────────────────────────────────────────────────
+
+describe('extractYoutubeTimecode', () => {
+  it('retourne null pour vide ou non-URL', () => {
+    expect(extractYoutubeTimecode('')).toBe(null);
+    expect(extractYoutubeTimecode(null)).toBe(null);
+    expect(extractYoutubeTimecode('1:23:45')).toBe(null);
+    expect(extractYoutubeTimecode('juste du texte')).toBe(null);
+  });
+
+  it('retourne null pour URL YouTube sans timecode', () => {
+    expect(extractYoutubeTimecode('https://youtu.be/dQw4w9WgXcQ')).toBe(null);
+    expect(extractYoutubeTimecode('https://www.youtube.com/watch?v=dQw4w9WgXcQ')).toBe(null);
+  });
+
+  it('extrait ?t=NNN (secondes brutes)', () => {
+    const r = extractYoutubeTimecode('https://youtu.be/dQw4w9WgXcQ?t=1118');
+    expect(r).toEqual({ seconds: 1118, videoId: 'dQw4w9WgXcQ' });
+  });
+
+  it('extrait ?t=NNNs', () => {
+    const r = extractYoutubeTimecode('https://youtu.be/dQw4w9WgXcQ?t=1118s');
+    expect(r).toEqual({ seconds: 1118, videoId: 'dQw4w9WgXcQ' });
+  });
+
+  it('extrait ?t=MmSs composé', () => {
+    expect(extractYoutubeTimecode('https://youtu.be/dQw4w9WgXcQ?t=18m38s'))
+      .toEqual({ seconds: 1118, videoId: 'dQw4w9WgXcQ' });
+    expect(extractYoutubeTimecode('https://youtu.be/dQw4w9WgXcQ?t=1h2m3s'))
+      .toEqual({ seconds: 3723, videoId: 'dQw4w9WgXcQ' });
+  });
+
+  it('extrait &t= (position secondaire dans l\'URL)', () => {
+    const r = extractYoutubeTimecode('https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=42s');
+    expect(r).toEqual({ seconds: 42, videoId: 'dQw4w9WgXcQ' });
+  });
+
+  it('accepte ?start=NNN (alias historique)', () => {
+    const r = extractYoutubeTimecode('https://www.youtube.com/watch?v=dQw4w9WgXcQ&start=90');
+    expect(r).toEqual({ seconds: 90, videoId: 'dQw4w9WgXcQ' });
+  });
+
+  it('renvoie seconds=0 pour ?t=0 (edge case)', () => {
+    const r = extractYoutubeTimecode('https://youtu.be/dQw4w9WgXcQ?t=0');
+    expect(r).toEqual({ seconds: 0, videoId: 'dQw4w9WgXcQ' });
+  });
+
+  it('videoId null quand URL non reconnue mais timecode présent', () => {
+    // Cas edge : quelqu'un colle un fragment style "?t=1118" sans URL complète
+    expect(extractYoutubeTimecode('?t=1118')).toEqual({ seconds: 1118, videoId: null });
   });
 });
 
