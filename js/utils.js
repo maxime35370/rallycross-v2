@@ -201,3 +201,103 @@ export function debounce(fn, delay = 300) {
     t = setTimeout(() => fn(...args), delay);
   };
 }
+
+// ─────────────────────────────────────────────────────────
+// TIMECODES VIDÉO (YouTube)
+// ─────────────────────────────────────────────────────────
+
+/**
+ * Parse un timecode texte en secondes.
+ * Accepte : "1:23:45" (h:m:s), "23:45" (m:s), "45" (s).
+ * Retourne null si invalide (chaîne vide → null).
+ */
+export function parseTimecode(str) {
+  if (str == null) return null;
+  const s = String(str).trim();
+  if (!s) return null;
+  const parts = s.split(':').map(p => p.trim());
+  if (parts.some(p => !/^\d+$/.test(p))) return null;
+  const nums = parts.map(Number);
+  if (nums.length === 1) return nums[0];
+  if (nums.length === 2) {
+    if (nums[1] > 59) return null;
+    return nums[0] * 60 + nums[1];
+  }
+  if (nums.length === 3) {
+    if (nums[1] > 59 || nums[2] > 59) return null;
+    return nums[0] * 3600 + nums[1] * 60 + nums[2];
+  }
+  return null;
+}
+
+/**
+ * Formate des secondes en "H:MM:SS" ou "M:SS" si < 1h.
+ */
+export function formatTimecode(seconds) {
+  if (seconds == null || isNaN(seconds) || seconds < 0) return '';
+  const total = Math.floor(seconds);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+/**
+ * Extrait l'ID YouTube d'une URL variée :
+ *  - https://www.youtube.com/watch?v=XXX
+ *  - https://youtu.be/XXX
+ *  - https://youtube.com/embed/XXX
+ *  - https://www.youtube.com/live/XXX
+ *  - https://youtube.com/shorts/XXX
+ * Retourne null si non reconnu.
+ */
+export function extractYoutubeId(url) {
+  if (!url) return null;
+  const s = String(url).trim();
+  if (!s) return null;
+  const patterns = [
+    /[?&]v=([a-zA-Z0-9_-]{11})/,
+    /youtu\.be\/([a-zA-Z0-9_-]{11})/,
+    /\/embed\/([a-zA-Z0-9_-]{11})/,
+    /\/live\/([a-zA-Z0-9_-]{11})/,
+    /\/shorts\/([a-zA-Z0-9_-]{11})/,
+  ];
+  for (const p of patterns) {
+    const m = s.match(p);
+    if (m) return m[1];
+  }
+  if (/^[a-zA-Z0-9_-]{11}$/.test(s)) return s;
+  return null;
+}
+
+/**
+ * Construit une URL YouTube avec un timecode (en secondes).
+ * @param {string} idOrUrl - ID vidéo ou URL complète
+ * @param {number} seconds - Secondes depuis le début (0 ou null = pas de timecode)
+ * @returns {string|null}
+ */
+export function buildYoutubeUrl(idOrUrl, seconds) {
+  const id = extractYoutubeId(idOrUrl);
+  if (!id) return null;
+  const t = seconds && seconds > 0 ? `?t=${Math.floor(seconds)}s` : '';
+  return `https://youtu.be/${id}${t}`;
+}
+
+/**
+ * Construit une clé map pour un timecode (session × catégorie).
+ * Utilisé pour le stockage dans `meeting.videoTimecodes[key]`.
+ * Ex : ("MQ", 1, "Division 5") → "MQ1__Division_5"
+ *      ("FIN", null, "Féminines") → "FIN__Feminines"
+ * @param {string} sessionType — EC, MQ, QF, DF, FIN
+ * @param {number|null} sessionNum — Numéro (pour MQ, QF, DF)
+ * @param {string} category — Ex: "Supercar", "Division 5"
+ */
+export function timecodeKey(sessionType, sessionNum, category) {
+  const cat = String(category || '')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-zA-Z0-9]/g, '_');
+  const t = sessionNum ? `${sessionType}${sessionNum}` : sessionType;
+  return `${t}__${cat}`;
+}

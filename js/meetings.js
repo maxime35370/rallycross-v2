@@ -437,6 +437,7 @@ function renderTable() {
         <td class="center">
           <div style="display:flex;gap:4px;justify-content:center">
             <button class="btn btn-ghost btn-icon mtg-qr-btn" data-id="${m.id}" data-name="${escHtml(m.location || '?')}" title="QR Live">📺</button>
+            <button class="btn btn-ghost btn-icon mtg-video-btn" data-id="${m.id}" title="Vidéos & timecodes">🎥</button>
             <button class="btn btn-ghost btn-icon mtg-edit-btn" data-id="${m.id}" title="Modifier">✏️</button>
             <button class="btn btn-danger btn-icon mtg-del-btn" data-id="${m.id}" title="Supprimer">🗑️</button>
           </div>
@@ -458,6 +459,12 @@ function renderTable() {
   });
   document.querySelectorAll('.mtg-qr-btn').forEach(btn =>
     btn.addEventListener('click', () => showQrLiveModal(btn.dataset.id, btn.dataset.name))
+  );
+  document.querySelectorAll('.mtg-video-btn').forEach(btn =>
+    btn.addEventListener('click', async () => {
+      const { openVideoEditor } = await import('./videoTimecodes.js');
+      openVideoEditor(btn.dataset.id);
+    })
   );
   document.querySelectorAll('.mtg-edit-btn').forEach(btn =>
     btn.addEventListener('click', () => openEdit(btn.dataset.id))

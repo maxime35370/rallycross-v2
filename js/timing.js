@@ -10,7 +10,7 @@ import { db } from './firebase.js';
 import { toast } from './app.js';
 import { logAudit } from './audit.js';
 import { requireAuth } from './auth.js';
-import { msToDisplay, inputToMs, msToFields, escHtml, parseTimeString } from './utils.js';
+import { msToDisplay, inputToMs, msToFields, escHtml, parseTimeString, timecodeKey, buildYoutubeUrl } from './utils.js';
 import { getActiveChampionship, getActiveChampionshipId } from './context.js';
 import { mqPoints, qfPoints, dfPoints, finPoints, ecBonusPoints, calcStatusPoints, compareInterimTiebreaker } from './calc.js';
 import { getChampionshipConfig } from './settings.js';
@@ -991,6 +991,29 @@ function renderTimingTable() {
       banner.appendChild(liveBtn);
     }
     liveBtn.onclick = () => triggerLiveImport(session);
+
+    // « ▶ Voir la course » : ouvre YouTube au bon timecode si défini pour
+    // cette combinaison session × catégorie sur le meeting.
+    const meeting = allMeetings.find(m => m.id === selectedMeetingId);
+    const key = timecodeKey(session.type, session.num, selectedCategory);
+    const tc  = meeting?.videoTimecodes?.[key];
+    const video = tc?.videoId ? (meeting?.videos || []).find(v => v.id === tc.videoId) : null;
+    const watchUrl = video?.url ? buildYoutubeUrl(video.url, tc.seconds) : null;
+
+    let watchBtn = document.getElementById('tim-watch-btn');
+    if (watchUrl) {
+      if (!watchBtn) {
+        watchBtn = document.createElement('button');
+        watchBtn.id = 'tim-watch-btn';
+        watchBtn.className = 'btn btn-secondary btn-sm';
+        watchBtn.textContent = '▶ Voir la course';
+        watchBtn.title = 'Ouvrir la vidéo YouTube au bon timecode';
+        banner.appendChild(watchBtn);
+      }
+      watchBtn.onclick = () => window.open(watchUrl, '_blank', 'noopener,noreferrer');
+    } else if (watchBtn) {
+      watchBtn.remove();
+    }
   }
 
   const timed   = participants.filter(p => results[p.driverId]?.ms != null || SPECIAL_STATUSES.includes(results[p.driverId]?.status));
