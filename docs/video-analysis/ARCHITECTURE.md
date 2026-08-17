@@ -3,6 +3,12 @@
 > Document d'architecture. **Aucun code applicatif n'est écrit à ce stade.**
 > Source de vérité : le dépôt `maxime35370/rallycross-v2` inspecté sur la branche `main`
 > (commit `75d641d`).
+>
+> **Révision 2** — correction majeure de granularité : une manche qualificative contient
+> **plusieurs départs physiques** (une série = un départ), alors qu'elle ne possède qu'un seul
+> timecode vidéo, qui pointe le début de la **première** série. Sections refondues : §1.3, §1.4,
+> **§1.5 (nouvelle)**, §2.2, §2.3, §4.7, §4.8, **§4.9 et §4.10 (nouvelles)**, §5 (phases 1–3),
+> §6, §7. La sémantique de `videoTimecodes` n'est **plus** modifiée par cette proposition.
 
 ---
 
@@ -93,9 +99,47 @@ session, sans rien saisir. Il y a même un éditeur de grille visuel dans `setti
 Et pour les manches qualificatives, `results.serie` / `results.couloir` sont **déjà stockés et
 déjà exploités** : `js/importTimes.js` les pré-remplit depuis les grilles officielles importées,
 et `js/standings.js` trace déjà un nuage de points « temps par couloir / série »
-(`renderMqCouloirGraph`). Le champ `couloir` est borné par la taille de la série
-(`validateMeta`) : une manche = **une seule ligne** de N voitures côte à côte, donc pour les MQ
-`position de grille ≡ couloir`.
+(`renderMqCouloirGraph`).
+
+**Une série = une seule ligne de N voitures côte à côte**, donc au sein d'une série
+`position de grille ≡ couloir`. Mais une **manche** contient plusieurs séries — voir §1.5, qui
+est le point le plus structurant du modèle de données.
+
+### 1.5 ⚠️ Un « départ physique » n'est pas une « session »
+
+C'est **la** subtilité du modèle, et elle change la granularité de tout le module.
+
+**Manches qualificatives.** Une session MQ contient *tous* les pilotes de la catégorie, répartis
+en séries. La structure des séries n'est **stockée nulle part** : elle est recalculée à la volée
+par `getSeriesStructure(nbParticipants)` (`js/timing.js`) via `computeSeriesSizes()`, en fonction
+de `maxPerSeries` de la catégorie et de `seriesDistributionMode` du championnat. L'affectation
+réelle, elle, vit **par pilote** dans `results.serie` + `results.couloir`.
+
+Conséquence : **les séries n'ont pas toutes la même taille.** En mode `ffsa`, 26 pilotes avec
+`maxPerSeries: 5` donnent `[3, 3, 5, 5, 5, 5]` — six départs physiques, dont deux à 3 voitures.
+Le `couloir` est borné par la taille de *sa* série (`validateMeta`).
+
+**Phases finales.** Vérification faite dans `sessions.js` / `competition.js` : QF1…QF4 et DF1…DF2
+sont des **documents `sessions` distincts** (`type` + `num`), chacun avec ses propres
+`sessionParticipants` (`distributeIntoQF`, `distributeIntoDF`, `gridSize`). Pour QF / DF / FIN,
+**1 session = 1 grille = 1 départ physique**. Seules les MQ sont multi-départs.
+
+| Phase | Représentation V2 | Départs physiques par session |
+|---|---|---|
+| EC | 1 session | *aucun* (essais chronométrés, pas de départ en grille) |
+| **MQ** | 1 session / (manche × catégorie), séries dans `results.serie` | **N séries → N départs** |
+| QF | 1 session par QF (`num` 1..4) | 1 |
+| DF | 1 session par DF (`num` 1..2) | 1 |
+| FIN | 1 session | 1 |
+
+**Principe directeur retenu : une `startAnalysis` = un départ physique réel**, jamais une
+session. L'identifiant, la récupération des pilotes, le timecode, la géométrie de grille et
+l'unité statistique en découlent tous (§4.7, §4.8).
+
+Ordre de grandeur, et c'est une excellente nouvelle : 4 manches × 6 séries = **24 départs
+exploitables par catégorie et par meeting**, contre 3 seulement (2 DF + 1 FIN) si l'on
+raisonnait par session. Les MQ sont donc, et de loin, la principale source de données — et ce
+sont aussi celles dont les couloirs sont attribués par tirage réglementaire (§4.8).
 
 ### 1.4 État des données : qu'est-ce qui manque vraiment ?
 
@@ -105,22 +149,31 @@ et `js/standings.js` trace déjà un nuage de points « temps par couloir / sér
 | Saison | ✅ | `year`, dénormalisé sur presque tous les documents |
 | Circuit | ⚠️ | `meeting.location` — **texte libre, à normaliser** |
 | Catégorie | ✅ | `category`, dénormalisé partout |
-| Session / course | ✅ | `sessions` (`type` + `num`) |
+| Session | ✅ | `sessions` (`type` + `num`) |
+| **Départ physique** | ⚠️ | déductible, mais **n'est pas une entité** : pour les MQ il faut regrouper `results` par `serie` (§1.5) |
 | Format / règlement | ✅ | `championships.sessionConfig` + `competitionPhases` |
 | Pilotes engagés | ✅ | `engagements`, `sessionParticipants` |
-| Grille MQ + couloir | ✅ | `results.serie` + `results.couloir` |
+| Composition d'une série MQ | ✅ | `results` filtrés sur `sessionId` + `serie` |
+| Couloir MQ | ✅ | `results.couloir` (borné par la taille de *sa* série) |
+| Taille / nb de séries d'une manche | ⚠️ | **recalculé à la volée** (`getSeriesStructure`), jamais persisté |
 | Géométrie de grille (lignes × couloirs) | ✅ | `sessionConfig.{QF,DF,FIN}.gridLayout` |
 | Grille QF/DF/FIN par pilote | ⚠️ | **calculée à la volée** dans `sessions.js` depuis la cascade de qualification, **jamais persistée** |
-| Position finale | ✅ | **calculée à la volée** par `calcPhaseStandings()` (`standings.js`) : tri par `ms` croissant, puis DNF classés via `manualPosition`, puis DSQ/DNS |
-| Vidéo + timecode de départ par (session × catégorie) | ✅ | `meeting.videos[]` + `meeting.videoTimecodes{}` |
-| **Position à la sortie du premier virage** | ❌ | **c'est la seule donnée réellement absente** |
+| Position finale QF/DF/FIN | ✅ | **calculée à la volée** par `calcPhaseStandings()` (`standings.js`) : tri par `ms` croissant, puis DNF classés via `manualPosition`, puis DSQ/DNS |
+| Position finale MQ | ⚠️ | `calcMqStandings()` classe **toute la manche** (1..30), pas la série → le rang *au sein du départ* est à recalculer (§4.7) |
+| Vidéo + timecode | ⚠️ | `meeting.videos[]` + `meeting.videoTimecodes{}`, mais **1 seul timecode par (session × catégorie)** = début de la **1ʳᵉ série** seulement (§2.2) |
+| **Position à la sortie du premier virage** | ❌ | donnée réellement absente |
+| **Timecode de départ des séries 2..N** | ❌ | donnée réellement absente |
 
-Il ne manque donc que **trois** choses, et une seule est difficile :
+Il manque donc **cinq** choses, dont une seule est difficile :
 
-1. **L'ordre à la sortie du virage 1** → nouvelle donnée à produire (§4).
-2. **La grille QF/DF/FIN persistée** → aujourd'hui affichée puis perdue ; il faut la figer au
-   moment de l'analyse pour que la statistique soit reproductible.
-3. **La normalisation des circuits** → `location` est du texte libre ; « Lohéac », «Loheac»,
+1. **L'ordre à la sortie du virage 1** → nouvelle donnée à produire (§4). *La seule difficile.*
+2. **Les timecodes de départ des séries 2..N d'une manche** → saisie humaine pendant la
+   navigation vidéo, très rapide (§2.3, §4.9).
+3. **La grille QF/DF/FIN persistée** → aujourd'hui affichée puis perdue ; à figer au moment de
+   l'analyse pour que la statistique soit reproductible.
+4. **Le rang d'arrivée au sein d'un départ MQ** → recalculable depuis `results.ms` des seuls
+   pilotes de la série, à figer lui aussi.
+5. **La normalisation des circuits** → `location` est du texte libre ; « Lohéac », «Loheac»,
    « LOHÉAC » scinderaient les statistiques en trois. Indispensable dès la phase 1 puisque tu
    veux comparer les circuits.
 
@@ -155,44 +208,54 @@ Ces timecodes alimentent le bouton « ▶ Voir la course » de la vue Chronomét
 | Question | Réponse |
 |---|---|
 | Notion de vidéo existante ? | **Oui**, mais **YouTube uniquement**, au niveau **meeting** |
-| Granularité ? | Une entrée par (type de session, numéro, catégorie) → **exactement la granularité d'une course** |
-| Sémantique du timecode ? | **Le début de la course** — donc déjà le point d'ancrage dont l'analyse a besoin |
+| Granularité ? | Une entrée par (type de session, numéro, catégorie). **Ce n'est PAS la granularité d'un départ** : pour une MQ à 6 séries, il n'y a qu'une seule case pour 6 départs physiques |
+| Sémantique du timecode ? | **Le début de la 1ʳᵉ série de la catégorie pour cette manche** — donc l'ancrage de la *première* grille, et un point d'entrée pour retrouver les suivantes |
+| Timecodes des séries 2..N ? | **Inexistants** dans le système actuel |
 | Données stockées | Sur le document `meetings` : `videos[]` et `videoTimecodes{}` |
-| Interface réutilisable ? | **Le modèle de données : oui, à 100 %. L'interface : non.** |
+| Interface réutilisable ? | **Non**, mais le modèle reste le bon point d'entrée |
 
-### 2.3 Recommandation : **étendre le modèle, séparer l'interface**
+⚠️ **Correction d'une erreur d'une version antérieure de ce document**, qui affirmait que
+`videoTimecodes` avait « exactement la granularité d'une course ». C'est vrai pour QF / DF / FIN
+(1 session = 1 grille), **faux pour les MQ** (1 session = N séries = N départs, 1 seul timecode).
+Toute la §4.7 et la §4.8 découlent de cette correction.
 
-**Étendre le modèle de données** — c'est le bon ancrage, il serait absurde d'en créer un second :
+### 2.3 Recommandation : **ne pas toucher à la sémantique existante**
+
+Tu demandes explicitement que `videoTimecodes` conserve son sens actuel — c'est aussi la bonne
+décision technique, et elle est plus propre que ce que proposait la version précédente :
+
+- **`videoTimecodes[key].seconds` garde exactement son sens** : début du bloc de séries de la
+  catégorie pour cette manche. Zéro modification de `videoTimecodes.js`, zéro risque de
+  régression sur le bouton « ▶ Voir la course ».
+- **Les repères fins du module d'analyse vivent dans `startAnalyses`**, un par départ physique
+  (`video.startSeconds`, `video.turn1Seconds`). Ils sont *utilisés par* le nouveau module, pas
+  partagés avec l'ancien.
+- **Le timecode existant sert d'amorce** : pour la série 1, `startSeconds` est pré-rempli depuis
+  `videoTimecodes[MQn|catégorie].seconds`. Pour les séries suivantes, voir la stratégie de
+  pré-remplissage progressif en §4.9.
+
+Un seul ajout au document `meetings`, indépendant de `videoTimecodes` :
 
 ```js
-// meeting.videoTimecodes[key] — champs existants conservés, ajouts optionnels
-{
-  videoId:       "u17",   // existant — inchangé
-  seconds:       4521,    // existant — début de course, inchangé
-  turn1Seconds:  4528.4,  // AJOUT : sortie du virage 1 (optionnel)
-  localVideoId:  "lv3"    // AJOUT : réf. vers un fichier local (optionnel)
-}
-
 // meeting.localVideos[] — AJOUT : descripteurs de fichiers locaux, JAMAIS le fichier
 [{ id:"lv3", label:"Finale Supercar", fileName:"loheac-2026-fin-sc.mp4",
    size:184320512, durationMs:612000, fps:50, fingerprint:"a91c…" }]
 ```
 
-Tous les ajouts sont **optionnels** : un meeting existant reste valide, `videoTimecodes.js`
-continue de fonctionner sans modification. Il faudra juste que sa fonction `saveAll()` préserve
-les nouvelles clés au lieu de les écraser (elle reconstruit aujourd'hui un objet propre en ne
-gardant que `{videoId, seconds}` — **c'est le seul vrai point de vigilance de non-régression du
-projet**).
+**Bénéfice de ce choix** : le point de vigilance de non-régression identifié précédemment
+(`saveAll()` qui reconstruit `videoTimecodes` en ne gardant que `{videoId, seconds}` et
+effacerait donc des clés ajoutées) **disparaît complètement**. `videoTimecodes.js` n'est pas
+modifié du tout.
 
-**Ne pas réutiliser l'interface**, en revanche : `videoTimecodes.js` est un *éditeur de masse*
-(remplir 60 timecodes vite), alors que l'analyse de départ est un *poste de travail sur une
-course* (lecteur, ligne virtuelle, tableau de validation). Deux usages, deux ergonomies. Les
-fusionner rendrait les deux moins bons.
+**Ne pas réutiliser l'interface** non plus : `videoTimecodes.js` est un *éditeur de masse*
+(remplir 60 timecodes vite), alors que l'analyse de départ est un *poste de travail sur un
+départ* (lecteur, ligne virtuelle, tableau de validation, enchaînement des séries). Deux usages,
+deux ergonomies. Les fusionner rendrait les deux moins bons.
 
-**Facteur commun à extraire** : un petit module pur `js/videoRefs.js` avec
-`getRaceVideoRef(meeting, sessionType, num, category)` / `setRaceVideoRef(...)`, utilisé par
-`videoTimecodes.js` **et** par le nouveau module. Une seule source de vérité sur la forme des
-clés, testable dans `tests/`.
+**Seul point de contact** : la lecture du timecode d'amorce. Le nouveau module réutilise
+`timecodeKey(sessionType, sessionNum, category)` déjà exporté par `js/utils.js` — donc aucun
+module partagé supplémentaire à créer, et aucune écriture dans `videoTimecodes`. Le
+rapprochement `videos[].id → ID YouTube` passe par `extractYoutubeId()`, également déjà exporté.
 
 ---
 
@@ -205,10 +268,10 @@ Le raisonnement :
 - La grille est connue (stockée pour les MQ, calculable pour QF/DF/FIN).
 - Le couloir est déductible de la grille par arithmétique sur `gridLayout`.
 - Le résultat final est déjà calculé par `calcPhaseStandings()`.
-- Le timecode de début de course est déjà saisi pour les courses déjà « timecodées ».
+- Le timecode d'entrée dans le bloc de séries est déjà saisi pour les manches déjà « timecodées ».
 
-Il ne reste donc à produire **qu'une seule donnée par course : l'ordre de ~8 voitures à un seul
-instant.** Ce n'est pas un problème de vision par ordinateur, c'est **une lecture ordinale
+Il ne reste donc à produire **qu'une seule donnée par départ : l'ordre de 3 à 8 voitures à un
+seul instant** (plus le timecode du départ pour les séries 2..N d'une manche). Ce n'est pas un problème de vision par ordinateur, c'est **une lecture ordinale
 unique**.
 
 ### 3.1 Le calcul de rentabilité qu'il faut faire avant de coder du YOLO
@@ -219,14 +282,15 @@ unique**.
 | OpenCV multi-tracker amorcé par clics | 10–15 s | ~3 jours | `opencv-contrib-python` (~50 Mo) |
 | YOLO + ByteTrack + ré-identification | 5–15 s (+ vérification) | ~8–10 jours | `ultralytics` + `torch` (**~2,5 Go**) |
 
-L'automatisation complète fait gagner ~20 s par course. À 8–10 jours de développement, le
-seuil de rentabilité est de l'ordre de **1 000 à 1 500 courses analysées**. Tu n'y seras pas
-avant plusieurs saisons.
+L'automatisation complète fait gagner ~20 s par départ. À 8–10 jours de développement, le
+seuil de rentabilité est de l'ordre de **1 000 à 1 500 départs analysés** — soit, à ~216 départs
+par catégorie et par saison, plusieurs saisons sur une catégorie, ou une saison complète si tu
+analyses toutes les catégories.
 
 **Conclusion : la valeur est dans les phases 1 à 3, pas dans le YOLO.** Un bon lecteur avec
 avance image par image et saisie d'ordre par clic te donne une base statistique réelle en
-quelques soirées. 200 courses × 25 s ≈ **1 h 20 de saisie** pour un échantillon déjà
-statistiquement exploitable.
+quelques soirées. 200 départs × 25 s ≈ **1 h 20 de saisie** pour un échantillon déjà
+statistiquement exploitable — et un seul meeting d'une catégorie en fournit déjà 27.
 
 ### 3.2 Ce que l'automatisation apporte quand même
 
@@ -291,9 +355,9 @@ Si l'OCR arrive un jour, ce sera en **suggestion uniquement**, jamais en source 
 │    ├─ js/startAnalysisCalc.js  ← NOUVEAU  pur + testé       │
 │    ├─ js/startStats.js         ← NOUVEAU  vue statistiques  │
 │    ├─ js/startStatsCalc.js     ← NOUVEAU  pur + testé       │
-│    ├─ js/videoPlayer.js        ← NOUVEAU  YouTube + fichier │
-│    └─ js/videoRefs.js          ← NOUVEAU  partagé avec      │
-│                                            videoTimecodes.js│
+│    └─ js/videoPlayer.js        ← NOUVEAU  YouTube + fichier │
+│                                                             │
+│    videoTimecodes.js ...... INCHANGÉ (lu seulement, §2.3)   │
 │                    │                                        │
 │                    ▼                                        │
 │  Firestore : collections existantes (lecture)               │
@@ -342,7 +406,8 @@ Schéma d'échange proposé :
 ```json
 {
   "schemaVersion": 1,
-  "video":  { "fileName": "loheac-2026-fin-sc.mp4", "fps": 50,
+  "start":  { "docId": "aBc123_s3", "label": "MQ1 · Série 3", "starters": 5 },
+  "video":  { "fileName": "loheac-2026-mq1-sc.mp4", "fps": 50,
               "width": 1920, "height": 1080, "fingerprint": "a91c…" },
   "window": { "startSeconds": 4521.0, "endSeconds": 4530.0 },
   "line":   { "a": [0.21, 0.62], "b": [0.78, 0.55] },
@@ -387,10 +452,11 @@ de **conserver un handle dans IndexedDB** et de réouvrir le même fichier plus 
 re-sélectionner. Firestore ne stocke qu'un **descripteur** (nom, taille, durée, fps,
 empreinte) — jamais la vidéo, conformément à ta contrainte.
 
-### 4.4 Définition du virage 1 : un préréglage par circuit, pas par course
+### 4.4 Définition du virage 1 : un préréglage par circuit, pas par départ
 
 Tu cliques deux points sur l'image → segment `A`–`B` en coordonnées normalisées. Mais le stocker
-**par course** serait une erreur : tu le ressaisirais 30 fois pour Lohéac. Il faut le stocker
+**par départ** serait une erreur : tu le ressaisirais des dizaines de fois pour Lohéac — les 6
+séries d'une même manche partagent d'ailleurs le même plan. Il faut le stocker
 **par circuit** (`circuits/{circuitKey}.presets[]`), avec un libellé et un indice de plan de
 caméra. Après la première course de Lohéac, la ligne est déjà là pour les 30 suivantes.
 
@@ -457,56 +523,138 @@ coupure en quelques clics. Détecter les coupures d'abord permet d'annoncer d'em
 
 ### 4.7 Nouveau schéma Firestore (minimal, sans duplication)
 
-**Nouvelle collection `startAnalyses`** — un document par course, id déterministe = `sessionId`
-(convention maison). Les lignes sont **imbriquées** : une course ≈ 8 lignes, largement sous la
-limite de 1 Mio, et surtout **1 seule lecture par course** pour la statistique (une saison d'une
-catégorie ≈ 30–60 documents).
+**Nouvelle collection `startAnalyses` — un document par DÉPART PHYSIQUE**, jamais par session
+(§1.5). Les lignes sont **imbriquées** : un départ = 3 à 8 lignes, très loin de la limite de
+1 Mio, et surtout **1 seule lecture par départ** pour la statistique.
+
+#### Stratégie d'identifiant déterministe
+
+`sessionId` seul ne suffit pas : une MQ contient N départs. Convention retenue, uniforme sur
+toutes les phases :
+
+```
+startAnalyses/${sessionId}_s${startIndex}
+```
+
+où `startIndex` = **numéro de série** pour les MQ (`results.serie`, 1..N), et **`1`** pour
+QF / DF / FIN qui n'ont qu'une grille. Exemples :
+
+```
+startAnalyses/aBc123_s1   ← MQ1 Supercar, série 1
+startAnalyses/aBc123_s6   ← MQ1 Supercar, série 6
+startAnalyses/xYz789_s1   ← DF2 Supercar (grille unique)
+```
+
+Pourquoi cette forme :
+
+- **Déterministe et idempotente** — `setDoc(..., {merge:true})` comme `results` et
+  `sessionParticipants` : impossible de créer un doublon, même en cas de double clic ou
+  d'onglets multiples. C'est la convention maison.
+- **Uniforme** : un seul chemin de code pour toutes les phases, `startIndex` valant simplement 1
+  quand il n'y a qu'un départ. Pas de branche `if (type === 'MQ')` dans la couche d'accès.
+- **Le préfixe `s`** évite toute ambiguïté de lecture et rend l'id lisible dans la console
+  Firestore.
+- **Requêtable** : `where('sessionId','==',id)` retourne les N départs d'une manche, triables par
+  `startIndex`.
+
+#### Schéma
 
 ```js
-startAnalyses/{sessionId} = {
-  // rattachement — dénormalisé comme partout ailleurs dans la V2
+startAnalyses/${sessionId}_s${startIndex} = {
+  // ── rattachement — dénormalisé comme partout ailleurs dans la V2 ──
   sessionId, meetingId, championshipId, year, category,
   sessionType,            // 'MQ' | 'QF' | 'DF' | 'FIN'
-  sessionNum,
-  circuitKey,             // slug normalisé de meeting.location
-  regulationKey,          // pour comparer les formats (ex. 'FFSA 2026')
+  sessionNum,             // n° de manche pour MQ, n° de QF/DF sinon
+  startIndex,             // n° de série (MQ) ou 1
+  startLabel,             // libellé lisible : « MQ1 · Série 3 », « DF2 »
+  circuitKey,
+  regulationKey,
 
-  // géométrie effective de la grille pour cette course
-  lanes, gridRows, gridSize,
+  // ── géométrie effective de CE départ ──
+  lanesUsed,              // nb de couloirs réellement occupés (3 pour une série de 3 !)
+  trackLanes,             // nb de couloirs de la grille du circuit (référence physique)
+  gridRows,               // 1 pour une série MQ ; 3 pour une grille DF/FIN
+  starters,               // nb de voitures au départ = rows.length
   gridSource: 'mq_couloir' | 'grid_layout' | 'manual',
 
   status: 'draft' | 'validated',
   validatedAt, validatedBy,
 
   video: { kind: 'youtube' | 'local', videoId | localVideoId,
-           startSeconds, turn1Seconds },
+           startSeconds,        // départ de CE départ (≠ videoTimecodes pour les séries 2..N)
+           turn1Seconds,
+           startSecondsSource: 'videoTimecodes' | 'manual' | 'suggested' },
 
   analysis: { engine: 'manual' | 'opencv-csrt' | 'yolo-bytetrack',
               version, ranAt, warnings: [] },
 
   rows: [{
-    driverId, carNumber,          // clés vers l'existant (pas de recopie d'identité)
-    gridPos, lane, laneZone, gridRow,
-    turn1Pos,                     // valeur validée par l'humain
-    autoTurn1Pos,                 // ce que le moteur avait proposé (traçabilité)
-    finishPos, finishStatus,      // figés à la validation, depuis calcPhaseStandings()
+    driverId, carNumber,      // clés vers l'existant (pas de recopie d'identité)
+    gridPos,                  // position sur la grille de CE départ
+    lane, laneZone, gridRow,
+    turn1Pos,                 // 1..starters — valeur validée par l'humain
+    autoTurn1Pos,             // ce que le moteur avait proposé (traçabilité)
+    finishPosInStart,         // rang parmi les partants de CE départ  ← comparable
+    finishPosInSession,       // rang dans la manche entière (MQ) ou la session
+    finishStatus,             // null | 'DNF' | 'DNS' | 'DSQ' | 'DSQ_RACE'
     confidence: 'green' | 'yellow' | 'red',
     corrected: false,
     note
   }],
 
+  integrity: { seriesFingerprint },   // voir ci-dessous
+
   createdAt, updatedAt
 }
 ```
 
-Choix de conception à noter :
+#### Choix de conception, et pourquoi
 
-- **`finishPos` est figé à la validation**, pas recalculé à chaque affichage. Raison : le
-  classement final dépend du règlement actif, qui peut évoluer ; une statistique historique doit
-  être stable. `autoTurn1Pos` conservé à côté de `turn1Pos` permet de mesurer a posteriori le
-  taux de correction humaine — donc la qualité réelle du moteur.
-- **Aucune recopie de nom de pilote** au-delà de `carNumber` (nécessaire au rapprochement
-  vidéo). `driverId` suffit pour rejoindre `drivers` / `persons`.
+- **`finishPosInStart` ET `finishPosInSession`.** C'est une conséquence directe de la correction
+  MQ. `calcMqStandings()` classe **toute la manche** (1..30) : ce rang n'est pas comparable à une
+  grille de 5. Pour la matrice de transition et le gain/perte de positions, la seule grandeur
+  homogène est **le rang au sein du départ**, recalculé en triant par `ms` les seuls pilotes de
+  la série. Le rang manche-entière est conservé à côté parce qu'il reste l'information
+  réglementaire (c'est lui qui donne les points) et qu'il permettra des analyses secondaires.
+  Pour QF / DF / FIN, les deux valeurs coïncident.
+- **`lanesUsed` ET `trackLanes`.** Les séries n'ont pas toutes la même taille (§1.5 : `[3,3,5,5,5,5]`).
+  Sans distinguer les deux, on ne peut pas interpréter un couloir correctement — voir la question
+  ouverte en §4.10, qui doit être tranchée avant de coder le calcul de `laneZone`.
+- **Tout est figé à la validation** (`finishPos*`, `lanesUsed`, `laneZone`) plutôt que recalculé à
+  l'affichage : les règlements et les compositions de séries évoluent, une statistique historique
+  doit être stable.
+- **`integrity.seriesFingerprint`** = hachage court de la liste triée des `driverId` du départ, au
+  moment de la validation. La composition des séries n'est **pas** persistée par la V2 : elle vit
+  dans `results.serie`, que la régie peut modifier (correction de saisie, nouveau tirage). Si la
+  série 3 contient demain d'autres pilotes qu'à la validation, l'empreinte ne correspondra plus →
+  le module affiche « cette analyse a été validée sur une composition différente » au lieu de
+  laisser une statistique silencieusement fausse. C'est peu de code pour un vrai risque.
+- **Aucune recopie de nom de pilote** au-delà de `carNumber` (nécessaire au rapprochement vidéo).
+  `driverId` suffit pour rejoindre `drivers` / `persons`.
+
+#### Reconstruction automatique d'un départ depuis l'existant
+
+Aucune saisie de grille n'est nécessaire — tout se déduit :
+
+**MQ** (`sessionId` + `startIndex`) :
+1. `results` où `sessionId == X` → filtrer `serie == startIndex` ;
+2. chaque pilote apporte son `couloir` → `gridPos = couloir`, `lane = couloir`, `gridRow = 1` ;
+3. `lanesUsed` = nombre de pilotes de la série (croisé avec `getSeriesStructure().sizes[startIndex-1]`
+   comme contrôle de cohérence) ;
+4. `finishPosInStart` = tri par `ms` des seuls pilotes de la série ;
+5. `finishPosInSession` = position issue de `calcMqStandings()`.
+
+**QF / DF / FIN** (`sessionId`, `startIndex = 1`) :
+1. `sessionParticipants` où `sessionId == X` → les partants ;
+2. `gridPos` via la cascade de qualification (`sessions.js`), puis `(gridRow, lane)` via
+   `sessionConfig[type].gridLayout.positions` ;
+3. `finishPosInStart = finishPosInSession` via `calcPhaseStandings()`.
+
+**Cas dégradé à gérer explicitement** : `results.serie` / `results.couloir` sont **nullables**
+(remplis par `importTimes.js` ou à la main dans `timing.js`, mais pas garantis). Si la série n'est
+pas renseignée, le module doit le dire clairement et proposer un regroupement manuel, jamais
+inventer une composition. À prévoir dès la phase 1 : c'est le cas le plus fréquent sur les
+meetings anciens.
 
 **Nouvelle collection `circuits`** (petite, ~20 documents) :
 
@@ -528,10 +676,13 @@ mélangerait des situations opposées et le résultat serait faux. Avec lui, `la
 proprement :
 
 ```
-lane (1..lanes) + firstTurnSide + lanes  →  'inside' | 'middle' | 'outside'
+laneZone(lane, trackLanes, lanesUsed, firstTurnSide) → 'inside' | 'middle' | 'outside'
 ```
 
-à placer dans `startAnalysisCalc.js`, en fonction pure et testée.
+à placer dans `startAnalysisCalc.js`, en fonction pure et testée. La signature prend **les deux**
+comptes de couloirs parce que le dénominateur correct dépend de la convention physique restée
+ouverte en §4.10 — trancher cette question ne changera que le corps de cette seule fonction, et
+ses tests.
 
 **Champs additifs sur `sessionParticipants`** : `gridPos`, `lane` — écrits au moment où la grille
 QF/DF/FIN est générée, pour cesser de perdre une information déjà calculée. Purement additif :
@@ -545,10 +696,13 @@ match /startAnalyses/{docId} {
   allow read:   if true;
   allow delete: if isRegie();
   allow create, update: if isRegie()
-    && hasFields(request.resource.data, ['sessionId','meetingId','year','category','status'])
+    && hasFields(request.resource.data,
+         ['sessionId','meetingId','year','category','sessionType','startIndex','status'])
     && request.resource.data.status in ['draft','validated']
+    && request.resource.data.startIndex is int
+    && request.resource.data.startIndex >= 1
     && request.resource.data.rows is list
-    && request.resource.data.rows.size() <= 40;
+    && request.resource.data.rows.size() <= 12;   // un départ physique : 3 à 8 voitures
 }
 match /circuits/{docId} {
   allow read:  if true;
@@ -558,16 +712,92 @@ match /circuits/{docId} {
 
 **Index** : aucun. Conformément à la convention de `stats.js`, on requête sur `year`
 (éventuellement + `status`) et on filtre championnat / circuit / catégorie côté client. Le volume
-(quelques centaines de documents) le permet largement.
+reste modeste même avec la granularité par départ : ~24 départs × 6 catégories × 8 meetings ≈
+**1 150 documents par saison** dans le pire cas, tous à ~2 Ko. Une saison complète se charge en
+une requête et se filtre côté client sans difficulté.
 
 **Migration** : aucune. Tout est additif, rien n'est renommé, aucune donnée existante n'est
-touchée.
+touchée. `videoTimecodes` n'est pas modifié (§2.3).
+
+### 4.9 Workflow vidéo : enchaîner Série 1 → Série 2 → Série 3
+
+C'est l'ergonomie qui détermine le volume de données collecté, donc elle mérite d'être conçue
+précisément.
+
+**Écran « Analyse des départs » — colonne de gauche : la liste des départs à analyser.**
+On choisit Championnat → Meeting → Catégorie, et le module **énumère tous les départs physiques
+du meeting** pour cette catégorie, avec leur état :
+
+```
+MQ1  ├─ Série 1  (5 pilotes)  ✅ validée
+     ├─ Série 2  (5 pilotes)  🟡 brouillon
+     ├─ Série 3  (5 pilotes)  ⚪ à faire   ← sélectionné
+     ├─ Série 4  (5 pilotes)  ⚪ à faire
+     ├─ Série 5  (3 pilotes)  ⚪ à faire
+     └─ Série 6  (3 pilotes)  ⚪ à faire
+MQ2  ├─ Série 1  …
+DF1  └─ grille unique         ⚪ à faire
+FIN  └─ grille unique         ⚪ à faire
+```
+
+Tu ne « reviens » donc jamais chercher session + catégorie : tu descends la liste. Raccourcis
+clavier `N` (départ suivant) / `P` (précédent) pour enchaîner sans souris.
+
+**Pré-remplissage progressif du timecode de départ** — la partie qui fait vraiment gagner du
+temps :
+
+| Départ | `startSeconds` proposé | `startSecondsSource` |
+|---|---|---|
+| Série 1 | `videoTimecodes[MQn\|catégorie].seconds` — **déjà en base** | `videoTimecodes` |
+| Série 2 | série 1 + intervalle par défaut du circuit | `suggested` |
+| Série 3+ | série précédente + **médiane des intervalles déjà mesurés** sur ce meeting | `suggested` |
+
+Une suggestion n'est jamais une donnée : elle positionne le lecteur *à peu près* au bon endroit,
+tu ajustes de quelques secondes et tu confirmes — ce qui passe la source à `manual`. Après deux
+ou trois séries mesurées, la médiane devient bonne et le lecteur tombe quasiment sur le départ.
+L'intervalle médian observé par circuit peut être mémorisé dans `circuits/{key}.medianSeriesGap`
+pour amorcer les meetings suivants.
+
+**Boucle de travail par départ** (~20–30 s) :
+
+1. le lecteur se positionne sur `startSeconds` (proposé ou saisi) ;
+2. la grille reconstruite depuis `results.serie`/`couloir` s'affiche à côté de l'image ;
+3. tu avances jusqu'à la sortie du virage 1, tu marques `turn1Seconds` ;
+4. tu saisis l'ordre V1 (clic sur les voitures, ou glisser-déposer des lignes) ;
+5. `finishPosInStart` et `finishPosInSession` sont déjà remplis depuis `results` ;
+6. **Valider → départ suivant** en un seul bouton.
+
+**Sécurité vidéo** : `startSeconds` et `turn1Seconds` sont stockés **par départ** dans
+`startAnalyses`, jamais dans `videoTimecodes` — donc aucune interaction avec la modale existante,
+et un timecode de série mal saisi n'affecte que son propre départ.
+
+### 4.10 Question ouverte à trancher avant de coder `laneZone`
+
+Une série de 3 pilotes n'occupe que 3 couloirs. Deux interprétations physiques possibles, qui
+mènent à des statistiques différentes :
+
+- **Hypothèse A — couloirs physiques fixes.** Les 3 voitures se placent dans les couloirs 1, 2, 3
+  de la piste ; les couloirs 4 et 5 restent vides. Alors le couloir 3 d'une série de 3 est
+  **physiquement au milieu de la piste**, exactement comme le couloir 3 d'une série de 5. →
+  `laneZone` se calcule sur `trackLanes`, et une petite série ne produit simplement aucune
+  observation pour les couloirs extérieurs.
+- **Hypothèse B — répartition sur la largeur.** Les 3 voitures sont réparties sur toute la largeur
+  de la piste. Alors le couloir 3 d'une série de 3 est **à l'extérieur**. → `laneZone` se calcule
+  sur `lanesUsed`.
+
+Le code de la V2 ne permet pas de trancher : `validateMeta` borne seulement `couloir ≤ taille de
+la série`, ce qui est compatible avec les deux. C'est une question de réalité terrain.
+
+Le schéma stocke **les deux valeurs** (`lanesUsed` et `trackLanes`), donc la décision n'est pas
+bloquante pour le modèle de données — mais elle l'est pour la fonction `laneZone()`, et une
+statistique calculée sous la mauvaise hypothèse serait fausse sans être détectable. À trancher
+avant la phase 1.
 
 ### 4.8 Intégration dans les statistiques
 
 `js/stats.js` est **orienté pilote** : lignes = pilotes, colonnes = meetings, filtré par
 `year` + `category` + championnat actif. L'analyse des départs est **orientée position** : lignes
-= positions de grille, agrégées sur des centaines de courses, et surtout **transversale aux
+= positions de grille, agrégées sur des centaines de départs, et surtout **transversale aux
 saisons et aux championnats** (tu veux comparer 2025 vs 2026, France vs Europe).
 
 Ce sont deux axes d'agrégation incompatibles : forcer l'un dans l'autre produirait une vue
@@ -578,18 +808,57 @@ confuse. → **Vue dédiée `startStats`**, placée sous « Statistiques » dans
 Filtres : Championnat → Saison → Circuit → Catégorie → Type de session → Position de grille →
 Couloir, chacun avec « Tous ». Le règlement/format se déduit de `regulationKey`.
 
+#### L'unité d'observation est le départ, pas la manche
+
+Point corrigé et central : **`n` compte des départs physiques.** Une MQ à 6 séries contribue 6
+observations, pas 1. Concrètement, `n` doit toujours être le nombre de documents `startAnalyses`
+validés qui entrent dans la case affichée — et il faut afficher **deux compteurs distincts** pour
+éviter toute ambiguïté :
+
+- **`n` départs** : nombre de départs physiques analysés (l'unité statistique) ;
+- **`n` observations pilote** : nombre de lignes, c'est-à-dire de couples (pilote × départ) — c'est
+  le `n` pertinent pour les statistiques par couloir, puisqu'un départ de 5 voitures fournit 5
+  observations de couloir.
+
+Confondre les deux gonflerait artificiellement les intervalles de confiance. Exemple d'affichage
+attendu : « Lohéac — Supercar — 2026 · **84 départs** · 412 observations pilote ».
+
+Ordre de grandeur de la montée en échantillon, avec la bonne granularité :
+
+| Périmètre | Départs | Observations pilote |
+|---|---|---|
+| 1 meeting, 1 catégorie (4 MQ × 6 séries + 2 DF + 1 FIN) | **27** | ~135 |
+| 1 saison, 1 catégorie (8 meetings) | **~216** | ~1 080 |
+
+C'est **neuf fois** ce qu'aurait donné un raisonnement par session, et cela rend l'objectif
+statistique atteignable en une seule saison.
+
+#### Comparabilité entre départs de tailles différentes
+
+Conséquence des séries de tailles inégales (`[3,3,5,5,5,5]`) : une matrice de transition
+grille → V1 mélangeant des grilles de 3 et de 5 voitures n'a pas de sens brut. Trois mesures :
+
+- **la matrice est calculée par taille de grille** (`starters`), et l'UI affiche soit une taille
+  choisie, soit une version normalisée ;
+- **le gain/perte de positions** (`gridPos − turn1Pos`) reste comparable entre tailles, c'est donc
+  l'indicateur transversal privilégié ;
+- **la position relative** (`(pos − 1) / (starters − 1)`, sur 0..1) permet une comparaison honnête
+  entre formats quand on agrège volontairement des tailles différentes.
+
 Indicateurs, tous dans `js/startStatsCalc.js` (pur, testé) :
 
-- matrice de transition grille → V1, et grille → arrivée ;
+- matrice de transition grille → V1, et grille → arrivée, **par taille de grille** ;
 - % de conservation de la tête, % de prise de tête par position de départ ;
 - gain/perte moyen (et **médian** — la moyenne est sensible aux abandons) ;
 - position moyenne en V1 et à l'arrivée par position de départ ;
-- effet du couloir (intérieur / milieu / extérieur), avec `firstTurnSide` appliqué ;
-- corrélation V1 ↔ arrivée (Spearman plutôt que Pearson : ce sont des rangs) ;
+- effet du couloir (intérieur / milieu / extérieur), avec `firstTurnSide` appliqué (§4.10) ;
+- corrélation V1 ↔ arrivée (Spearman plutôt que Pearson : ce sont des rangs), calculée sur
+  `finishPosInStart` ;
 - comparaisons circuit / catégorie / championnat / saison / format ;
-- **`n` affiché systématiquement**, et **intervalle de confiance de Wilson** sur chaque
-  pourcentage. C'est peu de code et ça évite d'interpréter 3/4 = 75 % comme un résultat. Un
-  pourcentage sous un seuil (`n < 10`) doit s'afficher en `n=4` grisé, sans pourcentage.
+- **`n` affiché systématiquement** (les deux compteurs), et **intervalle de confiance de Wilson**
+  sur chaque pourcentage. C'est peu de code et ça évite d'interpréter 3/4 = 75 % comme un
+  résultat. Un pourcentage sous un seuil (`n < 10`) doit s'afficher en `n=4` grisé, sans
+  pourcentage.
 
 **Deux avertissements méthodologiques à intégrer dans l'UI**, sinon les chiffres seront
 sur-interprétés :
@@ -613,39 +882,51 @@ son gain.
 ### Phase 1 — Statistiques + saisie manuelle · *fondation*
 
 - `circuits` + normalisation de `meeting.location` (avec écran de rapprochement des alias).
-- `startAnalysisCalc.js` pur + tests : `gridPos` → `(ligne, couloir)` via `gridLayout`,
-  `lane` → `laneZone` via `firstTurnSide`, extraction de `finishPos` depuis la logique de
-  `calcPhaseStandings()`.
-- Collection `startAnalyses` + règles.
-- Vue « Analyse des départs » : sélection Championnat → Meeting → Session, **grille et résultat
-  final pré-remplis automatiquement**, une seule colonne à saisir : V1. Validation explicite.
-- Persistance de `gridPos` / `lane` sur `sessionParticipants`.
+- **`startAnalysisCalc.js` pur + tests**, cœur de la phase :
+  - `enumerateStarts(session, results, participants, sessionConfig)` → la liste des départs
+    physiques d'une session (N séries pour une MQ, 1 sinon) — **la fonction la plus importante du
+    module** ;
+  - `buildStartGrid(...)` → reconstruction de la grille d'un départ (MQ : depuis
+    `serie`/`couloir` ; QF/DF/FIN : depuis la cascade + `gridLayout.positions`) ;
+  - `laneZone(lane, trackLanes, lanesUsed, firstTurnSide)` → intérieur / milieu / extérieur
+    (⚠️ dépend de la question ouverte §4.10) ;
+  - `finishPosInStart(rowsOfStart)` → rang par `ms` **au sein du départ** ;
+  - `startDocId(sessionId, startIndex)` et `seriesFingerprint(driverIds)`.
+- Collection `startAnalyses` + règles (`rows.size() <= 12`).
+- Vue « Analyse des départs » : Championnat → Meeting → Catégorie → **liste des départs
+  physiques** (§4.9), grille et résultats pré-remplis, une seule colonne à saisir : V1.
+  Validation explicite, départ par départ.
+- Gestion explicite du cas `results.serie` non renseigné (regroupement manuel, jamais deviné).
+- Persistance de `gridPos` / `lane` sur `sessionParticipants` pour les phases finales.
 
-*Gain immédiat* : chaque course saisie en ~20 s, sans vidéo. **Et surtout : les couloirs de MQ
-déjà en base permettent de produire une première statistique d'effet de couloir dès la fin de
-cette phase, avec zéro saisie nouvelle.**
+*Gain immédiat* : ~20–30 s par départ, sans vidéo, avec **27 départs disponibles par meeting et
+par catégorie**. **Et surtout : les couloirs de MQ déjà en base permettent de produire une
+première statistique d'effet de couloir dès la fin de cette phase, avec zéro saisie nouvelle.**
 
-### Phase 2 — Intégration vidéo · *extension de `videoTimecodes.js`*
+### Phase 2 — Intégration vidéo · *lecteur + enchaînement des séries*
 
-- `videoRefs.js` partagé ; `videoTimecodes.js` mis à jour pour **préserver** les nouvelles clés.
-- `videoPlayer.js` : lecteur YouTube (IFrame API, positionné sur le timecode déjà en base,
-  vitesse 0,25×) **et** lecteur de fichier local (`requestVideoFrameCallback`, image par image).
-- Bouton « ▶ Analyser le départ » depuis la vue Chronométrage, en réutilisant le timecode
-  existant.
-- Saisie de l'ordre V1 **par clic sur les voitures dans l'image**, ou par glisser-déposer des
-  lignes ; enregistrement de `turn1Seconds`.
+- **`videoTimecodes.js` n'est pas modifié** (§2.3) — il est seulement *lu*, comme amorce du
+  timecode de la série 1.
+- `videoPlayer.js` : lecteur YouTube (IFrame API, vitesse 0,25×) **et** lecteur de fichier local
+  (`requestVideoFrameCallback`, image par image).
+- **Marquage de `startSeconds` par départ** + suggestion progressive pour les séries suivantes
+  (médiane des intervalles mesurés, §4.9) et mémorisation de `medianSeriesGap` par circuit.
+- Enchaînement clavier Série 1 → Série 2 → … sans repasser par la sélection.
+- Saisie de l'ordre V1 par clic dans l'image ou glisser-déposer ; enregistrement de
+  `turn1Seconds`.
 
-*Gain* : c'est ici que le volume de données arrive vraiment. Avec les courses déjà timecodées,
-la saisie devient quasi immédiate.
+*Gain* : c'est ici que le volume arrive vraiment. La série 1 part d'un timecode déjà en base, les
+suivantes d'une suggestion de plus en plus juste.
 
 ### Phase 3 — Ligne virtuelle du virage 1
 
 - Placement de la ligne par deux clics, en coordonnées normalisées.
-- **Préréglages par circuit** réutilisables d'une course à l'autre.
-- Superposition de la ligne sur le lecteur, pour lire l'ordre à l'œil de façon cohérente d'une
-  course à l'autre. Toujours sans aucun code Python.
+- **Préréglages par circuit** réutilisables d'un départ à l'autre — d'autant plus rentables ici :
+  les 6 séries d'une manche partagent le même plan de caméra, donc la même ligne.
+- Superposition de la ligne sur le lecteur, pour lire l'ordre de façon cohérente d'un départ à
+  l'autre. Toujours sans aucun code Python.
 
-*Gain* : cohérence de la mesure entre courses et entre opérateurs — condition d'une base
+*Gain* : cohérence de la mesure entre départs et entre opérateurs — condition d'une base
 comparable.
 
 ### Phase 4 — Détection / suivi assisté · *`tools/rxstart`, sans YOLO*
@@ -711,14 +992,14 @@ comparable.
    convention explicite (classer en dernier ? exclure ? — à trancher en phase 1, et à figer).
 
 **Sur les performances** (PC classique, 8 cœurs, sans GPU) — le calcul n'est jamais le goulot,
-car on analyse ~10 s de vidéo par course :
+car on analyse ~10 s de vidéo par départ :
 
 | Étape | Coût |
 |---|---|
 | Décodage 1080p | ~5 ms / image |
-| CSRT, 8 pistes, 200 images | **15–40 s** par course |
-| YOLO11n ONNX, 640 px, CPU | ~10–15 ms / image → 3–5 s par course |
-| YOLO11s, CPU | ~60–150 ms / image → 15–40 s par course |
+| CSRT, 8 pistes, 200 images | **15–40 s** par départ |
+| YOLO11n ONNX, 640 px, CPU | ~10–15 ms / image → 3–5 s par départ |
+| YOLO11s, CPU | ~60–150 ms / image → 15–40 s par départ |
 | Détection de coupures | négligeable |
 
 Le vrai coût n'est pas le temps de calcul, c'est **le poids d'installation** (50 Mo en CSRT,
@@ -734,19 +1015,29 @@ l'introduire qu'en phase 5, en connaissance de cause.
 
 6. **La position de grille est corrélée au niveau du pilote** en QF/DF/FIN (§4.8) — le biais le
    plus important, et il ne se corrige pas par plus de données, seulement par un meilleur modèle.
-7. **Les tailles d'échantillon par circuit seront longtemps faibles.** D'où `n` et Wilson
-   obligatoires, et le seuil d'affichage.
+7. **Les tailles d'échantillon par circuit seront longtemps faibles** — nettement moins toutefois
+   qu'avec un raisonnement par session (×9). D'où `n` et Wilson obligatoires, et le seuil
+   d'affichage.
 8. **Les formats diffèrent** entre championnats (nombre de couloirs, 3 lignes vs 2). Comparer
    « P4 » entre deux formats n'a pas toujours de sens ; la position **relative** (rang / taille de
    grille) est parfois la seule comparaison légitime.
+9. **Les tailles de séries MQ sont inégales** (`[3,3,5,5,5,5]`) : les matrices de transition
+   doivent être ventilées par `starters`, et l'effet du couloir dépend de la convention physique
+   à trancher en §4.10.
+10. **La composition des séries n'est pas persistée** par la V2 : elle vit dans `results.serie`,
+    modifiable après coup. D'où `integrity.seriesFingerprint` (§4.7) — sans lui, une correction de
+    saisie ultérieure rendrait une analyse validée silencieusement fausse.
 
 **Non-régression**
 
-9. Le seul risque réel identifié dans tout le projet : `videoTimecodes.js → saveAll()` reconstruit
-   `videoTimecodes` en ne conservant que `{videoId, seconds}`. Sans correctif, ouvrir puis
-   enregistrer cette modale **effacerait** les `turn1Seconds`. À traiter en phase 2, avec un test.
-10. `sw.js` maintient une liste d'assets explicite : tout nouveau fichier JS/CSS doit y être
+11. `sw.js` maintient une liste d'assets explicite : tout nouveau fichier JS/CSS doit y être
     ajouté et `CACHE_NAME` incrémenté, sinon incohérences de cache après déploiement.
+12. `videoTimecodes.js` **n'est pas modifié** (§2.3) : le risque de perte de clés par `saveAll()`,
+    identifié dans une version antérieure de ce document, n'existe plus. Corollaire à respecter :
+    **ne jamais ajouter de champ dans `meeting.videoTimecodes`** sans corriger d'abord `saveAll()`.
+13. Le nombre de départs par manche dépend de `getSeriesStructure(nbParticipants)`, donc du nombre
+    de **participants du jour**. Si un participant est ajouté ou retiré après une analyse, la
+    structure des séries peut changer → c'est exactement ce que `seriesFingerprint` détecte.
 
 ---
 
@@ -754,6 +1045,13 @@ l'introduire qu'en phase 5, en connaissance de cause.
 
 | Question posée | Réponse proposée |
 |---|---|
+| **Unité du modèle** | **le départ physique**, jamais la session : MQ = N séries = N départs ; QF/DF/FIN = 1 grille = 1 départ |
+| **ID déterministe** | `startAnalyses/${sessionId}_s${startIndex}` — `startIndex` = n° de série (MQ) ou 1 |
+| **Pilotes d'une série MQ** | `results` filtrés sur `sessionId` + `serie`, avec leur `couloir` ; cas « série non renseignée » traité explicitement |
+| **Granularité de `videoTimecodes`** | 1 case par (session × catégorie) = **début de la 1ʳᵉ série seulement**. Sémantique **inchangée**, module non modifié |
+| **Timecodes des séries 2..N** | dans `startAnalyses.video.startSeconds`, saisis pendant la navigation, pré-remplis par médiane des intervalles |
+| **Arrivée d'un départ MQ** | `finishPosInStart` (rang dans la série, comparable) **et** `finishPosInSession` (rang manche entière, réglementaire) |
+| **Unité statistique** | le départ ; deux compteurs affichés : `n` départs et `n` observations pilote |
 | Technologies d'analyse vidéo | OpenCV en phase 4 ; YOLO **seulement** en phase 5 si le besoin est mesuré |
 | YOLO + ByteTrack pertinent ? | Pas comme fondation : l'identité initiale est déjà connue à 100 %. Utile plus tard pour amorcer les boîtes |
 | Réellement automatisable | grille, couloir, résultat final (**déjà en base**), détection, tracking sur fenêtre courte sans coupure, franchissement, confiance, statistiques |
@@ -762,8 +1060,8 @@ l'introduire qu'en phase 5, en connaissance de cause.
 | Pertes de tracking | métriques brutes → 🟢/🟡/🔴 ; un 🔴 bloque la validation ; le moteur n'écrit jamais `validated` |
 | Définition du virage 1 | 2 clics → ligne normalisée, **stockée par circuit** et réutilisée |
 | Ordre de passage | signe du produit vectoriel sur le centre-bas de boîte + interpolation sous-image |
-| Modifications de base | 1 collection `startAnalyses`, 1 collection `circuits`, 2 champs additifs sur `sessionParticipants`, 2 blocs de règles. **Aucune migration.** |
+| Modifications de base | 1 collection `startAnalyses` (**par départ**), 1 collection `circuits`, 2 champs additifs sur `sessionParticipants`, 1 champ `localVideos` sur `meetings`, 2 blocs de règles. **Aucune migration, `videoTimecodes` intact.** |
 | Intégration de Python | moteur **local auxiliaire**, échange par **fichier JSON**. L'application reste 100 % statique |
 | Service séparé ou intégré ? | **Séparé et optionnel** — l'application doit fonctionner entièrement sans Python |
-| Performances | 15–40 s par course en CSRT, 3–5 s avec YOLO ONNX. Le calcul n'est jamais le facteur limitant |
+| Performances | 15–40 s par départ en CSRT, 3–5 s avec YOLO ONNX. Le calcul n'est jamais le facteur limitant |
 | Vue statistiques | vue dédiée `startStats` (axe d'agrégation différent de `stats.js`), conventions UI réutilisées |
