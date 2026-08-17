@@ -32,6 +32,14 @@
 > manuelle assistée devient le chemin principal et permanent**, la détection automatique est
 > repoussée derrière un POC séparé et conditionnée à une source vidéo à caméra fixe. Les phases 1
 > et 2 et le modèle de données sont **inchangés**.
+>
+> **Révision 6** — **l'automatisation est réhabilitée**, sous une architecture différente de celle
+> écartée en révision 5 : **YOLO + tracking + ReID en ensemble fermé, intégrés dans l'application**
+> (et non CSRT + ré-ancrage via un outil séparé). Mesuré : 86 % d'identifications automatiques
+> correctes après coupure, **0 erreur silencieuse**. Architecture retenue : **tout dans le
+> navigateur** (ONNX Runtime Web), l'application reste statique et sans build. Voir
+> `AUTOMATION-ARCHITECTURE.md`. Le service Python local est **écarté**, l'enveloppe Tauri reste une
+> option future sans coût d'attente. Les phases 1 à 3 et le modèle de données restent inchangés.
 
 ---
 
@@ -430,7 +438,21 @@ Si l'OCR arrive un jour, ce sera en **suggestion uniquement**, jamais en source 
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### 4.2 Python : moteur auxiliaire, contrat par fichier JSON
+### 4.2 Python : écarté — voir `AUTOMATION-ARCHITECTURE.md` (révision 6)
+
+> ⚠️ **Section dépassée.** L'exigence d'expérience utilisateur est désormais explicite : **toute
+> l'analyse doit se faire dans Rallycross V2**, sans ouvrir d'outil séparé ni échanger de fichier
+> JSON à la main. L'architecture retenue est donc **l'exécution dans le navigateur** (ONNX Runtime
+> Web + modèles ONNX + code d'association en JS), qui préserve l'application statique sans build.
+>
+> Le service Python local est **écarté** : il impose une installation Python *et* conserve la
+> fragilité du contrôle *Private Network Access* de Chrome. L'enveloppe **Tauri** reste une option
+> pour plus tard — elle chargerait les mêmes fichiers statiques sans modification, donc attendre ne
+> coûte rien.
+>
+> Section conservée ci-dessous pour la traçabilité du raisonnement.
+
+#### (historique) Python : moteur auxiliaire, contrat par fichier JSON
 
 Ta proposition est la bonne, je la précise sur un point : **le mode d'échange**.
 
@@ -1424,8 +1446,8 @@ l'introduire qu'en phase 5, en connaissance de cause.
 | **Timecodes des séries 2..N** | dans `startAnalyses.video.startSeconds`, saisis pendant la navigation, pré-remplis par médiane des intervalles |
 | **Arrivée d'un départ MQ** | `finishPosInStart` (rang dans la série, comparable) **et** `finishPosInSession` (rang manche entière, réglementaire) |
 | **Unité statistique** | le départ ; deux compteurs affichés : `n` départs et `n` observations pilote |
-| Technologies d'analyse vidéo | **aucune** sur le chemin principal (phases 1–3). Si POC concluant : YOLO + ByteTrack, **pas CSRT** (`TRACKING-EVALUATION.md`) |
-| YOLO + ByteTrack pertinent ? | Pas sur de la vidéo TV (coupures, sorties de champ). Pertinent **uniquement** avec une source à caméra fixe |
+| Technologies d'analyse vidéo | **aucune** sur le chemin principal (phases 1–3). Automatisation : **YOLO ONNX + tracking JS + ReID en ensemble fermé, dans le navigateur** (`AUTOMATION-ARCHITECTURE.md`) |
+| YOLO + ByteTrack pertinent ? | **Oui**, en ensemble fermé avec ReID assistée : mesuré 86 % d'identifications correctes après coupure, 0 erreur silencieuse. La caméra fixe reste un atout, plus une condition |
 | Réellement automatisable | grille, couloir, résultat final (**déjà en base**), détection, tracking sur fenêtre courte sans coupure, franchissement, confiance, statistiques |
 | À garder semi-manuel | choix des instants, association voiture→pilote, placement de la ligne, **validation finale** |
 | Identification des voitures | géométrie de grille à t₀ + clic de confirmation ; signature couleur en garde-fou ; OCR écarté |
@@ -1433,8 +1455,8 @@ l'introduire qu'en phase 5, en connaissance de cause.
 | Définition du virage 1 | **ordre lu sur une image choisie** ; la ligne devient un repère visuel, stockée par circuit (§4.4, révision 5) |
 | Ordre de passage | saisi par l'humain sur l'image de mesure ; `orderCompleteness` trace la visibilité réelle des voitures |
 | Modifications de base | 1 collection `startAnalyses` (**par départ**), 1 collection `circuits`, 2 champs additifs sur `sessionParticipants`, 1 champ `localVideos` sur `meetings`, 2 blocs de règles. **Aucune migration, `videoTimecodes` intact.** |
-| Intégration de Python | moteur **local auxiliaire**, échange par **fichier JSON**. L'application reste 100 % statique |
-| Service séparé ou intégré ? | **Séparé et optionnel** — l'application doit fonctionner entièrement sans Python |
+| Intégration de Python | **aucune** — analyse **dans le navigateur** (ONNX Runtime Web), application toujours statique et sans build (révision 6) |
+| Service séparé ou intégré ? | **Intégré**, tout dans Rallycross V2. Service Python écarté (installation + fragilité *Private Network Access*). Tauri = option future sans coût d'attente |
 | Performances **mesurées** | CSRT 8 voitures 1080p : 212 ms/image → ~53 s pour 10 s à 25 fps. KCF : ~8 s. Le calcul n'est jamais le facteur limitant |
 | Vue statistiques | vue dédiée `startStats` (axe d'agrégation différent de `stats.js`), conventions UI réutilisées |
 | **Emplacement UI** | **1 tuile** d'accueil + entrée « Gestion » pour la saisie ; entrée de menu sous 📊 Statistiques pour les stats, **sans modifier `stats.js`** en phase 1 (§4.11) |
@@ -1448,4 +1470,6 @@ l'introduire qu'en phase 5, en connaissance de cause.
 | **Facteur limitant réel** | la **couverture vidéo**, pas le modèle de données — à suivre comme indicateur dès la phase 1 (§4.8) |
 | **Dépendances de l'automatisation** | `opencv-contrib-python-headless` (⚠️ pas `opencv-python` : OpenCV 5 a retiré CSRT/KCF du module de base) + `numpy` = **272 Mo**, Apache 2.0 + BSD, 0 € |
 | **Sortie de champ / coupure** | CSRT ne récupère **jamais** (mesuré 0/39 et 0/16). Perte **détectée de façon fiable** → ré-ancrage manuel, jamais de ré-attribution silencieuse |
-| **Levier réel pour automatiser** | changer la **source vidéo** (caméra fixe sur trépied), pas l'algorithme (`TRACKING-EVALUATION.md` §6.2) |
+| **Levier réel pour automatiser** | l'**ensemble fermé** (3–8 pilotes connus) + les signaux métier : +20 % d'automatisation mesurés pour quelques dizaines de lignes. Une caméra fixe reste un atout complémentaire |
+| **Confiance** | **marge d'appariement** (hongrois), calibrée empiriquement pour que 🟢 signifie ≥ 99 % d'exactitude mesurée — jamais un score brut de modèle |
+| **Poids des modèles** | ~25 à 45 Mo, chargés à la demande et **jamais** dans `ASSET_PATHS` de `sw.js` |
