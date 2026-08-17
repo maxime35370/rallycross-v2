@@ -508,9 +508,12 @@ export function buildStartGrid({ start, results = [], participants = [], rankedD
       const r = resultByDriver.get(id) || {};
       const couloir = Number(r.couloir);
       const lane = Number.isInteger(couloir) && couloir > 0 ? couloir : null;
+      const p = partByDriver.get(id) || {};
       return {
         driverId: id,
-        carNumber: partByDriver.get(id)?.carNumber ?? r.carNumber ?? null,
+        carNumber: p.carNumber ?? r.carNumber ?? null,
+        firstName: p.firstName ?? r.firstName ?? '',
+        lastName:  p.lastName  ?? r.lastName  ?? '',
         gridPos: lane,
         gridRow: lane != null ? 1 : null,
         lane,
@@ -538,9 +541,12 @@ export function buildStartGrid({ start, results = [], participants = [], rankedD
       const gridPos = i + 1;
       const place = placeOnGrid(gridPos, start.gridLayout);
       const r = resultByDriver.get(id) || {};
+      const p = partByDriver.get(id) || {};
       return {
         driverId: id,
-        carNumber: partByDriver.get(id)?.carNumber ?? r.carNumber ?? null,
+        carNumber: p.carNumber ?? r.carNumber ?? null,
+        firstName: p.firstName ?? r.firstName ?? '',
+        lastName:  p.lastName  ?? r.lastName  ?? '',
         gridPos,
         gridRow: place?.gridRow ?? null,
         lane: place?.lane ?? null,

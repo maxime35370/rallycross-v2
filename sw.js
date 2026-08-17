@@ -5,7 +5,7 @@
    Compatible GitHub Pages (sous-dossier) et racine.
 ═══════════════════════════════════════════════ */
 
-const CACHE_NAME = 'rx-chrono-v26';
+const CACHE_NAME = 'rx-chrono-v28';
 
 // Assets relatifs au scope du SW (pas de / en prefixe)
 const ASSET_PATHS = [
@@ -25,6 +25,7 @@ const ASSET_PATHS = [
   'css/modules/engagements.css',
   'css/modules/spectator.css',
   'css/modules/settings.css',
+  'css/modules/startAnalysis.css',
   'js/app.js',
   'js/firebase.js',
   'js/auth.js',
@@ -48,6 +49,10 @@ const ASSET_PATHS = [
   'js/competition.js',
   'js/importTimes.js',
   'js/videoTimecodes.js',
+  'js/persons.js',
+  'js/personProfile.js',
+  'js/startAnalysisCalc.js',
+  'js/startAnalysis.js',
   'js/providers/index.js',
   'js/providers/itsLive.js',
 ];

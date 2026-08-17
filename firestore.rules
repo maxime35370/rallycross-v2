@@ -147,6 +147,35 @@ service cloud.firestore {
         validString(request.resource.data.lastName, 50);
     }
 
+    // ── ANALYSE DES DÉPARTS ─────────────────────────────────────────
+    //  Un document = UN DÉPART PHYSIQUE RÉEL (id `${sessionId}_s${startIndex}`).
+    //  Pour les manches, une série = un départ : une MQ à 6 séries produit
+    //  donc 6 documents distincts.
+    //  Lecture publique (cohérent avec le reste), écriture régie uniquement.
+    //  Seuls les documents `status == 'validated'` alimentent les statistiques.
+    match /startAnalyses/{docId} {
+      allow read:   if true;
+      allow delete: if isRegie();
+      allow create, update: if isRegie()
+        && hasFields(request.resource.data,
+             ['sessionId','meetingId','year','category','sessionType','startIndex','status'])
+        && request.resource.data.status in ['draft','validated']
+        && request.resource.data.startIndex is int
+        && request.resource.data.startIndex >= 1
+        && inRange(request.resource.data.year, 2020, 2030)
+        && request.resource.data.rows is list
+        && request.resource.data.rows.size() <= 12;   // un départ : 3 à 8 voitures
+    }
+
+    // ── CIRCUITS ────────────────────────────────────────────────────
+    //  Métadonnées physiques et vidéo d'un circuit (alias de libellé, presets
+    //  de repère V1, intervalle médian entre séries). La géométrie de grille
+    //  n'est PAS ici : elle appartient au règlement du championnat.
+    match /circuits/{docId} {
+      allow read:  if true;
+      allow write: if isRegie();
+    }
+
     match /auditLog/{docId} {
       allow read:           if isRegie();   // journal back-office : régie uniquement
       allow create:         if isRegie();

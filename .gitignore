@@ -3,3 +3,8 @@ Thumbs.db
 *.log
 .vscode/settings.json
 node_modules/
+# Modèles et vidéos de l'analyse vidéo (jamais versionnés)
+*.mp4
+*.mkv
+*.onnx
+*.pt
