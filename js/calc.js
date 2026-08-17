@@ -36,6 +36,57 @@ const DEFAULT_STATUS_RULES = {
 };
 
 // ─────────────────────────────────────────────────────────
+// REPARTITION DES SERIES MQ
+// ─────────────────────────────────────────────────────────
+
+/**
+ * Repartition des series MQ pour n pilotes engages.
+ *
+ * Mode 'ffsa' (defaut historique) :
+ *   On remplit en priorite avec des series de taille `max`, et la
+ *   premiere serie peut etre tres petite. Ex pour n=26, max=5 :
+ *     [3, 3, 5, 5, 5, 5]
+ *   (recursif : chaque appel ajoute une serie de max sauf la base
+ *   qui peut etre 1 ou 2 series asymetriques).
+ *
+ * Mode 'fia_even' (FIA / Euro RX) :
+ *   On distribue le plus uniformement possible avec uniquement deux
+ *   tailles : `max` et `max - 1`. Les series de taille reduite sont
+ *   placees au DEBUT (pilotes plus lents en qualif), les series
+ *   pleines a la FIN (meilleurs qualifies). Ex pour n=26, max=5 :
+ *     [4, 4, 4, 4, 5, 5]
+ *   Si n est trop petit pour cette regle (ex n=11, max=5 : besoin
+ *   de tailles <= 3), on bascule sur une distribution la plus
+ *   uniforme possible : ex [3, 4, 4].
+ *
+ * @param {number} n     — nombre de pilotes
+ * @param {number} max   — taille maximale d'une serie
+ * @param {string} [mode] — 'ffsa' (defaut) | 'fia_even'
+ * @returns {number[]} tailles des series, dans l'ordre
+ */
+export function computeSeriesSizes(n, max, mode) {
+  max = max || 5;
+  if (n <= 0) return [];
+  if (n <= max) return [n];
+
+  if (mode === 'fia_even') {
+    const k = Math.ceil(n / max);
+    const base = Math.floor(n / k);
+    const remainder = n - base * k;
+    // (k - remainder) series de taille `base`, puis `remainder` series
+    // de taille `base + 1`. Les plus petites en premier.
+    const sizes = [];
+    for (let i = 0; i < k - remainder; i++) sizes.push(base);
+    for (let i = 0; i < remainder; i++) sizes.push(base + 1);
+    return sizes;
+  }
+
+  // Mode 'ffsa' (defaut)
+  if (n <= max * 2) { const first = Math.floor(n / 2); return [first, n - first]; }
+  return [...computeSeriesSizes(n - max, max, mode), max];
+}
+
+// ─────────────────────────────────────────────────────────
 // CALCUL DE POINTS GENERIQUE (depuis un pointsScale)
 // ─────────────────────────────────────────────────────────
 
