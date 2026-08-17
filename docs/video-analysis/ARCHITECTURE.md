@@ -9,6 +9,13 @@
 > timecode vidéo, qui pointe le début de la **première** série. Sections refondues : §1.3, §1.4,
 > **§1.5 (nouvelle)**, §2.2, §2.3, §4.7, §4.8, **§4.9 et §4.10 (nouvelles)**, §5 (phases 1–3),
 > §6, §7. La sémantique de `videoTimecodes` n'est **plus** modifiée par cette proposition.
+>
+> **Révision 3** — conventions tranchées (§4.10 : couloirs physiques fixes, `laneZone` sur
+> `trackLanes` ; abandon avant V1 → `turn1Pos = null` et départ conservé) et **correction de deux
+> chiffres erronés** : le seuil de rentabilité de l'automatisation (§3.1, faux d'un facteur ~10) et
+> le multiplicateur de volume (§4.8, « ×9 » annoncé sans dénominateur défini, et `S = 6` traité à
+> tort comme une constante). Ajout de l'indicateur de couverture vidéo, facteur réellement
+> limitant.
 
 ---
 
@@ -276,21 +283,45 @@ unique**.
 
 ### 3.1 Le calcul de rentabilité qu'il faut faire avant de coder du YOLO
 
-| Approche | Travail humain / course | Coût de développement | Dépendances |
+| Approche | Travail humain / départ | Coût de développement | Dépendances |
 |---|---|---|---|
 | Lecture manuelle avec un bon scrubber | **15–30 s** | ~2 jours | aucune |
 | OpenCV multi-tracker amorcé par clics | 10–15 s | ~3 jours | `opencv-contrib-python` (~50 Mo) |
 | YOLO + ByteTrack + ré-identification | 5–15 s (+ vérification) | ~8–10 jours | `ultralytics` + `torch` (**~2,5 Go**) |
 
-L'automatisation complète fait gagner ~20 s par départ. À 8–10 jours de développement, le
-seuil de rentabilité est de l'ordre de **1 000 à 1 500 départs analysés** — soit, à ~216 départs
-par catégorie et par saison, plusieurs saisons sur une catégorie, ou une saison complète si tu
-analyses toutes les catégories.
+L'automatisation complète fait gagner ~20 s par départ. Le seuil de rentabilité **en temps pur**
+se calcule directement :
 
-**Conclusion : la valeur est dans les phases 1 à 3, pas dans le YOLO.** Un bon lecteur avec
-avance image par image et saisie d'ordre par clic te donne une base statistique réelle en
-quelques soirées. 200 départs × 25 s ≈ **1 h 20 de saisie** pour un échantillon déjà
-statistiquement exploitable — et un seul meeting d'une catégorie en fournit déjà 27.
+```
+seuil (départs) = heures de développement × 3600 / 20
+```
+
+| Développement | Seuil de rentabilité |
+|---|---:|
+| 1 jour (8 h) | ~1 400 départs |
+| 3 jours (24 h) | ~4 300 départs |
+| 8–10 jours (64–80 h) | **~11 500 – 14 400 départs** |
+
+⚠️ **Correction (révision 3)** : une version antérieure de ce document annonçait 1 000 à 1 500
+départs pour 8–10 jours de développement. C'était faux d'un facteur ~10 — ce chiffre correspond en
+réalité à **une seule journée**.
+
+**Conséquence, qui change la conclusion : l'automatisation ne se justifie pas par le gain de temps
+de saisie.** À ~14 000 départs, ce seuil ne sera pas atteint (§4.8 : ~216 départs par catégorie et
+par saison dans le meilleur cas). Les phases 4–6 doivent donc être justifiées **uniquement** par
+les arguments de qualité du §3.2 — objectivité, reproductibilité, mesure de l'erreur humaine — et
+jamais par la vitesse.
+
+**Nuance sur la valorisation du temps.** Ce calcul compte une heure de développement au même prix
+qu'une heure de saisie. Si le développement est largement délégué et ne coûte que quelques heures
+de revue et de test, le seuil retombe vers **~700 départs**, donc atteignable en une saison. Le
+seuil dépend donc entièrement de la façon dont le temps de développement est valorisé : il n'y a
+pas de chiffre unique, et c'est un arbitrage à faire explicitement avant d'engager les phases 4–6.
+
+**Conclusion : la valeur immédiate est dans les phases 1 à 3, pas dans le YOLO.** Un bon lecteur
+avec avance image par image et saisie d'ordre par clic donne une base statistique réelle en
+quelques soirées : 200 départs × 25 s ≈ **1 h 20 de saisie**, et un meeting d'une catégorie bien
+remplie en fournit déjà 27 (§4.8).
 
 ### 3.2 Ce que l'automatisation apporte quand même
 
@@ -619,7 +650,8 @@ startAnalyses/${sessionId}_s${startIndex} = {
   Pour QF / DF / FIN, les deux valeurs coïncident.
 - **`lanesUsed` ET `trackLanes`.** Les séries n'ont pas toutes la même taille (§1.5 : `[3,3,5,5,5,5]`).
   Sans distinguer les deux, on ne peut pas interpréter un couloir correctement — voir la question
-  ouverte en §4.10, qui doit être tranchée avant de coder le calcul de `laneZone`.
+  Le calcul de `laneZone` s'appuie sur `trackLanes` (convention tranchée, §4.10) ; `lanesUsed`
+  sert aux contrôles de cohérence et à la comparabilité des matrices.
 - **Tout est figé à la validation** (`finishPos*`, `lanesUsed`, `laneZone`) plutôt que recalculé à
   l'affichage : les règlements et les compositions de séries évoluent, une statistique historique
   doit être stable.
@@ -663,6 +695,8 @@ circuits/{circuitKey} = {
   name: "Lohéac",
   aliases: ["Loheac", "LOHÉAC", "Lohéac-Bretagne"],
   firstTurnSide: 'left' | 'right',   // ← voir ci-dessous, c'est important
+  trackLanes: 5,                     // couloirs matérialisés sur la grille (§4.10 A)
+  medianSeriesGap: 320,              // intervalle médian entre 2 séries, en s (§4.9)
   presets: [{ label: "Plan tribune", videoHint: "…",
               lineA: {x:0.21,y:0.62}, lineB: {x:0.78,y:0.55} }]
 }
@@ -676,13 +710,11 @@ mélangerait des situations opposées et le résultat serait faux. Avec lui, `la
 proprement :
 
 ```
-laneZone(lane, trackLanes, lanesUsed, firstTurnSide) → 'inside' | 'middle' | 'outside'
+laneZone(lane, trackLanes, firstTurnSide) → 'inside' | 'middle' | 'outside'
 ```
 
-à placer dans `startAnalysisCalc.js`, en fonction pure et testée. La signature prend **les deux**
-comptes de couloirs parce que le dénominateur correct dépend de la convention physique restée
-ouverte en §4.10 — trancher cette question ne changera que le corps de cette seule fonction, et
-ses tests.
+à placer dans `startAnalysisCalc.js`, en fonction pure et testée. Le dénominateur est `trackLanes`
+et non le nombre de voitures présentes au départ — voir la convention tranchée en §4.10 A.
 
 **Champs additifs sur `sessionParticipants`** : `gridPos`, `lane` — écrits au moment où la grille
 QF/DF/FIN est générée, pour cesser de perdre une information déjà calculée. Purement additif :
@@ -718,6 +750,128 @@ une requête et se filtre côté client sans difficulté.
 
 **Migration** : aucune. Tout est additif, rien n'est renommé, aucune donnée existante n'est
 touchée. `videoTimecodes` n'est pas modifié (§2.3).
+
+### 4.8 Intégration dans les statistiques
+
+`js/stats.js` est **orienté pilote** : lignes = pilotes, colonnes = meetings, filtré par
+`year` + `category` + championnat actif. L'analyse des départs est **orientée position** : lignes
+= positions de grille, agrégées sur des centaines de départs, et surtout **transversale aux
+saisons et aux championnats** (tu veux comparer 2025 vs 2026, France vs Europe).
+
+Ce sont deux axes d'agrégation incompatibles : forcer l'un dans l'autre produirait une vue
+confuse. → **Vue dédiée `startStats`**, placée sous « Statistiques » dans le menu, mais qui
+**réutilise** les conventions existantes : barre de filtres du même type, classes CSS `sta-*`,
+`table-wrap`, tri par en-tête `data-sort`.
+
+Filtres : Championnat → Saison → Circuit → Catégorie → Type de session → Position de grille →
+Couloir, chacun avec « Tous ». Le règlement/format se déduit de `regulationKey`.
+
+#### L'unité d'observation est le départ, pas la manche
+
+Point corrigé et central : **`n` compte des départs physiques.** Une MQ à 6 séries contribue 6
+observations, pas 1. Concrètement, `n` doit toujours être le nombre de documents `startAnalyses`
+validés qui entrent dans la case affichée — et il faut afficher **deux compteurs distincts** pour
+éviter toute ambiguïté :
+
+- **`n` départs** : nombre de départs physiques analysés (l'unité statistique) ;
+- **`n` observations pilote** : nombre de lignes, c'est-à-dire de couples (pilote × départ) — c'est
+  le `n` pertinent pour les statistiques par couloir, puisqu'un départ de 5 voitures fournit 5
+  observations de couloir.
+
+Confondre les deux gonflerait artificiellement les intervalles de confiance. Exemple d'affichage
+attendu : « Lohéac — Supercar — 2026 · **84 départs** · 412 observations pilote ».
+
+#### Volumétrie : le calcul exact
+
+```
+départs par (meeting × catégorie) = nbMQ × S + nbDF + nbFIN
+```
+
+| Terme | Valeur | Origine |
+|---|---|---|
+| `nbMQ` | 4 | `meeting.nbMQ`, borné 1..4 par `firestore.rules` ; défaut `sessionConfig.MQ.count` |
+| `S` | **variable** | `computeSeriesSizes(nbParticipants, maxPerSeries, mode)`, `js/timing.js` |
+| `nbDF` | 2 | `sessionConfig.DF.count` |
+| `nbFIN` | 1 | — |
+
+**`S` n'est pas une constante** : il dépend du nombre d'engagés du jour. Valeurs obtenues en
+exécutant la fonction réelle (`maxPerSeries = 5`, mode `ffsa`) :
+
+| Engagés | Répartition | S | Départs / meeting | Observations pilote |
+|---:|---|---:|---:|---:|
+| 15 | `[5,5,5]` | 3 | **15** | ~75 |
+| 20 | `[5,5,5,5]` | 4 | **19** | ~95 |
+| 25 | `[5,5,5,5,5]` | 5 | **23** | ~115 |
+| 26 | `[3,3,5,5,5,5]` | 6 | **27** | ~131 |
+| 30 | `[5,5,5,5,5,5]` | 6 | **27** | ~135 |
+
+⚠️ **Correction (révision 3)** : une version antérieure annonçait « 27 départs, soit ×9 » sans
+définir le dénominateur, et traitait `S = 6` comme acquis. Les deux points sont corrigés :
+
+| Base de comparaison | « Avant » | Rapport (30 engagés) |
+|---|---:|---:|
+| Sessions comportant un départ en grille (4 MQ + 2 DF + 1 FIN) | 7 | **×3,9** |
+| Sessions qui auraient produit une donnée *valide* (2 DF + 1 FIN seulement) | 3 | ×9 |
+
+**Le chiffre de référence est ×3,9**, et il tombe à ×2,1 pour une catégorie à 15 engagés. Le ×9
+n'est vrai que si l'on considère que les sessions MQ ne produisaient aucune donnée exploitable sous
+l'ancien modèle — défendable, mais ce n'est pas un ratio de volume.
+
+Pour une saison : `nbMeetings × (nbMQ × S + 3)`. Le nombre de meetings n'est pas une donnée de
+configuration (il découle des documents `meetings` créés) — avec 8 meetings et S = 6, on obtient
+~216 départs par catégorie et par saison, mais c'est une hypothèse de calendrier, pas une constante
+du projet.
+
+#### ⚠️ Le facteur réellement limitant : la couverture vidéo
+
+Les chiffres ci-dessus sont un **maximum théorique**. En pratique, seuls les départs **filmés et
+retrouvables** sont analysables : la diffusion couvre rarement les 6 séries de toutes les
+catégories, et les séries des catégories secondaires sont souvent absentes du montage.
+
+**C'est la couverture vidéo, et non le modèle de données, qui déterminera le volume réel.** À
+suivre dès la phase 1 sous forme d'un indicateur explicite : *départs analysés / départs
+théoriques* par meeting et par catégorie. Sans lui, on ne saura pas distinguer « ce circuit a peu
+d'observations » de « ce circuit est mal filmé » — deux causes qui appellent des actions
+opposées.
+
+#### Comparabilité entre départs de tailles différentes
+
+Conséquence des séries de tailles inégales (`[3,3,5,5,5,5]`) : une matrice de transition
+grille → V1 mélangeant des grilles de 3 et de 5 voitures n'a pas de sens brut. Trois mesures :
+
+- **la matrice est calculée par taille de grille** (`starters`), et l'UI affiche soit une taille
+  choisie, soit une version normalisée ;
+- **le gain/perte de positions** (`gridPos − turn1Pos`) reste comparable entre tailles, c'est donc
+  l'indicateur transversal privilégié ;
+- **la position relative** (`(pos − 1) / (starters − 1)`, sur 0..1) permet une comparaison honnête
+  entre formats quand on agrège volontairement des tailles différentes.
+
+Indicateurs, tous dans `js/startStatsCalc.js` (pur, testé) :
+
+- matrice de transition grille → V1, et grille → arrivée, **par taille de grille** ;
+- % de conservation de la tête, % de prise de tête par position de départ ;
+- gain/perte moyen (et **médian** — la moyenne est sensible aux abandons) ;
+- position moyenne en V1 et à l'arrivée par position de départ ;
+- effet du couloir (intérieur / milieu / extérieur), avec `firstTurnSide` appliqué (§4.10) ;
+- corrélation V1 ↔ arrivée (Spearman plutôt que Pearson : ce sont des rangs), calculée sur
+  `finishPosInStart` ;
+- comparaisons circuit / catégorie / championnat / saison / format ;
+- **`n` affiché systématiquement** (les deux compteurs), et **intervalle de confiance de Wilson**
+  sur chaque pourcentage. C'est peu de code et ça évite d'interpréter 3/4 = 75 % comme un
+  résultat. Un pourcentage sous un seuil (`n < 10`) doit s'afficher en `n=4` grisé, sans
+  pourcentage.
+
+**Deux avertissements méthodologiques à intégrer dans l'UI**, sinon les chiffres seront
+sur-interprétés :
+
+1. **La position de grille n'est pas tirée au hasard** en QF/DF/FIN : P1 est le meilleur
+   qualifié. « P1 conserve la tête dans 63 % des cas » mélange donc l'avantage de la position
+   et le niveau du pilote. Pour isoler l'effet du couloir, il faut comparer un même pilote dans
+   des couloirs différents, ou normaliser par son rang au classement intermédiaire — que
+   l'application possède déjà (`interimStandings`).
+2. **Les couloirs de MQ, eux, sont attribués par tirage réglementaire** : c'est la véritable
+   expérience naturelle propre pour mesurer l'effet du couloir. Et ces données
+   (`results.couloir`) **sont déjà dans ta base**.
 
 ### 4.9 Workflow vidéo : enchaîner Série 1 → Série 2 → Série 3
 
@@ -771,106 +925,103 @@ pour amorcer les meetings suivants.
 `startAnalyses`, jamais dans `videoTimecodes` — donc aucune interaction avec la modale existante,
 et un timecode de série mal saisi n'affecte que son propre départ.
 
-### 4.10 Question ouverte à trancher avant de coder `laneZone`
+### 4.10 Conventions tranchées
 
-Une série de 3 pilotes n'occupe que 3 couloirs. Deux interprétations physiques possibles, qui
-mènent à des statistiques différentes :
+Deux points de réalité terrain, décidés avant la phase 1. Ils sont notés ici parce qu'ils
+déterminent directement le corps de deux fonctions pures et leurs tests.
 
-- **Hypothèse A — couloirs physiques fixes.** Les 3 voitures se placent dans les couloirs 1, 2, 3
-  de la piste ; les couloirs 4 et 5 restent vides. Alors le couloir 3 d'une série de 3 est
-  **physiquement au milieu de la piste**, exactement comme le couloir 3 d'une série de 5. →
-  `laneZone` se calcule sur `trackLanes`, et une petite série ne produit simplement aucune
-  observation pour les couloirs extérieurs.
-- **Hypothèse B — répartition sur la largeur.** Les 3 voitures sont réparties sur toute la largeur
-  de la piste. Alors le couloir 3 d'une série de 3 est **à l'extérieur**. → `laneZone` se calcule
-  sur `lanesUsed`.
+#### A. Couloirs physiques fixes — `laneZone` se calcule sur `trackLanes`
 
-Le code de la V2 ne permet pas de trancher : `validateMeta` borne seulement `couloir ≤ taille de
-la série`, ce qui est compatible avec les deux. C'est une question de réalité terrain.
+**Décision : les voitures remplissent les couloirs à partir du couloir 1, sans redistribution sur
+la largeur.** 3 pilotes → couloirs 1, 2, 3 ; 4 pilotes → 1, 2, 3, 4 ; les couloirs restants sont
+vides.
 
-Le schéma stocke **les deux valeurs** (`lanesUsed` et `trackLanes`), donc la décision n'est pas
-bloquante pour le modèle de données — mais elle l'est pour la fonction `laneZone()`, et une
-statistique calculée sous la mauvaise hypothèse serait fausse sans être détectable. À trancher
-avant la phase 1.
+Conséquence : le couloir 3 reste **physiquement le couloir central** d'une grille à 5 couloirs,
+que la série compte 3 ou 5 voitures. `laneZone` prend donc `trackLanes` comme dénominateur, jamais
+`lanesUsed` :
 
-### 4.8 Intégration dans les statistiques
+```
+laneZone(lane, trackLanes, firstTurnSide) → 'inside' | 'middle' | 'outside'
+```
 
-`js/stats.js` est **orienté pilote** : lignes = pilotes, colonnes = meetings, filtré par
-`year` + `category` + championnat actif. L'analyse des départs est **orientée position** : lignes
-= positions de grille, agrégées sur des centaines de départs, et surtout **transversale aux
-saisons et aux championnats** (tu veux comparer 2025 vs 2026, France vs Europe).
+`lanesUsed` reste stocké dans le document (§4.7) — non plus pour le calcul de zone, mais parce
+qu'il documente la taille réelle du départ et sert aux contrôles de cohérence et à la
+comparabilité des matrices (§4.8).
 
-Ce sont deux axes d'agrégation incompatibles : forcer l'un dans l'autre produirait une vue
-confuse. → **Vue dédiée `startStats`**, placée sous « Statistiques » dans le menu, mais qui
-**réutilise** les conventions existantes : barre de filtres du même type, classes CSS `sta-*`,
-`table-wrap`, tri par en-tête `data-sort`.
+**Résolution de `trackLanes`**, dans cet ordre :
 
-Filtres : Championnat → Saison → Circuit → Catégorie → Type de session → Position de grille →
-Couloir, chacun avec « Tous ». Le règlement/format se déduit de `regulationKey`.
+1. `circuits/{circuitKey}.trackLanes` s'il est renseigné — c'est une propriété **du circuit**
+   (nombre de couloirs matérialisés sur la grille de départ) ;
+2. sinon `sessionConfig[type].gridLayout.lanes` pour QF / DF / FIN ;
+3. sinon `maxPerSeries` de la catégorie pour les MQ (via `getCategoryMaxPerSeries()`) ;
+4. la valeur retenue est **figée dans le document d'analyse**, pour rester stable si un règlement
+   évolue.
 
-#### L'unité d'observation est le départ, pas la manche
+**Conséquence statistique à assumer** : une série incomplète ne fournit **aucune observation** pour
+les couloirs extérieurs. Les couloirs 1–3 auront donc systématiquement plus d'observations que les
+couloirs 4–5. Ce n'est pas un biais en soi — chaque observation reste valide — mais deux
+précautions s'imposent : afficher `n` **par couloir** et non seulement `n` global, et proposer un
+filtre « séries complètes uniquement » pour les comparaisons entre couloirs, puisque les séries
+incomplètes ne sont pas réparties au hasard dans une manche (en mode `ffsa`, elles sont placées en
+début).
 
-Point corrigé et central : **`n` compte des départs physiques.** Une MQ à 6 séries contribue 6
-observations, pas 1. Concrètement, `n` doit toujours être le nombre de documents `startAnalyses`
-validés qui entrent dans la case affichée — et il faut afficher **deux compteurs distincts** pour
-éviter toute ambiguïté :
+#### B. Abandon avant la sortie du virage 1 — `turn1Pos = null`, départ conservé
 
-- **`n` départs** : nombre de départs physiques analysés (l'unité statistique) ;
-- **`n` observations pilote** : nombre de lignes, c'est-à-dire de couples (pilote × départ) — c'est
-  le `n` pertinent pour les statistiques par couloir, puisqu'un départ de 5 voitures fournit 5
-  observations de couloir.
+**Décision : un pilote sans position V1 mesurable garde sa ligne avec `turn1Pos = null`** et son
+`finishStatus` (`DNF`, `DSQ_RACE`…). Le départ reste valide et validable.
 
-Confondre les deux gonflerait artificiellement les intervalles de confiance. Exemple d'affichage
-attendu : « Lohéac — Supercar — 2026 · **84 départs** · 412 observations pilote ».
+Règles qui en découlent, à implémenter dans `startStatsCalc.js` :
 
-Ordre de grandeur de la montée en échantillon, avec la bonne granularité :
+- une ligne à `turn1Pos = null` est **exclue** des matrices de transition, du gain/perte de
+  positions et des corrélations — elle n'a pas de valeur mesurée, on ne l'invente pas ;
+- le **départ** reste compté dans « nb de départs analysés » : les autres pilotes de ce départ sont
+  parfaitement exploitables ;
+- les positions V1 des autres pilotes ne sont **pas renumérotées** pour combler le trou : si le
+  pilote parti P2 disparaît, les positions mesurées restent celles observées à la ligne. Le champ
+  `starters` permet de savoir combien de voitures étaient au départ et
+  `rows.filter(r => r.turn1Pos != null).length` combien ont été mesurées ;
+- ces lignes deviennent une **donnée en soi** : le taux d'incident avant V1 par position de grille
+  et par couloir est une statistique intéressante, obtenue gratuitement puisque l'information est
+  conservée. À exposer en phase 8.
 
-| Périmètre | Départs | Observations pilote |
+C'est la convention la plus riche des trois envisagées : classer d'office le pilote dernier aurait
+confondu « a perdu 4 places » et « a été accroché », ce qui aurait tiré le gain moyen vers le bas
+précisément pour les positions les plus exposées ; écarter le départ entier aurait coûté une part
+notable de l'échantillon, le rallycross ayant beaucoup de contacts au premier virage.
+
+### 4.11 Emplacement dans l'interface
+
+Deux activités distinctes, donc deux points d'entrée — mais **une seule tuile** sur l'accueil.
+
+**1. Le poste de saisie/analyse → nouvelle entrée + nouvelle tuile.** C'est une activité de
+saisie, où l'on navigue meeting → catégorie → liste de départs et où l'on passe du temps. Placée
+dans la section **« Gestion »** du menu, près de Sessions et Chronométrage :
+
+```html
+<li><a class="menu-item" data-view="startAnalysis" href="#">🎥 Analyse des départs</a></li>
+```
+
+plus une `home-card` correspondante. Un bouton contextuel « 🎥 Analyser les départs » depuis la vue
+Chronométrage évite de repasser par la sélection quand on vient de saisir les temps.
+
+**2. Les statistiques → entrée de menu sous « 📊 Statistiques », sans tuile d'accueil.** La grille
+d'accueil compte déjà 11 tuiles ; en ajouter deux la dilue, et les statistiques restent accessibles
+par le menu et depuis le poste d'analyse.
+
+Deux façons de réaliser la navigation « Statistiques → Analyse des départs » demandée :
+
+| Option | Avantage | Risque |
 |---|---|---|
-| 1 meeting, 1 catégorie (4 MQ × 6 séries + 2 DF + 1 FIN) | **27** | ~135 |
-| 1 saison, 1 catégorie (8 meetings) | **~216** | ~1 080 |
+| **Vue séparée `startStats`** + entrée de menu placée juste après 📊 Statistiques | **`stats.js` (722 lignes) n'est pas touché** | navigation un peu moins intégrée |
+| Barre d'onglets **dans** `view-stats` | correspond littéralement à la formulation souhaitée | impose de modifier `renderView()` de `stats.js` |
 
-C'est **neuf fois** ce qu'aurait donné un raisonnement par session, et cela rend l'objectif
-statistique atteignable en une seule saison.
+**Recommandation : vue séparée en phase 1**, au nom de la contrainte « ne pas casser l'existant ».
+La fusion en onglets à l'intérieur de `view-stats` devient un changement cosmétique en phase 8,
+une fois le module éprouvé — alors que la faire maintenant mettrait `stats.js` en risque pour un
+gain nul.
 
-#### Comparabilité entre départs de tailles différentes
-
-Conséquence des séries de tailles inégales (`[3,3,5,5,5,5]`) : une matrice de transition
-grille → V1 mélangeant des grilles de 3 et de 5 voitures n'a pas de sens brut. Trois mesures :
-
-- **la matrice est calculée par taille de grille** (`starters`), et l'UI affiche soit une taille
-  choisie, soit une version normalisée ;
-- **le gain/perte de positions** (`gridPos − turn1Pos`) reste comparable entre tailles, c'est donc
-  l'indicateur transversal privilégié ;
-- **la position relative** (`(pos − 1) / (starters − 1)`, sur 0..1) permet une comparaison honnête
-  entre formats quand on agrège volontairement des tailles différentes.
-
-Indicateurs, tous dans `js/startStatsCalc.js` (pur, testé) :
-
-- matrice de transition grille → V1, et grille → arrivée, **par taille de grille** ;
-- % de conservation de la tête, % de prise de tête par position de départ ;
-- gain/perte moyen (et **médian** — la moyenne est sensible aux abandons) ;
-- position moyenne en V1 et à l'arrivée par position de départ ;
-- effet du couloir (intérieur / milieu / extérieur), avec `firstTurnSide` appliqué (§4.10) ;
-- corrélation V1 ↔ arrivée (Spearman plutôt que Pearson : ce sont des rangs), calculée sur
-  `finishPosInStart` ;
-- comparaisons circuit / catégorie / championnat / saison / format ;
-- **`n` affiché systématiquement** (les deux compteurs), et **intervalle de confiance de Wilson**
-  sur chaque pourcentage. C'est peu de code et ça évite d'interpréter 3/4 = 75 % comme un
-  résultat. Un pourcentage sous un seuil (`n < 10`) doit s'afficher en `n=4` grisé, sans
-  pourcentage.
-
-**Deux avertissements méthodologiques à intégrer dans l'UI**, sinon les chiffres seront
-sur-interprétés :
-
-1. **La position de grille n'est pas tirée au hasard** en QF/DF/FIN : P1 est le meilleur
-   qualifié. « P1 conserve la tête dans 63 % des cas » mélange donc l'avantage de la position
-   et le niveau du pilote. Pour isoler l'effet du couloir, il faut comparer un même pilote dans
-   des couloirs différents, ou normaliser par son rang au classement intermédiaire — que
-   l'application possède déjà (`interimStandings`).
-2. **Les couloirs de MQ, eux, sont attribués par tirage réglementaire** : c'est la véritable
-   expérience naturelle propre pour mesurer l'effet du couloir. Et ces données
-   (`results.couloir`) **sont déjà dans ta base**.
+Rappel des points d'insertion (§1.2), tous additifs : `VIEW_TITLES`, menu, `<div class="view">`,
+`safeInit()`, CSS, et **`ASSET_PATHS` de `sw.js` avec `CACHE_NAME` incrémenté**.
 
 ---
 
@@ -888,8 +1039,8 @@ son gain.
     module** ;
   - `buildStartGrid(...)` → reconstruction de la grille d'un départ (MQ : depuis
     `serie`/`couloir` ; QF/DF/FIN : depuis la cascade + `gridLayout.positions`) ;
-  - `laneZone(lane, trackLanes, lanesUsed, firstTurnSide)` → intérieur / milieu / extérieur
-    (⚠️ dépend de la question ouverte §4.10) ;
+  - `laneZone(lane, trackLanes, firstTurnSide)` → intérieur / milieu / extérieur, dénominateur
+    `trackLanes` (§4.10 A) ;
   - `finishPosInStart(rowsOfStart)` → rang par `ms` **au sein du départ** ;
   - `startDocId(sessionId, startIndex)` et `seriesFingerprint(driverIds)`.
 - Collection `startAnalyses` + règles (`rows.size() <= 12`).
@@ -899,9 +1050,10 @@ son gain.
 - Gestion explicite du cas `results.serie` non renseigné (regroupement manuel, jamais deviné).
 - Persistance de `gridPos` / `lane` sur `sessionParticipants` pour les phases finales.
 
-*Gain immédiat* : ~20–30 s par départ, sans vidéo, avec **27 départs disponibles par meeting et
-par catégorie**. **Et surtout : les couloirs de MQ déjà en base permettent de produire une
-première statistique d'effet de couloir dès la fin de cette phase, avec zéro saisie nouvelle.**
+*Gain immédiat* : ~20–30 s par départ, sans vidéo, avec **15 à 27 départs disponibles par meeting
+et par catégorie** selon le nombre d'engagés (§4.8). **Et surtout : les couloirs de MQ déjà en base
+permettent de produire une première statistique d'effet de couloir dès la fin de cette phase, avec
+zéro saisie nouvelle.**
 
 ### Phase 2 — Intégration vidéo · *lecteur + enchaînement des séries*
 
@@ -988,8 +1140,8 @@ comparable.
    confiance 🟡/🔴 servira réellement, ce n'est pas un ornement.
 4. **Occlusion mutuelle dans le peloton** : le cas des deux voitures qui se croisent derrière une
    troisième restera un cas humain.
-5. **Un abandon dans le virage 1** n'a pas de « position V1 » bien définie ; il faut une
-   convention explicite (classer en dernier ? exclure ? — à trancher en phase 1, et à figer).
+5. **Un abandon dans le virage 1** n'a pas de « position V1 » bien définie. Convention tranchée
+   en §4.10 B : `turn1Pos = null`, départ conservé, ligne exclue des matrices.
 
 **Sur les performances** (PC classique, 8 cœurs, sans GPU) — le calcul n'est jamais le goulot,
 car on analyse ~10 s de vidéo par départ :
@@ -1016,14 +1168,15 @@ l'introduire qu'en phase 5, en connaissance de cause.
 6. **La position de grille est corrélée au niveau du pilote** en QF/DF/FIN (§4.8) — le biais le
    plus important, et il ne se corrige pas par plus de données, seulement par un meilleur modèle.
 7. **Les tailles d'échantillon par circuit seront longtemps faibles** — nettement moins toutefois
-   qu'avec un raisonnement par session (×9). D'où `n` et Wilson obligatoires, et le seuil
-   d'affichage.
+   qu'avec un raisonnement par session (×3,9 à volume comparable, §4.8). D'où `n` et Wilson
+   obligatoires, et le seuil d'affichage.
 8. **Les formats diffèrent** entre championnats (nombre de couloirs, 3 lignes vs 2). Comparer
    « P4 » entre deux formats n'a pas toujours de sens ; la position **relative** (rang / taille de
    grille) est parfois la seule comparaison légitime.
 9. **Les tailles de séries MQ sont inégales** (`[3,3,5,5,5,5]`) : les matrices de transition
-   doivent être ventilées par `starters`, et l'effet du couloir dépend de la convention physique
-   à trancher en §4.10.
+   doivent être ventilées par `starters`, et les couloirs extérieurs reçoivent moins
+   d'observations que les couloirs intérieurs (§4.10 A) — d'où le `n` par couloir et le filtre
+   « séries complètes ».
 10. **La composition des séries n'est pas persistée** par la V2 : elle vit dans `results.serie`,
     modifiable après coup. D'où `integrity.seriesFingerprint` (§4.7) — sans lui, une correction de
     saisie ultérieure rendrait une analyse validée silencieusement fausse.
@@ -1065,3 +1218,8 @@ l'introduire qu'en phase 5, en connaissance de cause.
 | Service séparé ou intégré ? | **Séparé et optionnel** — l'application doit fonctionner entièrement sans Python |
 | Performances | 15–40 s par départ en CSRT, 3–5 s avec YOLO ONNX. Le calcul n'est jamais le facteur limitant |
 | Vue statistiques | vue dédiée `startStats` (axe d'agrégation différent de `stats.js`), conventions UI réutilisées |
+| **Emplacement UI** | **1 tuile** d'accueil + entrée « Gestion » pour la saisie ; entrée de menu sous 📊 Statistiques pour les stats, **sans modifier `stats.js`** en phase 1 (§4.11) |
+| **Couloirs d'une série incomplète** | **couloirs physiques fixes** : remplissage depuis le couloir 1, `laneZone` calculé sur `trackLanes` (§4.10 A) |
+| **Abandon avant V1** | `turn1Pos = null`, départ conservé et validable, ligne exclue des matrices mais comptée dans le taux d'incident (§4.10 B) |
+| **Seuil de rentabilité de l'automatisation** | ~11 500–14 400 départs en temps pur → **ne pas justifier les phases 4–6 par la vitesse**, mais par la qualité (§3.1) |
+| **Facteur limitant réel** | la **couverture vidéo**, pas le modèle de données — à suivre comme indicateur dès la phase 1 (§4.8) |
