@@ -24,6 +24,14 @@
 > renommé `gridLanes` et n'est plus alimenté par `circuits`. Ajout de `gridLayoutKey` pour ne
 > jamais comparer des couloirs de géométries différentes, des quatre axes statistiques
 > indépendants (§4.8) et de l'algorithme exact de placement sur la grille (§4.7).
+>
+> **Révision 5** — **révision majeure des phases 3 à 6** après vérification empirique du moteur de
+> tracking (voir `TRACKING-EVALUATION.md`, chiffres mesurés) : sur de la vidéo de retransmission,
+> CSRT ne convient pas, la ligne virtuelle à coordonnées fixes est invalide dès que la caméra
+> bouge, et la voie semi-automatique coûte autant de clics qu'elle en économise. La **saisie
+> manuelle assistée devient le chemin principal et permanent**, la détection automatique est
+> repoussée derrière un POC séparé et conditionnée à une source vidéo à caméra fixe. Les phases 1
+> et 2 et le modèle de données sont **inchangés**.
 
 ---
 
@@ -348,8 +356,16 @@ Le problème n'est **pas** « détecter des voitures dans une vidéo » (monde o
 **« suivre ces 8 boîtes que je viens de désigner, pendant 200 images »** (monde fermé, identité
 initiale connue à 100 %, fenêtre de 4–8 s).
 
+⚠️ **Cette section est en partie invalidée par la révision 5** — voir
+`TRACKING-EVALUATION.md`. Le raisonnement ci-dessous reste juste *en soi*, mais il suppose un
+**cadrage stable et toutes les voitures dans le champ**. Sur de la vidéo de retransmission
+(panoramiques, zooms, coupures, voitures hors cadre), les mesures montrent que CSRT ne tient pas :
+il ne se rétablit **jamais** après une sortie de champ (0/39 images) et échoue totalement à chaque
+changement de plan (0/16). **La recommandation « CSRT avant YOLO » est retirée.** Conservé ici pour
+la traçabilité du raisonnement.
+
 Pour ce problème précis, un **multi-tracker OpenCV amorcé par clics** (`TrackerCSRT`, ou
-`TrackerKCF` si la vitesse compte) est meilleur que YOLO + ByteTrack :
+`TrackerKCF` si la vitesse compte) serait meilleur que YOLO + ByteTrack :
 
 | Critère | OpenCV CSRT amorcé | YOLO + ByteTrack |
 |---|---|---|
@@ -491,29 +507,48 @@ de **conserver un handle dans IndexedDB** et de réouvrir le même fichier plus 
 re-sélectionner. Firestore ne stocke qu'un **descripteur** (nom, taille, durée, fps,
 empreinte) — jamais la vidéo, conformément à ta contrainte.
 
-### 4.4 Définition du virage 1 : un préréglage par circuit, pas par départ
+### 4.4 Définition du virage 1 : ordre à une image choisie (révision 5)
 
-Tu cliques deux points sur l'image → segment `A`–`B` en coordonnées normalisées. Mais le stocker
-**par départ** serait une erreur : tu le ressaisirais des dizaines de fois pour Lohéac — les 6
-séries d'une même manche partagent d'ailleurs le même plan. Il faut le stocker
-**par circuit** (`circuits/{circuitKey}.presets[]`), avec un libellé et un indice de plan de
-caméra. Après la première course de Lohéac, la ligne est déjà là pour les 30 suivantes.
+⚠️ **Changement de mécanisme.** Les révisions antérieures proposaient une **ligne virtuelle** et un
+calcul de franchissement avec interpolation sous-image. Ce mécanisme est **abandonné comme
+détecteur** : une ligne `A(x₁,y₁) → B(x₂,y₂)` en coordonnées d'image ne désigne un lieu physique de
+la piste que si le cadrage est figé. Sur de la retransmission — panoramique, zoom, suivi des
+voitures — elle devient invalide en une seconde. Analyse détaillée des alternatives (suivi de points
+du décor, homographie…) dans `TRACKING-EVALUATION.md` §5.
 
-**Calcul du franchissement** : signe du produit vectoriel (B−A) × (P−A), où `P` est le
-**centre-bas de la boîte** (la zone de contact au sol, la plus stable en perspective). Le
-changement de signe entre deux images encadre l'instant ; une **interpolation linéaire** donne
-un temps de franchissement bien plus fin qu'une image, ce qui compte quand deux voitures passent
-à 40 ms d'écart. L'ordre est le tri par temps interpolé.
+**Mécanisme retenu — « ordre à une image choisie » :**
 
-**Limite honnête à connaître** : l'ordre de franchissement d'une ligne *dans l'image* n'égale
-l'ordre réel de course que si la ligne est à peu près perpendiculaire à la trajectoire et si les
-voitures suivent des trajectoires comparables. En sortie de virage, une voiture à l'extérieur
-peut couper une ligne image plus tôt tout en étant derrière. Trois mitigations :
+1. navigation jusqu'à **l'image de sortie du virage 1** ;
+2. **cette image est l'instant de mesure**, enregistré dans `video.turn1Seconds` ;
+3. l'ordre est lu sur cette image, par clic sur les voitures ou par glisser-déposer des lignes ;
+4. une **ligne facultative**, tracée sur cette seule image, sert de **repère visuel** pour garder un
+   jugement cohérent d'un départ à l'autre.
 
-1. placer la ligne **le plus loin possible après la corde**, là où le peloton s'est réaligné ;
-2. préférer un plan de caméra à peu près perpendiculaire à la piste ;
-3. **marquer 🟡 automatiquement** deux franchissements séparés de moins de ~100 ms alors que les
-   voitures sont latéralement éloignées — le placement de la ligne y devient l'erreur dominante.
+La ligne conserve donc son intérêt — et les **presets par circuit** aussi, puisque les 6 séries
+d'une manche partagent le même plan de caméra — mais comme **aide à la décision humaine**, plus
+comme détecteur automatique.
+
+**Ce que ce choix élimine** : l'interpolation sous-image, le calcul de produit vectoriel, la gestion
+des franchissements quasi simultanés, et toute la classe d'erreurs liée au mouvement de caméra. La
+phase 3 devient plus simple **et** plus fiable.
+
+**Ce que l'on perd, honnêtement** : la résolution objective de deux franchissements à 40 ms d'écart,
+qui était l'un des trois arguments de qualité en faveur de l'automatisation. Sur une image unique,
+deux voitures côte à côte restent un jugement humain — à marquer 🟡.
+
+**Cas particulier à tracer explicitement** (voir `TRACKING-EVALUATION.md` §7) : quand toutes les
+voitures ne sont pas visibles sur l'image de mesure, il ne suffit pas de laisser `turn1Pos = null`
+pour les absentes — il faut aussi savoir si les voitures **visibles** sont réellement les premières.
+D'où un champ au niveau du départ :
+
+```js
+orderCompleteness: 'complete'      // toutes vues, ordre total fiable
+                 | 'leaders_only'  // les visibles sont certifiées être les premières
+                 | 'partial'       // ordre relatif non garanti → aucune ligne validée
+```
+
+Sans lui, un ordre partiel pourrait contaminer les statistiques par le haut du classement, et pas
+seulement par le bas.
 
 ### 4.5 Identification des voitures : par la géométrie, pas par l'IA
 
@@ -627,8 +662,11 @@ startAnalyses/${sessionId}_s${startIndex} = {
 
   video: { kind: 'youtube' | 'local', videoId | localVideoId,
            startSeconds,        // départ de CE départ (≠ videoTimecodes pour les séries 2..N)
-           turn1Seconds,
+           turn1Seconds,        // image de mesure de l'ordre V1 (§4.4)
            startSecondsSource: 'videoTimecodes' | 'manual' | 'suggested' },
+
+  // toutes les voitures étaient-elles visibles à l'instant de mesure ? (§4.4)
+  orderCompleteness: 'complete' | 'leaders_only' | 'partial',
 
   analysis: { engine: 'manual' | 'opencv-csrt' | 'yolo-bytetrack',
               version, ranAt, warnings: [] },
@@ -1230,44 +1268,61 @@ zéro saisie nouvelle.**
 *Gain* : c'est ici que le volume arrive vraiment. La série 1 part d'un timecode déjà en base, les
 suivantes d'une suggestion de plus en plus juste.
 
-### Phase 3 — Ligne virtuelle du virage 1
+### Phase 3 — Repère visuel de sortie du virage 1
 
-- Placement de la ligne par deux clics, en coordonnées normalisées.
-- **Préréglages par circuit** réutilisables d'un départ à l'autre — d'autant plus rentables ici :
-  les 6 séries d'une manche partagent le même plan de caméra, donc la même ligne.
-- Superposition de la ligne sur le lecteur, pour lire l'ordre de façon cohérente d'un départ à
-  l'autre. Toujours sans aucun code Python.
+- Choix de **l'image de mesure** (`turn1Seconds`) et saisie de l'ordre sur cette image (§4.4).
+- Ligne facultative en coordonnées normalisées, **repère visuel** et non détecteur.
+- **Préréglages par circuit** réutilisables — d'autant plus rentables que les 6 séries d'une manche
+  partagent le même plan de caméra.
+- Saisie de `orderCompleteness` et blocage de la validation si `partial`.
 
-*Gain* : cohérence de la mesure entre départs et entre opérateurs — condition d'une base
-comparable.
+*Gain* : cohérence de la mesure entre départs et entre opérateurs — condition d'une base comparable.
+**Fin du chemin nécessaire : à l'issue de la phase 3, le module est complet et exploitable pour
+toutes les courses, y compris celles disponibles uniquement sur YouTube.**
 
-### Phase 4 — Détection / suivi assisté · *`tools/rxstart`, sans YOLO*
+---
 
-- CLI Python : `opencv-contrib-python` + `numpy` uniquement.
-- Détection des changements de plan, extraction de la fenêtre, **multi-tracker CSRT amorcé par
-  les boîtes cliquées**, franchissement de ligne avec interpolation sous-image, métriques de
-  qualité, sortie JSON versionnée.
-- Import du JSON par glisser-déposer dans l'application, pré-remplissage du tableau.
-- Vidéo d'annotation en sortie (boîtes + ligne + numéros) pour vérifier d'un coup d'œil.
+## 5 bis. Automatisation : conditionnelle, et hors du chemin principal
 
-*Gain* : l'ordre est proposé et objectivé. Coût : ~50 Mo de dépendances, pas de modèle.
+Les phases 4 à 6 ci-dessous **ne sont plus recommandées en l'état** pour de la vidéo de
+retransmission. Justification mesurée dans `TRACKING-EVALUATION.md` ; en résumé :
 
-### Phase 5 — Association voiture ↔ pilote assistée
+- une séquence « feux verts → sortie V1 » de retransmission contient presque toujours **au moins une
+  coupure**, et aucun tracker par apparence n'y survit (mesuré : 0/16 images) ;
+- après une coupure, il faut **ré-ancrer les N voitures**, soit **N clics** — exactement le travail
+  de la saisie manuelle, qui consiste à cliquer les N voitures dans l'ordre **une seule fois** ;
+- une voiture sortie du cadre n'est **jamais** retrouvée par CSRT (mesuré : 0/39 images) ;
+- les vidéos étant principalement sur YouTube, la voie automatique ne concernerait de toute façon
+  qu'une **minorité** de départs (§4.3 et `TRACKING-EVALUATION.md` §3).
 
-- Proposition automatique par géométrie à t₀ (§4.5) ; confirmation/correction par clic.
-- Signature couleur et détection des permutations d'identité.
-- **Décision d'ajouter YOLO ici, et seulement ici**, si l'amorçage manuel des boîtes s'avère être
-  le vrai goulot d'étranglement — et alors uniquement pour proposer les boîtes initiales. Chemin
-  léger recommandé : YOLO11n exporté en ONNX + `onnxruntime` (~250 Mo), plutôt que
-  `ultralytics` + `torch` (~2,5 Go).
+### Phase 4 (conditionnelle) — POC séparé, hors application
 
-### Phase 6 — Proposition automatique de l'ordre V1
+**Préalable indispensable** : disposer de fichiers vidéo locaux légitimes, et de préférence d'une
+**source à caméra fixe** (`TRACKING-EVALUATION.md` §6.2 — c'est le levier déterminant, bien plus que
+le choix de l'algorithme).
 
-- Chaînage complet : fenêtre → tracking → franchissement → ordre proposé, avec ses confiances.
-- Mode lot sur plusieurs courses, produisant **exclusivement des `draft`**.
-- **Mesure du taux de désaccord** entre l'automatique et les courses déjà validées à la main :
-  c'est le chiffre qui dira si les phases 4–6 valaient le coup, et il faut le mesurer, pas le
-  supposer.
+- `tools/rxstart-poc/`, dossier totalement séparé, jamais importé par l'application.
+- Corpus couvrant les 10 scénarios réels, avec 3 / 5 / 8 voitures.
+- Mesures : pertes, ré-ancrages, **échanges d'identité**, exactitude de l'ordre, temps humain — et
+  comparaison au temps de la saisie manuelle sur les mêmes départs.
+- **Critères de décision fixés à l'avance** (`TRACKING-EVALUATION.md` §8.3) : zéro échange
+  d'identité non signalé, ≥ 70 % de départs sans ré-ancrage, < 10 s de temps humain, ≥ 90 % d'ordres
+  exacts.
+
+*Résultat le plus probable : « ne pas intégrer » — ce qui serait un succès du POC, pas un échec.*
+
+### Phases 5 et 6 (conditionnelles) — intégration si et seulement si le POC valide
+
+- Si le POC est concluant, l'outil retenu sera **YOLO + ByteTrack**, pas CSRT
+  (`TRACKING-EVALUATION.md` §6.3) : la détection par image est structurellement plus robuste à la
+  sortie de champ et à l'occultation.
+- Association voiture ↔ pilote par géométrie de grille à t₀ puis confirmation par clic (§4.5).
+- Ré-ancrage manuel après perte ou coupure, avec message explicite « voiture 12 perdue —
+  ré-identification nécessaire », **jamais** de ré-attribution silencieuse.
+- Mode lot produisant **exclusivement des `draft`**, et mesure du taux de désaccord avec les départs
+  déjà validés à la main.
+
+---
 
 ### Phase 7 — Validation et confiance
 
@@ -1290,8 +1345,12 @@ comparable.
 
 ## 6. Limites techniques anticipées
 
-**Sur l'analyse vidéo**
+**Sur l'analyse vidéo** — désormais *mesurées*, voir `TRACKING-EVALUATION.md`
 
+0. **Les vidéos étant principalement sur YouTube, l'analyse automatique ne concerne qu'une
+   minorité de départs** : le lecteur YouTube n'expose pas ses pixels (origine croisée) et aucun
+   téléchargement n'est envisagé (CGU). La saisie manuelle est donc le chemin **principal et
+   permanent**, pas un repli.
 1. **Les changements de plan sont la limite dure.** Aucun modèle d'apparence ne survit à un
    changement de point de vue sur une voiture large de 5 m. Détecter et demander un ré-ancrage
    est la seule réponse honnête.
@@ -1365,18 +1424,18 @@ l'introduire qu'en phase 5, en connaissance de cause.
 | **Timecodes des séries 2..N** | dans `startAnalyses.video.startSeconds`, saisis pendant la navigation, pré-remplis par médiane des intervalles |
 | **Arrivée d'un départ MQ** | `finishPosInStart` (rang dans la série, comparable) **et** `finishPosInSession` (rang manche entière, réglementaire) |
 | **Unité statistique** | le départ ; deux compteurs affichés : `n` départs et `n` observations pilote |
-| Technologies d'analyse vidéo | OpenCV en phase 4 ; YOLO **seulement** en phase 5 si le besoin est mesuré |
-| YOLO + ByteTrack pertinent ? | Pas comme fondation : l'identité initiale est déjà connue à 100 %. Utile plus tard pour amorcer les boîtes |
+| Technologies d'analyse vidéo | **aucune** sur le chemin principal (phases 1–3). Si POC concluant : YOLO + ByteTrack, **pas CSRT** (`TRACKING-EVALUATION.md`) |
+| YOLO + ByteTrack pertinent ? | Pas sur de la vidéo TV (coupures, sorties de champ). Pertinent **uniquement** avec une source à caméra fixe |
 | Réellement automatisable | grille, couloir, résultat final (**déjà en base**), détection, tracking sur fenêtre courte sans coupure, franchissement, confiance, statistiques |
 | À garder semi-manuel | choix des instants, association voiture→pilote, placement de la ligne, **validation finale** |
 | Identification des voitures | géométrie de grille à t₀ + clic de confirmation ; signature couleur en garde-fou ; OCR écarté |
 | Pertes de tracking | métriques brutes → 🟢/🟡/🔴 ; un 🔴 bloque la validation ; le moteur n'écrit jamais `validated` |
-| Définition du virage 1 | 2 clics → ligne normalisée, **stockée par circuit** et réutilisée |
-| Ordre de passage | signe du produit vectoriel sur le centre-bas de boîte + interpolation sous-image |
+| Définition du virage 1 | **ordre lu sur une image choisie** ; la ligne devient un repère visuel, stockée par circuit (§4.4, révision 5) |
+| Ordre de passage | saisi par l'humain sur l'image de mesure ; `orderCompleteness` trace la visibilité réelle des voitures |
 | Modifications de base | 1 collection `startAnalyses` (**par départ**), 1 collection `circuits`, 2 champs additifs sur `sessionParticipants`, 1 champ `localVideos` sur `meetings`, 2 blocs de règles. **Aucune migration, `videoTimecodes` intact.** |
 | Intégration de Python | moteur **local auxiliaire**, échange par **fichier JSON**. L'application reste 100 % statique |
 | Service séparé ou intégré ? | **Séparé et optionnel** — l'application doit fonctionner entièrement sans Python |
-| Performances | 15–40 s par départ en CSRT, 3–5 s avec YOLO ONNX. Le calcul n'est jamais le facteur limitant |
+| Performances **mesurées** | CSRT 8 voitures 1080p : 212 ms/image → ~53 s pour 10 s à 25 fps. KCF : ~8 s. Le calcul n'est jamais le facteur limitant |
 | Vue statistiques | vue dédiée `startStats` (axe d'agrégation différent de `stats.js`), conventions UI réutilisées |
 | **Emplacement UI** | **1 tuile** d'accueil + entrée « Gestion » pour la saisie ; entrée de menu sous 📊 Statistiques pour les stats, **sans modifier `stats.js`** en phase 1 (§4.11) |
 | **Position sportive vs physique** | `gridPos` (sportif) **et** `gridRow` + `lane` (physique) sont conservés séparément ; sur une grille en quinconce, P4 est en ligne 2 (§4.7) |
@@ -1387,3 +1446,6 @@ l'introduire qu'en phase 5, en connaissance de cause.
 | **Abandon avant V1** | `turn1Pos = null`, départ conservé et validable, ligne exclue des matrices mais comptée dans le taux d'incident (§4.10 B) |
 | **Seuil de rentabilité de l'automatisation** | ~11 500–14 400 départs en temps pur → **ne pas justifier les phases 4–6 par la vitesse**, mais par la qualité (§3.1) |
 | **Facteur limitant réel** | la **couverture vidéo**, pas le modèle de données — à suivre comme indicateur dès la phase 1 (§4.8) |
+| **Dépendances de l'automatisation** | `opencv-contrib-python-headless` (⚠️ pas `opencv-python` : OpenCV 5 a retiré CSRT/KCF du module de base) + `numpy` = **272 Mo**, Apache 2.0 + BSD, 0 € |
+| **Sortie de champ / coupure** | CSRT ne récupère **jamais** (mesuré 0/39 et 0/16). Perte **détectée de façon fiable** → ré-ancrage manuel, jamais de ré-attribution silencieuse |
+| **Levier réel pour automatiser** | changer la **source vidéo** (caméra fixe sur trépied), pas l'algorithme (`TRACKING-EVALUATION.md` §6.2) |
