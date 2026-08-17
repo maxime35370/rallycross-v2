@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   startDocId, gridLayoutKey, seriesFingerprint,
   maxPerSeries, resolveGridGeometry, gridCellsInOrder, placeOnGrid, checkGridLayout,
-  laneZone, startLabel, enumerateStarts, finishPosInStart, buildStartGrid,
+  laneZone, normalizePoleSide, startLabel, enumerateStarts, finishPosInStart, buildStartGrid,
   validateAnalysis,
 } from '../js/startAnalysisCalc.js';
 import { computeSeriesSizes } from '../js/calc.js';
@@ -287,62 +287,50 @@ describe('checkGridLayout', () => {
 // laneZone
 // ─────────────────────────────────────────────────────────
 
-describe('laneZone (5 couloirs, virage 1 à gauche, couloirs numérotés depuis la gauche)', () => {
-  const z = (lane) => laneZone(lane, 5, 'left', 'left');
-
-  it('couloir 1 et 2 = intérieur', () => {
-    expect(z(1)).toBe('inside');
-    expect(z(2)).toBe('inside');
-  });
-  it('couloir 3 = milieu', () => {
-    expect(z(3)).toBe('middle');
-  });
-  it('couloirs 4 et 5 = extérieur', () => {
-    expect(z(4)).toBe('outside');
-    expect(z(5)).toBe('outside');
-  });
-});
-
-describe('laneZone — inversion selon le sens du virage', () => {
-  it('virage à droite : le couloir 1 devient extérieur', () => {
-    expect(laneZone(1, 5, 'right', 'left')).toBe('outside');
-    expect(laneZone(5, 5, 'right', 'left')).toBe('inside');
+describe('laneZone (aide d\'affichage — couloir 1 toujours à l\'intérieur)', () => {
+  // Convention vérifiée dans standings.js : « 1er virage à droite → couloir 1 à
+  // droite ». Le couloir 1 est donc toujours du côté intérieur, quel que soit le
+  // circuit : aucune orientation n'est nécessaire.
+  it('5 couloirs → 2 intérieur / 1 milieu / 2 extérieur', () => {
+    expect([1, 2, 3, 4, 5].map(l => laneZone(l, 5)))
+      .toEqual(['inside', 'inside', 'middle', 'outside', 'outside']);
   });
 
-  it('numérotation depuis la droite compense le sens du virage', () => {
-    // virage à droite + couloirs numérotés depuis la droite → couloir 1 = intérieur
-    expect(laneZone(1, 5, 'right', 'right')).toBe('inside');
+  it('3 couloirs → un par zone', () => {
+    expect([1, 2, 3].map(l => laneZone(l, 3))).toEqual(['inside', 'middle', 'outside']);
   });
 
   it('le couloir 3 reste au MILIEU même dans une série de 3 voitures', () => {
-    // Convention §4.10 A : dénominateur = gridLanes du règlement (5), pas lanesUsed
-    expect(laneZone(3, 5, 'left', 'left')).toBe('middle');
+    // Dénominateur = gridLanes du règlement (5), pas le nb de partants (§4.10 A)
+    expect(laneZone(3, 5)).toBe('middle');
   });
 
   it('une série incomplète ne produit aucune observation extérieure', () => {
-    const zones = [1, 2, 3].map(l => laneZone(l, 5, 'left', 'left'));
+    const zones = [1, 2, 3].map(l => laneZone(l, 5));
     expect(zones).toEqual(['inside', 'inside', 'middle']);
     expect(zones).not.toContain('outside');
   });
 
-  it('renvoie null sans sens de virage connu — on n\'invente pas', () => {
-    expect(laneZone(1, 5, null)).toBeNull();
-    expect(laneZone(1, 5, '')).toBeNull();
+  it('un seul couloir → milieu (aucun choix latéral)', () => {
+    expect(laneZone(1, 1)).toBe('middle');
   });
 
   it('renvoie null pour des entrées hors bornes', () => {
-    expect(laneZone(0, 5, 'left')).toBeNull();
-    expect(laneZone(6, 5, 'left')).toBeNull();
-    expect(laneZone(1, 0, 'left')).toBeNull();
+    expect(laneZone(0, 5)).toBeNull();
+    expect(laneZone(6, 5)).toBeNull();
+    expect(laneZone(1, 0)).toBeNull();
+    expect(laneZone(null, 5)).toBeNull();
   });
+});
 
-  it('un seul couloir → milieu (aucun choix latéral)', () => {
-    expect(laneZone(1, 1, 'left')).toBe('middle');
+describe('normalizePoleSide', () => {
+  it('traduit le champ existant meeting.poleSide', () => {
+    expect(normalizePoleSide('gauche')).toBe('left');
+    expect(normalizePoleSide('droite')).toBe('right');
   });
-
-  it('3 couloirs → un par zone', () => {
-    expect([1, 2, 3].map(l => laneZone(l, 3, 'left', 'left')))
-      .toEqual(['inside', 'middle', 'outside']);
+  it('retombe sur "right" comme le défaut de meetings.js', () => {
+    expect(normalizePoleSide(undefined)).toBe('right');
+    expect(normalizePoleSide('')).toBe('right');
   });
 });
 
@@ -566,7 +554,6 @@ describe('finishPosInStart', () => {
 
 describe('buildStartGrid — MQ', () => {
   const session = { id: 'sess-mq1', type: 'MQ', num: 1 };
-  const circuit = { firstTurnSide: 'left', laneNumberingFrom: 'left' };
 
   it('gridPos ≡ couloir, une seule ligne, trié par couloir', () => {
     const results = [
@@ -574,12 +561,13 @@ describe('buildStartGrid — MQ', () => {
     ];
     const participants = results.map(r => ({ driverId: r.driverId, carNumber: r.carNumber }));
     const { starts } = enumerateStarts({ session, results, participants, championship: CHAMP_FFSA, category: 'Supercar' });
-    const { rows } = buildStartGrid({ start: starts[0], results, participants, circuit });
+    const { rows } = buildStartGrid({ start: starts[0], results, participants });
 
     expect(rows.map(r => r.gridPos)).toEqual([1, 2, 3]);
     expect(rows.map(r => r.lane)).toEqual([1, 2, 3]);
     expect(rows.every(r => r.gridRow === 1)).toBe(true);
-    expect(rows.map(r => r.laneZone)).toEqual(['inside', 'inside', 'middle']);
+    // laneZone n'est PAS stocké : seul le couloir brut l'est (« pas de regroupement »)
+    expect(rows.every(r => !('laneZone' in r))).toBe(true);
   });
 
   it('remplit finishPosInStart depuis les temps du départ', () => {
@@ -588,7 +576,7 @@ describe('buildStartGrid — MQ', () => {
     ];
     const participants = results.map(r => ({ driverId: r.driverId }));
     const { starts } = enumerateStarts({ session, results, participants, championship: CHAMP_FFSA, category: 'Supercar' });
-    const { rows } = buildStartGrid({ start: starts[0], results, participants, circuit });
+    const { rows } = buildStartGrid({ start: starts[0], results, participants });
     const byId = Object.fromEntries(rows.map(r => [r.driverId, r.finishPosInStart]));
     expect(byId).toEqual({ d1: 3, d2: 1, d3: 2 });
   });
@@ -596,22 +584,14 @@ describe('buildStartGrid — MQ', () => {
   it('turn1Pos est toujours null à la construction — jamais deviné', () => {
     const results = [mqResult('d1', 1, 1, 120000)];
     const { starts } = enumerateStarts({ session, results, participants: results, championship: CHAMP_FFSA, category: 'Supercar' });
-    const { rows } = buildStartGrid({ start: starts[0], results, participants: results, circuit });
+    const { rows } = buildStartGrid({ start: starts[0], results, participants: results });
     expect(rows[0].turn1Pos).toBeNull();
     expect(rows[0].autoTurn1Pos).toBeNull();
   });
 
-  it('sans sens de virage : laneZone null + avertissement', () => {
-    const results = [mqResult('d1', 1, 1, 120000)];
-    const { starts } = enumerateStarts({ session, results, participants: results, championship: CHAMP_FFSA, category: 'Supercar' });
-    const { rows, warnings } = buildStartGrid({ start: starts[0], results, participants: results, circuit: null });
-    expect(rows[0].laneZone).toBeNull();
-    expect(warnings.join(' ')).toMatch(/premier virage inconnu/i);
-  });
 });
 
 describe('buildStartGrid — DF (quinconce)', () => {
-  const circuit = { firstTurnSide: 'left', laneNumberingFrom: 'left' };
   const participants = Array.from({ length: 8 }, (_, i) => ({ driverId: `d${i + 1}`, carNumber: i + 1 }));
   const ranked = participants.map(p => p.driverId);   // d1 = meilleur qualifié
 
@@ -620,7 +600,7 @@ describe('buildStartGrid — DF (quinconce)', () => {
       session: { id: 'sess-df1', type: 'DF', num: 1 },
       results: [], participants, championship: CHAMP_FFSA, category: 'Supercar',
     });
-    const { rows } = buildStartGrid({ start: starts[0], results: [], participants, rankedDriverIds: ranked, circuit });
+    const { rows } = buildStartGrid({ start: starts[0], results: [], participants, rankedDriverIds: ranked });
     const p4 = rows.find(r => r.gridPos === 4);
     expect(p4.gridRow).toBe(2);
     expect(p4.lane).toBe(2);
@@ -632,7 +612,7 @@ describe('buildStartGrid — DF (quinconce)', () => {
       championship: CHAMP_FFSA, category: 'Supercar',
     });
     const reversed = [...ranked].reverse();           // d8 devient meilleur qualifié
-    const { rows } = buildStartGrid({ start: starts[0], results: [], participants, rankedDriverIds: reversed, circuit });
+    const { rows } = buildStartGrid({ start: starts[0], results: [], participants, rankedDriverIds: reversed });
     expect(rows.find(r => r.gridPos === 1).driverId).toBe('d8');
   });
 
@@ -641,7 +621,7 @@ describe('buildStartGrid — DF (quinconce)', () => {
       session: { id: 's', type: 'DF', num: 1 }, results: [], participants,
       championship: CHAMP_FFSA, category: 'Supercar',
     });
-    const { warnings } = buildStartGrid({ start: starts[0], results: [], participants, rankedDriverIds: null, circuit });
+    const { warnings } = buildStartGrid({ start: starts[0], results: [], participants, rankedDriverIds: null });
     expect(warnings.join(' ')).toMatch(/ordre de qualification inconnu/i);
   });
 
@@ -653,7 +633,7 @@ describe('buildStartGrid — DF (quinconce)', () => {
     });
     const { rows, warnings } = buildStartGrid({
       start: starts[0], results: [], participants: many,
-      rankedDriverIds: many.map(p => p.driverId), circuit,
+      rankedDriverIds: many.map(p => p.driverId),
     });
     expect(rows).toHaveLength(10);
     expect(rows[8].lane).toBeNull();
@@ -667,7 +647,7 @@ describe('buildStartGrid — DF (quinconce)', () => {
         session: { id: 's', type: 'DF', num: 1 }, results: [], participants,
         championship: champ, category: 'Supercar',
       });
-      return buildStartGrid({ start: starts[0], results: [], participants, rankedDriverIds: ranked, circuit }).rows;
+      return buildStartGrid({ start: starts[0], results: [], participants, rankedDriverIds: ranked }).rows;
     };
     const a = mk(CHAMP_FFSA).find(r => r.gridPos === 3);
     const b = mk(CHAMP_ALT).find(r => r.gridPos === 3);

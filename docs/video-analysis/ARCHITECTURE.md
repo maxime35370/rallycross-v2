@@ -40,6 +40,11 @@
 > navigateur** (ONNX Runtime Web), l'application reste statique et sans build. Voir
 > `AUTOMATION-ARCHITECTURE.md`. Le service Python local est **écarté**, l'enveloppe Tauri reste une
 > option future sans coût d'attente. Les phases 1 à 3 et le modèle de données restent inchangés.
+>
+> **Révision 7** — `circuits.firstTurnSide` **retiré** : le sens du premier virage existe déjà en
+> base sous `meeting.poleSide`, et `standings.js` établit que **le couloir 1 est toujours du côté du
+> premier virage**, donc à l'intérieur. `laneZone(lane, gridLanes)` n'a besoin d'aucune orientation,
+> et **n'est plus stocké** : seul le couloir brut l'est, le regroupement se fait à l'affichage.
 
 ---
 
@@ -702,7 +707,7 @@ startAnalyses/${sessionId}_s${startIndex} = {
     // ── position PHYSIQUE, déduite de gridPos via le gridLayout du règlement ──
     gridRow,                  // ligne physique, 1-based
     lane,                     // couloir physique, 1-based
-    laneZone,                 // 'inside' | 'middle' | 'outside' (orienté par firstTurnSide)
+    // NB : laneZone n'est PAS stocké — regroupement à l'affichage (§4.10 A)
     turn1Pos,                 // 1..starters — valeur validée par l'humain
     autoTurn1Pos,             // ce que le moteur avait proposé (traçabilité)
     finishPosInStart,         // rang parmi les partants de CE départ  ← comparable
@@ -778,8 +783,8 @@ Chaque champ a **une seule** origine, et il est important de ne pas les mélange
 | `lane` | **règlement** — `gridLayout` (finales) / `results.couloir` (MQ) | ≡ `couloir` | déduit du `gridLayout` |
 | `gridLanes` | **règlement** — `gridLayout.lanes` / `maxPerSeries` | `maxPerSeries` de la catégorie | `gridLayout.lanes` |
 | `gridRowsTotal` | **règlement** — `gridLayout.rows` | `1` | `gridLayout.rows` |
-| `laneZone` | `lane` + `gridLanes` (règlement) + `firstTurnSide` (**circuit**) | calculé | calculé |
-| `firstTurnSide` | **circuit** — `circuits/{key}` | — | — |
+| `laneZone` | **non stocké** — calculé à l'affichage depuis `lane` + `gridLanes` | — | — |
+| orientation (affichage) | **`meeting.poleSide`**, déjà en base | — | — |
 | ligne V1, presets vidéo | **circuit** — `circuits/{key}.presets` | — | — |
 
 **Règle à ne jamais enfreindre : la géométrie de la grille appartient au règlement du
@@ -851,16 +856,28 @@ meetings anciens.
 circuits/{circuitKey} = {
   name: "Lohéac",
   aliases: ["Loheac", "LOHÉAC", "Lohéac-Bretagne"],
-  firstTurnSide: 'left' | 'right',   // ← oriente laneZone, voir ci-dessous
   medianSeriesGap: 320,              // intervalle médian entre 2 séries, en s (§4.9)
-  physicalLanes: 5,                  // OPTIONNEL, et jamais utilisé pour un calcul :
-                                     //   simple contrôle de cohérence vs le règlement (§4.10 A)
   presets: [{ label: "Plan tribune", videoHint: "…",
               lineA: {x:0.21,y:0.62}, lineB: {x:0.78,y:0.55} }]
 }
 ```
 
-**`firstTurnSide` est un point que personne n'anticipe et qui invaliderait tes comparaisons.**
+⚠️ **Correction (révision 7) — `firstTurnSide` retiré, il était redondant.** Le sens du premier
+virage **existe déjà en base** : `meeting.poleSide` (`'droite'` | `'gauche'`), saisi à la création
+du meeting (`js/meetings.js`, boutons `.mtg-pole-btn`) et déjà exploité par `js/standings.js`.
+
+Et surtout, `standings.js` documente la convention de numérotation :
+
+> « 1er virage à droite — couloir 1 à droite » / « 1er virage à gauche — couloir 1 à gauche »
+
+**⇒ le couloir 1 est TOUJOURS du côté du premier virage, donc toujours à l'intérieur.** La zone
+latérale ne dépend donc que de `(lane, gridLanes)` : **aucune orientation n'est nécessaire pour la
+calculer**, et le champ `laneNumberingFrom` un temps envisagé n'a pas lieu d'être.
+
+`meeting.poleSide` reste utile pour l'**affichage** (orienter la grille, placer le repère visuel V1),
+jamais pour le calcul de zone.
+
+**Pourquoi l'orientation compte quand même (pour l'affichage).**
 « Intérieur » et « extérieur » n'ont de sens que **relativement au sens du premier virage** : sur
 un circuit dont le virage 1 tourne à droite, l'intérieur est le côté droit de la grille ; à
 gauche, c'est l'inverse. Sans ce champ, agréger « couloir intérieur » sur plusieurs circuits
@@ -868,8 +885,16 @@ mélangerait des situations opposées et le résultat serait faux. Avec lui, `la
 proprement :
 
 ```
-laneZone(lane, gridLanes, firstTurnSide) → 'inside' | 'middle' | 'outside'
+laneZone(lane, gridLanes) → 'inside' | 'middle' | 'outside'
 ```
+
+Le couloir 1 étant toujours à l'intérieur (convention vérifiée dans `standings.js`, voir §4.7),
+aucune orientation n'entre dans ce calcul.
+
+**Décision complémentaire : `laneZone` n'est PAS stocké.** Seuls `lane` (brut) et `gridLanes` le
+sont ; le regroupement intérieur / milieu / extérieur se fait **à l'affichage**, dans la vue
+statistiques. `laneZone()` reste donc un simple utilitaire de présentation, ce qui permet de changer
+de découpage plus tard sans migration de données.
 
 à placer dans `startAnalysisCalc.js`, en fonction pure et testée. Le dénominateur est `gridLanes`
 — le nombre de couloirs défini par **le règlement**, et non le nombre de voitures présentes au
@@ -1045,7 +1070,7 @@ Tous dans `js/startStatsCalc.js` (pur, testé) :
 - position moyenne en V1 et à l'arrivée par position de départ ;
 - effet de la **ligne** (`gridRow`) — question distincte de celle du couloir ;
 - effet du **couloir** (`lane`), groupé par `gridLayoutKey` ;
-- effet du **côté** (`laneZone`), avec `firstTurnSide` appliqué (§4.10 A) ;
+- effet du **côté** (`laneZone`, calculé à l'affichage depuis `lane` + `gridLanes`, §4.10 A) ;
 - corrélation V1 ↔ arrivée (Spearman plutôt que Pearson : ce sont des rangs), calculée sur
   `finishPosInStart` ;
 - comparaisons circuit / catégorie / championnat / saison / format ;
@@ -1134,7 +1159,7 @@ que la série compte 3 ou 5 voitures. Le dénominateur de `laneZone` est donc le
 **de la géométrie**, jamais le nombre de voitures présentes :
 
 ```
-laneZone(lane, gridLanes, firstTurnSide) → 'inside' | 'middle' | 'outside'
+laneZone(lane, gridLanes) → 'inside' | 'middle' | 'outside'
 ```
 
 ⚠️ **Correction (révision 4) — `trackLanes` renommé en `gridLanes`, et la source de vérité
@@ -1155,12 +1180,8 @@ l'interface — sinon une analyse rejouée plus tard, avec un autre championnat 
 reconstruirait une géométrie fausse. Les valeurs retenues sont **figées dans le document
 d'analyse** pour rester stables si un règlement évolue.
 
-**Ce que le circuit fournit, et rien de plus** : `firstTurnSide` (l'orientation, indispensable),
-les presets de ligne V1, `medianSeriesGap`. Un champ `physicalLanes` **optionnel** peut documenter
-le nombre de couloirs réellement matérialisés sur la piste, mais **uniquement comme contrôle de
-cohérence** : s'il diffère de `gridLanes`, on émet un avertissement de qualité de données — on ne
-substitue jamais l'un à l'autre. Ce contrôle est reportable en phase 8, il n'est pas nécessaire à
-la phase 1.
+**Ce que le circuit fournit, et rien de plus** : les presets de ligne V1 et `medianSeriesGap`.
+L'orientation vient de `meeting.poleSide`, déjà en base (§4.7).
 
 `lanesUsed` reste stocké (§4.7) : il documente le remplissage réel du départ et sert aux contrôles
 de cohérence et à la comparabilité des matrices (§4.8).
@@ -1252,8 +1273,8 @@ son gain.
     valeur ;
   - `buildStartGrid(...)` → assemblage : MQ depuis `serie`/`couloir` ; QF/DF/FIN depuis la cascade
     puis `placeOnGrid` ;
-  - `laneZone(lane, gridLanes, firstTurnSide)` → intérieur / milieu / extérieur, dénominateur
-    `gridLanes` (§4.10 A) ;
+  - `laneZone(lane, gridLanes)` → utilitaire d'affichage, dénominateur `gridLanes` (§4.10 A) ;
+  - `normalizePoleSide(meeting.poleSide)` → orientation pour l'affichage ;
   - `finishPosInStart(rowsOfStart)` → rang par `ms` **au sein du départ** ;
   - `startDocId(sessionId, startIndex)`, `gridLayoutKey(gridLayout)` et
     `seriesFingerprint(driverIds)`.
@@ -1461,7 +1482,7 @@ l'introduire qu'en phase 5, en connaissance de cause.
 | Vue statistiques | vue dédiée `startStats` (axe d'agrégation différent de `stats.js`), conventions UI réutilisées |
 | **Emplacement UI** | **1 tuile** d'accueil + entrée « Gestion » pour la saisie ; entrée de menu sous 📊 Statistiques pour les stats, **sans modifier `stats.js`** en phase 1 (§4.11) |
 | **Position sportive vs physique** | `gridPos` (sportif) **et** `gridRow` + `lane` (physique) sont conservés séparément ; sur une grille en quinconce, P4 est en ligne 2 (§4.7) |
-| **Source de vérité de la géométrie** | **le règlement du championnat** (`sessionConfig[type].gridLayout`), résolu via `meeting.championshipId`. Le circuit ne fournit que `firstTurnSide`, les presets vidéo et `medianSeriesGap` (§4.10 A) |
+| **Source de vérité de la géométrie** | **le règlement du championnat** (`sessionConfig[type].gridLayout`), résolu via `meeting.championshipId`. Le circuit ne fournit que les presets vidéo et `medianSeriesGap` ; l'orientation vient de `meeting.poleSide`, déjà en base (§4.10 A) |
 | **Sémantique de `gridPos`** | MQ : index de couloir, aucune hiérarchie. Finales : rang de qualification. **Jamais agrégés ensemble** — ventilation par `gridSource` (§4.8) |
 | **Comparaison des couloirs** | uniquement à `gridLayoutKey` identique ; `laneZone` et la position relative sont les seuls axes transversaux (§4.8) |
 | **Couloirs d'une série incomplète** | **couloirs physiques fixes** : remplissage depuis le couloir 1, `laneZone` calculé sur `gridLanes` (réglementaire, §4.10 A) |

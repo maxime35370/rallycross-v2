@@ -13,8 +13,13 @@
    Sources de vérité (ne jamais les mélanger) :
      • gridPos      → results.couloir (MQ) / cascade de qualification (finales)
      • gridRow/lane → RÈGLEMENT du championnat (sessionConfig[type].gridLayout)
-     • laneZone     → lane + gridLanes (règlement) + firstTurnSide (CIRCUIT)
-     • circuit      → uniquement infos physiques et vidéo
+     • orientation  → meeting.poleSide, DÉJÀ en base ('droite' | 'gauche')
+
+   Convention de numérotation des couloirs, vérifiée dans le code existant
+   (standings.js : « 1er virage à droite — couloir 1 à droite ») :
+     ⇒ le COULOIR 1 est TOUJOURS du côté du premier virage, donc à l'INTÉRIEUR.
+   La zone latérale ne dépend donc QUE de (lane, gridLanes) : aucune orientation
+   n'est nécessaire pour la calculer.
 
    Voir docs/video-analysis/ARCHITECTURE.md §1.5, §4.7, §4.10.
 ═══════════════════════════════════════════════ */
@@ -242,42 +247,48 @@ export function checkGridLayout(gridLayout, starters) {
 // ─────────────────────────────────────────────────────────
 
 /**
- * Zone latérale d'un couloir par rapport au premier virage.
+ * Zone latérale d'un couloir : intérieur / milieu / extérieur.
  *
- * Convention (ARCHITECTURE.md §4.10 A) : les voitures remplissent les couloirs
- * à partir du couloir 1 sans redistribution. Le dénominateur est donc
- * `gridLanes` — le nombre de couloirs défini par le RÈGLEMENT — et non le
- * nombre de voitures présentes au départ.
+ * ⚠️ AIDE D'AFFICHAGE UNIQUEMENT — cette valeur n'est PAS stockée dans
+ * startAnalyses. Seuls `lane` (brut) et `gridLanes` le sont, et la vue
+ * statistiques regroupe comme elle veut (décision : « pas de regroupement »
+ * figé en base). Cette fonction est donc un utilitaire pour cette vue.
  *
- * L'orientation vient du CIRCUIT :
- *   • firstTurnSide      : côté vers lequel tourne le virage 1 ('left'|'right')
- *   • laneNumberingFrom  : côté depuis lequel les couloirs sont numérotés,
- *                          vu dans le sens de la marche ('left'|'right')
- * Le couloir 1 est à l'intérieur si ces deux côtés coïncident.
+ * Le couloir 1 étant toujours du côté du premier virage (voir en-tête), la zone
+ * ne dépend que du couloir et du nombre de couloirs de la géométrie :
+ *   couloir 1 = intérieur … couloir gridLanes = extérieur
  *
- * Découpage en trois zones par tiers de la largeur (5 couloirs → 2/1/2).
+ * Dénominateur = `gridLanes` (RÈGLEMENT) et non le nombre de voitures
+ * présentes : le couloir 3 reste au milieu d'une géométrie à 5 couloirs, même
+ * dans une série de 3 (ARCHITECTURE.md §4.10 A).
+ *
+ * Découpage par tiers de la largeur : 5 couloirs → 2 / 1 / 2.
  *
  * @param {number} lane — 1-based
  * @param {number} gridLanes — nb de couloirs de la géométrie
- * @param {string} firstTurnSide — 'left' | 'right'
- * @param {string} [laneNumberingFrom='left'] — 'left' | 'right'
  * @returns {'inside'|'middle'|'outside'|null} null si indéterminable
  */
-export function laneZone(lane, gridLanes, firstTurnSide, laneNumberingFrom = 'left') {
+export function laneZone(lane, gridLanes) {
   const l = Number(lane);
   const L = Number(gridLanes);
   if (!Number.isFinite(l) || !Number.isFinite(L) || l < 1 || L < 1 || l > L) return null;
-  if (!firstTurnSide) return null;      // sans orientation, aucune zone : on n'invente pas
   if (L === 1) return 'middle';         // aucun choix latéral possible
 
-  // t = 0 côté couloir 1 … 1 côté couloir L
-  let t = (l - 1) / (L - 1);
-  // Si le couloir 1 n'est PAS à l'intérieur, on inverse pour que t=0 = intérieur
-  if (firstTurnSide !== laneNumberingFrom) t = 1 - t;
-
+  const t = (l - 1) / (L - 1);          // 0 = couloir 1 = intérieur
   if (t < 1 / 3) return 'inside';
   if (t > 2 / 3) return 'outside';
   return 'middle';
+}
+
+/**
+ * Normalise meeting.poleSide vers 'left' | 'right'.
+ * Sert à l'affichage (orientation de la grille, repère vidéo), jamais au calcul
+ * de laneZone.
+ * @param {string} poleSide — 'droite' | 'gauche'
+ * @returns {'left'|'right'}
+ */
+export function normalizePoleSide(poleSide) {
+  return String(poleSide || '').toLowerCase() === 'gauche' ? 'left' : 'right';
 }
 
 // ─────────────────────────────────────────────────────────
@@ -472,16 +483,15 @@ export function finishPosInStart(rows = []) {
  * @param {string[]} [params.rankedDriverIds] — pour QF/DF/FIN : ordre de la
  *        cascade de qualification (meilleur qualifié en premier). Si absent,
  *        l'ordre des participants est utilisé et un avertissement est émis.
- * @param {object|null} [params.circuit] — pour firstTurnSide / laneNumberingFrom
  * @returns {{rows:Array, warnings:string[]}}
+ *
+ * Note : `laneZone` n'est PAS produit ici. Seul le couloir brut est conservé ;
+ * le regroupement intérieur/milieu/extérieur se fait à l'affichage (§4.10 A).
  */
-export function buildStartGrid({ start, results = [], participants = [], rankedDriverIds = null, circuit = null }) {
+export function buildStartGrid({ start, results = [], participants = [], rankedDriverIds = null }) {
   const warnings = [...(start.warnings || [])];
   const resultByDriver = new Map(results.map(r => [r.driverId, r]));
   const partByDriver   = new Map(participants.map(p => [p.driverId, p]));
-  const side = circuit?.firstTurnSide || null;
-  const numbering = circuit?.laneNumberingFrom || 'left';
-  if (!side) warnings.push('Sens du premier virage inconnu pour ce circuit : couloir intérieur/extérieur non calculé');
 
   // Rang d'arrivée au sein du départ, sur les seuls pilotes du départ
   const startRows = start.driverIds.map(id => {
@@ -504,7 +514,6 @@ export function buildStartGrid({ start, results = [], participants = [], rankedD
         gridPos: lane,
         gridRow: lane != null ? 1 : null,
         lane,
-        laneZone: lane != null ? laneZone(lane, start.gridLanes, side, numbering) : null,
         turn1Pos: null,
         autoTurn1Pos: null,
         finishPosInStart: finishInStart.get(id) ?? null,
@@ -535,7 +544,6 @@ export function buildStartGrid({ start, results = [], participants = [], rankedD
         gridPos,
         gridRow: place?.gridRow ?? null,
         lane: place?.lane ?? null,
-        laneZone: place ? laneZone(place.lane, start.gridLanes, side, numbering) : null,
         turn1Pos: null,
         autoTurn1Pos: null,
         finishPosInStart: finishInStart.get(id) ?? null,
