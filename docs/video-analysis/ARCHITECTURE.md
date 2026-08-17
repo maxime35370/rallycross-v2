@@ -11,11 +11,19 @@
 > §6, §7. La sémantique de `videoTimecodes` n'est **plus** modifiée par cette proposition.
 >
 > **Révision 3** — conventions tranchées (§4.10 : couloirs physiques fixes, `laneZone` sur
-> `trackLanes` ; abandon avant V1 → `turn1Pos = null` et départ conservé) et **correction de deux
+> `trackLanes`, *renommé `gridLanes` en révision 4* ; abandon avant V1 → `turn1Pos = null` et
+> départ conservé) et **correction de deux
 > chiffres erronés** : le seuil de rentabilité de l'automatisation (§3.1, faux d'un facteur ~10) et
 > le multiplicateur de volume (§4.8, « ×9 » annoncé sans dénominateur défini, et `S = 6` traité à
 > tort comme une constante). Ajout de l'indicateur de couverture vidéo, facteur réellement
 > limitant.
+>
+> **Révision 4** — distinction explicite entre **position sportive** (`gridPos`) et **position
+> physique** (`gridRow` + `lane`), et clarification des sources de vérité : la géométrie de grille
+> des phases finales appartient au **règlement du championnat**, pas au circuit. `trackLanes` est
+> renommé `gridLanes` et n'est plus alimenté par `circuits`. Ajout de `gridLayoutKey` pour ne
+> jamais comparer des couloirs de géométries différentes, des quatre axes statistiques
+> indépendants (§4.8) et de l'algorithme exact de placement sur la grille (§4.7).
 
 ---
 
@@ -601,12 +609,18 @@ startAnalyses/${sessionId}_s${startIndex} = {
   circuitKey,
   regulationKey,
 
-  // ── géométrie effective de CE départ ──
-  lanesUsed,              // nb de couloirs réellement occupés (3 pour une série de 3 !)
-  trackLanes,             // nb de couloirs de la grille du circuit (référence physique)
-  gridRows,               // 1 pour une série MQ ; 3 pour une grille DF/FIN
+  // ── géométrie effective de CE départ — source : LE RÈGLEMENT (§4.10 A) ──
+  gridLanes,              // nb de couloirs que définit la géométrie de grille
+                          //   QF/DF/FIN : sessionConfig[type].gridLayout.lanes
+                          //   MQ        : maxPerSeries de la catégorie
+  gridRowsTotal,          // nb de lignes de la géométrie (1 pour une MQ)
+  lanesUsed,              // nb de couloirs réellement occupés (3 pour une série de 3)
   starters,               // nb de voitures au départ = rows.length
   gridSource: 'mq_couloir' | 'grid_layout' | 'manual',
+                          // détermine aussi la SÉMANTIQUE de rows[].gridPos (voir ci-dessous)
+  gridLayoutKey,          // empreinte de la géométrie (lanes, rows, positions)
+                          //   → deux départs ne sont comparables au couloir près
+                          //     que s'ils partagent ce même gridLayoutKey (§4.8)
 
   status: 'draft' | 'validated',
   validatedAt, validatedBy,
@@ -621,8 +635,14 @@ startAnalyses/${sessionId}_s${startIndex} = {
 
   rows: [{
     driverId, carNumber,      // clés vers l'existant (pas de recopie d'identité)
-    gridPos,                  // position sur la grille de CE départ
-    lane, laneZone, gridRow,
+
+    // ── position SPORTIVE ──
+    gridPos,                  // MQ    : ≡ couloir (aucune hiérarchie sportive)
+                              // finales : rang de qualification (P1 = meilleur qualifié)
+    // ── position PHYSIQUE, déduite de gridPos via le gridLayout du règlement ──
+    gridRow,                  // ligne physique, 1-based
+    lane,                     // couloir physique, 1-based
+    laneZone,                 // 'inside' | 'middle' | 'outside' (orienté par firstTurnSide)
     turn1Pos,                 // 1..starters — valeur validée par l'humain
     autoTurn1Pos,             // ce que le moteur avait proposé (traçabilité)
     finishPosInStart,         // rang parmi les partants de CE départ  ← comparable
@@ -648,10 +668,29 @@ startAnalyses/${sessionId}_s${startIndex} = {
   la série. Le rang manche-entière est conservé à côté parce qu'il reste l'information
   réglementaire (c'est lui qui donne les points) et qu'il permettra des analyses secondaires.
   Pour QF / DF / FIN, les deux valeurs coïncident.
-- **`lanesUsed` ET `trackLanes`.** Les séries n'ont pas toutes la même taille (§1.5 : `[3,3,5,5,5,5]`).
-  Sans distinguer les deux, on ne peut pas interpréter un couloir correctement — voir la question
-  Le calcul de `laneZone` s'appuie sur `trackLanes` (convention tranchée, §4.10) ; `lanesUsed`
-  sert aux contrôles de cohérence et à la comparabilité des matrices.
+- **`gridPos` (sportif) ET `gridRow` + `lane` (physique) — jamais l'un à la place de l'autre.**
+  Ce sont deux informations différentes qui répondent à des questions statistiques différentes
+  (§4.8). Sur une grille en quinconce, P4 est en **ligne 2**, pas dans le couloir 4 :
+
+  ```
+  Ligne 1 :   P1        P2        P3        →  gridRow 1, lanes 1 / 3 / 5
+  Ligne 2 :        P4        P5             →  gridRow 2, lanes 2 / 4
+  Ligne 3 :   P6        P7        P8        →  gridRow 3, lanes 1 / 3 / 5
+  ```
+
+- **⚠️ `gridPos` n'a pas la même signification selon la phase**, et `gridSource` sert à le savoir :
+  - `gridSource: 'mq_couloir'` → `gridPos ≡ lane`, c'est un **index de couloir** ; l'application ne
+    modélise aucune hiérarchie de mérite pour les couloirs de MQ ;
+  - `gridSource: 'grid_layout'` → `gridPos` est un **rang de qualification** (P1 = meilleur
+    qualifié de la cascade).
+
+  Conséquence directe pour la statistique : **agréger « P1 » à travers les MQ et les finales
+  mélangerait deux concepts distincts.** Toute métrique indexée sur `gridPos` doit être filtrée ou
+  ventilée par `gridSource` (§4.8).
+- **`gridLanes` (réglementaire) ET `lanesUsed` (réel).** `gridLanes` définit le repère dans lequel
+  `lane` est exprimé et sert de dénominateur à `laneZone` ; `lanesUsed` décrit le remplissage réel
+  du départ (3 voitures sur une géométrie à 5 couloirs) et sert aux contrôles de cohérence et à la
+  comparabilité des matrices.
 - **Tout est figé à la validation** (`finishPos*`, `lanesUsed`, `laneZone`) plutôt que recalculé à
   l'affichage : les règlements et les compositions de séries évoluent, une statistique historique
   doit être stable.
@@ -668,19 +707,77 @@ startAnalyses/${sessionId}_s${startIndex} = {
 
 Aucune saisie de grille n'est nécessaire — tout se déduit :
 
-**MQ** (`sessionId` + `startIndex`) :
+#### Tableau des sources de vérité
+
+Chaque champ a **une seule** origine, et il est important de ne pas les mélanger :
+
+| Champ | Source de vérité | MQ | QF / DF / FIN |
+|---|---|---|---|
+| `gridPos` | `results.couloir` (MQ) / cascade de qualification (finales) | ≡ `couloir` | rang de qualification |
+| `gridRow` | **règlement** — `sessionConfig[type].gridLayout` | toujours `1` | déduit du `gridLayout` |
+| `lane` | **règlement** — `gridLayout` (finales) / `results.couloir` (MQ) | ≡ `couloir` | déduit du `gridLayout` |
+| `gridLanes` | **règlement** — `gridLayout.lanes` / `maxPerSeries` | `maxPerSeries` de la catégorie | `gridLayout.lanes` |
+| `gridRowsTotal` | **règlement** — `gridLayout.rows` | `1` | `gridLayout.rows` |
+| `laneZone` | `lane` + `gridLanes` (règlement) + `firstTurnSide` (**circuit**) | calculé | calculé |
+| `firstTurnSide` | **circuit** — `circuits/{key}` | — | — |
+| ligne V1, presets vidéo | **circuit** — `circuits/{key}.presets` | — | — |
+
+**Règle à ne jamais enfreindre : la géométrie de la grille appartient au règlement du
+championnat, le circuit ne fournit que des informations physiques et vidéo.** Deux championnats
+peuvent définir des demi-finales différemment sur le même circuit ; l'analyse doit alors utiliser
+le `gridLayout` du championnat concerné, résolu via `meeting.championshipId`.
+
+#### MQ (`sessionId` + `startIndex`)
+
 1. `results` où `sessionId == X` → filtrer `serie == startIndex` ;
 2. chaque pilote apporte son `couloir` → `gridPos = couloir`, `lane = couloir`, `gridRow = 1` ;
-3. `lanesUsed` = nombre de pilotes de la série (croisé avec `getSeriesStructure().sizes[startIndex-1]`
-   comme contrôle de cohérence) ;
-4. `finishPosInStart` = tri par `ms` des seuls pilotes de la série ;
-5. `finishPosInSession` = position issue de `calcMqStandings()`.
+3. `gridLanes = maxPerSeries` de la catégorie (`getCategoryMaxPerSeries()`), `gridRowsTotal = 1` ;
+4. `lanesUsed` = nombre de pilotes de la série (croisé avec
+   `getSeriesStructure().sizes[startIndex-1]` comme contrôle de cohérence) ;
+5. `finishPosInStart` = tri par `ms` des seuls pilotes de la série ;
+6. `finishPosInSession` = position issue de `calcMqStandings()`.
 
-**QF / DF / FIN** (`sessionId`, `startIndex = 1`) :
-1. `sessionParticipants` où `sessionId == X` → les partants ;
-2. `gridPos` via la cascade de qualification (`sessions.js`), puis `(gridRow, lane)` via
-   `sessionConfig[type].gridLayout.positions` ;
-3. `finishPosInStart = finishPosInSession` via `calcPhaseStandings()`.
+#### QF / DF / FIN (`sessionId`, `startIndex = 1`)
+
+```
+gridPos  →  gridLayout du règlement du championnat  →  gridRow + lane  →  laneZone
+```
+
+1. résoudre le championnat : `meeting.championshipId` → `championships/{id}.sessionConfig[type]` ;
+2. `sessionParticipants` où `sessionId == X` → les partants ;
+3. `gridPos` = rang dans la cascade de qualification, telle que `sessions.js` la calcule déjà ;
+4. **placement physique** — reproduire exactement l'algorithme de `sessions.js` (voir ci-dessous) ;
+5. `gridLanes = gridLayout.lanes`, `gridRowsTotal = gridLayout.rows` ;
+6. `finishPosInStart = finishPosInSession` via `calcPhaseStandings()`.
+
+**Détail d'implémentation vérifié dans le code, et qui n'est pas une simple inversion de la
+map.** Les clés de `gridLayout.positions` sont `"ligne-colonne"` en **base 0**
+(`defaultGridLayout` : `positions[r + '-' + c] = pos++`), donc `gridRow = r + 1` et
+`lane = c + 1`. Mais l'éditeur de grille de `settings.js` est **entièrement libre**
+(`readGridLayout` ramasse toute cellule portant un nombre) : les numéros de position peuvent être
+non contigus, comporter des trous, voire des doublons. `sessions.js` ne fait donc **pas** une
+recherche par valeur — il trie les cellules par numéro puis distribue les pilotes dans l'ordre du
+classement :
+
+```js
+const cells = Object.entries(positions).sort((a, b) => a[1] - b[1]);
+const cell  = cells[gridPos - 1];            // gridPos = rang sportif, 1-based
+const [r, c] = cell[0].split('-').map(Number);
+// gridRow = r + 1 ; lane = c + 1
+```
+
+`startAnalysisCalc.js` doit reproduire **cette** logique, et non inverser `positions` par valeur :
+c'est la seule façon de garantir que la grille reconstruite corresponde à celle affichée dans la
+vue Sessions, y compris sur une configuration exotique. Cas à couvrir par des tests :
+
+- numéros de position **non contigus** (`{1,2,3,5,8}`) → le n-ième qualifié occupe la n-ième
+  cellule, et le numéro affiché dans la grille **diffère** alors du rang sportif → émettre un
+  avertissement plutôt que de laisser l'ambiguïté ;
+- **doublons** de numéros → configuration invalide, refuser et le signaler ;
+- **plus de partants que de cellules** → les partants surnuméraires n'ont pas de position physique
+  (`gridRow = lane = null`), le départ reste analysable pour les autres ;
+- `gridLayout` **absent** du règlement → `gridSource: 'manual'`, saisie assistée, jamais de valeur
+  inventée.
 
 **Cas dégradé à gérer explicitement** : `results.serie` / `results.couloir` sont **nullables**
 (remplis par `importTimes.js` ou à la main dans `timing.js`, mais pas garantis). Si la série n'est
@@ -694,9 +791,10 @@ meetings anciens.
 circuits/{circuitKey} = {
   name: "Lohéac",
   aliases: ["Loheac", "LOHÉAC", "Lohéac-Bretagne"],
-  firstTurnSide: 'left' | 'right',   // ← voir ci-dessous, c'est important
-  trackLanes: 5,                     // couloirs matérialisés sur la grille (§4.10 A)
+  firstTurnSide: 'left' | 'right',   // ← oriente laneZone, voir ci-dessous
   medianSeriesGap: 320,              // intervalle médian entre 2 séries, en s (§4.9)
+  physicalLanes: 5,                  // OPTIONNEL, et jamais utilisé pour un calcul :
+                                     //   simple contrôle de cohérence vs le règlement (§4.10 A)
   presets: [{ label: "Plan tribune", videoHint: "…",
               lineA: {x:0.21,y:0.62}, lineB: {x:0.78,y:0.55} }]
 }
@@ -710,11 +808,12 @@ mélangerait des situations opposées et le résultat serait faux. Avec lui, `la
 proprement :
 
 ```
-laneZone(lane, trackLanes, firstTurnSide) → 'inside' | 'middle' | 'outside'
+laneZone(lane, gridLanes, firstTurnSide) → 'inside' | 'middle' | 'outside'
 ```
 
-à placer dans `startAnalysisCalc.js`, en fonction pure et testée. Le dénominateur est `trackLanes`
-et non le nombre de voitures présentes au départ — voir la convention tranchée en §4.10 A.
+à placer dans `startAnalysisCalc.js`, en fonction pure et testée. Le dénominateur est `gridLanes`
+— le nombre de couloirs défini par **le règlement**, et non le nombre de voitures présentes au
+départ ni une propriété du circuit. Voir §4.10 A.
 
 **Champs additifs sur `sessionParticipants`** : `gridPos`, `lane` — écrits au moment où la grille
 QF/DF/FIN est générée, pour cesser de perdre une information déjà calculée. Purement additif :
@@ -846,13 +945,47 @@ grille → V1 mélangeant des grilles de 3 et de 5 voitures n'a pas de sens brut
 - **la position relative** (`(pos − 1) / (starters − 1)`, sur 0..1) permet une comparaison honnête
   entre formats quand on agrège volontairement des tailles différentes.
 
-Indicateurs, tous dans `js/startStatsCalc.js` (pur, testé) :
+#### Quatre axes d'analyse indépendants
 
-- matrice de transition grille → V1, et grille → arrivée, **par taille de grille** ;
+La distinction sportif / physique (§4.7) existe précisément pour permettre quatre familles de
+questions **différentes**, qu'il ne faut pas confondre :
+
+| Axe | Champ | Exemple de résultat | Comparable entre championnats ? |
+|---|---|---|---|
+| Position sportive | `gridPos` | « P1 ressort en tête du V1 dans 62 % des départs » | ✅ oui, mais **jamais entre MQ et finales** (sémantique différente) |
+| Ligne de départ | `gridRow` | « la ligne 2 perd en moyenne 0,4 position au V1 » | ✅ oui, si le nombre de lignes est comparable |
+| Couloir physique | `lane` | « le couloir 4 gagne en moyenne 0,25 position » | ❌ **seulement à `gridLayoutKey` identique** |
+| Côté du virage 1 | `laneZone` | « côté intérieur : +0,31 position en moyenne » | ✅ oui — c'est l'axe le plus robuste |
+
+Trois règles qui en découlent, à implémenter comme garde-fous dans `startStatsCalc.js` :
+
+1. **`gridPos` ne s'agrège jamais entre MQ et finales.** En MQ c'est un index de couloir sans
+   hiérarchie ; en finale, un rang de mérite. Les métriques indexées sur `gridPos` sont donc
+   toujours ventilées par `gridSource`, et l'UI l'indique explicitement.
+2. **`lane` ne s'agrège qu'à géométrie identique.** « Couloir 3 du championnat A » et « couloir 3 du
+   championnat B » ne désignent pas la même place si les `gridLayout` diffèrent. D'où
+   `gridLayoutKey` (§4.7) : les statistiques par couloir groupent sur cette empreinte, et l'UI
+   refuse de mélanger deux géométries au lieu de produire une moyenne trompeuse.
+3. **`laneZone` et la position relative sont les seuls axes vraiment transversaux.** Ce sont donc
+   eux qu'il faut privilégier pour les comparaisons entre championnats et entre formats.
+
+Un filtre **« configuration de grille »** (dérivé de `gridLayoutKey`, présenté sous forme lisible :
+« 5 couloirs × 3 lignes, quinconce ») complète les filtres Championnat → Saison → Circuit →
+Catégorie.
+
+#### Indicateurs
+
+Tous dans `js/startStatsCalc.js` (pur, testé) :
+
+- matrice de transition `gridPos` → V1, et `gridPos` → arrivée, **par taille de grille** et **par
+  `gridSource`** ;
 - % de conservation de la tête, % de prise de tête par position de départ ;
-- gain/perte moyen (et **médian** — la moyenne est sensible aux abandons) ;
+- gain/perte moyen (et **médian** — la moyenne est sensible aux abandons), déclinable sur les
+  quatre axes ci-dessus ;
 - position moyenne en V1 et à l'arrivée par position de départ ;
-- effet du couloir (intérieur / milieu / extérieur), avec `firstTurnSide` appliqué (§4.10) ;
+- effet de la **ligne** (`gridRow`) — question distincte de celle du couloir ;
+- effet du **couloir** (`lane`), groupé par `gridLayoutKey` ;
+- effet du **côté** (`laneZone`), avec `firstTurnSide` appliqué (§4.10 A) ;
 - corrélation V1 ↔ arrivée (Spearman plutôt que Pearson : ce sont des rangs), calculée sur
   `finishPosInStart` ;
 - comparaisons circuit / catégorie / championnat / saison / format ;
@@ -930,32 +1063,47 @@ et un timecode de série mal saisi n'affecte que son propre départ.
 Deux points de réalité terrain, décidés avant la phase 1. Ils sont notés ici parce qu'ils
 déterminent directement le corps de deux fonctions pures et leurs tests.
 
-#### A. Couloirs physiques fixes — `laneZone` se calcule sur `trackLanes`
+#### A. Couloirs physiques fixes — `laneZone` se calcule sur `gridLanes` (réglementaire)
 
 **Décision : les voitures remplissent les couloirs à partir du couloir 1, sans redistribution sur
 la largeur.** 3 pilotes → couloirs 1, 2, 3 ; 4 pilotes → 1, 2, 3, 4 ; les couloirs restants sont
 vides.
 
-Conséquence : le couloir 3 reste **physiquement le couloir central** d'une grille à 5 couloirs,
-que la série compte 3 ou 5 voitures. `laneZone` prend donc `trackLanes` comme dénominateur, jamais
-`lanesUsed` :
+Conséquence : le couloir 3 reste **physiquement le couloir central** d'une géométrie à 5 couloirs,
+que la série compte 3 ou 5 voitures. Le dénominateur de `laneZone` est donc le nombre de couloirs
+**de la géométrie**, jamais le nombre de voitures présentes :
 
 ```
-laneZone(lane, trackLanes, firstTurnSide) → 'inside' | 'middle' | 'outside'
+laneZone(lane, gridLanes, firstTurnSide) → 'inside' | 'middle' | 'outside'
 ```
 
-`lanesUsed` reste stocké dans le document (§4.7) — non plus pour le calcul de zone, mais parce
-qu'il documente la taille réelle du départ et sert aux contrôles de cohérence et à la
-comparabilité des matrices (§4.8).
+⚠️ **Correction (révision 4) — `trackLanes` renommé en `gridLanes`, et la source de vérité
+change.** La révision 3 faisait de `circuits/{circuitKey}.trackLanes` la source prioritaire, avec
+repli sur le règlement. **C'était une erreur de conception** : elle laissait une propriété du
+circuit écraser la géométrie réglementaire des phases finales, alors que celle-ci est configurable
+par championnat dans la V2. Le nom `trackLanes` entretenait lui-même la confusion.
 
-**Résolution de `trackLanes`**, dans cet ordre :
+**Résolution de `gridLanes` — le règlement est l'unique source de vérité** :
 
-1. `circuits/{circuitKey}.trackLanes` s'il est renseigné — c'est une propriété **du circuit**
-   (nombre de couloirs matérialisés sur la grille de départ) ;
-2. sinon `sessionConfig[type].gridLayout.lanes` pour QF / DF / FIN ;
-3. sinon `maxPerSeries` de la catégorie pour les MQ (via `getCategoryMaxPerSeries()`) ;
-4. la valeur retenue est **figée dans le document d'analyse**, pour rester stable si un règlement
-   évolue.
+| Phase | `gridLanes` | `gridRowsTotal` |
+|---|---|---|
+| QF / DF / FIN | `championships/{id}.sessionConfig[type].gridLayout.lanes` | `…gridLayout.rows` |
+| MQ | `maxPerSeries` de la catégorie (`getCategoryMaxPerSeries()`) | `1` |
+
+Le championnat est résolu via `meeting.championshipId`, jamais via le championnat *actif* de
+l'interface — sinon une analyse rejouée plus tard, avec un autre championnat sélectionné,
+reconstruirait une géométrie fausse. Les valeurs retenues sont **figées dans le document
+d'analyse** pour rester stables si un règlement évolue.
+
+**Ce que le circuit fournit, et rien de plus** : `firstTurnSide` (l'orientation, indispensable),
+les presets de ligne V1, `medianSeriesGap`. Un champ `physicalLanes` **optionnel** peut documenter
+le nombre de couloirs réellement matérialisés sur la piste, mais **uniquement comme contrôle de
+cohérence** : s'il diffère de `gridLanes`, on émet un avertissement de qualité de données — on ne
+substitue jamais l'un à l'autre. Ce contrôle est reportable en phase 8, il n'est pas nécessaire à
+la phase 1.
+
+`lanesUsed` reste stocké (§4.7) : il documente le remplissage réel du départ et sert aux contrôles
+de cohérence et à la comparabilité des matrices (§4.8).
 
 **Conséquence statistique à assumer** : une série incomplète ne fournit **aucune observation** pour
 les couloirs extérieurs. Les couloirs 1–3 auront donc systématiquement plus d'observations que les
@@ -1034,15 +1182,27 @@ son gain.
 
 - `circuits` + normalisation de `meeting.location` (avec écran de rapprochement des alias).
 - **`startAnalysisCalc.js` pur + tests**, cœur de la phase :
-  - `enumerateStarts(session, results, participants, sessionConfig)` → la liste des départs
+  - `enumerateStarts(session, results, participants, championship)` → la liste des départs
     physiques d'une session (N séries pour une MQ, 1 sinon) — **la fonction la plus importante du
     module** ;
-  - `buildStartGrid(...)` → reconstruction de la grille d'un départ (MQ : depuis
-    `serie`/`couloir` ; QF/DF/FIN : depuis la cascade + `gridLayout.positions`) ;
-  - `laneZone(lane, trackLanes, firstTurnSide)` → intérieur / milieu / extérieur, dénominateur
-    `trackLanes` (§4.10 A) ;
+  - `resolveGridGeometry(championship, sessionType, category)` → `{ gridLanes, gridRowsTotal,
+    gridLayout, gridLayoutKey }` — **le règlement est l'unique source de vérité** (§4.10 A) ;
+  - `placeOnGrid(gridPos, gridLayout)` → `{ gridRow, lane }` en reproduisant l'algorithme de
+    `sessions.js` (tri des cellules par numéro, puis n-ième cellule), **pas** une inversion par
+    valeur ;
+  - `buildStartGrid(...)` → assemblage : MQ depuis `serie`/`couloir` ; QF/DF/FIN depuis la cascade
+    puis `placeOnGrid` ;
+  - `laneZone(lane, gridLanes, firstTurnSide)` → intérieur / milieu / extérieur, dénominateur
+    `gridLanes` (§4.10 A) ;
   - `finishPosInStart(rowsOfStart)` → rang par `ms` **au sein du départ** ;
-  - `startDocId(sessionId, startIndex)` et `seriesFingerprint(driverIds)`.
+  - `startDocId(sessionId, startIndex)`, `gridLayoutKey(gridLayout)` et
+    `seriesFingerprint(driverIds)`.
+
+  Cas de test à couvrir explicitement (§4.7) : grille en quinconce (vérifier que **P4 tombe en
+  ligne 2**, et non dans le couloir 4), numéros de position non contigus, doublons de numéros,
+  partants surnuméraires, `gridLayout` absent, série incomplète, et **deux championnats aux
+  `gridLayout` différents sur le même type de session** — c'est le test qui garantit qu'on lit bien
+  le règlement du championnat du meeting.
 - Collection `startAnalyses` + règles (`rows.size() <= 12`).
 - Vue « Analyse des départs » : Championnat → Meeting → Catégorie → **liste des départs
   physiques** (§4.9), grille et résultats pré-remplis, une seule colonne à saisir : V1.
@@ -1219,7 +1379,11 @@ l'introduire qu'en phase 5, en connaissance de cause.
 | Performances | 15–40 s par départ en CSRT, 3–5 s avec YOLO ONNX. Le calcul n'est jamais le facteur limitant |
 | Vue statistiques | vue dédiée `startStats` (axe d'agrégation différent de `stats.js`), conventions UI réutilisées |
 | **Emplacement UI** | **1 tuile** d'accueil + entrée « Gestion » pour la saisie ; entrée de menu sous 📊 Statistiques pour les stats, **sans modifier `stats.js`** en phase 1 (§4.11) |
-| **Couloirs d'une série incomplète** | **couloirs physiques fixes** : remplissage depuis le couloir 1, `laneZone` calculé sur `trackLanes` (§4.10 A) |
+| **Position sportive vs physique** | `gridPos` (sportif) **et** `gridRow` + `lane` (physique) sont conservés séparément ; sur une grille en quinconce, P4 est en ligne 2 (§4.7) |
+| **Source de vérité de la géométrie** | **le règlement du championnat** (`sessionConfig[type].gridLayout`), résolu via `meeting.championshipId`. Le circuit ne fournit que `firstTurnSide`, les presets vidéo et `medianSeriesGap` (§4.10 A) |
+| **Sémantique de `gridPos`** | MQ : index de couloir, aucune hiérarchie. Finales : rang de qualification. **Jamais agrégés ensemble** — ventilation par `gridSource` (§4.8) |
+| **Comparaison des couloirs** | uniquement à `gridLayoutKey` identique ; `laneZone` et la position relative sont les seuls axes transversaux (§4.8) |
+| **Couloirs d'une série incomplète** | **couloirs physiques fixes** : remplissage depuis le couloir 1, `laneZone` calculé sur `gridLanes` (réglementaire, §4.10 A) |
 | **Abandon avant V1** | `turn1Pos = null`, départ conservé et validable, ligne exclue des matrices mais comptée dans le taux d'incident (§4.10 B) |
 | **Seuil de rentabilité de l'automatisation** | ~11 500–14 400 départs en temps pur → **ne pas justifier les phases 4–6 par la vitesse**, mais par la qualité (§3.1) |
 | **Facteur limitant réel** | la **couverture vidéo**, pas le modèle de données — à suivre comme indicateur dès la phase 1 (§4.8) |
