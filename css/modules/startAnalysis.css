@@ -178,3 +178,48 @@
 }
 
 .sanl-feedback { margin-top: var(--sp-sm); }
+
+/* ── Boutons de position au premier virage ──
+   Un clic = une position. Cliquer la position active la retire.
+   Une position prise par un autre pilote est désactivée. */
+.sanl-col-v1 { min-width: 190px; }
+
+.sanl-v1-group {
+  display: flex;
+  gap: 3px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.sanl-v1-btn {
+  min-width: 32px;
+  padding: 3px 6px;
+  font-family: var(--font-condensed);
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--clr-text-2);
+  background: var(--clr-surface);
+  border: 1px solid var(--clr-border-2, var(--clr-border));
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+
+.sanl-v1-btn:hover:not(:disabled):not(.is-active) {
+  border-color: var(--clr-accent);
+  color: var(--clr-text-1);
+}
+
+.sanl-v1-btn.is-active {
+  background: var(--clr-accent);
+  border-color: var(--clr-accent);
+  color: #fff;
+}
+
+/* Position déjà prise par un autre pilote */
+.sanl-v1-btn:disabled {
+  opacity: 0.28;
+  cursor: not-allowed;
+  text-decoration: line-through;
+}

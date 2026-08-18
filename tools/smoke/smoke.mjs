@@ -228,6 +228,49 @@ try {
         v1.before.length === 5 && !v1.afterOther.includes(3) && v1.afterSelf.includes(3),
         JSON.stringify(v1));
 
+  // ── 12. Rendu réel des boutons V1 (DOM + CSS), avec un départ simulé ──
+  const btns = await page.evaluate(async () => {
+    const m = await import('/js/startAnalysisCalc.js');
+    const starters = 5;
+    const rows = ['a','b','c','d','e'].map(id => ({ driverId: id, turn1Pos: null }));
+    rows[2].turn1Pos = 3;                       // le pilote c prend P3
+
+    // Reproduit le rendu de la vue pour vérifier le DOM et le style appliqué
+    const host = document.createElement('div');
+    host.className = 'sanl-work';
+    host.innerHTML = rows.map(r => {
+      const avail = new Set(m.availableTurn1Positions(r.driverId, rows, starters));
+      let h = `<div class="sanl-v1-group" data-driver="${r.driverId}">`;
+      for (let k = 1; k <= starters; k++) {
+        const active = r.turn1Pos === k;
+        h += `<button type="button" class="sanl-v1-btn${active ? ' is-active' : ''}"
+              data-driver="${r.driverId}" data-pos="${k}" ${!avail.has(k) ? 'disabled' : ''}>P${k}</button>`;
+      }
+      return h + '</div>';
+    }).join('');
+    document.body.appendChild(host);
+
+    const groupOf = id => host.querySelector(`.sanl-v1-group[data-driver="${id}"]`);
+    const stateOf = id => [...groupOf(id).querySelectorAll('.sanl-v1-btn')]
+      .map(b => b.disabled ? 'x' : (b.classList.contains('is-active') ? 'A' : '.')).join('');
+
+    const one = groupOf('a').querySelector('.sanl-v1-btn');
+    const cs = getComputedStyle(one);
+    const activeBtn = groupOf('c').querySelector('.sanl-v1-btn.is-active');
+    const out = {
+      a: stateOf('a'), c: stateOf('c'),
+      nbBoutons: groupOf('a').querySelectorAll('.sanl-v1-btn').length,
+      styleApplique: cs.cursor === 'pointer' && parseFloat(cs.minWidth) >= 30,
+      actifVisible: !!activeBtn && getComputedStyle(activeBtn).backgroundColor !== 'rgba(0, 0, 0, 0)',
+    };
+    host.remove();
+    return out;
+  });
+  check('boutons V1 : 5 boutons, P3 barré chez les autres, actif chez son pilote',
+        btns.nbBoutons === 5 && btns.a === '..x..' && btns.c === '..A..'
+        && btns.styleApplique && btns.actifVisible,
+        JSON.stringify(btns));
+
 } finally {
   await browser.close();
   server.close();
