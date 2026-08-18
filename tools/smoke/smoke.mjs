@@ -208,6 +208,26 @@ try {
   }));
   check('entrée de menu + tuile d\'accueil présentes', entry.menu && entry.card, JSON.stringify(entry));
 
+  // ── 11. Sélecteur V1 : une position prise disparaît des autres listes ──
+  const v1 = await page.evaluate(async () => {
+    const m = await import('/js/startAnalysisCalc.js');
+    const rows = [
+      { driverId: 'a', turn1Pos: null }, { driverId: 'b', turn1Pos: null },
+      { driverId: 'c', turn1Pos: null }, { driverId: 'd', turn1Pos: null },
+      { driverId: 'e', turn1Pos: null },
+    ];
+    const before = m.availableTurn1Positions('a', rows, 5);
+    rows[2].turn1Pos = 3;                      // c prend P3
+    return {
+      before,
+      afterOther: m.availableTurn1Positions('a', rows, 5),   // P3 doit disparaître
+      afterSelf: m.availableTurn1Positions('c', rows, 5),    // c garde son P3
+    };
+  });
+  check('sélecteur V1 : P3 pris par un autre disparaît, le pilote garde le sien',
+        v1.before.length === 5 && !v1.afterOther.includes(3) && v1.afterSelf.includes(3),
+        JSON.stringify(v1));
+
 } finally {
   await browser.close();
   server.close();

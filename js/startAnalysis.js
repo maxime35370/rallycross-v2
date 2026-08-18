@@ -18,7 +18,7 @@ import { escHtml } from './utils.js';
 import { getActiveChampionshipId, getAllChampionships } from './context.js';
 import {
   enumerateStarts, buildStartGrid, startDocId, seriesFingerprint,
-  validateAnalysis, normalizePoleSide,
+  validateAnalysis, normalizePoleSide, availableTurn1Positions,
 } from './startAnalysisCalc.js';
 
 // ─────────────────────────────────────────────────────────
@@ -386,10 +386,7 @@ function renderRow(r, i, start, readOnly) {
   const n = start.starters;
   const finish = r.finishPosInStart != null ? `P${r.finishPosInStart}`
     : (r.finishStatus ? `<span class="badge badge-dnf">${escHtml(r.finishStatus)}</span>` : '—');
-  const options = ['<option value="">—</option>']
-    .concat(Array.from({ length: n }, (_, k) =>
-      `<option value="${k + 1}" ${r.turn1Pos === k + 1 ? 'selected' : ''}>P${k + 1}</option>`))
-    .join('');
+  const options = v1OptionsHtml(r, n);
 
   return `
     <tr data-driver="${escHtml(r.driverId)}">
@@ -412,6 +409,30 @@ function renderRow(r, i, start, readOnly) {
         </select>
       </td>
     </tr>`;
+}
+
+/** Options du sélecteur V1 : les positions prises par un autre pilote sont retirées. */
+function v1OptionsHtml(row, starters) {
+  const avail = availableTurn1Positions(row.driverId, current.rows, starters);
+  return ['<option value="">—</option>']
+    .concat(avail.map(k => `<option value="${k}" ${row.turn1Pos === k ? 'selected' : ''}>P${k}</option>`))
+    .join('');
+}
+
+/**
+ * Reconstruit les listes déroulantes après chaque saisie : choisir une position
+ * la retire des autres sélecteurs. On ne re-rend pas tout le tableau pour ne pas
+ * perdre le focus en cours de frappe.
+ */
+function refreshV1Options() {
+  if (!current) return;
+  const n = current.start.starters;
+  document.querySelectorAll('.sanl-v1').forEach(sel => {
+    const row = current.rows.find(r => r.driverId === sel.dataset.driver);
+    if (!row) return;
+    sel.innerHTML = v1OptionsHtml(row, n);
+    sel.value = row.turn1Pos != null ? String(row.turn1Pos) : '';
+  });
 }
 
 function refreshFeedback() {
@@ -461,6 +482,7 @@ function bindWork() {
       row.turn1Pos = sel.value ? parseInt(sel.value, 10) : null;
       row.corrected = true;
       current.dirty = true;
+      refreshV1Options();
       refreshFeedback();
     });
   });
