@@ -206,11 +206,30 @@ try {
         JSON.stringify(sanl));
 
   // ── 10. Le menu et la tuile d'accueil pointent vers la vue ──
-  const entry = await page.evaluate(() => ({
-    menu: !!document.querySelector('.menu-item[data-view="startAnalysis"]'),
-    card: !!document.querySelector('.home-card[data-view="startAnalysis"]'),
-  }));
-  check('entrée de menu + tuile d\'accueil présentes', entry.menu && entry.card, JSON.stringify(entry));
+  const entry = await page.evaluate(() => {
+    // Visibilité selon le rôle : la vue de saisie appartient à la gestion, elle
+    // ne doit pas apparaître pour un visiteur non authentifié.
+    const item = document.querySelector('.menu-item[data-view="startAnalysis"]');
+    const tile = document.querySelector('.home-card[data-view="startAnalysis"]');
+    const shown = el => !!el && getComputedStyle(el).display !== 'none';
+
+    const wasAdmin = document.body.classList.contains('is-admin');
+    document.body.classList.remove('is-admin');
+    const publicMenu = shown(item), publicCard = shown(tile);
+    document.body.classList.add('is-admin');
+    const adminMenu = shown(item), adminCard = shown(tile);
+    document.body.classList.toggle('is-admin', wasAdmin);
+
+    return {
+      menu: !!item,
+      card: !!tile,
+      cachePourLePublic: !publicMenu && !publicCard,
+      visiblePourLaRegie: adminMenu && adminCard,
+    };
+  });
+  check('menu + tuile : réservés à la régie, masqués au public',
+        entry.menu && entry.card && entry.cachePourLePublic && entry.visiblePourLaRegie,
+        JSON.stringify(entry));
 
   // ── 11. Sélecteur V1 : une position prise disparaît des autres listes ──
   const v1 = await page.evaluate(async () => {
