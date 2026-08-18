@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   validatedOnly, filterAnalyses, toRows,
   mean, median, wilson, spearman,
-  byGridPos, byLane, byGridRow, transitionMatrix, allMatrices,
+  byGridPos, byLane, byGridRow, gridPosEqualsLane, transitionMatrix, allMatrices,
   turn1VsFinish, gridVsFinish, gridVsTurn1, summary,
   phaseGroupOf, availableSizes, formatRate, MIN_N_FOR_RATE,
 } from '../js/startStatsCalc.js';
@@ -266,6 +266,34 @@ describe('byLane — couloir BRUT, la vue principale', () => {
   it('calcule le gain moyen par couloir', () => {
     expect(stats[0].gainMean).toBeCloseTo(-0.5, 6);
     expect(stats[1].gainMean).toBeCloseTo(0.5, 6);
+  });
+});
+
+describe('gridPosEqualsLane — détection des deux tableaux identiques', () => {
+  it('est vrai sur une grille de manche (une seule ligne)', () => {
+    const rows = toRows([makeStart({ id: 's1' })]);
+    expect(gridPosEqualsLane(rows)).toBe(true);
+  });
+
+  it("produit alors exactement les mêmes chiffres des deux côtés", () => {
+    const rows = toRows([
+      makeStart({ id: 's1', turn1: [1, 2, 3, 4, 5] }),
+      makeStart({ id: 's2', turn1: [2, 1, 3, 4, 5] }),
+    ]);
+    const g = byGridPos(rows).map(({ gridPos, ...rest }) => rest);
+    const l = byLane(rows).map(({ lane, ...rest }) => rest);
+    expect(g).toEqual(l);
+  });
+
+  it('est faux dès qu’une ligne dissocie position de grille et couloir', () => {
+    const rows = toRows([makeStart({ id: 's1' })]);
+    rows[3].gridPos = 4; rows[3].lane = 1;   // 2e ligne d'une grille 3/2/3
+    expect(gridPosEqualsLane(rows)).toBe(false);
+  });
+
+  it('est faux sans donnée exploitable', () => {
+    expect(gridPosEqualsLane([])).toBe(false);
+    expect(gridPosEqualsLane([{ gridPos: null, lane: null }])).toBe(false);
   });
 });
 

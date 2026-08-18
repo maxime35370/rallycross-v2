@@ -15,7 +15,7 @@ import { db } from './firebase.js';
 import { escHtml } from './utils.js';
 import { getActiveChampionshipId, getAllChampionships } from './context.js';
 import {
-  filterAnalyses, toRows, byGridPos, byLane, byGridRow,
+  filterAnalyses, toRows, byGridPos, byLane, byGridRow, gridPosEqualsLane,
   allMatrices, summary, availableSizes, phaseGroupOf,
   formatRate, MIN_N_FOR_RATE,
 } from './startStatsCalc.js';
@@ -195,8 +195,8 @@ function renderContent() {
 
   el.innerHTML = [
     renderSummary(s, sizes),
-    renderGridPosTable(byGridPos(rows)),
-    renderLaneTable(byLane(rows)),
+    renderGridPosTable(byGridPos(rows), gridPosEqualsLane(rows)),
+    renderLaneTable(byLane(rows), gridPosEqualsLane(rows)),
     filters.phase === 'FINALS' ? renderGridRowTable(byGridRow(rows)) : '',
     renderMatrices(rows, size, sizes),
     renderGainChart(byGridPos(rows)),
@@ -286,13 +286,16 @@ function positionTableHead(first) {
     </thead>`;
 }
 
-function renderGridPosTable(stats) {
-  const note = filters.phase === 'MQ'
-    ? 'En manche, la position de grille <strong>est</strong> le couloir : ce tableau et le suivant se recoupent.'
-    : 'En phase finale, la position de grille est un <strong>rang de qualification</strong>, pas un couloir.';
+function renderGridPosTable(stats, sameAsLane) {
+  const note = sameAsLane
+    ? 'Grille à une seule ligne : la n-ième position de grille <strong>est</strong> le n-ième couloir. '
+      + 'Les deux lectures se confondent, le tableau ci-dessous vaut donc aussi pour les couloirs.'
+    : 'En phase finale, la position de grille est un <strong>rang de qualification</strong>, pas un couloir : '
+      + 'le tableau des couloirs regroupe les positions autrement.';
+  const title = sameAsLane ? 'Par position de grille (= couloir)' : 'Par position de grille';
   return `
     <div class="sst-section">
-      <div class="sst-section-title">Par position de grille</div>
+      <div class="sst-section-title">${title}</div>
       <div class="sst-hint">${note}</div>
       <div class="table-wrap"><table class="sst-table">
         ${positionTableHead('Grille')}
@@ -301,7 +304,10 @@ function renderGridPosTable(stats) {
     </div>`;
 }
 
-function renderLaneTable(stats) {
+function renderLaneTable(stats, sameAsGridPos) {
+  // Sur une grille à une seule ligne ce tableau serait le clone exact du
+  // précédent : on ne réaffiche pas les mêmes chiffres sous un autre nom.
+  if (sameAsGridPos) return '';
   return `
     <div class="sst-section">
       <div class="sst-section-title">Par couloir</div>
