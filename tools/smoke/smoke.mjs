@@ -101,7 +101,7 @@ try {
     'standings.js', 'championship.js', 'stats.js', 'meetings.js', 'drivers.js',
     'engagements.js', 'competition.js', 'importTimes.js', 'videoTimecodes.js',
     'spectator.js', 'settings.js', 'persons.js', 'personProfile.js', 'driverProfile.js',
-    'startAnalysis.js',
+    'startAnalysis.js', 'startStatsCalc.js', 'startStats.js',
   ];
   const loaded = await page.evaluate(async (mods) => {
     const out = {};
@@ -306,6 +306,53 @@ try {
   });
   const allOneLine = oneLine.every(r => r.nbLignes === 1 && r.ratioHauteur < 1.6);
   check('boutons V1 sur une seule ligne (5 et 8 partants)', allOneLine, JSON.stringify(oneLine));
+
+  // ── 14. La vue Statistiques des départs se construit ──
+  await page.evaluate(async () => {
+    const app = await import('/js/app.js');
+    app.showView('startStats');
+  });
+  let statsBuilt = true;
+  try {
+    await page.waitForFunction(() => !!document.getElementById('sst-content'), null, { timeout: 8000 });
+  } catch { statsBuilt = false; }
+  const sst = await page.evaluate(() => ({
+    display: document.getElementById('view-startStats')?.style.display,
+    hasFilters: !!document.getElementById('sst-filters'),
+    hasPhaseToggle: document.querySelectorAll('.sst-phase-btn').length === 2,
+    menu: !!document.querySelector('.menu-item[data-view="startStats"]'),
+  }));
+  check('vue Statistiques des départs : filtres + bascule Manches/Finales',
+        statsBuilt && sst.display !== 'none' && sst.hasFilters && sst.hasPhaseToggle && sst.menu,
+        JSON.stringify(sst));
+
+  // ── 15. Le calcul statistique tourne dans le navigateur ──
+  const stat = await page.evaluate(async () => {
+    const m = await import('/js/startStatsCalc.js');
+    const mk = (id, turn1) => ({
+      id, status: 'validated', sessionType: 'MQ', starters: 3, category: 'Supercar',
+      year: 2026, circuitLabel: 'Kerlabo', championshipId: 'c1', gridLayoutKey: 'mq:5',
+      gridSource: 'mq_couloir', gridLanes: 5,
+      rows: [1, 2, 3].map((_, i) => ({
+        driverId: `${id}-${i}`, didNotStart: false, gridPos: i + 1, lane: i + 1, gridRow: 1,
+        turn1Pos: turn1[i], finishPosInStart: turn1[i], finishStatus: null,
+      })),
+    });
+    const data = [mk('a', [1, 2, 3]), mk('b', [1, 2, 3]), mk('c', [2, 1, 3])];
+    const rows = m.toRows(data);
+    const mats = m.allMatrices(rows, 3);
+    return {
+      nStarts: m.summary(data).nStarts,
+      p1KeepsLead: m.byGridPos(rows)[0].leadRate.rate,
+      matrices: Object.keys(mats).length,
+      cell00: mats.gridToTurn1.cells[0][0],
+      smallSample: m.formatRate(m.wilson(2, 3)),
+    };
+  });
+  check('calcul statistique correct dans le navigateur',
+        stat.nStarts === 3 && Math.abs(stat.p1KeepsLead - 2 / 3) < 1e-9
+        && stat.matrices === 3 && stat.cell00.count === 2 && stat.smallSample === '2/3',
+        JSON.stringify(stat));
 
 } finally {
   await browser.close();
