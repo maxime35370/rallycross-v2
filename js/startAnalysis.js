@@ -1002,6 +1002,10 @@ function buildDoc() {
     startIndex: start.startIndex,
     startLabel: start.startLabel,
     circuitLabel: meeting?.location || '',
+    // Côté de la pole = côté du premier virage. Dénormalisé ici pour que les
+    // statistiques puissent afficher les couloirs dans le sens de la piste
+    // sans relire le meeting.
+    poleSide: normalizePoleSide(meeting?.poleSide),
     regulationKey: championship?.regulation || championship?.name || '',
     gridLanes: start.gridLanes,
     gridRowsTotal: start.gridRowsTotal,

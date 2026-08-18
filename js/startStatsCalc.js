@@ -19,6 +19,8 @@
    Voir docs/video-analysis/ARCHITECTURE.md §4.8.
 ═══════════════════════════════════════════════ */
 
+import { normalizePoleSide } from './startAnalysisCalc.js';
+
 // ─────────────────────────────────────────────────────────
 // SÉLECTION DES DONNÉES
 // ─────────────────────────────────────────────────────────
@@ -216,6 +218,47 @@ export function spearman(xs = [], ys = []) {
  * @returns {Array<{gridPos, nStarts, nObservations, keptLeadRate, tookLeadRate,
  *                  gainMean, gainMedian, turn1Mean, finishMean}>}
  */
+/**
+ * Sens de la piste pour l'ensemble d'analyses affiché.
+ *
+ * Le couloir 1 est toujours du côté du premier virage. Pour lire un tableau
+ * « comme sur la piste », il faut donc savoir de quel côté part la pole :
+ *  • 'right'   → couloir 1 à droite, donc de gauche à droite : Cn … C1 ;
+ *  • 'left'    → couloir 1 à gauche, ordre naturel C1 … Cn ;
+ *  • 'mixed'   → la sélection mélange des circuits orientés différemment,
+ *                aucun ordre physique commun n'existe ;
+ *  • 'unknown' → orientation inconnue.
+ *
+ * @param {Array} analyses
+ * @param {Object<string,string>} [sideByMeetingId] — repli quand l'analyse ne
+ *        porte pas encore `poleSide` (analyses enregistrées avant son ajout)
+ * @returns {'left'|'right'|'mixed'|'unknown'}
+ */
+export function laneOrientation(analyses = [], sideByMeetingId = {}) {
+  const sides = new Set();
+  for (const a of analyses) {
+    const raw = a?.poleSide ?? sideByMeetingId[a?.meetingId];
+    if (!raw) continue;
+    sides.add(normalizePoleSide(raw));
+  }
+  if (sides.size === 0) return 'unknown';
+  if (sides.size > 1) return 'mixed';
+  return [...sides][0];
+}
+
+/**
+ * Ordonne des lignes de couloir pour une lecture « de gauche à droite sur la
+ * piste ». N'inverse que lorsque l'orientation est connue ET unique : sur une
+ * sélection mélangée, un ordre physique serait une illusion.
+ *
+ * @param {Array} stats — sortie de byLane()
+ * @param {string} orientation — voir laneOrientation()
+ * @returns {Array} nouveau tableau, l'entrée n'est pas modifiée
+ */
+export function orderLanesForDisplay(stats = [], orientation = 'unknown') {
+  return orientation === 'right' ? [...stats].reverse() : [...stats];
+}
+
 export function byGridPos(rows = []) {
   const groups = new Map();
   for (const r of rows) {

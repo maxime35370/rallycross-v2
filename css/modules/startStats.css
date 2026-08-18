@@ -120,8 +120,70 @@
 }
 
 /* ── Tableaux ── */
-.sst-table { min-width: 760px; font-size: 0.82rem; }
-.sst-table th { white-space: nowrap; }
+.sst-table { min-width: 820px; font-size: 0.82rem; }
+.sst-table th { white-space: nowrap; line-height: 1.15; }
+
+/* En-tête sur deux niveaux : le bandeau de groupe dit de quelle phase de la
+   course relèvent les colonnes en dessous. */
+.sst-grp {
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--clr-accent);
+  border-bottom: 1px solid var(--clr-border);
+  font-weight: 700;
+  padding-bottom: 3px;
+}
+
+.sst-head-group .sst-grp + .sst-grp { border-left: 1px solid var(--clr-border); }
+.sst-table th.sst-sep { border-left: 1px solid var(--clr-border); }
+.sst-table td:nth-child(10) { border-left: 1px solid var(--clr-border); }
+
+.sst-corner { text-align: left !important; }
+
+.sst-corner-sub {
+  display: block;
+  font-size: 0.64rem;
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  color: var(--clr-text-3);
+}
+
+/* ── Légende ── */
+.sst-legend {
+  background: var(--clr-bg-2);
+  border: 1px solid var(--clr-border);
+  border-radius: var(--r-lg);
+  padding: var(--sp-xs) var(--sp-md);
+  margin-bottom: var(--sp-md);
+  font-size: 0.8rem;
+}
+
+.sst-legend summary {
+  cursor: pointer;
+  color: var(--clr-text-3);
+  font-family: var(--font-condensed);
+  letter-spacing: 0.04em;
+  padding: 4px 0;
+}
+
+.sst-legend summary:hover { color: var(--clr-text-1); }
+
+.sst-legend dl {
+  display: grid;
+  grid-template-columns: minmax(120px, max-content) 1fr;
+  gap: 4px var(--sp-md);
+  margin: var(--sp-xs) 0 var(--sp-sm);
+}
+
+.sst-legend dt { font-weight: 700; color: var(--clr-text-1); }
+.sst-legend dd { margin: 0; color: var(--clr-text-3); line-height: 1.45; }
+
+@media (max-width: 640px) {
+  .sst-legend dl { grid-template-columns: 1fr; }
+  .sst-legend dd { margin-bottom: var(--sp-xs); }
+}
 .sst-pos { color: var(--clr-success, #2ecc71); }
 .sst-neg { color: var(--clr-danger, #e74c3c); }
 

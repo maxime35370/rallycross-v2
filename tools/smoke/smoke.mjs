@@ -589,6 +589,50 @@ try {
   check('overlay : reste aligné après redimensionnement',
         resize.moitie && resize.canvasToujoursAligne, JSON.stringify(resize));
 
+
+  // ── 20. Tableaux de statistiques : en-têtes parlants et sens de la piste ──
+  const tbl = await page.evaluate(async () => {
+    const m = await import('/js/startStatsCalc.js');
+    const stats = [{ lane: 1 }, { lane: 2 }, { lane: 3 }, { lane: 4 }, { lane: 5 }];
+    const analyses = [{ meetingId: 'm1' }, { meetingId: 'm1' }];
+
+    // Rendu réel d'un en-tête, pour vérifier que le regroupement tient
+    const host = document.createElement('div');
+    host.className = 'sst-section';
+    host.style.width = '900px';
+    host.innerHTML = `<div class="table-wrap"><table class="sst-table"><thead>
+      <tr class="sst-head-group">
+        <th class="center sst-corner" rowspan="2">Couloir<span class="sst-corner-sub">C1 ▶ 1er virage</span></th>
+        <th class="center" rowspan="2">n</th>
+        <th class="center sst-grp" colspan="7">Du départ au 1er virage</th>
+        <th class="center sst-grp" colspan="3">Du départ à l'arrivée</th>
+      </tr>
+      <tr>${Array.from({ length: 10 }, () => '<th class="center">x</th>').join('')}</tr>
+      </thead><tbody><tr>${Array.from({ length: 12 }, () => '<td>1</td>').join('')}</tr></tbody></table></div>`;
+    document.body.appendChild(host);
+    const groupes = [...host.querySelectorAll('.sst-grp')];
+    const cellsRow2 = host.querySelectorAll('thead tr:nth-child(2) th').length;
+    const bodyCells = host.querySelectorAll('tbody td').length;
+    const out = {
+      orientationDroite: m.laneOrientation(analyses, { m1: 'droite' }),
+      ordreAffiche: m.orderLanesForDisplay(stats, m.laneOrientation(analyses, { m1: 'droite' }))
+        .map(s => s.lane),
+      ordreNaturel: m.orderLanesForDisplay(stats, 'left').map(s => s.lane),
+      nbGroupes: groupes.length,
+      // 2 colonnes fixes + 10 = 12, autant que de cellules de données
+      colonnesCoherentes: 2 + cellsRow2 === bodyCells,
+      groupeVisible: groupes.every(g => getComputedStyle(g).textTransform === 'uppercase'),
+    };
+    host.remove();
+    return out;
+  });
+  check('tableaux : en-tête groupé cohérent + couloirs dans le sens de la piste',
+        tbl.orientationDroite === 'right'
+        && JSON.stringify(tbl.ordreAffiche) === JSON.stringify([5, 4, 3, 2, 1])
+        && JSON.stringify(tbl.ordreNaturel) === JSON.stringify([1, 2, 3, 4, 5])
+        && tbl.nbGroupes === 2 && tbl.colonnesCoherentes && tbl.groupeVisible,
+        JSON.stringify(tbl));
+
 } finally {
   await browser.close();
   server.close();

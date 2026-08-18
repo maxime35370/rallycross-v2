@@ -3,6 +3,7 @@ import {
   validatedOnly, filterAnalyses, toRows,
   mean, median, wilson, spearman,
   byGridPos, byLane, byGridRow, gridPosEqualsLane, transitionMatrix, allMatrices,
+  laneOrientation, orderLanesForDisplay,
   turn1VsFinish, gridVsFinish, gridVsTurn1, summary,
   phaseGroupOf, availableSizes, formatRate, MIN_N_FOR_RATE,
 } from '../js/startStatsCalc.js';
@@ -294,6 +295,56 @@ describe('gridPosEqualsLane — détection des deux tableaux identiques', () => 
   it('est faux sans donnée exploitable', () => {
     expect(gridPosEqualsLane([])).toBe(false);
     expect(gridPosEqualsLane([{ gridPos: null, lane: null }])).toBe(false);
+  });
+});
+
+describe('laneOrientation — sens de lecture des couloirs', () => {
+  it('lit le côté depuis l\'analyse quand elle le porte', () => {
+    expect(laneOrientation([{ poleSide: 'droite' }, { poleSide: 'right' }])).toBe('right');
+    expect(laneOrientation([{ poleSide: 'gauche' }])).toBe('left');
+  });
+
+  it('retombe sur le meeting pour les analyses enregistrées avant ce champ', () => {
+    const analyses = [{ meetingId: 'm1' }, { meetingId: 'm1' }];
+    expect(laneOrientation(analyses, { m1: 'gauche' })).toBe('left');
+  });
+
+  it('préfère le côté porté par l\'analyse à celui du meeting', () => {
+    // Le meeting a pu être corrigé après coup : l'analyse fait foi.
+    expect(laneOrientation([{ meetingId: 'm1', poleSide: 'droite' }], { m1: 'gauche' })).toBe('right');
+  });
+
+  it('refuse un ordre physique quand la sélection mélange les orientations', () => {
+    expect(laneOrientation([{ poleSide: 'droite' }, { poleSide: 'gauche' }])).toBe('mixed');
+  });
+
+  it('dit ne pas savoir plutôt que de supposer', () => {
+    expect(laneOrientation([])).toBe('unknown');
+    expect(laneOrientation([{ meetingId: 'm1' }], {})).toBe('unknown');
+    expect(laneOrientation([{ meetingId: 'm1' }], { m1: '' })).toBe('unknown');
+  });
+});
+
+describe('orderLanesForDisplay', () => {
+  const stats = [{ lane: 1 }, { lane: 2 }, { lane: 3 }, { lane: 4 }, { lane: 5 }];
+
+  it('inverse quand le couloir 1 est à droite : on lit la piste de gauche à droite', () => {
+    expect(orderLanesForDisplay(stats, 'right').map(s => s.lane)).toEqual([5, 4, 3, 2, 1]);
+  });
+
+  it('garde l\'ordre naturel quand le couloir 1 est à gauche', () => {
+    expect(orderLanesForDisplay(stats, 'left').map(s => s.lane)).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  it('n\'invente pas d\'ordre physique sur une sélection mélangée ou inconnue', () => {
+    expect(orderLanesForDisplay(stats, 'mixed').map(s => s.lane)).toEqual([1, 2, 3, 4, 5]);
+    expect(orderLanesForDisplay(stats, 'unknown').map(s => s.lane)).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  it('ne modifie pas le tableau d\'entrée', () => {
+    const copy = [...stats];
+    orderLanesForDisplay(stats, 'right');
+    expect(stats).toEqual(copy);
   });
 });
 

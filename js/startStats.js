@@ -16,6 +16,7 @@ import { escHtml } from './utils.js';
 import { getActiveChampionshipId, getAllChampionships } from './context.js';
 import {
   filterAnalyses, toRows, byGridPos, byLane, byGridRow, gridPosEqualsLane,
+  laneOrientation, orderLanesForDisplay,
   allMatrices, summary, availableSizes, phaseGroupOf,
   formatRate, MIN_N_FOR_RATE,
 } from './startStatsCalc.js';
@@ -27,6 +28,11 @@ const FS = 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 // ─────────────────────────────────────────────────────────
 
 let allAnalyses = [];
+// Côté de la pole par meeting : le couloir 1 est du côté du premier virage,
+// c'est donc lui qui donne le sens de lecture des couloirs. Les analyses
+// enregistrées avant l'ajout de `poleSide` n'en portent pas : cette table
+// permet de les afficher correctement sans avoir à les revalider.
+let poleSideByMeeting = {};
 let loaded = false;
 let _initialised = false;
 
@@ -55,6 +61,16 @@ async function loadAnalyses() {
     where('status', '==', 'validated'),
   ));
   allAnalyses = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+  // Orientation des circuits, lue une fois. Échec sans conséquence : les
+  // couloirs s'affichent alors dans l'ordre 1 → n, et le tableau le dit.
+  poleSideByMeeting = {};
+  try {
+    const meetings = await getDocs(collection(db, 'meetings'));
+    meetings.forEach(m => { poleSideByMeeting[m.id] = m.data()?.poleSide || ''; });
+  } catch (e) {
+    console.warn('startStats — orientation des circuits indisponible :', e);
+  }
   loaded = true;
 }
 
@@ -192,11 +208,17 @@ function renderContent() {
   const s = summary(analyses);
   const sizes = availableSizes(analyses);
   const size = filters.size || sizes[0]?.starters || 0;
+  const orientation = laneOrientation(analyses, poleSideByMeeting);
+  const sameAsLane = gridPosEqualsLane(rows);
 
   el.innerHTML = [
     renderSummary(s, sizes),
-    renderGridPosTable(byGridPos(rows), gridPosEqualsLane(rows)),
-    renderLaneTable(byLane(rows), gridPosEqualsLane(rows)),
+    renderLegend(),
+    // Sur une grille à une seule ligne, place de grille et couloir se
+    // confondent. Les deux tableaux ne méritent d'exister séparément que si
+    // l'ordre physique de la piste les distingue réellement.
+    renderGridPosTable(byGridPos(rows), sameAsLane && orientation !== 'right'),
+    renderLaneTable(byLane(rows), orientation, sameAsLane && orientation !== 'right'),
     filters.phase === 'FINALS' ? renderGridRowTable(byGridRow(rows)) : '',
     renderMatrices(rows, size, sizes),
     renderGainChart(byGridPos(rows)),
@@ -266,55 +288,127 @@ function renderPositionRows(stats, key, label) {
     </tr>`).join('');
 }
 
-function positionTableHead(first) {
+/**
+ * En-tête sur deux niveaux : le premier dit DE QUOI on parle (du départ au
+ * premier virage, puis jusqu'à l'arrivée), le second nomme chaque colonne en
+ * clair. Sans ce regroupement, « Gain » désignait tantôt un nombre de places,
+ * tantôt un pourcentage de départs.
+ *
+ * @param {string} first — libellé du coin haut-gauche, la dimension analysée
+ * @param {string} [firstTitle] — son explication au survol
+ */
+function positionTableHead(first, firstTitle = '') {
+  const th = (label, title, cls = '') =>
+    `<th class="center ${cls}" title="${escHtml(title)}">${label}</th>`;
   return `
     <thead>
+      <tr class="sst-head-group">
+        <th class="center sst-corner" rowspan="2" title="${escHtml(firstTitle)}">${first}</th>
+        <th class="center" rowspan="2"
+            title="places au 1er virage mesurées / pilotes observés · nombre de départs distincts">n</th>
+        <th class="center sst-grp" colspan="7">Du départ au 1er virage</th>
+        <th class="center sst-grp" colspan="3">Du départ à l'arrivée</th>
+      </tr>
       <tr>
-        <th class="center">${first}</th>
-        <th class="center" title="positions V1 mesurées / observations · nombre de départs">n</th>
-        <th class="center">V1 moyen</th>
-        <th class="center">Gain V1</th>
-        <th class="center">Médian</th>
-        <th class="center">P1 au V1</th>
-        <th class="center">Maintien</th>
-        <th class="center">Gain</th>
-        <th class="center">Perte</th>
-        <th class="center">Arrivée moy.</th>
-        <th class="center">Victoire</th>
-        <th class="center">Gain total</th>
+        ${th('Place au<br>1er virage', 'Place moyenne à la sortie du premier virage')}
+        ${th('Places<br>gagnées', 'Places gagnées en moyenne entre le départ et le 1er virage (négatif = places perdues)')}
+        ${th('Médiane', 'Même chose en médiane : un seul départ exceptionnel ne la déforme pas')}
+        ${th('En tête', 'Part des départs où cette place mène au 1er virage')}
+        ${th('Garde<br>sa place', 'Part des départs où la place est inchangée entre le départ et le 1er virage')}
+        ${th('Gagne', 'Part des départs où au moins une place est gagnée avant le 1er virage')}
+        ${th('Perd', 'Part des départs où au moins une place est perdue avant le 1er virage')}
+        ${th('Place à<br>l\'arrivée', 'Place moyenne à l\'arrivée de la course', 'sst-sep')}
+        ${th('Victoire', 'Part des départs gagnés')}
+        ${th('Bilan', 'Places gagnées en moyenne entre le départ et l\'arrivée')}
       </tr>
     </thead>`;
 }
 
-function renderGridPosTable(stats, sameAsLane) {
-  const note = sameAsLane
-    ? 'Grille à une seule ligne : la n-ième position de grille <strong>est</strong> le n-ième couloir. '
-      + 'Les deux lectures se confondent, le tableau ci-dessous vaut donc aussi pour les couloirs.'
-    : 'En phase finale, la position de grille est un <strong>rang de qualification</strong>, pas un couloir : '
-      + 'le tableau des couloirs regroupe les positions autrement.';
-  const title = sameAsLane ? 'Par position de grille (= couloir)' : 'Par position de grille';
+/** Légende détaillée, repliée : affichée une seule fois pour les trois tableaux. */
+function renderLegend() {
+  const items = [
+    ['n', 'Trois nombres : places au 1er virage réellement mesurées / pilotes observés · nombre de départs distincts. '
+        + `Sous ${MIN_N_FOR_RATE} mesures, les pourcentages laissent la place à l'effectif brut (« 2/8 »), `
+        + 'parce que 100 % sur 2 départs ne vaut pas 63 % sur 300.'],
+    ['Place au 1er virage', 'Place moyenne à la sortie du premier virage. Plus le nombre est bas, mieux la place s\'en sort.'],
+    ['Places gagnées', 'Différence moyenne entre la place au départ et la place au 1er virage. '
+        + '+1 signifie « gagne une place en moyenne », −1 « en perd une ».'],
+    ['Médiane', 'La valeur du milieu plutôt que la moyenne : un carambolage isolé ne la fait pas basculer.'],
+    ['En tête / Garde sa place / Gagne / Perd', 'Les quatre issues possibles du départ, en part des départs. '
+        + '« Garde », « Gagne » et « Perd » se complètent à 100 % ; « En tête » les recoupe.'],
+    ['Place à l\'arrivée', 'Place moyenne à la fin de la course, dans ce même départ.'],
+    ['Victoire', 'Part des départs remportés.'],
+    ['Bilan', 'Places gagnées entre le départ et l\'arrivée : l\'effet complet de la place de départ, '
+        + 'départ et course confondus.'],
+  ];
+  return `
+    <details class="sst-legend">
+      <summary>ℹ️ Comment lire ces tableaux</summary>
+      <dl>
+        ${items.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')}
+      </dl>
+    </details>`;
+}
+
+/** Phrase décrivant le sens de la piste, ou chaîne vide si on ne le sait pas. */
+function orientationNote(orientation, lanes) {
+  if (orientation === 'right') {
+    return `Le couloir 1 est <strong>à droite</strong>, côté du premier virage. `
+         + `Les lignes vont donc de la gauche de la piste vers la droite : `
+         + `${lanes.slice().reverse().join(' · ')}.`;
+  }
+  if (orientation === 'left') {
+    return `Le couloir 1 est <strong>à gauche</strong>, côté du premier virage. `
+         + `Les lignes suivent la piste de gauche à droite : ${lanes.join(' · ')}.`;
+  }
+  if (orientation === 'mixed') {
+    return 'La sélection mélange des circuits dont le premier virage n\'est pas du même côté : '
+         + 'les couloirs restent affichés dans l\'ordre 1 → n, sans ordre physique commun.';
+  }
+  return 'Côté du premier virage inconnu pour cette sélection : couloirs affichés dans l\'ordre 1 → n.';
+}
+
+function renderGridPosTable(stats, mergedWithLanes) {
+  const note = mergedWithLanes
+    ? 'Grille à une seule ligne : la n-ième place de grille <strong>est</strong> le n-ième couloir. '
+      + 'Les deux lectures se confondent, ce tableau vaut donc aussi pour les couloirs.'
+    : 'En phase finale, la place de grille est un <strong>rang de qualification</strong>, pas un couloir : '
+      + 'le tableau des couloirs regroupe ces places autrement.';
+  const title = mergedWithLanes ? 'Par place au départ (= couloir)' : 'Par place au départ';
   return `
     <div class="sst-section">
       <div class="sst-section-title">${title}</div>
       <div class="sst-hint">${note}</div>
       <div class="table-wrap"><table class="sst-table">
-        ${positionTableHead('Grille')}
+        ${positionTableHead('Place au<br>départ',
+          'Rang sur la grille : P1 = premier de la grille de ce départ')}
         <tbody>${renderPositionRows(stats, 'gridPos', 'P')}</tbody>
       </table></div>
     </div>`;
 }
 
-function renderLaneTable(stats, sameAsGridPos) {
-  // Sur une grille à une seule ligne ce tableau serait le clone exact du
-  // précédent : on ne réaffiche pas les mêmes chiffres sous un autre nom.
-  if (sameAsGridPos) return '';
+/**
+ * Tableau des couloirs, ordonné comme sur la piste.
+ *
+ * @param {Array} stats — sortie de byLane(), toujours dans l'ordre 1 → n
+ * @param {string} orientation — voir laneOrientation()
+ * @param {boolean} skip — vrai quand ce tableau serait le clone du précédent
+ */
+function renderLaneTable(stats, orientation, skip) {
+  // Sur une grille à une seule ligne ET sans ordre physique connu, ce tableau
+  // reprendrait exactement le précédent : inutile de le répéter.
+  if (skip) return '';
+  const ordered = orderLanesForDisplay(stats, orientation);
+  const lanes = stats.map(st => `C${st.lane}`);
+  const arrow = orientation === 'right' ? 'C1 ▶ 1er virage' : '1er virage ◀ C1';
   return `
     <div class="sst-section">
-      <div class="sst-section-title">Par couloir</div>
-      <div class="sst-hint">Couloir brut, tel qu'il est sur la piste. Le couloir 1 est du côté du premier virage.</div>
+      <div class="sst-section-title">Par couloir de départ</div>
+      <div class="sst-hint">${orientationNote(orientation, lanes)}</div>
       <div class="table-wrap"><table class="sst-table">
-        ${positionTableHead('Couloir')}
-        <tbody>${renderPositionRows(stats, 'lane', 'C')}</tbody>
+        ${positionTableHead(`Couloir<br><span class="sst-corner-sub">${arrow}</span>`,
+          'Couloir physique sur la piste. Le couloir 1 est du côté du premier virage.')}
+        <tbody>${renderPositionRows(ordered, 'lane', 'C')}</tbody>
       </table></div>
     </div>`;
 }
@@ -326,7 +420,8 @@ function renderGridRowTable(stats) {
       <div class="sst-section-title">Par ligne de grille</div>
       <div class="sst-hint">Les pilotes de la deuxième ligne partent derrière : cet écart se mesure ici.</div>
       <div class="table-wrap"><table class="sst-table">
-        ${positionTableHead('Ligne')}
+        ${positionTableHead('Ligne de<br>grille',
+          'L1 = première ligne de la grille, L2 = juste derrière, etc.')}
         <tbody>${renderPositionRows(stats, 'gridRow', 'L')}</tbody>
       </table></div>
     </div>`;
