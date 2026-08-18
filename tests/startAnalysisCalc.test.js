@@ -690,7 +690,7 @@ describe('validateAnalysis', () => {
     a.rows.push({ driverId: 'd', turn1Pos: null, confidence: 'green', lane: 4 });
     const v = validateAnalysis(a);
     expect(v.ok).toBe(true);
-    expect(v.warnings.join(' ')).toMatch(/sans position V1/i);
+    expect(v.warnings.join(' ')).toMatch(/sans position au 1er virage/i);
   });
 
   it('refuse une ligne 🔴 non traitée', () => {
@@ -723,6 +723,25 @@ describe('validateAnalysis', () => {
     const v = validateAnalysis(a);
     expect(v.ok).toBe(false);
     expect(v.errors.join(' ')).toMatch(/aucune position/i);
+  });
+
+  it('rien de saisi : PAS d\'avertissement « sans position » en doublon', () => {
+    // L'erreur ci-dessus dit déjà que rien n'est saisi ; répéter en orange
+    // serait redondant, et parler d'abandon serait faux.
+    const a = okAnalysis();
+    a.rows.forEach(r => { r.turn1Pos = null; });
+    const v = validateAnalysis(a);
+    expect(v.warnings.join(' ')).not.toMatch(/sans position/i);
+  });
+
+  it('saisie partielle : avertit sans présumer d\'un abandon', () => {
+    const a = okAnalysis();
+    a.rows[2].turn1Pos = null;              // 2 saisis sur 3
+    const v = validateAnalysis(a);
+    const w = v.warnings.join(' ');
+    expect(w).toMatch(/1 pilote\(s\) sans position au 1er virage/i);
+    expect(w).toMatch(/non visible/i);       // la raison n'est pas présumée
+    expect(w).not.toMatch(/^.*abandon avant le virage 1/);
   });
 
   it('refuse un départ vide', () => {
