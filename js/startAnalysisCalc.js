@@ -417,13 +417,12 @@ export function enumerateStarts({ session, results = [], participants = [], cham
       if (dupes.length) localWarnings.push(`Série ${serie} : couloir(s) en doublon : ${dupes.join(', ')}`);
 
       const dnsIds = rows.filter(r => isNonStarter(r.status)).map(r => r.driverId);
-      if (dnsIds.length) {
-        localWarnings.push(
-          `Série ${serie} : ${dnsIds.length} pilote(s) DNS — non compté(s) parmi les partants, ` +
-          'leur couloir reste vide'
-        );
-      }
+      // Un DNS est une situation NORMALE : simple information, pas un problème.
+      const localNotes = dnsIds.length
+        ? [`${dnsIds.length} pilote(s) DNS — couloir laissé vide, ${rows.length - dnsIds.length} partant(s)`]
+        : [];
       return {
+        notes: localNotes,
         startIndex: serie,
         startLabel: startLabel(session, serie, multi),
         sessionId: session.id,
@@ -454,13 +453,12 @@ export function enumerateStarts({ session, results = [], participants = [], cham
   const starters = participants.length - dnsIds.length;
 
   const localWarnings = checkGridLayout(geometry.gridLayout, starters);
-  if (dnsIds.length) {
-    localWarnings.push(
-      `${dnsIds.length} pilote(s) DNS — non compté(s) parmi les partants, leur emplacement reste vide`
-    );
-  }
+  const localNotes = dnsIds.length
+    ? [`${dnsIds.length} pilote(s) DNS — emplacement laissé vide, ${starters} partant(s)`]
+    : [];
   return {
     starts: [{
+      notes: localNotes,
       startIndex: 1,
       startLabel: startLabel(session, 1, false),
       sessionId: session.id,
@@ -796,12 +794,9 @@ export function validateAnalysis(analysis) {
       `(abandon, ou voiture non visible à l'image de mesure)`
     );
   }
-  if (nonStarters.length) {
-    warnings.push(
-      `${nonStarters.length} pilote(s) DNS — absent(s) de la grille, exclu(s) de l'analyse ` +
-      `(${starters} partant(s) réel(s))`
-    );
-  }
+  // Les DNS ne sont PAS signalés ici : c'est une situation normale, déjà
+  // indiquée en tête du départ. La répéter en orange laisserait croire à un
+  // problème et découragerait la validation.
   if (rows.some(r => r.confidence === 'yellow')) {
     warnings.push('Certaines lignes sont à vérifier (🟡)');
   }

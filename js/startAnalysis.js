@@ -265,7 +265,9 @@ function renderList() {
             const saved = existingAnalyses.get(id);
             const icon = saved ? (STATE_ICON[saved.status] || '⚪') : '⚪';
             const isCur = current?.start && startDocId(current.start.sessionId, current.start.startIndex) === id;
-            const warn = st.warnings?.length ? ' ⚠️' : '';
+            // ⚠️ réservé aux vrais problèmes non encore validés : un DNS est une
+            // information (st.notes), pas une alerte.
+            const warn = (!saved && st.warnings?.length) ? ' ⚠️' : '';
             return `
               <button class="sanl-item ${isCur ? 'is-active' : ''}" data-id="${escHtml(id)}">
                 <span class="sanl-item-icon">${icon}</span>
@@ -362,6 +364,8 @@ function renderWork() {
   const n = countStarters(rows);
   const nbDns = rows.length - n;
 
+  const noteHtml = [...(start.notes || [])].map(n =>
+    `<div class="sanl-note">ℹ️ ${escHtml(n)}</div>`).join('');
   const warnHtml = [...(warnings || [])].map(w =>
     `<div class="sanl-warn">⚠️ ${escHtml(w)}</div>`).join('');
 
@@ -387,6 +391,7 @@ function renderWork() {
     </div>
 
     ${integrityHtml}
+    ${noteHtml}
     ${warnHtml}
 
     <div class="sanl-completeness">

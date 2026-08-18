@@ -696,7 +696,10 @@ describe('enumerateStarts — un DNS ne compte pas parmi les partants', () => {
     expect(starts[0].starters).toBe(3);
     expect(starts[0].driverIds).toHaveLength(4);      // la ligne reste visible
     expect(starts[0].dnsDriverIds).toEqual(['d2']);
-    expect(starts[0].warnings.join(' ')).toMatch(/DNS/);
+    // Un DNS est une information, pas un avertissement : il ne doit pas
+    // déclencher de signal d'alerte qui découragerait la validation.
+    expect(starts[0].notes.join(' ')).toMatch(/DNS/);
+    expect(starts[0].warnings.join(' ')).not.toMatch(/DNS/);
   });
 
   it('un DNF compte bien parmi les partants', () => {
@@ -1046,7 +1049,25 @@ describe('validateAnalysis', () => {
     const v = validateAnalysis(a);
     expect(v.ok).toBe(true);
     expect(v.warnings.join(' ')).not.toMatch(/sans position au 1er virage/i);
-    expect(v.warnings.join(' ')).toMatch(/DNS/);
+    // et aucun avertissement pour le DNS lui-même : c'est normal, pas un souci
+    expect(v.warnings.join(' ')).not.toMatch(/DNS/);
+  });
+
+  it('une série avec un DNS reste validable, SANS aucun avertissement', () => {
+    // Cas réel : 4 engagés dont 1 DNS, les 3 partants renseignés.
+    const a = {
+      orderCompleteness: 'complete',
+      rows: [
+        { driverId: 'a', turn1Pos: 2, confidence: 'green', lane: 1 },
+        { driverId: 'b', turn1Pos: null, confidence: 'green', lane: 2, didNotStart: true },
+        { driverId: 'c', turn1Pos: 3, confidence: 'green', lane: 3 },
+        { driverId: 'd', turn1Pos: 1, confidence: 'green', lane: 4 },
+      ],
+    };
+    const v = validateAnalysis(a);
+    expect(v.ok).toBe(true);
+    expect(v.errors).toEqual([]);
+    expect(v.warnings).toEqual([]);       // aucun signal d'alerte parasite
   });
 
   it('refuse un départ vide', () => {
