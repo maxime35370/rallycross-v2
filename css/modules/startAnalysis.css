@@ -229,3 +229,14 @@
   cursor: not-allowed;
   text-decoration: line-through;
 }
+
+/* ── Pilote DNS : absent de la grille, aucune position possible ── */
+.sanl-row-dns { opacity: 0.62; }
+
+.sanl-dns-tag {
+  font-size: 0.76rem;
+  color: var(--clr-warning, #f0a020);
+  font-style: italic;
+}
+
+.sanl-dns-note { color: var(--clr-warning, #f0a020); }

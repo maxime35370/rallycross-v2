@@ -18,7 +18,7 @@ import { escHtml } from './utils.js';
 import { getActiveChampionshipId, getAllChampionships } from './context.js';
 import {
   enumerateStarts, buildStartGrid, startDocId, seriesFingerprint,
-  validateAnalysis, normalizePoleSide, availableTurn1Positions,
+  validateAnalysis, normalizePoleSide, availableTurn1Positions, countStarters,
 } from './startAnalysisCalc.js';
 
 // ─────────────────────────────────────────────────────────
@@ -314,7 +314,9 @@ function renderWork() {
   const meeting = current.meeting;
   const poleSide = normalizePoleSide(meeting?.poleSide);
   const readOnly = !isAdmin();
-  const n = rows.length;
+  // n = pilotes réellement au départ : un DNS n'était pas sur la grille
+  const n = countStarters(rows);
+  const nbDns = rows.length - n;
 
   const warnHtml = [...(warnings || [])].map(w =>
     `<div class="sanl-warn">⚠️ ${escHtml(w)}</div>`).join('');
@@ -330,7 +332,7 @@ function renderWork() {
         <div class="sanl-work-title">${escHtml(start.startLabel)}</div>
         <div class="sanl-work-sub">
           ${escHtml(meeting?.location || '')} · ${escHtml(selectedCategory)} ·
-          ${n} partant${n > 1 ? 's' : ''} ·
+          ${n} partant${n > 1 ? 's' : ''}${nbDns ? ` <span class="sanl-dns-note">(+${nbDns} DNS)</span>` : ''} ·
           couloir 1 ${poleSide === 'left' ? 'à gauche' : 'à droite'} (intérieur)
         </div>
       </div>
@@ -384,6 +386,7 @@ function renderWork() {
 
 function renderRow(r, i, start, readOnly) {
   const n = start.starters;
+  if (r.didNotStart) return renderNonStarterRow(r, start);
   const finish = r.finishPosInStart != null ? `P${r.finishPosInStart}`
     : (r.finishStatus ? `<span class="badge badge-dnf">${escHtml(r.finishStatus)}</span>` : '—');
   const v1Buttons = v1ButtonsHtml(r, n, readOnly);
@@ -459,6 +462,27 @@ function bindV1Buttons() {
       refreshFeedback();
     });
   });
+}
+
+/**
+ * Ligne d'un pilote DNS : il n'était pas sur la grille, donc aucun bouton de
+ * position. Son couloir reste affiché et VIDE — les autres pilotes ne sont pas
+ * renumérotés pour autant.
+ */
+function renderNonStarterRow(r, start) {
+  const name = escHtml(((r.firstName || '') + ' ' + (r.lastName || '')).trim() || r.driverId);
+  const cols = start.sessionType === 'MQ' ? 1 : 2;   // Grille (+ Ligne hors MQ)
+  return `
+    <tr class="sanl-row-dns" data-driver="${escHtml(r.driverId)}">
+      <td class="center">${r.gridPos != null ? 'P' + r.gridPos : '—'}</td>
+      ${start.sessionType === 'MQ' ? '' : `<td class="center">${r.gridRow ?? '—'}</td>`}
+      <td class="center">${r.lane ?? '—'}</td>
+      <td>${name}</td>
+      <td class="center">${r.carNumber ?? '—'}</td>
+      <td class="center" colspan="3">
+        <span class="sanl-dns-tag">DNS — n'a pas pris le départ</span>
+      </td>
+    </tr>`;
 }
 
 function refreshFeedback() {
@@ -553,7 +577,7 @@ function buildDoc() {
     gridRowsTotal: start.gridRowsTotal,
     gridLayoutKey: start.gridLayoutKey,
     gridSource: start.gridSource,
-    starters: start.starters,
+    starters: countStarters(rows),
     lanesUsed: rows.filter(r => r.lane != null).length,
     orderCompleteness: current.orderCompleteness,
     analysis: { engine: 'manual', version: 1, ranAt: new Date(), warnings: start.warnings || [] },
@@ -561,6 +585,7 @@ function buildDoc() {
     rows: rows.map(r => ({
       driverId: r.driverId,
       carNumber: r.carNumber ?? null,
+      didNotStart: !!r.didNotStart,
       gridPos: r.gridPos ?? null,
       gridRow: r.gridRow ?? null,
       lane: r.lane ?? null,
