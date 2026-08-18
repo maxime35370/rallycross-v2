@@ -1,39 +1,10 @@
 rules_version = '2';
-
-// ═══════════════════════════════════════════════════════════════════
-//  RÈGLES FIRESTORE — RX Chrono  (version VERROUILLÉE)
-//  À coller en entier dans la console : Firestore → Règles → Publier.
-//
-//  Modèle :
-//   • LECTURE publique partout (overlays + mode spectateur, sans connexion).
-//   • ÉCRITURE (create / update / delete) réservée à la RÉGIE = isRegie()
-//     (compte authentifié NON anonyme = ta connexion email/mot de passe).
-//     → plus personne ne peut modifier/supprimer tes saisies sans être toi.
-//   • VOTES pronostics : le spectateur (anonyme) n'écrit QUE son propre vote,
-//     et seulement tant que le pronostic est « open ».
-//
-//  Sûr pour ton appli : toutes tes vues d'écriture (timing, drivers,
-//  meetings, sessions, engagements, persons, réglages) passent déjà par une
-//  connexion (requireAuth). Ces règles ne font que l'exiger aussi côté serveur.
-//  La validation de champs que tu avais est conservée (défense en profondeur).
-// ═══════════════════════════════════════════════════════════════════
-
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    function hasFields(data, fields) {
-      return data.keys().hasAll(fields);
-    }
-    function validString(val, maxLen) {
-      return val is string && val.size() > 0 && val.size() <= maxLen;
-    }
-    function inRange(val, min, max) {
-      return val is int && val >= min && val <= max;
-    }
-    // Régie = TON (tes) compte(s) précis, PAS « n'importe quel compte non anonyme »
-    // (n'importe qui peut s'auto-inscrire en email/mot de passe). On restreint donc
-    // à une liste d'e-mails de confiance. ⬇ REMPLACE par le/les e-mail(s) exact(s)
-    // avec le(s)quel(s) tu te connectes à la régie.
+    function hasFields(data, fields) { return data.keys().hasAll(fields); }
+    function validString(val, maxLen) { return val is string && val.size() > 0 && val.size() <= maxLen; }
+    function inRange(val, min, max) { return val is int && val >= min && val <= max; }
     function isRegie() {
       return request.auth != null
           && request.auth.token.email in ['maxime.theard@gmail.com'];
@@ -46,15 +17,13 @@ service cloud.firestore {
         hasFields(request.resource.data, ['firstName','lastName','carNumber','category','year']) &&
         validString(request.resource.data.firstName, 50) &&
         validString(request.resource.data.lastName, 50) &&
-        request.resource.data.carNumber is int &&
-        request.resource.data.carNumber >= 1 &&
+        request.resource.data.carNumber is int && request.resource.data.carNumber >= 1 &&
         validString(request.resource.data.category, 50) &&
         inRange(request.resource.data.year, 2020, 2030);
       allow update: if isRegie() &&
         validString(request.resource.data.firstName, 50) &&
         validString(request.resource.data.lastName, 50) &&
-        request.resource.data.carNumber is int &&
-        request.resource.data.carNumber >= 1;
+        request.resource.data.carNumber is int && request.resource.data.carNumber >= 1;
     }
 
     match /meetings/{docId} {
@@ -65,8 +34,7 @@ service cloud.firestore {
         validString(request.resource.data.location, 80) &&
         inRange(request.resource.data.year, 2020, 2030) &&
         inRange(request.resource.data.nbMQ, 1, 4) &&
-        request.resource.data.categories is list &&
-        request.resource.data.categories.size() > 0;
+        request.resource.data.categories is list && request.resource.data.categories.size() > 0;
       allow update: if isRegie();
     }
 
@@ -99,8 +67,7 @@ service cloud.firestore {
         hasFields(request.resource.data, ['sessionId','driverId','sessionType']) &&
         request.resource.data.sessionType in ['EC','MQ','QF','DF','FIN'] &&
         (request.resource.data.ms == null || request.resource.data.ms is int) &&
-        (request.resource.data.status == null ||
-         request.resource.data.status in ['DNS','DNF','DSQ','DSQ_RACE']);
+        (request.resource.data.status == null || request.resource.data.status in ['DNS','DNF','DSQ','DSQ_RACE']);
     }
 
     match /interimStandings/{docId} {
@@ -129,12 +96,6 @@ service cloud.firestore {
       allow write: if isRegie();
     }
 
-    // Pénalités « points championnat » (niveau saison) — écrit régie, lu par tous.
-    match /championshipPenalties/{docId} {
-      allow read:  if true;
-      allow write: if isRegie();
-    }
-
     match /persons/{docId} {
       allow read:   if true;
       allow delete: if isRegie();
@@ -148,7 +109,7 @@ service cloud.firestore {
     }
 
     match /auditLog/{docId} {
-      allow read:           if isRegie();   // journal back-office : régie uniquement
+      allow read:           if isRegie();
       allow create:         if isRegie();
       allow update, delete: if false;
     }
@@ -156,20 +117,17 @@ service cloud.firestore {
     match /reglements/{docId} {
       allow read:   if true;
       allow delete: if isRegie();
-      allow create, update: if isRegie() &&
-        hasFields(request.resource.data, ['name']);
+      allow create, update: if isRegie() && hasFields(request.resource.data, ['name']);
     }
 
     match /obsControl/{doc} {
-      allow read:  if true;         // l'overlay (non connecté) peut lire
-      allow write: if isRegie();    // la régie seule (compte non anonyme) écrit
+      allow read:  if true;
+      allow write: if isRegie();
     }
 
-    // ── PRONOSTICS SPECTATEURS ──────────────────────────────────────
     match /pronostics/{pid} {
       allow read:  if true;
       allow write: if isRegie();
-
       match /votes/{uid} {
         allow get:  if isRegie() || (request.auth != null && request.auth.uid == uid);
         allow list: if isRegie();
@@ -182,17 +140,13 @@ service cloud.firestore {
       }
     }
 
-    // ── CLASSEMENT DES PRONOSTIQUEURS (points par épreuve) ──────────
-    //  Écrit par la RÉGIE (calcul des points au dévoilement d'un
-    //  pronostic), lu par tout le monde (carte « classement » spectateur).
+    // Classement des pronostiqueurs (points par épreuve) — écrit par la régie, lu par tous
     match /pronoScores/{meetingId} {
       allow read:  if true;
       allow write: if isRegie();
     }
-
-    // ── PSEUDOS DES JOUEURS (pronostics) ────────────────────────────
-    //  Lecture publique (affichage au classement). Chaque spectateur
-    //  n'écrit QUE son propre pseudo (≤ 20 caractères, champ unique).
+    
+		// ── PSEUDOS DES JOUEURS (pronostics) ────────────────────────────
     match /players/{uid} {
       allow read:  if true;
       allow write: if request.auth != null
@@ -201,9 +155,48 @@ service cloud.firestore {
           && request.resource.data.pseudo.size() <= 20
           && request.resource.data.keys().hasOnly(['pseudo']);
     }
-
-    match /{document=**} {
-      allow read, write: if false;
+    
+    // Pénalités « points championnat » (niveau saison) — écrit régie, lu par tous
+    match /championshipPenalties/{docId} {
+      allow read:  if true;
+      allow write: if isRegie();
     }
+
+    // ═══════════════════════════════════════════════════════════════
+    //  ANALYSE DES DÉPARTS  — AJOUT
+    // ═══════════════════════════════════════════════════════════════
+
+    // Un document = UN DÉPART PHYSIQUE RÉEL, jamais une session.
+    // Id déterministe : `${sessionId}_s${startIndex}` où startIndex vaut le
+    // numéro de série pour une MQ, et 1 pour une QF / DF / FIN.
+    // Une manche à 6 séries produit donc 6 documents distincts.
+    //
+    // Lecture publique (cohérent avec le reste du projet), écriture régie.
+    // Seuls les documents `status == 'validated'` alimenteront les statistiques.
+    match /startAnalyses/{docId} {
+      allow read:   if true;
+      allow delete: if isRegie();
+      allow create, update: if isRegie() &&
+        hasFields(request.resource.data,
+          ['sessionId','meetingId','year','category','sessionType','startIndex','status']) &&
+        request.resource.data.status in ['draft','validated'] &&
+        request.resource.data.startIndex is int &&
+        request.resource.data.startIndex >= 1 &&
+        inRange(request.resource.data.year, 2020, 2030) &&
+        request.resource.data.rows is list &&
+        request.resource.data.rows.size() <= 16;
+    }
+
+    // Métadonnées d'un circuit : alias de libellé, repères vidéo, intervalle
+    // médian entre deux séries. La géométrie de grille n'est PAS ici : elle
+    // appartient au règlement du championnat (championships.sessionConfig).
+    // Pas encore alimentée par l'application — ajoutée dès maintenant pour
+    // n'avoir qu'une seule publication de règles à faire.
+    match /circuits/{docId} {
+      allow read:  if true;
+      allow write: if isRegie();
+    }
+
+    match /{document=**} { allow read, write: if false; }
   }
 }

@@ -25,6 +25,7 @@
   <link rel="stylesheet" href="css/modules/engagements.css">
   <link rel="stylesheet" href="css/modules/spectator.css">
   <link rel="stylesheet" href="css/modules/settings.css">
+  <link rel="stylesheet" href="css/modules/startAnalysis.css">
 
   <!-- Cloudflare Web Analytics — visiteurs uniques du site, GRATUIT et SANS cookie (pas de bandeau RGPD).
        Étapes : 1) compte gratuit sur dash.cloudflare.com → « Web Analytics » → Add a site : rxchrono.netlify.app
@@ -86,6 +87,7 @@
       <li><a class="menu-item" data-view="meetings"   href="#">📅 Meetings</a></li>
       <li><a class="menu-item" data-view="engagements" href="#">📋 Engagements</a></li>
       <li><a class="menu-item" data-view="sessions"   href="#">🏁 Sessions</a></li>
+      <li><a class="menu-item" data-view="startAnalysis" href="#">🎥 Analyse des départs</a></li>
       <li class="menu-separator"></li>
       <li class="menu-section">Compétition</li>
       <li><a class="menu-item" data-view="timing"     href="#">⏱️ Chronométrage</a></li>
@@ -155,6 +157,10 @@
         <div class="home-card" data-view="championship">
           <div class="home-card-icon">🥇</div>
           <div class="home-card-label">Championnat</div>
+        </div>
+        <div class="home-card" data-view="startAnalysis">
+          <div class="home-card-icon">🎥</div>
+          <div class="home-card-label">Analyse des départs</div>
         </div>
         <div class="home-card" data-view="stats">
           <div class="home-card-icon">📊</div>
@@ -254,6 +260,15 @@
         <div class="placeholder-icon">🥇</div>
         <div class="placeholder-title">Championnat</div>
         <div class="placeholder-desc">Cette vue sera construite à l'étape suivante.</div>
+      </div>
+    </div>
+
+    <!-- VUE : Analyse des départs -->
+    <div class="view" id="view-startAnalysis" style="display:none">
+      <div class="view-placeholder">
+        <div class="placeholder-icon">🎥</div>
+        <div class="placeholder-title">Analyse des départs</div>
+        <div class="placeholder-desc">Chargement…</div>
       </div>
     </div>
 
