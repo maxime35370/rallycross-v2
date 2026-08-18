@@ -479,6 +479,84 @@ export function enumerateStarts({ session, results = [], participants = [], cham
 }
 
 // ─────────────────────────────────────────────────────────
+// ORDRE DE LA GRILLE DES PHASES FINALES
+// ─────────────────────────────────────────────────────────
+
+/**
+ * Ordre d'arrivée d'une course, tel que le calcule déjà sessions.js
+ * (fonction getTopN) : temps croissant, puis DNF, puis DSQ_RACE, puis le reste.
+ *
+ * @param {Array<{driverId:string, ms?:number|null, status?:string|null}>} rows
+ * @returns {string[]} driverIds dans l'ordre d'arrivée
+ */
+export function orderByRaceResult(rows = []) {
+  const key = r => r.ms ? r.ms
+    : r.status === 'DNF' ? 9000000
+    : r.status === 'DSQ_RACE' ? 9100000
+    : 9999999;
+  return [...rows].sort((a, b) => key(a) - key(b)).map(r => r.driverId);
+}
+
+/**
+ * Grille d'une QF ou d'une DF : les pilotes sont placés dans l'ordre du
+ * CLASSEMENT INTERMÉDIAIRE établi à l'issue des manches qualificatives.
+ *
+ * Le leader du classement intermédiaire est en pole de SA demi-finale, le
+ * deuxième en pole de l'AUTRE : la répartition entre les demi-finales est déjà
+ * faite par l'application (1er et 3e ensemble, 2e et 4e ensemble, etc.).
+ * Il ne reste donc ici qu'à trier les pilotes d'un même départ.
+ *
+ * Un pilote absent du classement passe en fin de grille plutôt que d'être
+ * placé arbitrairement.
+ *
+ * @param {string[]} driverIds — pilotes de CE départ
+ * @param {string[]} interimOrder — driverIds du classement intermédiaire, 1er en tête
+ * @returns {string[]} driverIds ordonnés pour la grille
+ */
+export function orderGridByInterim(driverIds = [], interimOrder = []) {
+  const rank = new Map(interimOrder.map((id, i) => [id, i]));
+  return [...driverIds].sort((a, b) => {
+    const ra = rank.has(a) ? rank.get(a) : Number.MAX_SAFE_INTEGER;
+    const rb = rank.has(b) ? rank.get(b) : Number.MAX_SAFE_INTEGER;
+    if (ra !== rb) return ra - rb;
+    return driverIds.indexOf(a) - driverIds.indexOf(b);   // stable
+  });
+}
+
+/**
+ * Grille de la FINALE : composée par paires depuis les demi-finales, comme le
+ * fait déjà sessions.js — le vainqueur de la DF1 puis celui de la DF2, ensuite
+ * les deuxièmes de chaque DF, et ainsi de suite.
+ *
+ * Les finalistes qui ne proviennent d'aucune demi-finale (ajout manuel, ou
+ * catégorie à petit effectif disputant la finale sans demi-finales) sont
+ * ajoutés ensuite, dans l'ordre du classement intermédiaire.
+ *
+ * @param {string[]} driverIds — finalistes de CE départ
+ * @param {string[][]} semiFinishOrders — un tableau d'ordres d'arrivée par DF
+ * @param {string[]} [interimOrder] — repli pour les pilotes hors demi-finales
+ * @returns {string[]} driverIds ordonnés pour la grille
+ */
+export function orderFinalGridFromSemis(driverIds = [], semiFinishOrders = [], interimOrder = []) {
+  const wanted = new Set(driverIds);
+  const out = [];
+  const placed = new Set();
+
+  const depth = Math.max(0, ...semiFinishOrders.map(o => o.length));
+  for (let i = 0; i < depth; i++) {
+    for (const order of semiFinishOrders) {
+      const id = order[i];
+      if (id && wanted.has(id) && !placed.has(id)) { out.push(id); placed.add(id); }
+    }
+  }
+
+  // Finalistes hors demi-finales : classement intermédiaire, puis ordre d'origine
+  const rest = driverIds.filter(id => !placed.has(id));
+  out.push(...orderGridByInterim(rest, interimOrder));
+  return out;
+}
+
+// ─────────────────────────────────────────────────────────
 // CLASSEMENT À L'ARRIVÉE, AU SEIN DU DÉPART
 // ─────────────────────────────────────────────────────────
 
