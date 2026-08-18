@@ -150,7 +150,11 @@ describe('graphe de modules — fichiers cibles', () => {
 });
 
 describe('modules purs — restent testables hors navigateur', () => {
-  const PURE = [join('js', 'calc.js'), join('js', 'utils.js'), join('js', 'startAnalysisCalc.js')];
+  const PURE = [
+    join('js', 'calc.js'), join('js', 'utils.js'),
+    join('js', 'startAnalysisCalc.js'), join('js', 'startStatsCalc.js'),
+    join('js', 'videoPlayerCalc.js'),
+  ];
 
   it('n\'importent ni Firebase ni un module de vue', () => {
     const bad = [];

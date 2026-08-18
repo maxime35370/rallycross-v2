@@ -1254,6 +1254,66 @@ Rappel des points d'insertion (§1.2), tous additifs : `VIEW_TITLES`, menu, `<di
 
 ---
 
+### 4.12 Lecteur V0 livré — contrat exact (révision 8)
+
+Le lot « lecteur vidéo V0 » est en place. Il ne contient **aucune IA** : ni YOLO, ni ReID, ni
+tracking. Son rôle est d'être un bon outil de lecture et de saisie, et de figer dès maintenant
+l'interface que le futur module de détection utilisera.
+
+**Modules**
+
+| Fichier | Rôle | Pur ? |
+|---|---|---|
+| `js/videoPlayerCalc.js` | temps, cadence, vitesses, géométrie de l'overlay, clavier | oui, testé |
+| `js/videoPlayer.js` | composant lecteur + canvas, YouTube et fichier local | non (DOM) |
+| `css/modules/videoPlayer.css` | mise en forme, superposition stricte du canvas | — |
+
+**Repères enregistrés** — dans le document `startAnalyses/{sessionId}_s{n}`, sous la clé `video` :
+
+```js
+video: {
+  kind:      'youtube' | 'file',
+  youtubeId: string | null,   // jamais l'id LOCAL de meeting.videos[]
+  fileName:  string | null,   // NOM seul : aucun octet n'est téléversé
+  startAt:   number | null,   // instant du départ, en secondes (3 décimales)
+  turn1At:   number | null,   // image de mesure du 1er virage
+  fps:       number | null,   // cadence mesurée, fichier local uniquement
+}
+```
+
+`meeting.videoTimecodes` n'est **pas modifié** : il reste lu comme amorce, et l'interface signale
+explicitement qu'un timecode de meeting vise la première série de la session, pas celle qu'on
+analyse. Dès qu'un `startAt` propre au départ existe, c'est lui qui prime.
+
+**Contrat de l'overlay** — le point d'entrée du futur module de détection :
+
+```js
+player.renderBoxes([
+  { driverId, carNumber, label, x, y, width, height, confidence, status },
+]);
+```
+
+- coordonnées **normalisées 0..1 dans le repère de l'image**, jamais en pixels ;
+- `status` ∈ `confirmed` (vert, trait plein) · `probable` (jaune, tirets, `confidence` affichée) ·
+  `unknown` (gris) · `lost` (rouge) ;
+- une boîte invalide ou entièrement hors image est **écartée**, pas dessinée au hasard — même
+  règle que pour les positions : on n'invente rien ;
+- `computeVideoRect()` reproduit `object-fit: contain`, donc les boîtes tombent dans l'image et
+  jamais dans les bandes noires, à toute taille de lecteur, en plein écran et à tout ratio.
+
+**Limites assumées de V0**
+
+- **YouTube ne donne pas accès aux images.** Pas de vrai image par image : le pas fin retombe sur
+  0,2 s, et les vitesses sont bornées à celles que l'API accepte (0,25 minimum). C'est une limite
+  de la plateforme, pas du lecteur.
+- Un **fichier local** donne tout : cadence mesurée par `requestVideoFrameCallback`, pas d'exactement
+  une image, ralenti jusqu'à 0,1×, timecode à la milliseconde et numéro d'image.
+- Le fichier local **n'est pas réattaché automatiquement** d'une session à l'autre : le navigateur
+  interdit de rouvrir un chemin disque sans geste de l'utilisateur. Seul le nom est mémorisé, pour
+  savoir quel fichier reprendre.
+
+---
+
 ## 5. Plan de développement par phases
 
 L'objectif : quelque chose d'utilisable dès la phase 1, l'automatisation seulement si elle prouve

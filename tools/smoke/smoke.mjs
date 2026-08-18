@@ -194,11 +194,15 @@ try {
       title: document.getElementById('header-view-title')?.textContent,
       hasList: !!document.getElementById('sanl-list'),
       hasWork: !!document.getElementById('sanl-work'),
+      // Le panneau vidéo vit HORS de #sanl-work : c'est ce qui empêche le
+      // lecteur d'être détruit à chaque saisie de position.
+      hasVideoSlot: !!document.getElementById('sanl-video'),
+      videoHorsWork: !document.getElementById('sanl-work')?.contains(document.getElementById('sanl-video')),
     };
   });
   check('la vue Analyse des départs s\'affiche et se construit',
         built && sanl.display !== 'none' && /Analyse des d/i.test(sanl.title || '')
-        && sanl.hasList && sanl.hasWork,
+        && sanl.hasList && sanl.hasWork && sanl.hasVideoSlot && sanl.videoHorsWork,
         JSON.stringify(sanl));
 
   // ── 10. Le menu et la tuile d'accueil pointent vers la vue ──
@@ -353,6 +357,202 @@ try {
         stat.nStarts === 3 && Math.abs(stat.p1KeepsLead - 2 / 3) < 1e-9
         && stat.matrices === 3 && stat.cell00.count === 2 && stat.smallSample === '2/3',
         JSON.stringify(stat));
+
+
+  // ── 16. Le lecteur vidéo se construit et son canvas recouvre la scène ──
+  const vp = await page.evaluate(async () => {
+    const { createVideoPlayer } = await import('/js/videoPlayer.js');
+    const host = document.createElement('div');
+    host.style.width = '640px';
+    document.body.appendChild(host);
+    const p = createVideoPlayer(host);
+    await new Promise(r => requestAnimationFrame(r));
+    const stage  = host.querySelector('.vp-stage');
+    const canvas = host.querySelector('.vp-overlay');
+    const sr = stage.getBoundingClientRect();
+    const cr = canvas.getBoundingClientRect();
+    const out = {
+      hasStage: !!stage,
+      hasCanvas: !!canvas,
+      // le canvas doit recouvrir la scène AU PIXEL près
+      aligne: Math.abs(sr.x - cr.x) < 0.5 && Math.abs(sr.y - cr.y) < 0.5
+           && Math.abs(sr.width - cr.width) < 0.5 && Math.abs(sr.height - cr.height) < 0.5,
+      // et ne jamais intercepter un clic destiné au lecteur
+      transparentAuxClics: getComputedStyle(canvas).pointerEvents === 'none',
+      ratio: +(sr.width / sr.height).toFixed(3),
+    };
+    p.destroy();
+    host.remove();
+    return out;
+  });
+  check('lecteur vidéo : canvas d\'overlay superposé au pixel près',
+        vp.hasStage && vp.hasCanvas && vp.aligne && vp.transparentAuxClics
+        && Math.abs(vp.ratio - 16 / 9) < 0.01,
+        JSON.stringify(vp));
+
+  // ── 17. Une vraie vidéo locale : lecture, position, image par image ──
+  //    La vidéo est fabriquée dans le navigateur (MediaRecorder) : le test
+  //    exerce le vrai chemin <video> + objectURL, sans fichier de test binaire.
+  const local = await page.evaluate(async () => {
+    const FPS = 10;
+    const make = () => new Promise((resolve, reject) => {
+      const c = document.createElement('canvas');
+      c.width = 320; c.height = 240;
+      const g = c.getContext('2d');
+      const stream = c.captureStream(FPS);
+      const chunks = [];
+      let rec;
+      try { rec = new MediaRecorder(stream, { mimeType: 'video/webm' }); }
+      catch (e) { reject(e); return; }
+      rec.ondataavailable = e => chunks.push(e.data);
+      rec.onstop = () => resolve(new File([new Blob(chunks, { type: 'video/webm' })], 'course.webm'));
+      rec.start();
+      let i = 0;
+      const tick = setInterval(() => {
+        g.fillStyle = `hsl(${(i * 24) % 360} 80% 50%)`;
+        g.fillRect(0, 0, 320, 240);
+        if (++i >= 30) { clearInterval(tick); rec.stop(); }
+      }, 1000 / FPS);
+    });
+
+    const file = await make();
+    const { createVideoPlayer } = await import('/js/videoPlayer.js');
+    const host = document.createElement('div');
+    host.style.width = '640px';
+    document.body.appendChild(host);
+
+    let ready = null;
+    const p = createVideoPlayer(host, { onReady: (i) => { ready = i; } });
+    p.loadFile(file, 0);
+    await new Promise((res, rej) => {
+      const t0 = Date.now();
+      const wait = () => (ready ? res() : Date.now() - t0 > 8000 ? rej(new Error('métadonnées absentes')) : setTimeout(wait, 60));
+      wait();
+    });
+
+    const video = host.querySelector('video');
+    const settle = () => new Promise(res => {
+      video.addEventListener('seeked', res, { once: true });
+      setTimeout(res, 800);
+    });
+
+    p.seek(1);
+    await settle();
+    const t1 = p.getTime();
+
+    // Image par image : le pas doit valoir 1/fps (cadence par défaut si la
+    // mesure n'a pas encore eu lieu), et jamais 0.
+    p.step(+1, 'frame');
+    await settle();
+    const t2 = p.getTime();
+
+    p.step(-1, 'frame');
+    await settle();
+    const t3 = p.getTime();
+
+    p.setRate(0.25);
+    const rate = video.playbackRate;
+
+    const out = {
+      kind: p.kind,
+      dureeConnue: p.duration > 0.4,
+      apresSeek: +t1.toFixed(3),
+      pasImage: +(t2 - t1).toFixed(4),
+      retourImage: Math.abs(t3 - t1) < 1e-3,
+      ralenti: rate,
+      objectUrl: (video.src || '').startsWith('blob:'),   // le fichier reste local
+      pasDeReseau: !/^https?:/i.test(video.src || ''),
+    };
+    p.destroy();
+    host.remove();
+    return out;
+  }).catch(err => ({ error: String(err) }));
+
+  check('vidéo locale : lecture, seek précis, image par image, ralenti',
+        !local.error && local.kind === 'file' && local.dureeConnue
+        && Math.abs(local.apresSeek - 1) < 0.15
+        && local.pasImage > 0.005 && local.pasImage < 0.25
+        && local.retourImage && local.ralenti === 0.25
+        && local.objectUrl && local.pasDeReseau,
+        JSON.stringify(local));
+
+  // ── 18. Les bounding boxes tombent DANS l'image, jamais dans les bandes noires ──
+  const overlay = await page.evaluate(async () => {
+    const { createVideoPlayer } = await import('/js/videoPlayer.js');
+    const { computeVideoRect } = await import('/js/videoPlayerCalc.js');
+    const host = document.createElement('div');
+    host.style.width = '640px';                 // scène 640×360 (16:9)
+    document.body.appendChild(host);
+    const p = createVideoPlayer(host);
+    await new Promise(r => requestAnimationFrame(r));
+
+    // Sans vidéo chargée, la scène est en 16:9 : le rectangle utile la remplit.
+    const rect = p.getVideoRect();
+    const attendu = computeVideoRect(640, 360, 1000, 562);
+
+    const n = p.renderBoxes([
+      { driverId: 'd1', carNumber: 12, label: 'DUPONT', status: 'confirmed',
+        x: 0.25, y: 0.25, width: 0.2, height: 0.2 },
+      { x: 5, y: 5, width: 0.1, height: 0.1 },                  // hors image → écartée
+      { x: 0.1, y: 0.1, width: 0, height: 0.1 },                // dégénérée → écartée
+    ]);
+
+    const canvas = host.querySelector('.vp-overlay');
+    const g = canvas.getContext('2d');
+    const dpr = window.devicePixelRatio || 1;
+    const px = (x, y) => g.getImageData(Math.round(x * dpr), Math.round(y * dpr), 1, 1).data;
+
+    // Le bord gauche de la boîte doit être peint, le centre de la boîte non
+    // (on dessine un contour, pas un aplat).
+    const bord   = px(rect.x + rect.width * 0.25, rect.y + rect.height * 0.35);
+    const centre = px(rect.x + rect.width * 0.35, rect.y + rect.height * 0.35);
+
+    const out = {
+      boitesRetenues: n,
+      rectCorrect: Math.abs(rect.width - attendu.width) < 1 && Math.abs(rect.x - attendu.x) < 1,
+      bordPeint: bord[3] > 0,
+      centreVide: centre[3] === 0,
+    };
+    p.destroy();
+    host.remove();
+    return out;
+  });
+  check('overlay : boîtes normalisées dessinées au bon endroit, invalides écartées',
+        overlay.boitesRetenues === 1 && overlay.rectCorrect
+        && overlay.bordPeint && overlay.centreVide,
+        JSON.stringify(overlay));
+
+  // ── 19. L'overlay suit le redimensionnement et le changement de ratio ──
+  const resize = await page.evaluate(async () => {
+    const { createVideoPlayer } = await import('/js/videoPlayer.js');
+    const host = document.createElement('div');
+    host.style.width = '640px';
+    document.body.appendChild(host);
+    const p = createVideoPlayer(host);
+    await new Promise(r => requestAnimationFrame(r));
+    const avant = p.getVideoRect();
+
+    host.style.width = '320px';
+    await new Promise(r => setTimeout(r, 120));   // laisse agir le ResizeObserver
+    const apres = p.getVideoRect();
+
+    const canvas = host.querySelector('.vp-overlay');
+    const stage  = host.querySelector('.vp-stage');
+    const cr = canvas.getBoundingClientRect();
+    const sr = stage.getBoundingClientRect();
+
+    const out = {
+      largeurAvant: Math.round(avant.width),
+      largeurApres: Math.round(apres.width),
+      moitie: Math.abs(apres.width * 2 - avant.width) < 2,
+      canvasToujoursAligne: Math.abs(cr.width - sr.width) < 0.5 && Math.abs(cr.height - sr.height) < 0.5,
+    };
+    p.destroy();
+    host.remove();
+    return out;
+  });
+  check('overlay : reste aligné après redimensionnement',
+        resize.moitie && resize.canvasToujoursAligne, JSON.stringify(resize));
 
 } finally {
   await browser.close();

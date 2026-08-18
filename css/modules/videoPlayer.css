@@ -1,0 +1,242 @@
+/* ═══════════════════════════════════════════════
+   VIDEOPLAYER.CSS — Lecteur vidéo intégré + overlay
+═══════════════════════════════════════════════ */
+
+.vp { display: block; }
+
+/* ── Scène : image + canvas strictement superposés ── */
+.vp-stage {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: #000;
+  border-radius: var(--r-lg);
+  overflow: hidden;
+  outline: none;
+}
+
+.vp-stage:fullscreen {
+  aspect-ratio: auto;
+  height: 100vh;
+  border-radius: 0;
+}
+
+.vp-media,
+.vp-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.vp-media iframe,
+.vp-media .vp-yt {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  display: block;
+}
+
+.vp-video {
+  width: 100%;
+  height: 100%;
+  /* contain : c'est cette règle que computeVideoRect() reproduit pour placer
+     les bounding boxes. Passer en cover décalerait le canvas. */
+  object-fit: contain;
+  display: block;
+  background: #000;
+}
+
+/* Le canvas ne doit jamais voler un clic destiné au lecteur. */
+.vp-overlay { pointer-events: none; z-index: 2; }
+
+.vp-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: var(--clr-text-3);
+  font-size: 0.84rem;
+}
+
+.vp-empty-icon { font-size: 2.2rem; opacity: 0.6; }
+
+.vp-error {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  text-align: center;
+  padding: var(--sp-md);
+  color: var(--clr-text-2);
+  font-size: 0.84rem;
+}
+
+.vp-error a { color: var(--clr-accent); }
+
+/* ── Barre de transport ── */
+.vp-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: var(--sp-xs) 0 0;
+}
+
+.vp-btn {
+  background: var(--clr-surface);
+  border: 1px solid var(--clr-border);
+  border-radius: var(--r-sm);
+  color: var(--clr-text-1);
+  padding: 5px 10px;
+  font-size: 0.84rem;
+  line-height: 1.1;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+
+.vp-btn:hover:not(:disabled) { background: var(--clr-bg-2); border-color: var(--clr-accent); }
+.vp-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.vp-btn--primary { background: var(--clr-accent); border-color: var(--clr-accent); color: #fff; }
+.vp-btn--mark { font-weight: 700; }
+
+.vp-time {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.86rem;
+  font-variant-numeric: tabular-nums;
+  padding: 0 6px;
+  color: var(--clr-text-1);
+  white-space: nowrap;
+}
+
+.vp-meta {
+  font-size: 0.72rem;
+  color: var(--clr-text-3);
+  white-space: nowrap;
+}
+
+.vp-sep { flex: 1 1 auto; }
+
+.vp-rate {
+  font-variant-numeric: tabular-nums;
+  min-width: 52px;
+  text-align: center;
+}
+
+/* ── Sélection de la source ── */
+.vp-source {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: var(--sp-xs);
+}
+
+.vp-url {
+  flex: 1 1 220px;
+  min-width: 160px;
+  font-size: 0.82rem;
+  padding: 5px 8px;
+  background: var(--clr-surface);
+  border: 1px solid var(--clr-border);
+  border-radius: var(--r-sm);
+  color: var(--clr-text-1);
+}
+
+.vp-file-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+}
+
+.vp-file-label input[type="file"] { display: none; }
+
+/* ── Repères enregistrés ── */
+.vp-marks {
+  display: flex;
+  gap: var(--sp-sm);
+  flex-wrap: wrap;
+  align-items: center;
+  font-size: 0.78rem;
+  color: var(--clr-text-3);
+  padding: var(--sp-xs) 0;
+}
+
+.vp-mark-val {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  color: var(--clr-text-1);
+  font-variant-numeric: tabular-nums;
+}
+
+.vp-mark--unset { color: var(--clr-text-3); font-style: italic; }
+
+.vp-hint {
+  font-size: 0.74rem;
+  color: var(--clr-text-3);
+  line-height: 1.5;
+}
+
+.vp-hint kbd {
+  background: var(--clr-surface);
+  border: 1px solid var(--clr-border);
+  border-bottom-width: 2px;
+  border-radius: 3px;
+  padding: 0 4px;
+  font-size: 0.72rem;
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
+
+.vp-local-note {
+  font-size: 0.74rem;
+  color: var(--clr-text-3);
+}
+
+/* ── Intégration dans la vue Analyse des départs ── */
+.sanl-video {
+  margin-bottom: var(--sp-md);
+  padding-bottom: var(--sp-sm);
+  border-bottom: 1px solid var(--clr-border);
+}
+
+.sanl-video-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-sm);
+  margin-bottom: var(--sp-xs);
+}
+
+.sanl-video-title {
+  font-family: var(--font-condensed);
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--clr-text-3);
+}
+
+.sanl-video.is-collapsed .vp,
+.sanl-video.is-collapsed .vp-source,
+.sanl-video.is-collapsed .vp-bar,
+.sanl-video.is-collapsed .vp-marks,
+.sanl-video.is-collapsed .vp-hint { display: none; }
+
+/* ── Navigation entre départs ── */
+.sanl-nav {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+@media (max-width: 720px) {
+  .vp-bar { gap: 4px; }
+  .vp-btn { padding: 5px 8px; font-size: 0.8rem; }
+  .vp-time { font-size: 0.78rem; }
+}

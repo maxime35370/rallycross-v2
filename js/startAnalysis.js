@@ -22,6 +22,11 @@ import {
   orderGridByInterim, orderFinalGridFromSemis, orderByRaceResult,
 } from './startAnalysisCalc.js';
 import { calcInterimStandings } from './calc.js';
+import { createVideoPlayer } from './videoPlayer.js';
+import {
+  parseVideoSource, resolveStartTime, formatPreciseTime, buildVideoBlock,
+  keyboardAction, neighbourStartId, nextRate, ratesFor, SHORTCUT_HELP,
+} from './videoPlayerCalc.js';
 
 // ─────────────────────────────────────────────────────────
 // ÉTAT
@@ -38,6 +43,15 @@ let current           = null;    // { start, rows, analysis, dirty }
 let interimOrder      = [];      // driverIds du classement intermédiaire, 1er en tête
 let semiFinishOrders  = [];      // ordres d'arrivée des demi-finales, pour la grille de finale
 let _initialised      = false;
+
+// ── Lecteur vidéo ──
+// Le lecteur vit HORS de la zone re-rendue : changer une position au V1 ne doit
+// jamais recharger la vidéo ni perdre la position de lecture.
+let player          = null;
+let videoCollapsed  = false;
+let sharedFile      = null;   // fichier local courant, réutilisé d'une série à l'autre
+let videoState      = { time: 0, playing: false, ready: false, error: '' };
+let _keysBound      = false;
 
 const FS = 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 
@@ -187,12 +201,17 @@ function renderView() {
 
     <div class="sanl-layout">
       <aside class="sanl-list" id="sanl-list"></aside>
-      <section class="sanl-work" id="sanl-work"></section>
+      <div class="sanl-right">
+        <section class="sanl-video" id="sanl-video"></section>
+        <section class="sanl-work" id="sanl-work"></section>
+      </div>
     </div>
   `;
   refreshMeetingSelect();
   bindToolbar();
+  bindKeyboard();
   renderList();
+  renderVideoPanel();
   renderWork();
 }
 
@@ -324,6 +343,14 @@ function selectStart(docId) {
     rows,
     warnings,
     meeting,
+    video: {
+      kind:      saved?.video?.kind || null,
+      youtubeId: saved?.video?.youtubeId || null,
+      fileName:  saved?.video?.fileName || null,
+      startAt:   saved?.video?.startAt ?? null,
+      turn1At:   saved?.video?.turn1At ?? null,
+      fps:       saved?.video?.fps ?? null,
+    },
     orderCompleteness: saved?.orderCompleteness || 'complete',
     savedStatus: saved?.status || null,
     integrityMismatch: saved?.integrity?.seriesFingerprint
@@ -332,6 +359,7 @@ function selectStart(docId) {
     dirty: false,
   };
   renderList();
+  renderVideoPanel();
   renderWork();
 }
 
@@ -425,6 +453,8 @@ function renderWork() {
       <button class="btn btn-secondary" id="sanl-clear" ${readOnly ? 'disabled' : ''}>Effacer les positions V1</button>
       <button class="btn btn-secondary" id="sanl-draft" ${readOnly ? 'disabled' : ''}>💾 Enregistrer en brouillon</button>
       <button class="btn btn-primary"   id="sanl-validate" ${readOnly ? 'disabled' : ''}>✅ Valider l'analyse</button>
+      <button class="btn btn-primary"   id="sanl-validate-next" ${readOnly ? 'disabled' : ''}
+        title="Valider puis ouvrir le départ suivant (N)">✅ Valider → départ suivant</button>
     </div>
     <div class="sanl-feedback" id="sanl-feedback"></div>
   `;
@@ -548,6 +578,351 @@ function refreshFeedback() {
 }
 
 // ─────────────────────────────────────────────────────────
+// LECTEUR VIDÉO
+// ─────────────────────────────────────────────────────────
+
+/** Identifiants des départs, dans l'ordre affiché : sert à « suivant/précédent ». */
+function startIdsInOrder() {
+  return startsIndex.map(st => startDocId(st.sessionId, st.startIndex));
+}
+
+function currentDocId() {
+  return current?.start ? startDocId(current.start.sessionId, current.start.startIndex) : null;
+}
+
+/**
+ * Panneau vidéo. Sa coquille n'est construite qu'UNE fois : le lecteur ne doit
+ * pas être recréé à chaque saisie, sinon la vidéo repart au début.
+ */
+function renderVideoPanel() {
+  const el = document.getElementById('sanl-video');
+  if (!el) return;
+
+  if (!current) {
+    destroyPlayer();
+    el.innerHTML = '';
+    el.style.display = 'none';
+    return;
+  }
+  el.style.display = '';
+
+  if (!el.querySelector('#sanl-player')) {
+    el.className = `sanl-video${videoCollapsed ? ' is-collapsed' : ''}`;
+    el.innerHTML = videoShellHtml();
+    bindVideoControls();
+    ensurePlayer();
+  } else if (!player) {
+    // Coquille intacte mais lecteur détruit : le recréer plutôt que laisser
+    // des commandes sans effet.
+    ensurePlayer();
+  }
+  applySourceForCurrent();
+  refreshVideoUi();
+}
+
+function videoShellHtml() {
+  return `
+    <div class="sanl-video-head">
+      <span class="sanl-video-title">🎬 Lecteur vidéo</span>
+      <div class="sanl-nav">
+        <button class="vp-btn" id="sanl-prev" title="Départ précédent (P)">◀ Précédent</button>
+        <button class="vp-btn" id="sanl-next" title="Départ suivant (N)">Suivant ▶</button>
+        <button class="vp-btn" id="sanl-video-toggle">${videoCollapsed ? 'Afficher' : 'Masquer'}</button>
+      </div>
+    </div>
+
+    <div class="vp-source">
+      <input type="text" class="vp-url" id="sanl-vurl" placeholder="Lien YouTube (https://youtu.be/…)">
+      <button class="vp-btn" id="sanl-vload">Charger</button>
+      <label class="vp-btn vp-file-label">
+        📁 Fichier local
+        <input type="file" id="sanl-vfile" accept="video/*">
+      </label>
+      <span class="vp-local-note" id="sanl-vsource"></span>
+    </div>
+
+    <div id="sanl-player"></div>
+
+    <div class="vp-bar">
+      <button class="vp-btn" id="sanl-vplay" title="Lecture / pause (Espace)">▶︎</button>
+      <button class="vp-btn" id="sanl-vjb"  title="− 5 s (⇧←)">−5s</button>
+      <button class="vp-btn" id="sanl-vsb"  title="− 1 s (←)">−1s</button>
+      <button class="vp-btn" id="sanl-vfp"  title="Image précédente (⌥← ou ,)">⏮ img</button>
+      <button class="vp-btn" id="sanl-vfn"  title="Image suivante (⌥→ ou .)">img ⏭</button>
+      <button class="vp-btn" id="sanl-vsf"  title="+ 1 s (→)">+1s</button>
+      <button class="vp-btn" id="sanl-vjf"  title="+ 5 s (⇧→)">+5s</button>
+      <span class="vp-time" id="sanl-vtime">—</span>
+      <button class="vp-btn" id="sanl-vslow" title="Plus lent (↓)">−</button>
+      <span class="vp-rate vp-meta" id="sanl-vrate">×1</span>
+      <button class="vp-btn" id="sanl-vfast" title="Plus rapide (↑)">+</button>
+      <span class="vp-sep"></span>
+      <button class="vp-btn vp-btn--mark" id="sanl-vmarkd" title="Marquer l'instant du départ (D)">⏱ Départ ici</button>
+      <button class="vp-btn vp-btn--mark vp-btn--primary" id="sanl-vmarkv" title="Marquer l'image du 1er virage (V)">🎯 Image V1</button>
+      <button class="vp-btn" id="sanl-vfull" title="Plein écran (F)">⛶</button>
+    </div>
+
+    <div class="vp-marks" id="sanl-vmarks"></div>
+    <div class="vp-hint">
+      ${SHORTCUT_HELP.map(([k, label]) => `<kbd>${escHtml(k)}</kbd> ${escHtml(label)}`).join(' · ')}
+    </div>`;
+}
+
+function ensurePlayer() {
+  const host = document.getElementById('sanl-player');
+  if (!host) return;
+  destroyPlayer();
+  player = createVideoPlayer(host, {
+    onTime: (t) => { videoState.time = t; refreshTimeDisplay(); },
+    onReady: (info) => {
+      videoState.ready = true;
+      videoState.error = '';
+      if (info.fps && current) current.video.fps = info.fps;
+      refreshVideoUi();
+    },
+    onPlayState: (playing) => {
+      videoState.playing = playing;
+      const b = document.getElementById('sanl-vplay');
+      if (b) b.textContent = playing ? '❚❚' : '▶︎';
+    },
+    onError: (msg) => { videoState.error = msg || ''; refreshVideoUi(); },
+  });
+}
+
+/**
+ * Le meeting ou la catégorie a changé : la vidéo chargée ne correspond plus.
+ * Le fichier local, lui, est conservé — c'est souvent le même enregistrement
+ * pour toute une journée de course.
+ */
+function resetVideo() {
+  destroyPlayer();
+  _loadedKey = '';
+}
+
+function destroyPlayer() {
+  if (player) { try { player.destroy(); } catch { /* déjà détruit */ } player = null; }
+  videoState = { time: 0, playing: false, ready: false, error: '' };
+}
+
+/**
+ * Charge la source correspondant au départ sélectionné, et se place au
+ * timecode connu. Ne recharge rien si la même source est déjà à l'écran :
+ * enchaîner deux séries de la même vidéo doit être instantané.
+ */
+let _loadedKey = '';
+
+function applySourceForCurrent() {
+  if (!player || !current) return;
+  const meeting = current.meeting;
+  const resolved = resolveStartTime({
+    analysisVideo: current.video,
+    meetingTimecodes: meeting?.videoTimecodes,
+    meetingVideos: meeting?.videos,
+    sessionType: current.start.sessionType,
+    sessionNum: current.start.sessionNum,
+    category: selectedCategory,
+    startIndex: current.start.startIndex,
+  });
+  current._resolved = resolved;
+
+  const wantsFile = current.video.kind === 'file' && sharedFile;
+  const key = wantsFile
+    ? `file:${sharedFile.name}`
+    : (resolved.youtubeId ? `yt:${resolved.youtubeId}` : '');
+
+  const at = resolved.seconds ?? 0;
+  if (!key) { _loadedKey = ''; return; }
+
+  if (key === _loadedKey) {
+    // Même vidéo : un simple repositionnement suffit.
+    if (resolved.seconds != null) player.seek(at);
+    return;
+  }
+  _loadedKey = key;
+  if (wantsFile) player.loadFile(sharedFile, at);
+  else player.loadYoutube(resolved.youtubeId, at);
+}
+
+function refreshTimeDisplay() {
+  const el = document.getElementById('sanl-vtime');
+  if (!el || !player) return;
+  const fps = player.fps || current?.video?.fps || null;
+  el.textContent = formatPreciseTime(videoState.time, { fps: fps || undefined, frames: !!fps });
+}
+
+function refreshVideoUi() {
+  if (!current) return;
+  const marks = document.getElementById('sanl-vmarks');
+  const src   = document.getElementById('sanl-vsource');
+  const rate  = document.getElementById('sanl-vrate');
+  const ids   = startIdsInOrder();
+  const id    = currentDocId();
+
+  const prev = document.getElementById('sanl-prev');
+  const next = document.getElementById('sanl-next');
+  if (prev) prev.disabled = !neighbourStartId(ids, id, -1);
+  if (next) next.disabled = !neighbourStartId(ids, id, +1);
+
+  if (rate && player) rate.textContent = `×${player.rate}`;
+
+  if (src) {
+    const r = current._resolved || {};
+    const kind = player?.kind;
+    const bits = [];
+    if (kind === 'file') bits.push(`📁 ${escHtml(player.fileName || '')}`);
+    else if (kind === 'youtube') bits.push('▶ YouTube');
+    else bits.push('aucune source');
+    if (player?.fps) bits.push(`${player.fps} img/s`);
+    if (r.source === 'meeting') {
+      bits.push(r.approximate
+        ? '⚠️ timecode du meeting : il vise la 1ʳᵉ série de cette session'
+        : 'timecode du meeting');
+    }
+    if (videoState.error) bits.push(`⚠️ ${escHtml(videoState.error)}`);
+    src.innerHTML = bits.join(' · ');
+  }
+
+  if (marks) {
+    const v = current.video;
+    const fps = player?.fps || v.fps || null;
+    const fmt = (t) => formatPreciseTime(t, { fps: fps || undefined, frames: !!fps });
+    marks.innerHTML = `
+      <span>⏱ Départ :
+        ${v.startAt != null
+          ? `<button class="vp-btn vp-mark-val" id="sanl-goto-start">${fmt(v.startAt)}</button>`
+          : '<span class="vp-mark--unset">non marqué</span>'}
+      </span>
+      <span>🎯 Image V1 :
+        ${v.turn1At != null
+          ? `<button class="vp-btn vp-mark-val" id="sanl-goto-v1">${fmt(v.turn1At)}</button>`
+          : '<span class="vp-mark--unset">non marquée</span>'}
+      </span>`;
+    document.getElementById('sanl-goto-start')?.addEventListener('click',
+      () => player?.seek(current.video.startAt));
+    document.getElementById('sanl-goto-v1')?.addEventListener('click',
+      () => player?.seek(current.video.turn1At));
+  }
+  refreshTimeDisplay();
+}
+
+function markMoment(which) {
+  if (!player || !current) return;
+  if (!player.kind) { toast('Chargez d\'abord une vidéo', 'error'); return; }
+  player.pause();
+  const t = player.getTime();
+  current.video[which] = Math.round(t * 1000) / 1000;
+  current.video.kind = player.kind;
+  if (player.kind === 'youtube') current.video.youtubeId = current._resolved?.youtubeId || current.video.youtubeId;
+  if (player.kind === 'file') current.video.fileName = player.fileName;
+  if (player.fps) current.video.fps = player.fps;
+  current.dirty = true;
+  refreshVideoUi();
+  toast(which === 'turn1At' ? 'Image V1 marquée ✓' : 'Instant du départ marqué ✓', 'success');
+}
+
+function bindVideoControls() {
+  const on = (id, fn) => document.getElementById(id)?.addEventListener('click', fn);
+
+  on('sanl-video-toggle', () => {
+    videoCollapsed = !videoCollapsed;
+    document.getElementById('sanl-video')?.classList.toggle('is-collapsed', videoCollapsed);
+    const b = document.getElementById('sanl-video-toggle');
+    if (b) b.textContent = videoCollapsed ? 'Afficher' : 'Masquer';
+  });
+
+  on('sanl-prev', () => goToNeighbour(-1));
+  on('sanl-next', () => goToNeighbour(+1));
+
+  on('sanl-vload', () => {
+    const raw = document.getElementById('sanl-vurl')?.value || '';
+    const parsed = parseVideoSource(raw);
+    if (!parsed) { toast('Lien YouTube non reconnu', 'error'); return; }
+    current.video.kind = 'youtube';
+    current.video.youtubeId = parsed.videoId;
+    current.dirty = true;
+    _loadedKey = `yt:${parsed.videoId}`;
+    player.loadYoutube(parsed.videoId, parsed.startAt ?? current.video.startAt ?? 0);
+    refreshVideoUi();
+  });
+
+  document.getElementById('sanl-vfile')?.addEventListener('change', (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    // Le fichier reste sur la machine : aucune donnée n'est envoyée à Firebase.
+    sharedFile = file;
+    current.video.kind = 'file';
+    current.video.fileName = file.name;
+    current.dirty = true;
+    _loadedKey = `file:${file.name}`;
+    player.loadFile(file, current.video.startAt ?? 0);
+    refreshVideoUi();
+  });
+
+  on('sanl-vplay', () => player?.togglePlay());
+  on('sanl-vjb', () => player?.step(-1, 'large'));
+  on('sanl-vsb', () => player?.step(-1, 'medium'));
+  on('sanl-vfp', () => player?.step(-1, 'frame'));
+  on('sanl-vfn', () => player?.step(+1, 'frame'));
+  on('sanl-vsf', () => player?.step(+1, 'medium'));
+  on('sanl-vjf', () => player?.step(+1, 'large'));
+  on('sanl-vfull', () => player?.toggleFullscreen());
+  on('sanl-vslow', () => changeRate(-1));
+  on('sanl-vfast', () => changeRate(+1));
+  on('sanl-vmarkd', () => markMoment('startAt'));
+  on('sanl-vmarkv', () => markMoment('turn1At'));
+}
+
+function changeRate(dir) {
+  if (!player) return;
+  player.setRate(nextRate(ratesFor(player.kind), player.rate, dir));
+  const el = document.getElementById('sanl-vrate');
+  if (el) el.textContent = `×${player.rate}`;
+}
+
+function goToNeighbour(dir) {
+  const target = neighbourStartId(startIdsInOrder(), currentDocId(), dir);
+  if (!target) { toast(dir > 0 ? 'Dernier départ de la catégorie' : 'Premier départ'); return; }
+  selectStart(target);
+}
+
+// ─────────────────────────────────────────────────────────
+// CLAVIER
+// ─────────────────────────────────────────────────────────
+
+function bindKeyboard() {
+  if (_keysBound) return;
+  _keysBound = true;
+  document.addEventListener('keydown', (e) => {
+    // Uniquement quand la vue est visible et qu'un départ est ouvert.
+    const view = document.getElementById('view-startAnalysis');
+    if (!view || view.style.display === 'none' || !current) return;
+    const action = keyboardAction(e);
+    if (!action) return;
+
+    const needsPlayer = action !== 'nextStart' && action !== 'prevStart';
+    if (needsPlayer && !player?.kind) return;
+
+    e.preventDefault();
+    switch (action) {
+      case 'togglePlay':   player.togglePlay(); break;
+      case 'stepBack':     player.step(-1, 'medium'); break;
+      case 'stepForward':  player.step(+1, 'medium'); break;
+      case 'jumpBack':     player.step(-1, 'large'); break;
+      case 'jumpForward':  player.step(+1, 'large'); break;
+      case 'framePrev':    player.step(-1, 'frame'); break;
+      case 'frameNext':    player.step(+1, 'frame'); break;
+      case 'slower':       changeRate(-1); break;
+      case 'faster':       changeRate(+1); break;
+      case 'markTurn1':    markMoment('turn1At'); break;
+      case 'markStart':    markMoment('startAt'); break;
+      case 'fullscreen':   player.toggleFullscreen(); break;
+      case 'nextStart':    goToNeighbour(+1); break;
+      case 'prevStart':    goToNeighbour(-1); break;
+      default: break;
+    }
+  });
+}
+
+// ─────────────────────────────────────────────────────────
 // ÉVÉNEMENTS
 // ─────────────────────────────────────────────────────────
 
@@ -555,21 +930,24 @@ function bindToolbar() {
   document.getElementById('sanl-year')?.addEventListener('change', async (e) => {
     selectedYear = parseInt(e.target.value, 10);
     selectedMeetingId = ''; selectedCategory = ''; current = null;
+    resetVideo();
     await loadMeetings();
-    refreshMeetingSelect(); renderList(); renderWork();
+    refreshMeetingSelect(); renderList(); renderVideoPanel(); renderWork();
   });
 
   document.getElementById('sanl-meeting')?.addEventListener('change', async (e) => {
     selectedMeetingId = e.target.value; selectedCategory = ''; current = null;
+    resetVideo();
     refreshMeetingSelect();
     await loadSessionsAndStarts();
-    renderList(); renderWork();
+    renderList(); renderVideoPanel(); renderWork();
   });
 
   document.getElementById('sanl-category')?.addEventListener('change', async (e) => {
     selectedCategory = e.target.value; current = null;
+    resetVideo();
     await loadSessionsAndStarts();
-    renderList(); renderWork();
+    renderList(); renderVideoPanel(); renderWork();
   });
 }
 
@@ -600,6 +978,9 @@ function bindWork() {
 
   document.getElementById('sanl-draft')?.addEventListener('click', () => persist(false));
   document.getElementById('sanl-validate')?.addEventListener('click', () => persist(true));
+  document.getElementById('sanl-validate-next')?.addEventListener('click', async () => {
+    if (await persist(true)) goToNeighbour(+1);
+  });
 }
 
 // ─────────────────────────────────────────────────────────
@@ -631,6 +1012,9 @@ function buildDoc() {
     orderCompleteness: current.orderCompleteness,
     analysis: { engine: 'manual', version: 1, ranAt: new Date(), warnings: start.warnings || [] },
     integrity: { seriesFingerprint: seriesFingerprint(start.driverIds) },
+    // Repères vidéo du départ. Un fichier local n'est JAMAIS téléversé : seul
+    // son nom est conservé pour retrouver le bon fichier à la prochaine session.
+    video: buildVideoBlock(current.video),
     rows: rows.map(r => ({
       driverId: r.driverId,
       carNumber: r.carNumber ?? null,
@@ -651,18 +1035,19 @@ function buildDoc() {
 }
 
 async function persist(validated) {
-  if (!current) return;
+  if (!current) return false;
   if (validated) {
     const v = validateAnalysis({ rows: current.rows, orderCompleteness: current.orderCompleteness });
-    if (!v.ok) { toast(v.errors[0], 'error', 5000); return; }
+    if (!v.ok) { toast(v.errors[0], 'error', 5000); return false; }
   }
   const ok = await saveAnalysis(buildDoc(), { validated });
-  if (!ok) return;
+  if (!ok) return false;
   current.dirty = false;
   current.savedStatus = validated ? 'validated' : 'draft';
   toast(validated ? 'Analyse validée ✓' : 'Brouillon enregistré', 'success');
   renderList();
   renderWork();
+  return true;
 }
 
 // ─────────────────────────────────────────────────────────

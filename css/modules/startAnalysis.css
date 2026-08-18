@@ -10,6 +10,15 @@
   align-items: start;
 }
 
+/* Colonne droite : le lecteur vidéo reste au-dessus du poste de travail et,
+   surtout, HORS de la zone re-rendue à chaque saisie. */
+.sanl-right {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-md);
+  min-width: 0;
+}
+
 @media (max-width: 860px) {
   .sanl-layout { grid-template-columns: 1fr; }
   .sanl-list   { max-height: 240px; }
