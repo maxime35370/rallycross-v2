@@ -608,9 +608,15 @@ export function validateAnalysis(analysis) {
   }
 
   // Avertissements non bloquants
+  // Avertissement de saisie PARTIELLE uniquement : quand rien n'est encore
+  // saisi, l'erreur ci-dessus le dit déjà, et parler d'« abandon » serait faux.
+  // On ne présume donc pas de la raison : abandon, ou voiture hors champ.
   const missing = rows.length - withPos.length;
-  if (missing > 0) {
-    warnings.push(`${missing} pilote(s) sans position V1 (abandon avant le virage 1) — exclus des matrices`);
+  if (missing > 0 && withPos.length > 0) {
+    warnings.push(
+      `${missing} pilote(s) sans position au 1er virage — exclus des matrices ` +
+      `(abandon, ou voiture non visible à l'image de mesure)`
+    );
   }
   if (rows.some(r => r.confidence === 'yellow')) {
     warnings.push('Certaines lignes sont à vérifier (🟡)');
