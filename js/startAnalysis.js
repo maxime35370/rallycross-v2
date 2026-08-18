@@ -361,7 +361,7 @@ function renderWork() {
             <th style="width:56px" title="Couloir physique">Couloir</th>
             <th>Pilote</th>
             <th style="width:52px" class="center">N°</th>
-            <th style="width:96px" class="center">1er virage</th>
+            <th class="center sanl-col-v1">1er virage</th>
             <th style="width:74px" class="center">Arrivée</th>
             <th style="width:110px" class="center">Confiance</th>
           </tr>
@@ -386,7 +386,7 @@ function renderRow(r, i, start, readOnly) {
   const n = start.starters;
   const finish = r.finishPosInStart != null ? `P${r.finishPosInStart}`
     : (r.finishStatus ? `<span class="badge badge-dnf">${escHtml(r.finishStatus)}</span>` : '—');
-  const options = v1OptionsHtml(r, n);
+  const v1Buttons = v1ButtonsHtml(r, n, readOnly);
 
   return `
     <tr data-driver="${escHtml(r.driverId)}">
@@ -395,11 +395,7 @@ function renderRow(r, i, start, readOnly) {
       <td class="center">${r.lane ?? '<span class="text-muted">—</span>'}</td>
       <td>${escHtml(((r.firstName || '') + ' ' + (r.lastName || '')).trim() || r.driverId)}</td>
       <td class="center">${r.carNumber ?? '—'}</td>
-      <td class="center">
-        <select class="form-select sanl-v1" data-driver="${escHtml(r.driverId)}" ${readOnly ? 'disabled' : ''}>
-          ${options}
-        </select>
-      </td>
+      <td class="center"><div class="sanl-v1-group" data-driver="${escHtml(r.driverId)}">${v1Buttons}</div></td>
       <td class="center">${finish}</td>
       <td class="center">
         <select class="form-select sanl-conf" data-driver="${escHtml(r.driverId)}" ${readOnly ? 'disabled' : ''}>
@@ -411,27 +407,57 @@ function renderRow(r, i, start, readOnly) {
     </tr>`;
 }
 
-/** Options du sélecteur V1 : les positions prises par un autre pilote sont retirées. */
-function v1OptionsHtml(row, starters) {
-  const avail = availableTurn1Positions(row.driverId, current.rows, starters);
-  return ['<option value="">—</option>']
-    .concat(avail.map(k => `<option value="${k}" ${row.turn1Pos === k ? 'selected' : ''}>P${k}</option>`))
-    .join('');
+/**
+ * Boutons de position au premier virage pour un pilote.
+ * Une position prise par un AUTRE pilote est désactivée ; celle du pilote
+ * lui-même reste toujours cliquable pour permettre de la retirer.
+ */
+function v1ButtonsHtml(row, starters, readOnly) {
+  const avail = new Set(availableTurn1Positions(row.driverId, current.rows, starters));
+  let html = '';
+  for (let k = 1; k <= starters; k++) {
+    const active = row.turn1Pos === k;
+    const disabled = !avail.has(k) || readOnly;
+    html += `<button type="button" class="sanl-v1-btn${active ? ' is-active' : ''}"
+      data-driver="${escHtml(row.driverId)}" data-pos="${k}"
+      aria-pressed="${active}" ${disabled ? 'disabled' : ''}
+      title="${active ? 'Cliquer pour retirer' : `Placer ce pilote en P${k} au 1er virage`}"
+      >P${k}</button>`;
+  }
+  return html;
 }
 
 /**
- * Reconstruit les listes déroulantes après chaque saisie : choisir une position
- * la retire des autres sélecteurs. On ne re-rend pas tout le tableau pour ne pas
- * perdre le focus en cours de frappe.
+ * Met à jour l'état des boutons après chaque clic : la position choisie devient
+ * indisponible pour les autres pilotes. On ne re-rend pas tout le tableau afin
+ * de ne pas perdre la position de défilement.
  */
-function refreshV1Options() {
+function refreshV1Buttons() {
   if (!current) return;
   const n = current.start.starters;
-  document.querySelectorAll('.sanl-v1').forEach(sel => {
-    const row = current.rows.find(r => r.driverId === sel.dataset.driver);
+  const readOnly = !isAdmin();
+  document.querySelectorAll('.sanl-v1-group').forEach(group => {
+    const row = current.rows.find(r => r.driverId === group.dataset.driver);
     if (!row) return;
-    sel.innerHTML = v1OptionsHtml(row, n);
-    sel.value = row.turn1Pos != null ? String(row.turn1Pos) : '';
+    group.innerHTML = v1ButtonsHtml(row, n, readOnly);
+  });
+  bindV1Buttons();
+}
+
+/** (Ré)attache les clics sur les boutons de position. */
+function bindV1Buttons() {
+  document.querySelectorAll('.sanl-v1-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const row = current.rows.find(r => r.driverId === btn.dataset.driver);
+      if (!row) return;
+      const pos = parseInt(btn.dataset.pos, 10);
+      // Clic sur la position déjà active → on la retire (pas besoin d'un « — »)
+      row.turn1Pos = row.turn1Pos === pos ? null : pos;
+      row.corrected = true;
+      current.dirty = true;
+      refreshV1Buttons();
+      refreshFeedback();
+    });
   });
 }
 
@@ -475,17 +501,7 @@ function bindToolbar() {
 }
 
 function bindWork() {
-  document.querySelectorAll('.sanl-v1').forEach(sel => {
-    sel.addEventListener('change', () => {
-      const row = current.rows.find(r => r.driverId === sel.dataset.driver);
-      if (!row) return;
-      row.turn1Pos = sel.value ? parseInt(sel.value, 10) : null;
-      row.corrected = true;
-      current.dirty = true;
-      refreshV1Options();
-      refreshFeedback();
-    });
-  });
+  bindV1Buttons();
 
   document.querySelectorAll('.sanl-conf').forEach(sel => {
     sel.addEventListener('change', () => {
