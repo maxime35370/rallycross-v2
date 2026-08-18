@@ -231,6 +231,22 @@ try {
         entry.menu && entry.card && entry.cachePourLePublic && entry.visiblePourLaRegie,
         JSON.stringify(entry));
 
+  // ── 10 bis. La vue de saisie est déclarée réservée à la régie ──
+  //    Masquer le lien ne suffirait pas : le routage par hash (#startAnalysis)
+  //    ouvre n'importe quelle vue. C'est PROTECTED_VIEWS qui ferme la porte.
+  const prot = await page.evaluate(async () => {
+    const auth = await import('/js/auth.js');
+    return {
+      analyseProtegee: auth.isProtectedView('startAnalysis'),
+      // les statistiques restent publiques, comme les autres vues de résultats
+      statsPubliques: !auth.isProtectedView('startStats'),
+      spectateurPublic: !auth.isProtectedView('spectator'),
+    };
+  });
+  check('vue de saisie réservée à la régie, statistiques publiques',
+        prot.analyseProtegee && prot.statsPubliques && prot.spectateurPublic,
+        JSON.stringify(prot));
+
   // ── 11. Sélecteur V1 : une position prise disparaît des autres listes ──
   const v1 = await page.evaluate(async () => {
     const m = await import('/js/startAnalysisCalc.js');

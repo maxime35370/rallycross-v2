@@ -14,7 +14,7 @@ let currentUser = null;
 // non-admin). Lecture libre pour tous : home, standings, championship, stats, spectator.
 const PROTECTED_VIEWS = [
   'persons', 'drivers', 'meetings', 'engagements', 'sessions', 'timing',
-  'audit', 'config', 'settings',
+  'startAnalysis', 'audit', 'config', 'settings',
 ];
 
 // ⚠️ DOIT correspondre à l'allowlist des RÈGLES FIRESTORE (fonction isRegie()).
