@@ -2,8 +2,9 @@ import { describe, it, expect } from 'vitest';
 import {
   validatedOnly, filterAnalyses, toRows,
   mean, median, wilson, spearman,
-  byGridPos, byLane, transitionMatrix, turn1VsFinish, summary,
-  formatRate, MIN_N_FOR_RATE,
+  byGridPos, byLane, byGridRow, transitionMatrix, allMatrices,
+  turn1VsFinish, gridVsFinish, gridVsTurn1, summary,
+  phaseGroupOf, availableSizes, formatRate, MIN_N_FOR_RATE,
 } from '../js/startStatsCalc.js';
 
 // ─────────────────────────────────────────────────────────
@@ -210,15 +211,25 @@ describe('byGridPos', () => {
     expect(stats[0].nObservations).toBe(4);
   });
 
-  it('calcule le taux de conservation de la tête pour P1', () => {
-    expect(stats[0].keptLeadRate.rate).toBe(0.75);
-    expect(stats[0].keptLeadRate.n).toBe(4);
-    expect(stats[0].tookLeadRate).toBeNull();      // sans objet pour P1
+  it('« P1 au V1 » : une seule colonne, valable pour toutes les positions', () => {
+    expect(stats[0].leadRate.rate).toBe(0.75);     // P1 garde la tête 3 fois sur 4
+    expect(stats[1].leadRate.rate).toBe(0.25);     // P2 la prend 1 fois sur 4
+    expect(stats[2].leadRate.rate).toBe(0);
   });
 
-  it('calcule le taux de prise de tête pour P2', () => {
-    expect(stats[1].tookLeadRate.rate).toBe(0.25);
-    expect(stats[1].keptLeadRate).toBeNull();
+  it('décompose maintien, gain et perte de position', () => {
+    expect(stats[0].keptRate.rate).toBe(0.75);     // P1 reste P1
+    expect(stats[0].lostRate.rate).toBe(0.25);
+    expect(stats[0].gainedRate.rate).toBe(0);      // P1 ne peut pas gagner
+    expect(stats[1].gainedRate.rate).toBe(0.25);   // P2 passe P1 une fois
+    expect(stats[1].keptRate.rate).toBe(0.75);
+  });
+
+  it('les trois taux d\'évolution totalisent 100 %', () => {
+    for (const st of stats) {
+      const total = st.keptRate.rate + st.gainedRate.rate + st.lostRate.rate;
+      expect(total).toBeCloseTo(1, 6);
+    }
   });
 
   it('calcule le gain moyen, positif quand on gagne des places', () => {
@@ -328,6 +339,173 @@ describe('summary', () => {
 
   it('détaille la répartition par taille de grille', () => {
     expect(s.bySize).toEqual([{ starters: 3, count: 1 }, { starters: 5, count: 2 }]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────
+// LES TROIS MATRICES
+// ─────────────────────────────────────────────────────────
+
+describe('allMatrices — grille → V1 → arrivée', () => {
+  // 3 départs de 3. Au V1 l'ordre change, puis se rétablit à l'arrivée.
+  const data = [
+    makeStart({ id: 'm1', starters: 3, turn1: [1, 2, 3], finish: [1, 2, 3] }),
+    makeStart({ id: 'm2', starters: 3, turn1: [2, 1, 3], finish: [1, 2, 3] }),
+    makeStart({ id: 'm3', starters: 3, turn1: [2, 1, 3], finish: [2, 1, 3] }),
+  ];
+  const rows = toRows(data);
+  const m = allMatrices(rows, 3);
+
+  it('produit bien les trois matrices demandées', () => {
+    expect(Object.keys(m)).toEqual(['gridToTurn1', 'turn1ToFinish', 'gridToFinish']);
+  });
+
+  it('grille → V1 : P1 conserve la tête 1 fois sur 3', () => {
+    expect(m.gridToTurn1.cells[0][0]).toMatchObject({ count: 1, n: 3 });
+  });
+
+  it('V1 → arrivée : celui qui sort P1 du virage gagne 2 fois sur 3', () => {
+    // m1 : P1 au V1 finit P1 ; m2 : le V1-P1 est d2 qui finit P2 ; m3 : le V1-P1 finit P1
+    expect(m.turn1ToFinish.cells[0][0].n).toBe(3);
+    expect(m.turn1ToFinish.cells[0][0].count).toBe(2);
+  });
+
+  it('grille → arrivée : mesure l\'effet global de la position de départ', () => {
+    expect(m.gridToFinish.cells[0][0]).toMatchObject({ count: 2, n: 3 });
+  });
+
+  it('chaque matrice indique son nombre de paires et de départs', () => {
+    expect(m.gridToTurn1.nStarts).toBe(3);
+    expect(m.gridToTurn1.nPairs).toBe(9);
+    expect(m.gridToTurn1.from).toBe('gridPos');
+    expect(m.gridToTurn1.to).toBe('turn1Pos');
+  });
+});
+
+describe('matrices — un abandon n\'est jamais transformé en position', () => {
+  it('exclut la paire dont l\'arrivée est inconnue', () => {
+    const a = makeStart({ id: 'x', starters: 3, turn1: [1, 2, 3], finish: [1, 2, 3] });
+    a.rows[2].finishPosInStart = null;          // DNF
+    a.rows[2].finishStatus = 'DNF';
+    const m = allMatrices(toRows([a]), 3);
+    expect(m.gridToFinish.nPairs).toBe(2);      // la 3e paire est écartée
+    expect(m.gridToTurn1.nPairs).toBe(3);       // mais son V1 reste exploitable
+  });
+
+  it('le DNF est compté à part, sans position fictive', () => {
+    const a = makeStart({ id: 'x', starters: 3, turn1: [1, 2, 3] });
+    a.rows[2].finishPosInStart = null;
+    a.rows[2].finishStatus = 'DNF';
+    const st = byGridPos(toRows([a]));
+    expect(st[2].nDnf).toBe(1);
+    expect(st[2].nFinished).toBe(0);
+    expect(st[2].finishMean).toBeNull();
+  });
+});
+
+// ─────────────────────────────────────────────────────────
+// ORDRE INCOMPLET
+// ─────────────────────────────────────────────────────────
+
+describe('orderCompleteness — ne jamais déduire les positions non vues', () => {
+  const partiel = makeStart({ id: 'p', starters: 5, turn1: [1, 2, 3, null, null] });
+  partiel.orderCompleteness = 'leaders_only';
+  const complet = makeStart({ id: 'c', starters: 5, turn1: [1, 2, 3, 4, 5] });
+
+  it('les positions certifiées d\'un départ partiel restent utilisables', () => {
+    const rows = toRows([partiel]);
+    expect(rows.filter(r => r.turn1Pos != null)).toHaveLength(3);
+  });
+
+  it('les positions non vues restent nulles, jamais devinées', () => {
+    const rows = toRows([partiel]);
+    expect(rows[3].turn1Pos).toBeNull();
+    expect(rows[4].turn1Pos).toBeNull();
+    expect(rows[3].gainToTurn1).toBeNull();
+  });
+
+  it('requireComplete écarte entièrement les départs partiels', () => {
+    expect(toRows([partiel, complet])).toHaveLength(10);
+    expect(toRows([partiel, complet], { requireComplete: true })).toHaveLength(5);
+  });
+
+  it('le nombre d\'observations issues de départs partiels est exposé', () => {
+    const st = byGridPos(toRows([partiel, complet]));
+    expect(st[0].nFromPartial).toBe(1);
+    expect(summary([partiel, complet]).nFromPartial).toBe(5);
+  });
+});
+
+// ─────────────────────────────────────────────────────────
+// SÉPARATION DES PHASES
+// ─────────────────────────────────────────────────────────
+
+describe('phaseGroupOf — manches et phases finales ne se mélangent pas', () => {
+  it('classe les manches à part', () => {
+    expect(phaseGroupOf('MQ')).toBe('MQ');
+  });
+  it('regroupe QF, DF et finale', () => {
+    expect(phaseGroupOf('QF')).toBe('FINALS');
+    expect(phaseGroupOf('DF')).toBe('FINALS');
+    expect(phaseGroupOf('FIN')).toBe('FINALS');
+  });
+  it('classe le reste à part', () => {
+    expect(phaseGroupOf('EC')).toBe('OTHER');
+    expect(phaseGroupOf(null)).toBe('OTHER');
+  });
+});
+
+describe('availableSizes', () => {
+  it('liste les tailles de grille, la plus fréquente en tête', () => {
+    const data = [
+      makeStart({ id: 'a', starters: 5 }),
+      makeStart({ id: 'b', starters: 5 }),
+      makeStart({ id: 'c', starters: 3, turn1: [1, 2, 3] }),
+    ];
+    expect(availableSizes(data)).toEqual([
+      { starters: 5, count: 2 }, { starters: 3, count: 1 },
+    ]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────
+// byGridRow et corrélations
+// ─────────────────────────────────────────────────────────
+
+describe('byGridRow — utile en phases finales', () => {
+  it('regroupe par ligne de grille', () => {
+    const a = makeStart({ id: 'f', sessionType: 'DF', starters: 4, turn1: [1, 2, 3, 4] });
+    a.rows[0].gridRow = 1; a.rows[1].gridRow = 1;
+    a.rows[2].gridRow = 2; a.rows[3].gridRow = 2;
+    const st = byGridRow(toRows([a]));
+    expect(st.map(r => r.gridRow)).toEqual([1, 2]);
+    expect(st[0].nObservations).toBe(2);
+    expect(st[1].turn1Mean).toBe(3.5);
+  });
+});
+
+describe('corrélations des trois transitions', () => {
+  const a = makeStart({ id: 'a', turn1: [1, 2, 3, 4, 5], finish: [1, 2, 3, 4, 5] });
+  const rows = toRows([a]);
+
+  it('grille → V1', () => expect(gridVsTurn1(rows).rho).toBeCloseTo(1, 6));
+  it('V1 → arrivée', () => expect(turn1VsFinish(rows).rho).toBeCloseTo(1, 6));
+  it('grille → arrivée', () => expect(gridVsFinish(rows).rho).toBeCloseTo(1, 6));
+
+  it('summary expose les trois', () => {
+    const c = summary([a]).correlations;
+    expect(Object.keys(c)).toEqual(['gridToTurn1', 'turn1ToFinish', 'gridToFinish']);
+  });
+});
+
+describe('gains sur les trois transitions', () => {
+  it('P4 → V1 P2 → arrivée P1 donne +2, +1 et +3', () => {
+    const a = makeStart({ id: 'a', starters: 4, turn1: [4, 3, 1, 2], finish: [4, 3, 2, 1] });
+    // le pilote parti P4 : V1 P2, arrivée P1
+    const row = toRows([a]).find(r => r.gridPos === 4);
+    expect(row.gainToTurn1).toBe(2);
+    expect(row.gainTurn1ToFinish).toBe(1);
+    expect(row.gainTotal).toBe(3);
   });
 });
 

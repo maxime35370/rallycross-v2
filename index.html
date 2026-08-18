@@ -26,6 +26,7 @@
   <link rel="stylesheet" href="css/modules/spectator.css">
   <link rel="stylesheet" href="css/modules/settings.css">
   <link rel="stylesheet" href="css/modules/startAnalysis.css">
+  <link rel="stylesheet" href="css/modules/startStats.css">
 
   <!-- Cloudflare Web Analytics — visiteurs uniques du site, GRATUIT et SANS cookie (pas de bandeau RGPD).
        Étapes : 1) compte gratuit sur dash.cloudflare.com → « Web Analytics » → Add a site : rxchrono.netlify.app
@@ -95,6 +96,7 @@
       <li><a class="menu-item" data-view="championship" href="#">🥇 Championnat</a></li>
       <li class="menu-separator"></li>
       <li><a class="menu-item" data-view="stats" href="#">📊 Statistiques</a></li>
+      <li><a class="menu-item" data-view="startStats" href="#">📈 Stats des départs</a></li>
       <li><a class="menu-item" data-view="spectator" href="#">📺 Mode Spectateur</a></li>
       <li class="menu-separator"></li>
       <li><a class="menu-item" data-view="audit" href="#">📋 Journal d'audit</a></li>
@@ -268,6 +270,15 @@
       <div class="view-placeholder">
         <div class="placeholder-icon">🎥</div>
         <div class="placeholder-title">Analyse des départs</div>
+        <div class="placeholder-desc">Chargement…</div>
+      </div>
+    </div>
+
+    <!-- VUE : Statistiques des départs -->
+    <div class="view" id="view-startStats" style="display:none">
+      <div class="view-placeholder">
+        <div class="placeholder-icon">📈</div>
+        <div class="placeholder-title">Statistiques des départs</div>
         <div class="placeholder-desc">Chargement…</div>
       </div>
     </div>

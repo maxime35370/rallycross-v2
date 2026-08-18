@@ -70,14 +70,31 @@ export function filterAnalyses(analyses = [], f = {}) {
  * @param {Array} analyses — déjà filtrées
  * @returns {Array}
  */
-export function toRows(analyses = []) {
+export function toRows(analyses = [], { requireComplete = false } = {}) {
   const out = [];
   for (const a of analyses) {
+    // orderCompleteness : 'partial' n'est jamais validable, donc absent ici.
+    // 'leaders_only' signifie que SEULES les voitures vues sont certifiées :
+    // leurs positions sont fiables, mais l'échantillon peut être biaisé (une
+    // voiture est plus souvent filmée quand elle est devant). D'où l'option
+    // requireComplete, qui n'admet que les départs intégralement observés.
+    const complete = (a.orderCompleteness || 'complete') === 'complete';
+    if (requireComplete && !complete) continue;
+
     for (const r of a.rows) {
       if (r.didNotStart) continue;              // n'était pas sur la grille
       if (r.gridPos == null) continue;          // position de grille inconnue
+      const t1 = Number.isFinite(r.turn1Pos) ? r.turn1Pos : null;
+      const fin = Number.isFinite(r.finishPosInStart) ? r.finishPosInStart : null;
       out.push({
         ...r,
+        turn1Pos: t1,
+        finishPosInStart: fin,
+        // Les trois transitions, positives quand des places sont GAGNÉES
+        gainToTurn1:      t1  != null ? r.gridPos - t1 : null,
+        gainTurn1ToFinish: (t1 != null && fin != null) ? t1 - fin : null,
+        gainTotal:        fin != null ? r.gridPos - fin : null,
+        fromCompleteStart: complete,
         startId: a.id,
         sessionType: a.sessionType,
         category: a.category,
@@ -87,6 +104,7 @@ export function toRows(analyses = []) {
         gridSource: a.gridSource,
         gridLayoutKey: a.gridLayoutKey,
         gridLanes: a.gridLanes,
+        gridRow: r.gridRow ?? null,
         starters: a.starters,
       });
     }
@@ -206,26 +224,51 @@ export function byGridPos(rows = []) {
     if (!groups.has(k)) groups.set(k, []);
     groups.get(k).push(r);
   }
+  return [...groups.entries()].sort((a, b) => a[0] - b[0])
+    .map(([gridPos, rs]) => positionStats({ key: 'gridPos', value: gridPos, rows: rs }));
+}
 
-  return [...groups.entries()].sort((a, b) => a[0] - b[0]).map(([gridPos, rs]) => {
-    const measured = rs.filter(r => Number.isFinite(r.turn1Pos));
-    const gains = measured.map(r => r.gridPos - r.turn1Pos);   // + = places gagnées
-    const leads = measured.filter(r => r.turn1Pos === 1).length;
+/**
+ * Indicateurs communs à un groupe de lignes (position de grille, couloir,
+ * ligne de grille…). Regrouper le calcul évite trois copies divergentes.
+ *
+ * @param {{key:string, value:number, rows:Array}} g
+ * @returns {object}
+ */
+function positionStats({ key, value, rows: rs }) {
+  const measured = rs.filter(r => r.turn1Pos != null);
+  const finished = rs.filter(r => r.finishPosInStart != null);
+  const gains = measured.map(r => r.gainToTurn1);
 
-    return {
-      gridPos,
-      nStarts: new Set(rs.map(r => r.startId)).size,
-      nObservations: rs.length,
-      nMeasured: measured.length,
-      // P1 conserve-t-il la tête ? Les autres la prennent-ils ?
-      keptLeadRate: gridPos === 1 ? wilson(leads, measured.length) : null,
-      tookLeadRate: gridPos !== 1 ? wilson(leads, measured.length) : null,
-      gainMean: mean(gains),
-      gainMedian: median(gains),
-      turn1Mean: mean(measured.map(r => r.turn1Pos)),
-      finishMean: mean(rs.map(r => r.finishPosInStart).filter(Number.isFinite)),
-    };
-  });
+  return {
+    [key]: value,
+    nStarts: new Set(rs.map(r => r.startId)).size,
+    nObservations: rs.length,
+    nMeasured: measured.length,
+    nFinished: finished.length,
+    nFromPartial: rs.filter(r => !r.fromCompleteStart).length,
+
+    // ── Grille → V1 ──
+    turn1Mean: mean(measured.map(r => r.turn1Pos)),
+    gainMean: mean(gains),
+    gainMedian: median(gains),
+    leadRate: wilson(measured.filter(r => r.turn1Pos === 1).length, measured.length),
+    keptRate: wilson(measured.filter(r => r.gainToTurn1 === 0).length, measured.length),
+    gainedRate: wilson(measured.filter(r => r.gainToTurn1 > 0).length, measured.length),
+    lostRate: wilson(measured.filter(r => r.gainToTurn1 < 0).length, measured.length),
+
+    // ── V1 → arrivée ──
+    gainAfterTurn1Mean: mean(rs.map(r => r.gainTurn1ToFinish).filter(Number.isFinite)),
+
+    // ── Grille → arrivée ──
+    finishMean: mean(finished.map(r => r.finishPosInStart)),
+    gainTotalMean: mean(rs.map(r => r.gainTotal).filter(Number.isFinite)),
+    winRate: wilson(finished.filter(r => r.finishPosInStart === 1).length, finished.length),
+
+    // ── Abandons : comptés, jamais convertis en position ──
+    nDnf: rs.filter(r => r.finishStatus === 'DNF').length,
+    dnfRate: wilson(rs.filter(r => r.finishStatus === 'DNF').length, rs.length),
+  };
 }
 
 /**
@@ -246,22 +289,26 @@ export function byLane(rows = []) {
     if (!groups.has(k)) groups.set(k, []);
     groups.get(k).push(r);
   }
+  return [...groups.entries()].sort((a, b) => a[0] - b[0])
+    .map(([lane, rs]) => positionStats({ key: 'lane', value: lane, rows: rs }));
+}
 
-  return [...groups.entries()].sort((a, b) => a[0] - b[0]).map(([lane, rs]) => {
-    const measured = rs.filter(r => Number.isFinite(r.turn1Pos));
-    const gains = measured.map(r => r.gridPos - r.turn1Pos);
-    return {
-      lane,
-      nStarts: new Set(rs.map(r => r.startId)).size,
-      nObservations: rs.length,
-      nMeasured: measured.length,
-      gainMean: mean(gains),
-      gainMedian: median(gains),
-      leadRate: wilson(measured.filter(r => r.turn1Pos === 1).length, measured.length),
-      turn1Mean: mean(measured.map(r => r.turn1Pos)),
-      finishMean: mean(rs.map(r => r.finishPosInStart).filter(Number.isFinite)),
-    };
-  });
+/**
+ * Synthèse par LIGNE de grille — n'a de sens qu'en phases finales, les séries
+ * de manche n'ayant qu'une seule ligne.
+ * @param {Array} rows
+ * @returns {Array}
+ */
+export function byGridRow(rows = []) {
+  const groups = new Map();
+  for (const r of rows) {
+    const k = Number(r.gridRow);
+    if (!Number.isInteger(k)) continue;
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(r);
+  }
+  return [...groups.entries()].sort((a, b) => a[0] - b[0])
+    .map(([gridRow, rs]) => positionStats({ key: 'gridRow', value: gridRow, rows: rs }));
 }
 
 /**
@@ -275,30 +322,77 @@ export function byLane(rows = []) {
  * @param {number} size — nombre de partants
  * @returns {{size:number, nStarts:number, cells:Array<Array<{count,rate,n}>>}}
  */
-export function transitionMatrix(rows = [], size = 0) {
+export function transitionMatrix(rows = [], size = 0, { from = 'gridPos', to = 'turn1Pos' } = {}) {
   const n = Number(size);
-  if (!Number.isInteger(n) || n < 1) return { size: 0, nStarts: 0, cells: [] };
+  if (!Number.isInteger(n) || n < 1) return { size: 0, from, to, nStarts: 0, nPairs: 0, cells: [] };
 
-  const rs = rows.filter(r => Number(r.starters) === n
-    && Number.isInteger(r.gridPos) && r.gridPos <= n);
+  const rs = rows.filter(r => Number(r.starters) === n);
 
   const counts = Array.from({ length: n }, () => new Array(n).fill(0));
   const totals = new Array(n).fill(0);
+  let nPairs = 0;
   for (const r of rs) {
-    if (!Number.isFinite(r.turn1Pos) || r.turn1Pos < 1 || r.turn1Pos > n) continue;
-    counts[r.gridPos - 1][r.turn1Pos - 1]++;
-    totals[r.gridPos - 1]++;
+    const a = r[from];
+    const b = r[to];
+    // Une paire n'est comptée que si les DEUX états sont connus. Un abandon
+    // (finishPosInStart null) n'est jamais converti en une position fictive.
+    if (!Number.isFinite(a) || !Number.isFinite(b)) continue;
+    if (a < 1 || a > n || b < 1 || b > n) continue;
+    counts[a - 1][b - 1]++;
+    totals[a - 1]++;
+    nPairs++;
   }
 
   return {
     size: n,
+    from,
+    to,
     nStarts: new Set(rs.map(r => r.startId)).size,
+    nPairs,
     cells: counts.map((row, i) => row.map(c => ({
       count: c,
       rate: totals[i] ? c / totals[i] : null,
       n: totals[i],
     }))),
   };
+}
+
+/** Les trois matrices demandées, pour une taille de grille donnée. */
+export function allMatrices(rows = [], size = 0) {
+  return {
+    gridToTurn1:  transitionMatrix(rows, size, { from: 'gridPos',  to: 'turn1Pos' }),
+    turn1ToFinish: transitionMatrix(rows, size, { from: 'turn1Pos', to: 'finishPosInStart' }),
+    gridToFinish: transitionMatrix(rows, size, { from: 'gridPos',  to: 'finishPosInStart' }),
+  };
+}
+
+/**
+ * Regroupement de phase : les manches et les phases finales ne se mélangent
+ * pas par défaut. Une série de manche est sur UNE ligne et `gridPos` y désigne
+ * un couloir ; une grille de finale a plusieurs lignes et `gridPos` y désigne
+ * un rang de qualification.
+ *
+ * @param {string} sessionType
+ * @returns {'MQ'|'FINALS'|'OTHER'}
+ */
+export function phaseGroupOf(sessionType) {
+  const t = String(sessionType || '').toUpperCase();
+  if (t === 'MQ') return 'MQ';
+  if (t === 'QF' || t === 'DF' || t === 'FIN') return 'FINALS';
+  return 'OTHER';
+}
+
+/** Tailles de grille présentes, de la plus fréquente à la plus rare. */
+export function availableSizes(analyses = []) {
+  const counts = new Map();
+  for (const a of analyses) {
+    const k = Number(a.starters);
+    if (!Number.isInteger(k) || k < 1) continue;
+    counts.set(k, (counts.get(k) || 0) + 1);
+  }
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0] - b[0])
+    .map(([starters, count]) => ({ starters, count }));
 }
 
 /**
@@ -312,6 +406,24 @@ export function turn1VsFinish(rows = []) {
   const pairs = rows.filter(r => Number.isFinite(r.turn1Pos) && Number.isFinite(r.finishPosInStart));
   return {
     rho: spearman(pairs.map(r => r.turn1Pos), pairs.map(r => r.finishPosInStart)),
+    n: pairs.length,
+  };
+}
+
+/** Corrélation entre la position de grille et le résultat final. */
+export function gridVsFinish(rows = []) {
+  const pairs = rows.filter(r => Number.isFinite(r.gridPos) && Number.isFinite(r.finishPosInStart));
+  return {
+    rho: spearman(pairs.map(r => r.gridPos), pairs.map(r => r.finishPosInStart)),
+    n: pairs.length,
+  };
+}
+
+/** Corrélation entre la position de grille et la position au premier virage. */
+export function gridVsTurn1(rows = []) {
+  const pairs = rows.filter(r => Number.isFinite(r.gridPos) && Number.isFinite(r.turn1Pos));
+  return {
+    rho: spearman(pairs.map(r => r.gridPos), pairs.map(r => r.turn1Pos)),
     n: pairs.length,
   };
 }
@@ -342,8 +454,13 @@ export function summary(analyses = []) {
     nCircuits: new Set(analyses.map(a => a.circuitLabel).filter(Boolean)).size,
     nCategories: new Set(analyses.map(a => a.category).filter(Boolean)).size,
     bySize: [...sizes.entries()].sort((a, b) => a[0] - b[0]).map(([starters, count]) => ({ starters, count })),
-    gainMean: mean(measured.map(r => r.gridPos - r.turn1Pos)),
-    correlation: turn1VsFinish(rows),
+    nFromPartial: rows.filter(r => !r.fromCompleteStart).length,
+    gainMean: mean(measured.map(r => r.gainToTurn1)),
+    correlations: {
+      gridToTurn1: gridVsTurn1(rows),
+      turn1ToFinish: turn1VsFinish(rows),
+      gridToFinish: gridVsFinish(rows),
+    },
   };
 }
 

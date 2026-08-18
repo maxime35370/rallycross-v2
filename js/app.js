@@ -16,6 +16,7 @@ const VIEW_TITLES = {
   championship:  'Championnat',
   spectator:     '📺 Mode Spectateur',
   startAnalysis: '🎥 Analyse des départs',
+  startStats:    '📈 Stats des départs',
   stats:         '📊 Statistiques',
   config:        'Configuration',
   settings:      'Reglages Championnats',
@@ -357,6 +358,7 @@ async function loadApp() {
   const { initSpectator }      = await import('./spectator.js');
   const { initStats }          = await import('./stats.js');
   const { initStartAnalysis }  = await import('./startAnalysis.js');
+  const { initStartStats }     = await import('./startStats.js');
   const { initSettings } = await import('./settings.js');
   const { initAudit }    = await import('./audit.js');
   // Enregistrement des modules de vue. Chaque init est isolé : si l'un échoue
@@ -371,6 +373,7 @@ async function loadApp() {
   safeInit(initSpectator, 'spectator');
   safeInit(initStats, 'stats');
   safeInit(initStartAnalysis, 'startAnalysis');
+  safeInit(initStartStats, 'startStats');
   safeInit(initSettings, 'settings');
   safeInit(initAudit, 'audit');
   safeInit(initHomeQr, 'homeQr');   // QR d'accueil (isolé : ne doit pas bloquer la vue courante)

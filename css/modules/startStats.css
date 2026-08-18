@@ -1,0 +1,195 @@
+/* ═══════════════════════════════════════════════
+   STARTSTATS.CSS — Vue « Statistiques des départs »
+═══════════════════════════════════════════════ */
+
+/* ── Filtres ── */
+.sst-filters { flex-wrap: wrap; gap: var(--sp-sm); align-items: center; }
+
+.sst-phase-toggle {
+  display: inline-flex;
+  border: 1px solid var(--clr-border);
+  border-radius: var(--r-sm);
+  overflow: hidden;
+}
+
+.sst-phase-btn {
+  background: transparent;
+  border: 0;
+  padding: 6px 12px;
+  font-family: var(--font-condensed);
+  font-size: 0.8rem;
+  letter-spacing: 0.04em;
+  color: var(--clr-text-3);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+
+.sst-phase-btn:hover { color: var(--clr-text-1); }
+
+.sst-phase-btn.is-active {
+  background: var(--clr-accent);
+  color: #fff;
+}
+
+.sst-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.78rem;
+  color: var(--clr-text-3);
+  cursor: pointer;
+}
+
+/* ── Sections ── */
+.sst-section { margin-bottom: var(--sp-xl); }
+
+.sst-section-title {
+  font-family: var(--font-condensed);
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--clr-text-3);
+  margin-bottom: var(--sp-xs);
+  padding-bottom: var(--sp-xs);
+  border-bottom: 1px solid var(--clr-border);
+}
+
+.sst-hint {
+  font-size: 0.76rem;
+  color: var(--clr-text-3);
+  margin-bottom: var(--sp-sm);
+}
+
+.sst-note {
+  font-size: 0.78rem;
+  color: var(--clr-text-3);
+  background: var(--clr-surface);
+  border-radius: var(--r-sm);
+  padding: 6px 10px;
+  margin-bottom: var(--sp-sm);
+}
+
+/* ── Cartes de synthèse ── */
+.sst-cards {
+  display: flex;
+  gap: var(--sp-sm);
+  flex-wrap: wrap;
+  margin-bottom: var(--sp-sm);
+}
+
+.sst-card {
+  flex: 1 1 120px;
+  background: var(--clr-bg-2);
+  border: 1px solid var(--clr-border);
+  border-radius: var(--r-lg);
+  padding: var(--sp-sm) var(--sp-md);
+  text-align: center;
+}
+
+.sst-card-val {
+  font-family: var(--font-condensed);
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--clr-accent);
+  line-height: 1.1;
+}
+
+.sst-card-lab {
+  font-size: 0.72rem;
+  color: var(--clr-text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-top: 2px;
+}
+
+.sst-corr {
+  display: flex;
+  gap: var(--sp-md);
+  flex-wrap: wrap;
+  font-size: 0.78rem;
+  color: var(--clr-text-3);
+  padding: 6px 0;
+}
+
+/* ── Effectifs : toujours visibles, jamais mis en avant ── */
+.sst-n {
+  font-size: 0.7rem;
+  color: var(--clr-text-3);
+  font-weight: 400;
+}
+
+/* ── Tableaux ── */
+.sst-table { min-width: 760px; font-size: 0.82rem; }
+.sst-table th { white-space: nowrap; }
+.sst-pos { color: var(--clr-success, #2ecc71); }
+.sst-neg { color: var(--clr-danger, #e74c3c); }
+
+/* ── Matrices ── */
+.sst-matrices {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: var(--sp-md);
+}
+
+.sst-matrix {
+  background: var(--clr-bg-2);
+  border: 1px solid var(--clr-border);
+  border-radius: var(--r-lg);
+  padding: var(--sp-sm) var(--sp-md) var(--sp-md);
+}
+
+.sst-matrix-title {
+  font-family: var(--font-condensed);
+  font-size: 0.9rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  margin-bottom: 2px;
+}
+
+.sst-matrix-table { min-width: 0; font-size: 0.78rem; }
+
+/* Intensité proportionnelle au taux : la diagonale ressort naturellement
+   quand les positions se conservent. */
+.sst-cell {
+  background: color-mix(in srgb, var(--clr-accent) calc(var(--i, 0) * 62%), transparent);
+  font-variant-numeric: tabular-nums;
+}
+
+.sst-cell--empty { color: var(--clr-text-3); background: none; }
+
+/* ── Sélecteur de taille de grille ── */
+.sst-size-picker {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+  font-size: 0.78rem;
+  color: var(--clr-text-3);
+  margin-bottom: var(--sp-sm);
+}
+
+.sst-size-btn {
+  background: var(--clr-surface);
+  border: 1px solid var(--clr-border);
+  border-radius: var(--r-sm);
+  padding: 3px 9px;
+  font-size: 0.78rem;
+  color: var(--clr-text-2);
+  cursor: pointer;
+}
+
+.sst-size-btn.is-active {
+  background: var(--clr-accent);
+  border-color: var(--clr-accent);
+  color: #fff;
+}
+
+.sst-size-btn.is-active .sst-n { color: rgba(255, 255, 255, 0.8); }
+
+/* ── Graphique ── */
+.sst-chart { width: 100%; max-width: 560px; height: auto; }
+.sst-bar--pos { fill: var(--clr-success, #2ecc71); }
+.sst-bar--neg { fill: var(--clr-danger, #e74c3c); }
+.sst-axis-line { stroke: var(--clr-border-2, var(--clr-border)); stroke-width: 1; }
+.sst-axis { fill: var(--clr-text-3); font-size: 10px; }
