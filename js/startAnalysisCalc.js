@@ -565,6 +565,42 @@ export function buildStartGrid({ start, results = [], participants = [], rankedD
 }
 
 // ─────────────────────────────────────────────────────────
+// SAISIE DE L'ORDRE AU PREMIER VIRAGE
+// ─────────────────────────────────────────────────────────
+
+/**
+ * Positions encore disponibles pour un pilote donné à la saisie du V1.
+ *
+ * Une position déjà attribuée à un AUTRE pilote du même départ est retirée :
+ * on empêche l'erreur au lieu de la signaler après coup.
+ *
+ * La position courante du pilote reste toujours proposée, même si elle
+ * apparaît en doublon — cela peut arriver sur un brouillon enregistré avant
+ * cette règle, et il ne faut pas que le sélecteur se vide silencieusement.
+ * Le contrôle de doublon de validateAnalysis() reste donc utile.
+ *
+ * @param {string} driverId — pilote pour qui on construit la liste
+ * @param {Array<{driverId:string, turn1Pos?:number|null}>} rows — lignes du départ
+ * @param {number} starters — nombre de partants (borne haute)
+ * @returns {number[]} positions proposables, dans l'ordre croissant
+ */
+export function availableTurn1Positions(driverId, rows = [], starters = 0) {
+  const n = Number(starters);
+  if (!Number.isInteger(n) || n < 1) return [];
+  const self = rows.find(r => r.driverId === driverId) || {};
+  const taken = new Set(
+    rows.filter(r => r.driverId !== driverId && r.turn1Pos != null)
+        .map(r => Number(r.turn1Pos))
+  );
+  const out = [];
+  for (let k = 1; k <= n; k++) {
+    if (taken.has(k) && Number(self.turn1Pos) !== k) continue;
+    out.push(k);
+  }
+  return out;
+}
+
+// ─────────────────────────────────────────────────────────
 // VALIDATION AVANT ENREGISTREMENT
 // ─────────────────────────────────────────────────────────
 

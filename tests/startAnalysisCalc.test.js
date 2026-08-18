@@ -3,7 +3,7 @@ import {
   startDocId, gridLayoutKey, seriesFingerprint,
   maxPerSeries, resolveGridGeometry, gridCellsInOrder, placeOnGrid, checkGridLayout,
   laneZone, normalizePoleSide, startLabel, enumerateStarts, finishPosInStart, buildStartGrid,
-  validateAnalysis,
+  validateAnalysis, availableTurn1Positions,
 } from '../js/startAnalysisCalc.js';
 import { computeSeriesSizes } from '../js/calc.js';
 
@@ -653,6 +653,67 @@ describe('buildStartGrid — DF (quinconce)', () => {
     const b = mk(CHAMP_ALT).find(r => r.gridPos === 3);
     expect(a).toMatchObject({ gridRow: 1, lane: 5 });
     expect(b).toMatchObject({ gridRow: 2, lane: 1 });
+  });
+});
+
+// ─────────────────────────────────────────────────────────
+// availableTurn1Positions — empêcher le doublon à la saisie
+// ─────────────────────────────────────────────────────────
+
+describe('availableTurn1Positions', () => {
+  const rows = () => ([
+    { driverId: 'a', turn1Pos: null },
+    { driverId: 'b', turn1Pos: null },
+    { driverId: 'c', turn1Pos: null },
+    { driverId: 'd', turn1Pos: null },
+    { driverId: 'e', turn1Pos: null },
+  ]);
+
+  it('propose toutes les positions quand rien n\'est saisi', () => {
+    expect(availableTurn1Positions('a', rows(), 5)).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  it('retire une position déjà prise par un autre pilote', () => {
+    const r = rows();
+    r[2].turn1Pos = 3;                       // c est P3
+    expect(availableTurn1Positions('a', r, 5)).toEqual([1, 2, 4, 5]);
+  });
+
+  it('retire toutes les positions déjà attribuées', () => {
+    const r = rows();
+    r[0].turn1Pos = 1; r[1].turn1Pos = 2; r[2].turn1Pos = 5;
+    expect(availableTurn1Positions('d', r, 5)).toEqual([3, 4]);
+  });
+
+  it('conserve TOUJOURS la position courante du pilote lui-même', () => {
+    const r = rows();
+    r[2].turn1Pos = 3;
+    expect(availableTurn1Positions('c', r, 5)).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  it('ne vide pas le sélecteur si un doublon existe déjà (brouillon ancien)', () => {
+    const r = rows();
+    r[0].turn1Pos = 3;
+    r[1].turn1Pos = 3;                       // doublon hérité
+    // chacun garde sa valeur visible, le doublon reste signalé par validateAnalysis
+    expect(availableTurn1Positions('a', r, 5)).toContain(3);
+    expect(availableTurn1Positions('b', r, 5)).toContain(3);
+  });
+
+  it('le dernier pilote n\'a plus qu\'un seul choix', () => {
+    const r = rows();
+    r[0].turn1Pos = 1; r[1].turn1Pos = 2; r[2].turn1Pos = 3; r[3].turn1Pos = 5;
+    expect(availableTurn1Positions('e', r, 5)).toEqual([4]);
+  });
+
+  it('borne la liste au nombre de partants', () => {
+    const r = [{ driverId: 'a', turn1Pos: null }, { driverId: 'b', turn1Pos: null }];
+    expect(availableTurn1Positions('a', r, 2)).toEqual([1, 2]);
+  });
+
+  it('gère les entrées vides sans planter', () => {
+    expect(availableTurn1Positions('a', [], 0)).toEqual([]);
+    expect(availableTurn1Positions('a', undefined, 3)).toEqual([1, 2, 3]);
   });
 });
 
