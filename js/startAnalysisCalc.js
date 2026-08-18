@@ -292,6 +292,35 @@ export function normalizePoleSide(poleSide) {
 }
 
 // ─────────────────────────────────────────────────────────
+// QUI A RÉELLEMENT PRIS LE DÉPART
+// ─────────────────────────────────────────────────────────
+
+/**
+ * Un pilote noté DNS (Did Not Start) n'était PAS sur la grille : il ne compte
+ * pas parmi les partants et ne peut pas avoir de position au premier virage.
+ *
+ * Les autres statuts correspondent à des pilotes qui ONT pris le départ :
+ *   • DNF      — parti, pas arrivé : il a bien une position possible au V1 ;
+ *   • DSQ_RACE — disqualifié de la course, donc il l'a disputée ;
+ *   • DSQ      — disqualification prononcée après coup.
+ * Seul DNS signifie sans ambiguïté « absent de la ligne de départ ».
+ *
+ * ⚠️ Son couloir reste VIDE : les autres pilotes ne sont pas renumérotés.
+ * Si le couloir 2 est absent, le pilote du couloir 3 garde le couloir 3.
+ *
+ * @param {string|null|undefined} status
+ * @returns {boolean}
+ */
+export function isNonStarter(status) {
+  return String(status || '').toUpperCase() === 'DNS';
+}
+
+/** Nombre de pilotes réellement au départ dans un jeu de lignes. */
+export function countStarters(rows = []) {
+  return rows.filter(r => !r.didNotStart).length;
+}
+
+// ─────────────────────────────────────────────────────────
 // ÉNUMÉRATION DES DÉPARTS PHYSIQUES
 // ─────────────────────────────────────────────────────────
 
@@ -387,6 +416,13 @@ export function enumerateStarts({ session, results = [], participants = [], cham
       const dupes = [...new Set(couloirs.filter((c, i) => couloirs.indexOf(c) !== i))];
       if (dupes.length) localWarnings.push(`Série ${serie} : couloir(s) en doublon : ${dupes.join(', ')}`);
 
+      const dnsIds = rows.filter(r => isNonStarter(r.status)).map(r => r.driverId);
+      if (dnsIds.length) {
+        localWarnings.push(
+          `Série ${serie} : ${dnsIds.length} pilote(s) DNS — non compté(s) parmi les partants, ` +
+          'leur couloir reste vide'
+        );
+      }
       return {
         startIndex: serie,
         startLabel: startLabel(session, serie, multi),
@@ -394,8 +430,9 @@ export function enumerateStarts({ session, results = [], participants = [], cham
         sessionType: type,
         sessionNum: session.num ?? null,
         driverIds: rows.map(r => r.driverId),
+        dnsDriverIds: dnsIds,
         sourceRows: rows,
-        starters: rows.length,
+        starters: rows.length - dnsIds.length,
         gridSource: 'mq_couloir',
         ...geometry,
         warnings: localWarnings,
@@ -410,7 +447,18 @@ export function enumerateStarts({ session, results = [], participants = [], cham
     return { starts: [], warnings };
   }
 
-  const localWarnings = checkGridLayout(geometry.gridLayout, participants.length);
+  const statusByDriver = new Map(results.map(r => [r.driverId, r.status]));
+  const dnsIds = participants
+    .filter(p => isNonStarter(statusByDriver.get(p.driverId)))
+    .map(p => p.driverId);
+  const starters = participants.length - dnsIds.length;
+
+  const localWarnings = checkGridLayout(geometry.gridLayout, starters);
+  if (dnsIds.length) {
+    localWarnings.push(
+      `${dnsIds.length} pilote(s) DNS — non compté(s) parmi les partants, leur emplacement reste vide`
+    );
+  }
   return {
     starts: [{
       startIndex: 1,
@@ -419,8 +467,9 @@ export function enumerateStarts({ session, results = [], participants = [], cham
       sessionType: type,
       sessionNum: session.num ?? null,
       driverIds: participants.map(p => p.driverId),
+      dnsDriverIds: dnsIds,
       sourceRows: participants,
-      starters: participants.length,
+      starters,
       gridSource: geometry.source === 'grid_layout' ? 'grid_layout' : 'manual',
       ...geometry,
       warnings: localWarnings,
@@ -517,6 +566,7 @@ export function buildStartGrid({ start, results = [], participants = [], rankedD
         gridPos: lane,
         gridRow: lane != null ? 1 : null,
         lane,
+        didNotStart: isNonStarter(r.status),
         turn1Pos: null,
         autoTurn1Pos: null,
         finishPosInStart: finishInStart.get(id) ?? null,
@@ -550,6 +600,7 @@ export function buildStartGrid({ start, results = [], participants = [], rankedD
         gridPos,
         gridRow: place?.gridRow ?? null,
         lane: place?.lane ?? null,
+        didNotStart: isNonStarter(r.status),
         turn1Pos: null,
         autoTurn1Pos: null,
         finishPosInStart: finishInStart.get(id) ?? null,
@@ -588,6 +639,8 @@ export function availableTurn1Positions(driverId, rows = [], starters = 0) {
   const n = Number(starters);
   if (!Number.isInteger(n) || n < 1) return [];
   const self = rows.find(r => r.driverId === driverId) || {};
+  // Un pilote DNS n'était pas sur la grille : aucune position ne lui est proposée.
+  if (self.didNotStart) return [];
   const taken = new Set(
     rows.filter(r => r.driverId !== driverId && r.turn1Pos != null)
         .map(r => Number(r.turn1Pos))
@@ -626,13 +679,24 @@ export function validateAnalysis(analysis) {
     );
   }
 
+  // Les pilotes DNS n'étaient pas sur la grille : ils sortent de tous les calculs
+  const starters = countStarters(rows);
+  const nonStarters = rows.filter(r => r.didNotStart);
   const withPos = rows.filter(r => r.turn1Pos != null);
-  if (withPos.length === 0) errors.push('Aucune position au premier virage saisie');
 
-  // Positions V1 : entières, dans les bornes, sans doublon
+  if (starters === 0) errors.push('Aucun pilote n\'a pris le départ');
+  if (withPos.length === 0 && starters > 0) errors.push('Aucune position au premier virage saisie');
+
+  // Un DNS ne peut pas avoir de position au premier virage
+  const dnsWithPos = nonStarters.filter(r => r.turn1Pos != null);
+  if (dnsWithPos.length) {
+    errors.push(`${dnsWithPos.length} pilote(s) DNS ont une position au 1er virage : impossible, ils n'ont pas pris le départ`);
+  }
+
+  // Positions V1 : entières, dans les bornes (nombre de PARTANTS), sans doublon
   const positions = withPos.map(r => Number(r.turn1Pos));
-  if (positions.some(p => !Number.isInteger(p) || p < 1 || p > rows.length)) {
-    errors.push(`Positions au premier virage hors bornes (1..${rows.length})`);
+  if (positions.some(p => !Number.isInteger(p) || p < 1 || p > starters)) {
+    errors.push(`Positions au premier virage hors bornes (1..${starters})`);
   }
   const dupes = [...new Set(positions.filter((p, i) => positions.indexOf(p) !== i))];
   if (dupes.length) errors.push(`Position(s) au premier virage en doublon : ${dupes.join(', ')}`);
@@ -647,11 +711,17 @@ export function validateAnalysis(analysis) {
   // Avertissement de saisie PARTIELLE uniquement : quand rien n'est encore
   // saisi, l'erreur ci-dessus le dit déjà, et parler d'« abandon » serait faux.
   // On ne présume donc pas de la raison : abandon, ou voiture hors champ.
-  const missing = rows.length - withPos.length;
+  const missing = starters - withPos.length;
   if (missing > 0 && withPos.length > 0) {
     warnings.push(
       `${missing} pilote(s) sans position au 1er virage — exclus des matrices ` +
       `(abandon, ou voiture non visible à l'image de mesure)`
+    );
+  }
+  if (nonStarters.length) {
+    warnings.push(
+      `${nonStarters.length} pilote(s) DNS — absent(s) de la grille, exclu(s) de l'analyse ` +
+      `(${starters} partant(s) réel(s))`
     );
   }
   if (rows.some(r => r.confidence === 'yellow')) {

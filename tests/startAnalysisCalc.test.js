@@ -3,7 +3,7 @@ import {
   startDocId, gridLayoutKey, seriesFingerprint,
   maxPerSeries, resolveGridGeometry, gridCellsInOrder, placeOnGrid, checkGridLayout,
   laneZone, normalizePoleSide, startLabel, enumerateStarts, finishPosInStart, buildStartGrid,
-  validateAnalysis, availableTurn1Positions,
+  validateAnalysis, availableTurn1Positions, isNonStarter, countStarters,
 } from '../js/startAnalysisCalc.js';
 import { computeSeriesSizes } from '../js/calc.js';
 
@@ -657,6 +657,86 @@ describe('buildStartGrid — DF (quinconce)', () => {
 });
 
 // ─────────────────────────────────────────────────────────
+// DNS — Did Not Start : absent de la ligne de départ
+// ─────────────────────────────────────────────────────────
+
+describe('isNonStarter / countStarters', () => {
+  it('seul DNS signifie « pas sur la grille »', () => {
+    expect(isNonStarter('DNS')).toBe(true);
+    expect(isNonStarter('dns')).toBe(true);
+  });
+
+  it('DNF, DSQ et DSQ_RACE ont bien pris le départ', () => {
+    for (const st of ['DNF', 'DSQ', 'DSQ_RACE', null, undefined, '']) {
+      expect(isNonStarter(st)).toBe(false);
+    }
+  });
+
+  it('countStarters exclut les DNS', () => {
+    expect(countStarters([
+      { driverId: 'a' }, { driverId: 'b', didNotStart: true }, { driverId: 'c' },
+    ])).toBe(2);
+  });
+});
+
+describe('enumerateStarts — un DNS ne compte pas parmi les partants', () => {
+  const session = { id: 'sess-mq4', type: 'MQ', num: 4 };
+
+  it('cas réel : 4 engagés dont 1 DNS → 3 partants', () => {
+    const results = [
+      mqResult('d1', 2, 1, 121000),
+      mqResult('d2', 2, 2, null, 'DNS'),      // Fabien Pailler : pas au départ
+      mqResult('d3', 2, 3, null, 'DNF'),
+      mqResult('d4', 2, 4, 120000),
+    ];
+    const { starts } = enumerateStarts({
+      session, results, participants: results, championship: CHAMP_FFSA, category: 'Supercar',
+    });
+    expect(starts[0].starters).toBe(3);
+    expect(starts[0].driverIds).toHaveLength(4);      // la ligne reste visible
+    expect(starts[0].dnsDriverIds).toEqual(['d2']);
+    expect(starts[0].warnings.join(' ')).toMatch(/DNS/);
+  });
+
+  it('un DNF compte bien parmi les partants', () => {
+    const results = [mqResult('d1', 1, 1, 120000), mqResult('d2', 1, 2, null, 'DNF')];
+    const { starts } = enumerateStarts({
+      session, results, participants: results, championship: CHAMP_FFSA, category: 'Supercar',
+    });
+    expect(starts[0].starters).toBe(2);
+  });
+
+  it('les couloirs des autres ne sont PAS renumérotés', () => {
+    // Couloir 2 absent → le pilote du couloir 3 garde le couloir 3
+    const results = [
+      mqResult('d1', 1, 1, 121000),
+      mqResult('d2', 1, 2, null, 'DNS'),
+      mqResult('d3', 1, 3, 120000),
+      mqResult('d4', 1, 4, 122000),
+    ];
+    const { starts } = enumerateStarts({
+      session, results, participants: results, championship: CHAMP_FFSA, category: 'Supercar',
+    });
+    const { rows } = buildStartGrid({ start: starts[0], results, participants: results });
+    expect(rows.map(r => r.lane)).toEqual([1, 2, 3, 4]);
+    expect(rows.find(r => r.driverId === 'd3').lane).toBe(3);
+    expect(rows.find(r => r.driverId === 'd2').didNotStart).toBe(true);
+    expect(rows.find(r => r.driverId === 'd1').didNotStart).toBe(false);
+  });
+
+  it('finales : un DNS est retiré des partants', () => {
+    const participants = Array.from({ length: 8 }, (_, i) => ({ driverId: `d${i + 1}` }));
+    const results = [{ driverId: 'd3', status: 'DNS' }];
+    const { starts } = enumerateStarts({
+      session: { id: 's', type: 'DF', num: 1 }, results, participants,
+      championship: CHAMP_FFSA, category: 'Supercar',
+    });
+    expect(starts[0].starters).toBe(7);
+    expect(starts[0].dnsDriverIds).toEqual(['d3']);
+  });
+});
+
+// ─────────────────────────────────────────────────────────
 // availableTurn1Positions — empêcher le doublon à la saisie
 // ─────────────────────────────────────────────────────────
 
@@ -709,6 +789,19 @@ describe('availableTurn1Positions', () => {
   it('borne la liste au nombre de partants', () => {
     const r = [{ driverId: 'a', turn1Pos: null }, { driverId: 'b', turn1Pos: null }];
     expect(availableTurn1Positions('a', r, 2)).toEqual([1, 2]);
+  });
+
+  it('un pilote DNS ne se voit proposer AUCUNE position', () => {
+    const r = rows();
+    r[1].didNotStart = true;
+    expect(availableTurn1Positions('b', r, 4)).toEqual([]);
+  });
+
+  it('les autres sont bornés au nombre de PARTANTS, pas de lignes', () => {
+    // 4 engagés dont 1 DNS → 3 partants → P1..P3 seulement
+    const r = rows().slice(0, 4);
+    r[1].didNotStart = true;
+    expect(availableTurn1Positions('a', r, 3)).toEqual([1, 2, 3]);
   });
 
   it('gère les entrées vides sans planter', () => {
@@ -803,6 +896,32 @@ describe('validateAnalysis', () => {
     expect(w).toMatch(/1 pilote\(s\) sans position au 1er virage/i);
     expect(w).toMatch(/non visible/i);       // la raison n'est pas présumée
     expect(w).not.toMatch(/^.*abandon avant le virage 1/);
+  });
+
+  it('refuse une position V1 attribuée à un pilote DNS', () => {
+    const a = okAnalysis();
+    a.rows.push({ driverId: 'd', turn1Pos: 4, confidence: 'green', lane: 4, didNotStart: true });
+    const v = validateAnalysis(a);
+    expect(v.ok).toBe(false);
+    expect(v.errors.join(' ')).toMatch(/DNS/);
+  });
+
+  it('borne les positions au nombre de PARTANTS (DNS exclus)', () => {
+    const a = okAnalysis();                              // 3 lignes, positions 1..3
+    a.rows.push({ driverId: 'd', turn1Pos: null, confidence: 'green', lane: 4, didNotStart: true });
+    a.rows[2].turn1Pos = 4;                              // hors bornes : 3 partants seulement
+    const v = validateAnalysis(a);
+    expect(v.ok).toBe(false);
+    expect(v.errors.join(' ')).toMatch(/hors bornes \(1\.\.3\)/);
+  });
+
+  it('un DNS ne compte pas comme « position manquante »', () => {
+    const a = okAnalysis();
+    a.rows.push({ driverId: 'd', turn1Pos: null, confidence: 'green', lane: 4, didNotStart: true });
+    const v = validateAnalysis(a);
+    expect(v.ok).toBe(true);
+    expect(v.warnings.join(' ')).not.toMatch(/sans position au 1er virage/i);
+    expect(v.warnings.join(' ')).toMatch(/DNS/);
   });
 
   it('refuse un départ vide', () => {
