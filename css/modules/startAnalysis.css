@@ -240,3 +240,15 @@
 }
 
 .sanl-dns-note { color: var(--clr-warning, #f0a020); }
+
+/* ── Information neutre (ex. présence d'un DNS) ──
+   Volontairement distincte de .sanl-warn : ce n'est pas un problème,
+   seulement un fait à connaître pour lire la grille. */
+.sanl-note {
+  font-size: 0.8rem;
+  padding: 5px 9px;
+  border-radius: var(--r-sm);
+  margin-bottom: 5px;
+  background: var(--clr-surface);
+  color: var(--clr-text-3);
+}
