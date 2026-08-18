@@ -294,6 +294,24 @@ export function byLane(rows = []) {
 }
 
 /**
+ * Vrai quand, sur l'ensemble des lignes, la position de grille et le couloir
+ * désignent la même place — c'est le cas d'une grille à une seule ligne, où la
+ * n-ième position EST le n-ième couloir.
+ *
+ * Dans ce cas `byGridPos()` et `byLane()` produisent des tableaux identiques :
+ * la vue peut n'en afficher qu'un seul au lieu de dupliquer les mêmes chiffres.
+ *
+ * @param {Array} rows
+ * @returns {boolean}
+ */
+export function gridPosEqualsLane(rows = []) {
+  const isPos = v => v != null && Number.isInteger(Number(v));
+  const usable = rows.filter(r => isPos(r.gridPos) && isPos(r.lane));
+  if (usable.length === 0) return false;
+  return usable.every(r => Number(r.gridPos) === Number(r.lane));
+}
+
+/**
  * Synthèse par LIGNE de grille — n'a de sens qu'en phases finales, les séries
  * de manche n'ayant qu'une seule ligne.
  * @param {Array} rows
