@@ -4,6 +4,7 @@ import {
   maxPerSeries, resolveGridGeometry, gridCellsInOrder, placeOnGrid, checkGridLayout,
   laneZone, normalizePoleSide, startLabel, enumerateStarts, finishPosInStart, buildStartGrid,
   validateAnalysis, availableTurn1Positions, isNonStarter, countStarters,
+  orderGridByInterim, orderFinalGridFromSemis, orderByRaceResult,
 } from '../js/startAnalysisCalc.js';
 import { computeSeriesSizes } from '../js/calc.js';
 
@@ -807,6 +808,130 @@ describe('availableTurn1Positions', () => {
   it('gère les entrées vides sans planter', () => {
     expect(availableTurn1Positions('a', [], 0)).toEqual([]);
     expect(availableTurn1Positions('a', undefined, 3)).toEqual([1, 2, 3]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────
+// ORDRE DE GRILLE DES PHASES FINALES
+// ─────────────────────────────────────────────────────────
+
+describe('orderByRaceResult', () => {
+  it('classe par temps croissant', () => {
+    expect(orderByRaceResult([
+      { driverId: 'a', ms: 130000 }, { driverId: 'b', ms: 128000 }, { driverId: 'c', ms: 129000 },
+    ])).toEqual(['b', 'c', 'a']);
+  });
+
+  it('place DNF puis DSQ_RACE puis le reste derrière les finisseurs', () => {
+    expect(orderByRaceResult([
+      { driverId: 'dsq', status: 'DSQ_RACE' },
+      { driverId: 'rien' },
+      { driverId: 'fini', ms: 130000 },
+      { driverId: 'dnf', status: 'DNF' },
+    ])).toEqual(['fini', 'dnf', 'dsq', 'rien']);
+  });
+});
+
+describe('orderGridByInterim — le classement intermédiaire fait la grille', () => {
+  // Règle : le leader du classement est en pole de SA demi-finale, le 2e en
+  // pole de l'AUTRE. Le 3e rejoint le 1er, le 4e rejoint le 2e, etc.
+  const interim = ['i1', 'i2', 'i3', 'i4', 'i5', 'i6', 'i7', 'i8', 'i9', 'i10', 'i11', 'i12', 'i13', 'i14', 'i15', 'i16'];
+  const DF1 = ['i1', 'i3', 'i5', 'i7', 'i9', 'i11', 'i13', 'i15'];
+  const DF2 = ['i2', 'i4', 'i6', 'i8', 'i10', 'i12', 'i14', 'i16'];
+
+  it('DF1 : le leader du classement est en pole', () => {
+    expect(orderGridByInterim(DF1, interim)[0]).toBe('i1');
+  });
+
+  it('DF2 : le 2e du classement est en pole de son autre demi-finale', () => {
+    expect(orderGridByInterim(DF2, interim)[0]).toBe('i2');
+  });
+
+  it('DF1 est ordonnée 1er, 3e, 5e… du classement', () => {
+    expect(orderGridByInterim(DF1, interim)).toEqual(DF1);
+  });
+
+  it('trie même si les participants arrivent en désordre', () => {
+    const mele = ['i7', 'i1', 'i5', 'i3'];
+    expect(orderGridByInterim(mele, interim)).toEqual(['i1', 'i3', 'i5', 'i7']);
+  });
+
+  it('un pilote absent du classement passe en fin de grille', () => {
+    expect(orderGridByInterim(['inconnu', 'i3', 'i1'], interim)).toEqual(['i1', 'i3', 'inconnu']);
+  });
+
+  it('sans classement disponible, l\'ordre d\'origine est conservé', () => {
+    expect(orderGridByInterim(['b', 'a', 'c'], [])).toEqual(['b', 'a', 'c']);
+  });
+});
+
+describe('chaîne complète — grille de DF placée physiquement', () => {
+  const interim = ['i1', 'i2', 'i3', 'i4', 'i5', 'i6', 'i7', 'i8', 'i9', 'i10', 'i11', 'i12', 'i13', 'i14', 'i15', 'i16'];
+  const DF1 = ['i1', 'i3', 'i5', 'i7', 'i9', 'i11', 'i13', 'i15'];
+
+  it('le leader du classement se retrouve ligne 1 couloir 1 (pole)', () => {
+    const participants = DF1.map(id => ({ driverId: id }));
+    const { starts } = enumerateStarts({
+      session: { id: 'df1', type: 'DF', num: 1 }, results: [], participants,
+      championship: CHAMP_FFSA, category: 'Supercar',
+    });
+    const { rows } = buildStartGrid({
+      start: starts[0], results: [], participants,
+      rankedDriverIds: orderGridByInterim(DF1, interim),
+    });
+    const pole = rows.find(r => r.gridPos === 1);
+    expect(pole.driverId).toBe('i1');
+    expect(pole.gridRow).toBe(1);
+    expect(pole.lane).toBe(1);
+  });
+
+  it('grille 3/2/3 : les 8 pilotes du classement dans l\'ordre attendu', () => {
+    const participants = DF1.map(id => ({ driverId: id }));
+    const { starts } = enumerateStarts({
+      session: { id: 'df1', type: 'DF', num: 1 }, results: [], participants,
+      championship: CHAMP_FFSA, category: 'Supercar',
+    });
+    const { rows } = buildStartGrid({
+      start: starts[0], results: [], participants,
+      rankedDriverIds: orderGridByInterim(DF1, interim),
+    });
+    expect(rows.map(r => `${r.driverId}:L${r.gridRow}C${r.lane}`)).toEqual([
+      'i1:L1C1', 'i3:L1C3', 'i5:L1C5',      // ligne 1
+      'i7:L2C2', 'i9:L2C4',                  // ligne 2
+      'i11:L3C1', 'i13:L3C3', 'i15:L3C5',    // ligne 3
+    ]);
+  });
+});
+
+describe('orderFinalGridFromSemis — la finale se compose par paires', () => {
+  const df1 = ['a1', 'a2', 'a3', 'a4'];       // ordre d'arrivée DF1
+  const df2 = ['b1', 'b2', 'b3', 'b4'];       // ordre d'arrivée DF2
+
+  it('vainqueur DF1 en pole, vainqueur DF2 juste derrière', () => {
+    const finalists = ['a1', 'a2', 'b1', 'b2'];
+    expect(orderFinalGridFromSemis(finalists, [df1, df2])).toEqual(['a1', 'b1', 'a2', 'b2']);
+  });
+
+  it('alterne les demi-finales sur toute la grille', () => {
+    const finalists = ['a1', 'a2', 'a3', 'a4', 'b1', 'b2', 'b3', 'b4'];
+    expect(orderFinalGridFromSemis(finalists, [df1, df2]))
+      .toEqual(['a1', 'b1', 'a2', 'b2', 'a3', 'b3', 'a4', 'b4']);
+  });
+
+  it('ignore les non-qualifiés restés en demi-finale', () => {
+    const finalists = ['a1', 'b1'];            // seuls les vainqueurs sont en finale
+    expect(orderFinalGridFromSemis(finalists, [df1, df2])).toEqual(['a1', 'b1']);
+  });
+
+  it('sans demi-finales, retombe sur le classement intermédiaire', () => {
+    const interim = ['x1', 'x2', 'x3'];
+    expect(orderFinalGridFromSemis(['x3', 'x1', 'x2'], [], interim)).toEqual(['x1', 'x2', 'x3']);
+  });
+
+  it('un finaliste hors demi-finale est ajouté après les paires', () => {
+    const interim = ['a1', 'b1', 'invite'];
+    expect(orderFinalGridFromSemis(['a1', 'b1', 'invite'], [df1, df2], interim))
+      .toEqual(['a1', 'b1', 'invite']);
   });
 });
 

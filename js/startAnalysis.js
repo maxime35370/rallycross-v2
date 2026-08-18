@@ -19,7 +19,9 @@ import { getActiveChampionshipId, getAllChampionships } from './context.js';
 import {
   enumerateStarts, buildStartGrid, startDocId, seriesFingerprint,
   validateAnalysis, normalizePoleSide, availableTurn1Positions, countStarters,
+  orderGridByInterim, orderFinalGridFromSemis, orderByRaceResult,
 } from './startAnalysisCalc.js';
+import { calcInterimStandings } from './calc.js';
 
 // ─────────────────────────────────────────────────────────
 // ÉTAT
@@ -33,6 +35,8 @@ let meetingSessions   = [];      // sessions du meeting × catégorie
 let startsIndex       = [];      // départs physiques énumérés
 let existingAnalyses  = new Map(); // docId → analyse enregistrée
 let current           = null;    // { start, rows, analysis, dirty }
+let interimOrder      = [];      // driverIds du classement intermédiaire, 1er en tête
+let semiFinishOrders  = [];      // ordres d'arrivée des demi-finales, pour la grille de finale
 let _initialised      = false;
 
 const FS = 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
@@ -71,13 +75,28 @@ async function loadSessionsAndStarts() {
   const meeting = allMeetings.find(m => m.id === selectedMeetingId);
   const championship = championshipOfMeeting(meeting);
 
-  const sessions = (await fsQuery('sessions', [['meetingId', '==', selectedMeetingId]]))
-    .filter(s => s.category === selectedCategory && s.type !== 'EC')
+  // Toutes les sessions de la catégorie, EC comprise : le classement
+  // intermédiaire en a besoin (bonus EC + points de manche).
+  const allCatSessions = (await fsQuery('sessions', [['meetingId', '==', selectedMeetingId]]))
+    .filter(s => s.category === selectedCategory);
+
+  const sessions = allCatSessions
+    .filter(s => s.type !== 'EC')
     .sort((a, b) => {
       const order = { MQ: 1, QF: 2, DF: 3, FIN: 4 };
       return (order[a.type] - order[b.type]) || ((a.num || 0) - (b.num || 0));
     });
   meetingSessions = sessions;
+
+  // Classement intermédiaire à l'issue des manches : c'est LUI qui donne
+  // l'ordre de la grille des QF et des DF (le leader est en pole de sa demi).
+  interimOrder = [];
+  try {
+    const interim = await calcInterimStandings(db, allCatSessions, championship);
+    interimOrder = interim.map(r => r.driverId);
+  } catch (e) {
+    console.warn('startAnalysis — classement intermédiaire indisponible :', e);
+  }
 
   // Analyses déjà enregistrées pour ce meeting
   const saved = await fsQuery('startAnalyses', [['meetingId', '==', selectedMeetingId]]);
@@ -94,6 +113,33 @@ async function loadSessionsAndStarts() {
       startsIndex.push({ ...s, _results: results, _participants: participants, _session: session });
     }
   }
+
+  // Ordres d'arrivée des demi-finales, dans l'ordre DF1, DF2… : la grille de
+  // la finale se compose par paires (vainqueur DF1, vainqueur DF2, puis les
+  // deuxièmes, etc.) — même règle que la vue Sessions.
+  semiFinishOrders = startsIndex
+    .filter(st => st.sessionType === 'DF')
+    .sort((a, b) => (a.sessionNum || 0) - (b.sessionNum || 0))
+    .map(st => orderByRaceResult(
+      st._participants.map(p => {
+        const r = st._results.find(x => x.driverId === p.driverId) || {};
+        return { driverId: p.driverId, ms: r.ms ?? null, status: r.status ?? null };
+      })
+    ));
+}
+
+/**
+ * Ordre de la grille d'un départ de phase finale.
+ *  • QF / DF : classement intermédiaire à l'issue des manches ;
+ *  • FIN     : paires issues des demi-finales, repli sur l'intermédiaire.
+ * Les MQ n'en ont pas besoin : leur grille EST le couloir.
+ */
+function gridOrderFor(start) {
+  if (start.sessionType === 'MQ') return null;
+  if (start.sessionType === 'FIN') {
+    return orderFinalGridFromSemis(start.driverIds, semiFinishOrders, interimOrder);
+  }
+  return orderGridByInterim(start.driverIds, interimOrder);
 }
 
 async function saveAnalysis(doc_, { validated }) {
@@ -251,9 +297,7 @@ function selectStart(docId) {
     start,
     results: start._results,
     participants: start._participants,
-    // QF/DF/FIN : l'ordre de la cascade n'est pas encore extrait de sessions.js.
-    // On part de l'ordre des participants et l'utilisateur ajuste (cf. rapport).
-    rankedDriverIds: null,
+    rankedDriverIds: gridOrderFor(start),
   });
 
   const saved = existingAnalyses.get(docId);
