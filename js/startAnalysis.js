@@ -359,11 +359,11 @@ function renderWork() {
             <th style="width:52px">Grille</th>
             ${start.sessionType === 'MQ' ? '' : '<th style="width:46px" title="Ligne physique">Ligne</th>'}
             <th style="width:56px" title="Couloir physique">Couloir</th>
-            <th>Pilote</th>
+            <th class="sanl-col-pilote">Pilote</th>
             <th style="width:52px" class="center">N°</th>
-            <th class="center sanl-col-v1">1er virage</th>
+            <th class="center sanl-col-v1" style="min-width:${n * 31 + 14}px">1er virage</th>
             <th style="width:74px" class="center">Arrivée</th>
-            <th style="width:110px" class="center">Confiance</th>
+            <th class="center sanl-col-conf">Confiance</th>
           </tr>
         </thead>
         <tbody>${rows.map((r, i) => renderRow(r, i, start, readOnly)).join('')}</tbody>

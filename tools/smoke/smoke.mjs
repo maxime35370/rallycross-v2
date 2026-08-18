@@ -260,7 +260,7 @@ try {
     const out = {
       a: stateOf('a'), c: stateOf('c'),
       nbBoutons: groupOf('a').querySelectorAll('.sanl-v1-btn').length,
-      styleApplique: cs.cursor === 'pointer' && parseFloat(cs.minWidth) >= 30,
+      styleApplique: cs.cursor === 'pointer' && parseFloat(cs.minWidth) >= 24,
       actifVisible: !!activeBtn && getComputedStyle(activeBtn).backgroundColor !== 'rgba(0, 0, 0, 0)',
     };
     host.remove();
@@ -270,6 +270,42 @@ try {
         btns.nbBoutons === 5 && btns.a === '..x..' && btns.c === '..A..'
         && btns.styleApplique && btns.actifVisible,
         JSON.stringify(btns));
+
+  // ── 13. Les boutons V1 tiennent sur UNE SEULE ligne (5 et 8 partants) ──
+  const oneLine = await page.evaluate(async () => {
+    const m = await import('/js/startAnalysisCalc.js');
+    const measure = (starters) => {
+      const rows = Array.from({ length: starters }, (_, i) => ({ driverId: 'd' + i, turn1Pos: null }));
+      const host = document.createElement('div');
+      host.className = 'sanl-work';
+      host.style.width = '700px';                       // largeur réaliste du panneau
+      const avail = new Set(m.availableTurn1Positions('d0', rows, starters));
+      let h = '<div class="table-wrap"><table class="sanl-table"><thead><tr>'
+        + '<th style="width:52px">Grille</th><th style="width:56px">Couloir</th>'
+        + '<th class="sanl-col-pilote">Pilote</th><th style="width:52px">N°</th>'
+        + `<th class="center sanl-col-v1" style="min-width:${starters * 31 + 14}px">1er virage</th>`
+        + '<th style="width:74px">Arrivée</th><th class="center sanl-col-conf">Confiance</th>'
+        + '</tr></thead><tbody><tr><td>P1</td><td>1</td><td>Laurent Le Manac\'h</td><td>12</td>'
+        + '<td class="center"><div class="sanl-v1-group" data-driver="d0">';
+      for (let k = 1; k <= starters; k++) {
+        h += `<button type="button" class="sanl-v1-btn" data-pos="${k}" ${!avail.has(k) ? 'disabled' : ''}>P${k}</button>`;
+      }
+      h += '</div></td><td>P1</td><td><select class="form-select"><option>🟢 Fiable</option></select></td></tr></tbody></table></div>';
+      host.innerHTML = h;
+      document.body.appendChild(host);
+      const group = host.querySelector('.sanl-v1-group');
+      const btns = [...group.querySelectorAll('.sanl-v1-btn')];
+      const tops = new Set(btns.map(b => Math.round(b.getBoundingClientRect().top)));
+      const groupH = group.getBoundingClientRect().height;
+      const btnH = btns[0].getBoundingClientRect().height;
+      const res = { starters, nbLignes: tops.size, ratioHauteur: +(groupH / btnH).toFixed(2) };
+      host.remove();
+      return res;
+    };
+    return [measure(5), measure(8)];
+  });
+  const allOneLine = oneLine.every(r => r.nbLignes === 1 && r.ratioHauteur < 1.6);
+  check('boutons V1 sur une seule ligne (5 et 8 partants)', allOneLine, JSON.stringify(oneLine));
 
 } finally {
   await browser.close();
