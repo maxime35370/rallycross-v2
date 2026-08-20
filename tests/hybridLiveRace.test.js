@@ -116,17 +116,29 @@ describe('les résultats réels sont repris tels quels', () => {
     }
   });
 
-  it('un pilote réellement 3e ne termine jamais devant les deux pilotes réels devant lui', () => {
-    // C (P1 réel), A (P2 réel), F (P3 réel) : F ne peut pas finir mieux que P3.
+  it('un pilote réellement 3e ne termine JAMAIS devant les deux pilotes réels devant lui', () => {
+    // C (P1 réel), A (P2 réel), F (P3 réel) : F ne peut pas finir mieux que P3,
+    // ni moins bien que P3 + le nombre de pilotes restant à courir.
     const ctx = ctxOf();
     let minF = Infinity, maxF = 0;
-    for (const rows of replayRace(ctx, { n: 1000 })) {
+    for (const rows of replayRace(ctx, { n: 2000 })) {
       const f = rows.find(r => r.driverId === 'F');
       minF = Math.min(minF, f.position);
       maxF = Math.max(maxF, f.position);
     }
-    expect(minF).toBe(3);                    // borne atteinte, donc exacte
-    expect(maxF).toBeLessThanOrEqual(3 + 5); // 5 pilotes restaient à courir
+    expect(minF).toBeGreaterThanOrEqual(3);
+    expect(maxF).toBeLessThanOrEqual(3 + 5);
+  });
+
+  it('la borne haute est atteignable : elle n\'est pas une marge de prudence', () => {
+    // Un seul pilote restant : F ne peut finir que P3 ou P4, et les deux
+    // doivent réellement apparaître.
+    const ctx = ctxOf({ done: ['C', 'A', 'F', 'B', 'D', 'E', 'G'] });
+    const vues = new Set();
+    for (const rows of replayRace(ctx, { n: 500 })) {
+      vues.add(rows.find(r => r.driverId === 'F').position);
+    }
+    expect([...vues].sort()).toEqual([3, 4]);
   });
 
   it('un statut réel (DNF) est conservé, jamais transformé en chrono', () => {
@@ -317,7 +329,8 @@ describe('un résultat acquis n\'est pas un scénario', () => {
       focusDriverId: 'B', raceNum: 4, positions: [1, 4, 8], simulations: 120,
     });
     expect(r.unavailable).toBeNull();
-    expect(r.entries.length).toBe(3 + 3);
+    // 3 places testées + les statuts définis par le règlement de test (4).
+    expect(r.entries.length).toBe(3 + 4);
     // Une place forcée devant les pilotes réels reste possible : B n'a pas couru.
     expect(r.entries.find(e => e.label === 'P1').probability).not.toBeNull();
   });

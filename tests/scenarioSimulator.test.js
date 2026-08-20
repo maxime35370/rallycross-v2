@@ -20,7 +20,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   simulateFromCheckpoint, whatIfResults, timeScaleOf, entrantsOfRace,
-  FORCEABLE_STATUSES,
+  FORCEABLE_STATUSES, forceableStatuses,
 } from '../js/projection/scenarioSimulator.js';
 import { buildGroups, buildMeetingContext, buildStateAfterRace } from '../js/projection/qualificationState.js';
 import { buildMqStandings } from '../js/calc.js';
@@ -371,7 +371,12 @@ describe('scénarios « et si »', () => {
       focusDriverId: 'C', raceNum: 4, simulations: 120, seed: 6,
     });
     expect(w.entries.filter(e => e.kind === 'position')).toHaveLength(SIX.length);
-    expect(w.entries.filter(e => e.kind === 'status').map(e => e.status)).toEqual(FORCEABLE_STATUSES);
+    // Les statuts testés viennent du RÈGLEMENT, pas d'une liste figée : le
+    // règlement de test en définit quatre, DSQ_RACE compris.
+    expect(w.entries.filter(e => e.kind === 'status').map(e => e.status))
+      .toEqual(forceableStatuses(TEST_REGULATION));
+    expect(forceableStatuses(TEST_REGULATION)).toEqual(['DNF', 'DNS', 'DSQ', 'DSQ_RACE']);
+    expect(forceableStatuses(null)).toEqual(FORCEABLE_STATUSES);
     expect(w.raceNum).toBe(4);
     expect(w.seed).toBe(6);
   });

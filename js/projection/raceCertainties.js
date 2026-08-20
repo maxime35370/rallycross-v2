@@ -62,13 +62,22 @@ export function raceProgress(context, raceNum, mode = 'live') {
   if (!race) return null;
   const real = realResultsOfRace(context, raceNum, mode) || {};
 
+  // `rowsById` vient de buildMqStandings : position ET points d'un statut y sont
+  // déjà calculés par le règlement. Les recalculer ici dupliquerait une règle,
+  // et deux implémentations d'une même règle finissent toujours par diverger.
+  const rowsById = new Map((race.rows || []).map(r => [r.driverId, r]));
+
   const finishers = Object.entries(real)
     .filter(([, r]) => r.ms != null && !r.status)
     .map(([driverId, r]) => ({ driverId, ms: r.ms }))
     .sort((a, b) => a.ms - b.ms);
   const withStatus = Object.entries(real)
     .filter(([, r]) => r.status)
-    .map(([driverId, r]) => ({ driverId, status: r.status }));
+    .map(([driverId, r]) => ({
+      driverId, status: r.status,
+      position: rowsById.get(driverId)?.position ?? null,
+      points: rowsById.get(driverId)?.points ?? null,
+    }));
 
   return {
     raceNum,
@@ -78,6 +87,7 @@ export function raceProgress(context, raceNum, mode = 'live') {
     pendingDriverIds: [...race.pendingDriverIds],
     finishers,
     withStatus,
+    rowsById,
     isInProgress: race.isInProgress,
     isComplete: race.isComplete,
     hasStarted: race.hasResults,
@@ -115,6 +125,20 @@ export function describeProgress(progress) {
   };
 }
 
+/**
+ * Statuts définis par le règlement, dans l'ordre d'affichage habituel.
+ * Aucune liste n'est figée dans le code : un championnat qui traiterait un
+ * statut différemment — ou en définirait un autre — est pris en compte tel quel.
+ */
+export function statusesOf(regulation) {
+  const known = Object.keys(regulation?.statusRules || {});
+  const ordre = ['DNF', 'DNS', 'DSQ', 'DSQ_RACE'];
+  return [...known].sort((a, b) => {
+    const ia = ordre.indexOf(a), ib = ordre.indexOf(b);
+    return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+  });
+}
+
 // ─────────────────────────────────────────────────────────
 // BORNES DE POSITION DANS LA MANCHE
 // ─────────────────────────────────────────────────────────
@@ -133,15 +157,16 @@ export function positionBounds(context, raceNum, driverId, mode = 'live') {
   const pending = progress.pendingCount;
   const mine = progress.withStatus.find(x => x.driverId === driverId);
 
-  // Statut déjà enregistré : la position est fixée par le règlement, elle ne
-  // bougera plus. C'est la certitude la plus forte qui soit.
+  // Statut déjà enregistré : position ET points sont fixés, ils ne bougeront
+  // plus. La valeur est LUE dans le classement produit par buildMqStandings,
+  // jamais recalculée : le placement d'un DNF ou d'un DSQ_RACE est une règle de
+  // l'application, elle n'a pas à être réécrite ici.
   if (mine) {
-    const position = mine.status === 'DNF' ? engaged + 1
-      : mine.status === 'DSQ_RACE' ? engaged + 3
-      : null;
     return {
-      hasRun: true, status: mine.status, provisionalPosition: position,
-      bestPosition: position, worstPosition: position, exact: true,
+      hasRun: true, status: mine.status,
+      provisionalPosition: mine.position,
+      bestPosition: mine.position, worstPosition: mine.position,
+      fixedPoints: mine.points, exact: true,
       ranAhead: null, pendingCount: pending, engagedCount: engaged,
     };
   }
@@ -182,7 +207,9 @@ export function positionBounds(context, raceNum, driverId, mode = 'live') {
 export function pointsBounds(bounds, regulation) {
   if (!bounds) return null;
   if (bounds.status) {
-    const p = calcStatusPoints(bounds.status, 'MQ', bounds.engagedCount, regulation);
+    // Points déjà attribués par buildMqStandings ; le recalcul n'est qu'un
+    // filet pour un contexte construit sans classement.
+    const p = bounds.fixedPoints ?? calcStatusPoints(bounds.status, 'MQ', bounds.engagedCount, regulation);
     return { min: p, max: p, exact: true, includesIncident: true };
   }
   let min = Infinity, max = -Infinity;
@@ -191,11 +218,14 @@ export function pointsBounds(bounds, regulation) {
     if (p < min) min = p;
     if (p > max) max = p;
   }
-  // Un pilote encore à courir peut aussi abandonner : la borne basse doit en
-  // tenir compte, sans quoi elle ne serait pas une borne.
+  // Un pilote encore à courir peut aussi ne pas terminer. La liste des statuts
+  // vient du RÈGLEMENT et non d'une énumération figée : un règlement qui en
+  // définirait un autre serait pris en compte sans modification de code. Selon
+  // le barème, un DNF peut d'ailleurs rapporter plus qu'une dernière place —
+  // il n'est pas supposé valoir zéro.
   let includesIncident = false;
   if (!bounds.hasRun) {
-    for (const status of ['DNF', 'DNS', 'DSQ']) {
+    for (const status of statusesOf(regulation)) {
       const p = calcStatusPoints(status, 'MQ', bounds.engagedCount, regulation) ?? 0;
       if (p < min) { min = p; includesIncident = true; }
     }

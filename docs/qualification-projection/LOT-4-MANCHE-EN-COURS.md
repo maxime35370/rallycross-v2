@@ -221,36 +221,251 @@ Pilote suivi : **#374 Denis Guillerm** — P16, 84 pts avant Q4, exactement sur 
 | Étape | Réels | Position provisoire | Meilleure | Pire | P(qualif) | Certitudes |
 |---|---|---|---|---|---|---|
 | avant Q4 | 0/30 | — | — | — | **37,0 %** | aucune manche en cours |
-| après série 1 | 5/30 | pas encore passé | P1 | P29 | **20,5 %** | places P1–P29 atteignables |
-| après série 2 | 10/30 | pas encore passé | P1 | P29 | **4,3 %** | idem |
-| après série 3 | 15/30 | pas encore passé | P1 | P29 | **2,2 %** | idem |
-| après série 4 | 20/30 | **P10** | P10 | P20 | **100,0 %** | résultat acquis · 9 pilotes hors de portée · 24–34 pts |
+| après série 1 | 5/30 | pas encore passé | P1 | P29 | **38,5 %** | places P1–P29 atteignables |
+| après série 2 | 10/30 | pas encore passé | P1 | P29 | **35,8 %** | idem |
+| après série 3 | 15/30 | pas encore passé | P1 | P29 | **46,8 %** | idem |
+| après série 4 | 20/30 | **P10** | P10 | P20 | **69,0 %** | résultat acquis · 9 pilotes hors de portée · 24–34 pts |
 | avant dernière série | 25/30 | **P14** | P14 | P19 | **100,0 %** | résultat acquis · 13 pilotes hors de portée · 25–30 pts |
 | Q4 terminée | 30/30 | — | — | — | **fait établi, 0 tirage** | QUALIFIÉ |
 
 Réalité : Q4 en P19 (25 pts) → **P16 avec 109 pts → QUALIFIÉ**.
 
+> **Chiffres corrigés.** La première version de ce tableau affichait
+> 37,0 → 20,5 → 4,3 → 100 %. Cet effondrement était un défaut d'échelle de
+> temps, corrigé depuis (§7). La trajectoire réelle est bien plus sage : la
+> probabilité reste autour de 36–39 % pendant que passent les séries de queue de
+> peloton, puis monte quand les rivaux directs livrent leurs résultats.
+
 Trois lectures à retenir :
 
-1. **La probabilité bouge fortement pendant la manche** (37 % → 4,3 % → 100 %) :
-   ce ne sont pas des révisions arbitraires, mais l'effet des résultats réels des
-   rivaux, qui déplacent le score de coupure.
-2. **Le what-if bascule** de « disponible » à « INDISPONIBLE (résultat déjà
-   acquis) » au moment exact où le pilote passe.
-3. **100 % de simulations n'est pas une certitude** : aux étapes 5 et 6, aucun
-   verdict mathématique n'est prononcé, parce que la borne conservatrice ne
-   permet pas de le démontrer. Le chiffre est affiché comme probabilité, jamais
-   dans le bloc CERTITUDES.
+1. **Les deux premières séries ne changent presque rien** (37,0 → 38,5 → 35,8 %).
+   C'est attendu : les séries sont composées du plus lent au plus rapide, et les
+   dix premiers passés sont tous classés derrière Guillerm au provisoire.
+2. **La série 3 fait bondir la projection** (+11 points) : elle contient ses
+   premiers concurrents directs, dont deux terminent moins bien que leur
+   projection médiane.
+3. **Le what-if bascule** de « disponible » à « indisponible » au moment exact
+   où le pilote passe — son résultat n'est plus une hypothèse.
+
+### Pourquoi la probabilité bouge — décomposition
+
+`node tools/qualification-audit/11-pourquoi.mjs`
+
+L'attribution n'est pas une corrélation : pour chaque pilote ayant couru, la
+probabilité est **recalculée dans un monde où ce seul résultat serait encore
+inconnu**, à tirages identiques. L'écart mesure l'effet propre de ce résultat.
+
+Exemple, série 3 (+9,7 points au total) :
+
+| Pilote | Avant Q4 | Chrono Q4 | Q4 provisoire | Q4 finale projetée | Effet propre |
+|---|---|---|---|---|---|
+| #325 Delaunay | P8 · 106 pts | 2:28.628 | P1 | P1 · 50 pts | ≈ 0 (hors zone) |
+| #369 Sordet | P11 · 98 pts | 2:29.090 | P3 | P2 · 45 pts | ≈ 0 (hors zone) |
+| #329 Bothorel | P20 · 72 pts | 2:30.630 | P5 | P7 · 37 pts | défavorable |
+| #333 Lefevre | P18 · 76 pts | 2:33.839 | P8 | P14 · 30 pts | défavorable |
+| #309 Jacquinet | P19 · 75 pts | 2:34.627 | P10 | P17 · 27 pts | favorable |
+
+La somme des effets propres et la variation observée ne coïncident pas
+exactement — deux résultats interagissent. Le **résidu non attribuable est
+affiché tel quel** plutôt que réparti arbitrairement entre les pilotes.
 
 ---
 
-## 6. Fichiers
+## 6. Défaut d'échelle de temps découvert et corrigé
+
+### Le symptôme
+
+La première version affichait 37,0 % → 20,5 % → 4,3 % en deux séries. La
+mécanique invoquée — « les résultats réels des rivaux remontent le score de
+coupure » — était fausse : les rivaux en question étaient tous classés
+**derrière** Guillerm.
+
+### La cause
+
+`timeScaleOf()` estimait la dispersion des chronos à partir de deux points, en
+lisant le rang d'un finisseur **parmi les engagés**. Sur une manche
+partiellement courue, cinq pilotes déjà passés occupent les positions
+provisoires P1 à P5 d'un plateau de 30 : leur étendue de chronos réelle
+(11,4 s) était donc rapportée à l'intervalle de quantiles des cinq premières
+places, minuscule. La pente explosait.
+
+Mesuré sur Kerlabo D3 :
+
+| Séries révélées | Étendue simulée du plateau | Pilote médian simulé |
+|---|---|---|
+| 0 (Q3 complète) | 18,4 s | 2:39.7 |
+| **1** | **51,7 s** | **2:54.7** |
+| 2 | 31,1 s | 2:44.4 |
+| 6 (Q4 complète) | 15,9 s | 2:34.1 |
+| *manche 4 réelle* | *14,1 s* | *2:30.3* |
+
+Le pilote médian simulé se retrouvait 14 s derrière le **dernier** pilote réel.
+Les cinq pilotes déjà passés étaient donc quasi certains de finir P1–P5 du
+classement final, avec 50/45/42/40/39 points — d'où l'effondrement.
+
+### Deuxième cause : les séries ne sont pas tirées au sort
+
+Mesuré sur les 30 manches finales de la base :
+
+| Série | 1 | 2 | 3 | 4 | 5 | 6 |
+|---|---|---|---|---|---|---|
+| Rang moyen en Q3 des pilotes | 17,9 | 14,1 | 9,4 | 7,3 | 4,9 | 3,0 |
+
+Les premiers passés sont **les plus lents du plateau, par construction**. Lire
+leur rang comme un quantile reste donc faux même avec un ajustement correct.
+
+### Le correctif
+
+L'ajustement porte désormais sur la **force estimée de chaque pilote** (le µ de
+son modèle de performance) et non sur son rang : on compare chaque chrono à ce
+qu'on attendait de *ce* pilote, ce qui est insensible à la composition des
+séries. La pente est ramenée vers celle de la dernière manche complète, d'autant
+plus fortement que les finisseurs observés sont peu nombreux ; le niveau, lui,
+vient toujours des chronos réels de la manche en cours, ce qui capte l'évolution
+de la piste.
+
+### Validation sur données réelles
+
+`node tools/qualification-audit/12-calibration-live.mjs [séries]`
+
+On masque les séries d'une manche terminée, on simule, et on compare la position
+finale **réelle** de chaque pilote déjà passé à la distribution simulée.
+
+| Séries révélées | Biais moyen (ancienne) | Biais moyen (corrigée) | Couverture 80 % (ancienne → corrigée) |
+|---|---|---|---|
+| 1 | −8,03 places | **−0,81** | 6,8 % → **62,6 %** |
+| 2 | −6,06 | **+0,01** | 19,2 % → **63,7 %** |
+| 3 | −4,46 | **+0,17** | 20,7 % → **68,8 %** |
+| 4 | −3,06 | **+0,08** | 28,3 % → **82,0 %** |
+
+Un biais de −8 places signifiait que le moteur classait chaque pilote déjà passé
+huit places trop haut. Le biais est désormais nul à moins d'une place près.
+
+La couverture reste sous les 80 % attendus quand peu de séries sont connues :
+les distributions sont alors **un peu trop étroites**. C'est une
+sur-confiance résiduelle, pas un biais, et elle est signalée ici plutôt que
+corrigée par un facteur arbitraire.
+
+### Le conditionnement lui-même est correct
+
+`node tools/qualification-audit/13-conditionnement.mjs`
+
+Test des espérances itérées : la moyenne des probabilités conditionnelles, prise
+sur les déroulements possibles d'une série que le moteur tire lui-même, doit
+retomber sur la probabilité d'avant la manche.
+
+| Meeting / catégorie | Avant | Moyenne conditionnelle | Écart |
+|---|---|---|---|
+| Kerlabo / D3 | 37,6 % | 37,7 % | +0,14 pt (0,9 σ) |
+| Kerlabo / D4 | 35,9 % | 36,9 % | +0,97 pt (1,6 σ) |
+| Kerlabo / Super1600 | 68,2 % | 68,2 % | +0,01 pt |
+| Kerlabo / Féminines | 58,2 % | 58,5 % | +0,34 pt (2,8 σ) |
+
+Le conditionnement ne dérive pas. Il reste un léger biais positif, inférieur à
+un point, attribuable à la ré-estimation de l'échelle sur peu d'observations ;
+il est signalé, pas masqué.
+
+Et l'amplitude n'est pas anormale en soi : sur Kerlabo D3, **une seule série
+peut légitimement déplacer la probabilité de 34,1 % à 41,2 %**. C'est la
+moyenne qui doit être stable, pas chaque trajectoire.
+
+### Aucun résultat des lots précédents n'est modifié
+
+En simulation **pure**, l'échelle de temps n'a aucun effet : les positions
+viennent de l'ordre des forces tirées, et les chronos émis sont une fonction
+croissante du rang. Multiplier l'échelle par cent ne déplace pas un pilote.
+
+Vérifié de deux façons :
+
+- test unitaire — deux meetings au classement identique mais aux chronos dix
+  fois plus étalés donnent **la même probabilité** ;
+- backtest complet ré-exécuté : les six lignes du tableau du LOT 2 sont
+  **inchangées au dix-millième près** (après Q3, meeting exclu : climatologie
+  0,1738 · historique 0,0646 · Monte-Carlo 0,0420).
+
+---
+
+## 7. Statuts DNF / DNS / DSQ — audit
+
+Un simulateur qui poserait « DNF = 0 point » serait faux dans les deux
+règlements réellement utilisés.
+
+### Ce que disent les règlements présents en base
+
+Barème MQ commun : `44 − position`, avec P1 = 50, P2 = 45, P3 = 42.
+
+| Statut | FFSA Rallycross 2026 | Euro RX |
+|---|---|---|
+| DNF | barème à (engagés + 1) | barème à (engagés + 1) |
+| DNS | **fixe : 0 pt** | barème à (engagés + 5) |
+| DSQ | fixe : 0 pt | fixe : 0 pt |
+| DSQ_RACE | barème à (engagés + 3) | barème à (engagés + 10) |
+
+Sur un plateau de 30, en FFSA : **DNF = 13 points**, soit **un seul point de
+moins que la dernière place classée** (14 pts). Un abandon coûte cher au
+classement de la manche, pas au score. En Euro RX, un DNS rapporte 9 points là
+où il en rapporte 0 en FFSA.
+
+Les points dépendent du nombre d'engagés : DNF vaut 35 pts à 8 engagés et 3 pts
+à 40.
+
+### Le simulateur applique-t-il ces règles ?
+
+Oui, et par construction : il n'a aucun barème propre. Il fabrique des documents
+de résultat portant un statut, puis les passe à `buildMqStandings()` — la
+fonction de l'application, qui appelle `calcStatusPoints(status, 'MQ',
+totalEngaged, regulation)`.
+
+`node tools/qualification-audit/10-statuts.mjs` compare les deux chemins :
+
+```
+72 comparaisons (2 règlements × 9 tailles de plateau × 4 statuts)
+écarts : 0
+```
+
+Tests permanents — `tests/statusPoints.test.js` (21) : chaque statut, chaque
+règlement, dix tailles de plateau, position **et** points. Plus un test que le
+DNF tiré au hasard pendant la simulation et le DNF imposé par un scénario
+donnent exactement le même résultat.
+
+### Deux défauts corrigés à cette occasion
+
+1. **`raceCertainties` recodait le placement des statuts** (`engagés + 1`,
+   `engagés + 3`). Valeurs correctes, mais dupliquées — et deux
+   implémentations d'une même règle finissent par diverger. La position et les
+   points sont désormais **lus** dans le classement produit par
+   `buildMqStandings`.
+2. **La liste des statuts était figée** à `['DNF','DNS','DSQ']`, ce qui excluait
+   `DSQ_RACE` — pourtant présent 9 fois dans les données réelles — des scénarios
+   « et si » et des bornes de points. Elle est désormais lue dans
+   `regulation.statusRules`.
+
+### Effet sur les lots précédents
+
+Aucun effet numérique : les points de statut passaient déjà par le règlement.
+Backtest ré-exécuté, six lignes identiques. Le seul changement visible est
+qu'un scénario `DSQ_RACE` est désormais proposé quand le règlement le définit.
+
+### Vérification demandée : « DNF Q3 → 2,5 % »
+
+Ce chiffre du LOT 3 était bien calculé avec **13 points** (Kerlabo D3, 30
+engagés), pas avec 0. Le faible pourcentage vient de la position — un DNF est
+classé 31ᵉ sur 30 — et non d'un score nul.
+
+---
+
+## 8. Fichiers
 
 **Nouveaux**
 - `js/projection/raceCertainties.js`
 - `tests/raceInProgress.test.js`, `tests/hybridLiveRace.test.js`, `tests/raceCertainties.test.js`
 - `tools/smoke/liveRaceSmoke.mjs`
-- `tools/qualification-audit/09-manche-en-cours.mjs`
+- `tests/statusPoints.test.js`, `tests/timeScale.test.js`
+- `tools/qualification-audit/09-manche-en-cours.mjs` — progression en direct
+- `tools/qualification-audit/10-statuts.mjs` — audit DNF / DNS / DSQ
+- `tools/qualification-audit/11-pourquoi.mjs` — décomposition des variations
+- `tools/qualification-audit/12-calibration-live.mjs` — biais et couverture
+- `tools/qualification-audit/13-conditionnement.mjs` — espérances itérées
 
 **Modifiés**
 - `js/projection/qualificationState.js` — états de manche, `seriesStateOf()`
@@ -261,4 +476,4 @@ Trois lectures à retenir :
 - `tests/helpers/projectionFixtures.js` — sentinelle `PENDING`, champ `serie`
 - `sw.js` (cache `rx-chrono-v36`), `tests/moduleGraph.test.js`
 
-**Total : 775 tests · 44/44 smoke projection · 15/15 smoke direct.**
+**Total : 805 tests · 44/44 smoke projection · 15/15 smoke direct.**

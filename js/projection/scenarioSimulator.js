@@ -58,44 +58,157 @@ import { PROJECTION_MIN_CLASSIFIED_RACES } from './qualificationState.js';
 import { isQualifiedByRule } from './qualificationRules.js';
 import { SIMULATION } from './projectionConfig.js';
 
-/** Statuts qu'un scénario peut forcer, dans l'ordre d'affichage. */
+/**
+ * Statuts qu'un scénario peut forcer, à défaut de règlement connu.
+ * Préférer `forceableStatuses(regulation)`, qui lit les statuts réellement
+ * définis par le championnat.
+ */
 export const FORCEABLE_STATUSES = ['DNF', 'DNS', 'DSQ'];
+
+/**
+ * Statuts forçables d'après le RÈGLEMENT.
+ *
+ * Les points d'un statut ne sont pas une constante du simulateur : selon le
+ * championnat et le nombre d'engagés, un DNF peut valoir près d'une dernière
+ * place, et un DNS peut rapporter des points. Énumérer les statuts ici plutôt
+ * que dans une constante évite qu'un championnat traitant un statut à part reste
+ * invisible dans les scénarios.
+ */
+export function forceableStatuses(regulation) {
+  const known = Object.keys(regulation?.statusRules || {});
+  if (!known.length) return [...FORCEABLE_STATUSES];
+  const ordre = ['DNF', 'DNS', 'DSQ', 'DSQ_RACE'];
+  return known.sort((a, b) => {
+    const ia = ordre.indexOf(a), ib = ordre.indexOf(b);
+    return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+  });
+}
 
 // ─────────────────────────────────────────────────────────
 // PRÉPARATION
 // ─────────────────────────────────────────────────────────
 
 /**
- * Échelle de temps du meeting, déduite de la dernière manche courue.
+ * Échelle de temps du meeting : la droite qui relie une FORCE latente à un
+ * CHRONO plausible.
  *
- * On ne cherche pas à prédire un chrono : on cherche à produire des écarts
- * plausibles et strictement ordonnés, à la bonne échelle pour ce circuit.
+ * ── À quoi elle sert exactement ────────────────────────────────────────────
+ * En simulation pure, elle ne sert à rien : les positions sortent de l'ordre
+ * des forces tirées, et les chronos émis sont une fonction croissante du rang.
+ * Multiplier l'échelle par dix ne changerait pas un seul classement.
  *
- * @returns {{ baseMs: number, msPerZ: number, source: number|null }}
+ * Elle devient en revanche déterminante en mode HYBRIDE, où des chronos réels
+ * sont comparés aux forces tirées des pilotes restants. Une échelle fausse
+ * classe alors tous les pilotes déjà passés devant tous les autres, et fait
+ * s'effondrer la projection pour une raison purement instrumentale.
+ *
+ * ── Pourquoi le rang ne suffit pas sur une manche en cours ─────────────────
+ * Les séries ne sont pas tirées au sort. Mesuré sur les données réelles : le
+ * rang moyen des pilotes de la série 1 est 17,9 sur ~30, celui de la dernière
+ * série 3,0. Les premiers passés sont les plus lents du plateau, par
+ * construction. Les traiter comme un échantillon représentatif — c'est-à-dire
+ * lire leur rang comme un quantile du plateau — décale l'échelle et fait
+ * paraître les pilotes restants beaucoup plus lents qu'ils ne sont.
+ *
+ * L'ajustement porte donc sur la FORCE ESTIMÉE de chaque pilote (µ de son
+ * modèle) et non sur son rang, dès que les modèles sont disponibles. Cette
+ * régression est insensible à la composition des séries : elle compare chaque
+ * chrono à ce qu'on attendait de CE pilote.
+ *
+ * La pente est ramenée vers celle de la dernière manche COMPLÈTE, d'autant plus
+ * fortement que les finisseurs observés sont peu nombreux. Le NIVEAU vient
+ * toujours des chronos réellement enregistrés : c'est ce qui capte l'évolution
+ * de la piste d'une manche à l'autre.
+ *
+ * @param {object} context
+ * @param {number} upToRace — dernière manche exploitable
+ * @param {object} [options]
+ * @param {object} [options.models] — modèles de performance, fortement conseillés
+ * @param {number} [options.priorWeight=8] — poids de la pente de référence
+ * @returns {{ baseMs, msPerZ, source, samples, basis, shrunk, reference }}
  */
-export function timeScaleOf(context, upToRace) {
+export function timeScaleOf(context, upToRace, options = {}) {
+  const priorWeight = options.priorWeight ?? 8;
+  const models = options.models || null;
   const races = (context?.races || [])
     .filter(r => r.hasResults && r.num <= upToRace)
     .sort((a, b) => b.num - a.num);
 
-  for (const race of races) {
-    const finishers = race.rows
+  /**
+   * Ajustement moindres carrés du chrono sur une abscisse de force.
+   * `basis` dit d'où vient cette abscisse : le modèle du pilote, ou son rang
+   * parmi les finisseurs observés à défaut de modèle.
+   */
+  const fit = (race, useModels) => {
+    const finishers = (race.rows || [])
       .filter(r => r.ms != null && !r.status && r.position != null)
-      .sort((a, b) => a.position - b.position);
-    if (finishers.length < 2) continue;
+      .sort((a, b) => a.ms - b.ms);
+    const k = finishers.length;
+    if (k < 2) return null;
 
-    const first = finishers[0], last = finishers[finishers.length - 1];
-    const zFirst = latentFromPosition(first.position, race.engagedCount);
-    const zLast = latentFromPosition(last.position, race.engagedCount);
-    const dz = (zLast ?? 0) - (zFirst ?? 0);
-    const dms = last.ms - first.ms;
-    if (dz > 1e-6 && dms > 0) {
-      return { baseMs: first.ms, msPerZ: dms / dz, source: race.num };
+    const points = [];
+    for (let i = 0; i < k; i++) {
+      const m = useModels ? models?.[finishers[i].driverId] : null;
+      // Rang parmi les finisseurs OBSERVÉS : sur une manche complète c'est le
+      // plateau entier, donc une lecture correcte du quantile.
+      const z = useModels && m ? m.mu : latentFromPosition(i + 1, k);
+      if (z == null || !Number.isFinite(z)) continue;
+      points.push([z, finishers[i].ms]);
     }
+    if (points.length < 2) return null;
+
+    let sz = 0, sm = 0, szz = 0, szm = 0;
+    for (const [z, ms] of points) { sz += z; sm += ms; szz += z * z; szm += z * ms; }
+    const n = points.length;
+    const varZ = szz - sz * sz / n;
+    if (!(varZ > 1e-9)) return null;
+    const slope = (szm - sz * sm / n) / varZ;
+    if (!(slope > 0)) return null;
+
+    return {
+      slope, meanZ: sz / n, meanMs: sm / n, k: n,
+      complete: Boolean(race.isComplete), num: race.num,
+      basis: useModels && models ? 'model' : 'rank',
+    };
+  };
+
+  const fits = [];
+  for (const race of races) {
+    // Sur une manche EN COURS, l'abscisse « rang » est biaisée par la
+    // composition des séries : on n'utilise que les modèles.
+    const f = fit(race, Boolean(models)) || (race.isComplete ? fit(race, false) : null);
+    if (f) fits.push(f);
   }
-  // Aucune référence exploitable : échelle neutre. Les chronos resteront
-  // ordonnés, ce qui est tout ce dont le départage a besoin.
-  return { baseMs: 60000, msPerZ: 1000, source: null };
+  if (!fits.length) {
+    // Aucune référence exploitable : échelle neutre. Les chronos resteront
+    // ordonnés, ce qui est tout ce dont le départage a besoin.
+    return { baseMs: 60000, msPerZ: 1000, source: null, samples: 0, basis: 'none', shrunk: false, reference: null };
+  }
+
+  const cible = fits[0];
+  // Référence de dispersion : la manche complète la plus récente, seule à
+  // observer tout le plateau.
+  const reference = fits.find(f => f.complete && f.num !== cible.num)
+    || (cible.complete ? cible : null);
+
+  let slope = cible.slope;
+  let shrunk = false;
+  if (!cible.complete && reference && reference.num !== cible.num) {
+    slope = (cible.k * cible.slope + priorWeight * reference.slope) / (cible.k + priorWeight);
+    shrunk = true;
+  }
+
+  // La droite passe par le barycentre des points observés : le niveau vient
+  // donc toujours des chronos réellement enregistrés sur cette manche.
+  const fieldSize = (context?.races || []).find(r => r.num === cible.num)?.engagedCount || cible.k;
+  const z0 = latentFromPosition(1, fieldSize) ?? 0;
+  const baseMs = cible.meanMs + slope * (z0 - cible.meanZ);
+
+  return {
+    baseMs, msPerZ: slope, source: cible.num,
+    samples: cible.k, basis: cible.basis, shrunk,
+    reference: reference ? { num: reference.num, msPerZ: reference.slope } : null,
+  };
 }
 
 /** Pilotes engagés sur une manche : ses inscrits, sinon ceux du checkpoint. */
@@ -455,7 +568,7 @@ export function simulateFromCheckpoint({
   // La manche en cours est la référence de temps la plus fraîche du meeting :
   // ses chronos réels servent d'échelle aux pilotes qui restent à passer.
   const scale = timeScaleOf(context, context?.raceInProgress != null && liveResults !== 'none'
-    ? Math.max(checkpoint, context.raceInProgress) : checkpoint);
+    ? Math.max(checkpoint, context.raceInProgress) : checkpoint, { models });
   const rng = createRng(seed);
 
   const positionTally = createTally();
@@ -619,7 +732,7 @@ function finalResult(r) {
  */
 export function whatIfResults({
   context, checkpoint, models, threshold, focusDriverId,
-  raceNum, positions, statuses = FORCEABLE_STATUSES,
+  raceNum, positions, statuses = null,
   simulations = SIMULATION.whatIfSimulations,
   seed = SIMULATION.defaultSeed,
   entrantsSource = 'session',
@@ -647,6 +760,7 @@ export function whatIfResults({
   const places = positions?.length
     ? positions
     : Array.from({ length: entrants.length }, (_, i) => i + 1);
+  const statutsTestes = statuses?.length ? statuses : forceableStatuses(context?.regulation);
 
   const entries = [];
   for (const position of places) {
@@ -661,7 +775,7 @@ export function whatIfResults({
       medianPosition: run.medianPosition,
     });
   }
-  for (const status of statuses) {
+  for (const status of statutsTestes) {
     const run = simulateFromCheckpoint({
       context, checkpoint, models, threshold, focusDriverId,
       forced: { [raceNum]: { [focusDriverId]: { status } } },
@@ -769,7 +883,7 @@ export function simulateScenarioMatrix({
     };
   });
   const scale = timeScaleOf(context, context?.raceInProgress != null && liveResults !== 'none'
-    ? Math.max(checkpoint, context.raceInProgress) : checkpoint);
+    ? Math.max(checkpoint, context.raceInProgress) : checkpoint, { models });
   const colIndex = races.findIndex(r => r.num === colNum);
 
   const cells = [];
