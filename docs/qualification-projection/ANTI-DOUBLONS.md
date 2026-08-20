@@ -85,6 +85,33 @@ Qualité des données → « Protection contre les inscriptions en double ». La
 du document à identifiant historique le plus récent ne doit jamais devenir
 postérieure au déploiement. Si elle le devient, la règle n'est pas active.
 
+## Procédure de déploiement — à exécuter avant la mise en production
+
+Le dépôt ne contient aucun mécanisme de déploiement des règles Firestore : elles
+se collent à la main dans la console. La procédure tient en cinq étapes.
+
+1. **Sauvegarder les règles actuelles.** Console Firebase → Firestore Database →
+   Règles → copier le contenu affiché dans un fichier local daté. C'est le seul
+   moyen de revenir en arrière.
+2. **Coller le contenu de `firestore.rules`** (racine du dépôt), en entier.
+3. **Publier**, puis attendre la confirmation de la console.
+4. **Vérifier immédiatement que l'écriture normale fonctionne encore** : ouvrir
+   une session en Chronométrage, ajouter puis retirer un participant de test.
+   Une règle trop stricte se manifesterait ici, pas plus tard.
+5. **Vérifier que la protection est active** : Projection de qualification →
+   Qualité des données → « Protection contre les inscriptions en double ». La
+   date du document à identifiant historique le plus récent doit rester
+   antérieure au déploiement. Si un document postérieur apparaît, la règle
+   n'est pas appliquée — revenir aux règles sauvegardées et investiguer.
+
+En cas de doute, l'étape 1 suffit à tout annuler : republier le fichier
+sauvegardé restaure exactement l'état antérieur.
+
+**Cette procédure est indépendante du déploiement du code.** Le site fonctionne
+sans elle ; elle empêche seulement la création de NOUVEAUX doublons. La déployer
+avant le prochain meeting est ce qui compte, pas avant le prochain déploiement
+du site.
+
 ## Ce qui n'est PAS fait, délibérément
 
 **Aucune suppression automatique des documents existants.** Reprendre les

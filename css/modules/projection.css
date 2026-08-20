@@ -409,3 +409,67 @@
   background: linear-gradient(90deg, #ff5252, #ffab40);
   transition: width .3s ease;
 }
+
+/* ─────────────────────────────────────────────────────────
+   OBJECTIF PILOTE
+
+   Ce bandeau est lu à la radio, debout, en quelques secondes. Il est donc
+   volontairement pauvre : une cible, un chrono, un pourcentage. Toute la
+   statistique vit en dessous, repliée.
+   ───────────────────────────────────────────────────────── */
+
+.prj-objective {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-md);
+  padding: var(--sp-md);
+  border-radius: var(--radius-md, 8px);
+  background: rgba(224, 64, 251, 0.10);
+  border: 1px solid rgba(224, 64, 251, 0.35);
+}
+.prj-objective-main { flex: 1 1 260px; min-width: 0; }
+.prj-objective-goal {
+  font-family: var(--font-condensed);
+  font-size: 1.35rem;
+  line-height: 1.25;
+  font-weight: 600;
+}
+.prj-objective-chrono {
+  margin-top: var(--sp-xs);
+  font-family: var(--font-mono, monospace);
+  font-size: 1.9rem;
+  font-weight: 700;
+  letter-spacing: .02em;
+  color: #e79bff;
+}
+.prj-objective-side { text-align: right; flex: 0 0 auto; }
+.prj-objective-prob {
+  font-family: var(--font-condensed);
+  font-size: 2.1rem;
+  font-weight: 700;
+  line-height: 1;
+}
+.prj-objective-prob-label {
+  font-size: .75rem;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  opacity: .7;
+}
+
+.prj-table tr.is-target {
+  background: rgba(224, 64, 251, 0.12);
+  font-weight: 600;
+}
+
+@media (max-width: 520px) {
+  .prj-objective { flex-direction: column; align-items: flex-start; }
+  .prj-objective-side { text-align: left; }
+}
+
+.prj-objective-compare {
+  margin: var(--sp-sm) 0 0;
+  font-size: .9rem;
+  opacity: .85;
+}

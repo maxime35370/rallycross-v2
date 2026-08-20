@@ -8,3 +8,6 @@ node_modules/
 *.mkv
 *.onnx
 *.pt
+
+# Copies de référence produites par tools/qualification-audit/16-non-regression.sh
+js/__base*.js

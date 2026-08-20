@@ -220,8 +220,65 @@ try {
 
   // Polices Google, QR distant, service worker : ressources externes
   // inaccessibles depuis l'environnement de test, sans rapport avec le module.
-  const reelles = errors.filter(e => !/net::|Failed to fetch|Failed to load resource|ERR_|favicon|manifest|qrserver|fonts\.googleapis|sw\.js|ServiceWorker/i.test(e));
-  check('aucune erreur JavaScript', reelles.length === 0, reelles.slice(0, 3).join(' | '));
+  const reelles = () => errors.filter(e => !/net::|Failed to fetch|Failed to load resource|ERR_|favicon|manifest|qrserver|fonts\.googleapis|sw\.js|ServiceWorker/i.test(e));
+  // ── OBJECTIF PILOTE ────────────────────────────────────
+  // Testé sur le pilote encore à courir le plus proche de la bulle : c'est le
+  // seul cas où une consigne de résultat a réellement un contenu. Un pilote
+  // largement qualifié afficherait « acquis » et n'exercerait rien.
+  const proche = await page.evaluate((ids) => {
+    const sel = document.getElementById('prj-driver');
+    const cut = 16;
+    let best = null;
+    for (const o of sel.options) {
+      if (!o.value || !ids.includes(o.value)) continue;
+      const m = /P(\d+)/.exec(o.textContent);
+      if (!m) continue;
+      const d = Math.abs(Number(m[1]) - cut);
+      if (!best || d < best.d) best = { d, value: o.value, label: o.textContent.trim() };
+    }
+    return best;
+  }, restant);
+  await choisir(proche ? proche.value : restant[0]);
+  await page.waitForTimeout(800);
+  const lance = await page.evaluate(() => {
+    const b = document.getElementById('prj-objective');
+    if (!b) return false;
+    b.click();
+    return true;
+  });
+  check('le bouton « Calculer l\'objectif » est proposé pendant la manche', lance);
+
+  let objectif = null;
+  if (lance) {
+    try {
+      await page.waitForFunction(() => !!document.querySelector('.prj-objective'), null, { timeout: 60000 });
+    } catch { /* relevé ci-dessous */ }
+    objectif = await page.evaluate(() => {
+      const el = document.querySelector('.prj-objective');
+      if (!el) return null;
+      const bloc = el.closest('.prj-section');
+      return {
+        goal: el.querySelector('.prj-objective-goal')?.textContent.trim(),
+        chrono: el.querySelector('.prj-objective-chrono')?.textContent.trim() || null,
+        prob: el.querySelector('.prj-objective-prob')?.textContent.trim(),
+        texte: bloc.textContent.replace(/\s+/g, ' '),
+        lignesEchelle: bloc.querySelectorAll('.prj-table tbody tr').length,
+      };
+    });
+  }
+  check('le bloc OBJECTIF affiche une consigne et une probabilité',
+        Boolean(objectif?.goal && objectif?.prob), `${objectif?.goal} · ${objectif?.chrono || 'sans chrono'} · ${objectif?.prob}`);
+  check('le chrono est présenté comme une traduction de rang, jamais comme une garantie seule',
+        !objectif || /traduction de l'objectif de rang/.test(objectif.texte)
+          || /MATHÉMATIQUEMENT|CONFORTABLE|DÉPENDANCE|acquis/.test(objectif.texte),
+        (objectif?.texte || '').slice(0, 120));
+  check('le détail expose l\'échelle de cibles et les concurrents',
+        (objectif?.lignesEchelle ?? 0) > 0, `${objectif?.lignesEchelle} lignes`);
+  check('l\'avertissement coéquipiers de série apparaît quand il y a lieu',
+        !objectif || !/ne garantit pas cette place/.test(objectif.texte)
+          || /concurrents? de votre série/.test(objectif.texte));
+
+  check('aucune erreur JavaScript', reelles().length === 0, reelles().slice(0, 3).join(' | '));
 } catch (e) {
   check('parcours complet', false, e.message);
 } finally {

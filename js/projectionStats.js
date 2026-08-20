@@ -36,9 +36,13 @@ import {
   hasRealResult,
 } from './projection/scenarioSimulator.js';
 import { buildRaceCertainties } from './projection/raceCertainties.js';
+import {
+  buildLiveObjective, directRivals, pickScenarios, seriesPlan, provisionalOrder,
+  mathematicalChronoTarget,
+} from './projection/liveStrategy.js';
 import { computeTargetResult, marginalGains, classifyStrategy } from './projection/strategyTargetCalculator.js';
 import { runBacktest, LEAKAGE_MODES } from './projection/qualificationBacktest.js';
-import { MESSAGES, MIN_CASES_TO_SHOW_RATE, SIMULATION } from './projection/projectionConfig.js';
+import { MESSAGES, MIN_CASES_TO_SHOW_RATE, SIMULATION, STRATEGY } from './projection/projectionConfig.js';
 
 // ─────────────────────────────────────────────────────────
 // ÉTAT
@@ -76,6 +80,7 @@ let simSeed = SIMULATION.defaultSeed;
 let simProfile = SIMULATION.defaultProfile;
 let whatIfState = { key: null, running: false, progress: 0, data: null, raceNum: null };
 let matrixState = { key: null, running: false, progress: 0, data: null };
+let objectiveState = { key: null, running: false, data: null };
 let backtestState = { running: false, progress: 0, data: null, checkpoint: 3, leakageMode: LEAKAGE_MODES[0] };
 
 // ─────────────────────────────────────────────────────────
@@ -332,6 +337,7 @@ function renderSituation(el) {
   const resetScenarioRace = () => {
     whatIfState = { key: null, running: false, progress: 0, data: null, raceNum: null };
     matrixState = { key: null, running: false, progress: 0, data: null };
+    objectiveState = { key: null, running: false, data: null };
   };
   document.getElementById('prj-meeting')?.addEventListener('change', e => {
     situation.meetingKey = e.target.value;
@@ -357,6 +363,7 @@ function renderSituation(el) {
     renderSituationHeader(ctx, state, thresholdInfo, checkpoint, trivial),
     renderLiveBanner(ctx, live),
     driver ? renderCertainties(ctx, checkpoint, driver, threshold) : '',
+    driver ? renderObjective(ctx, state, threshold, checkpoint, driver) : '',
     driver ? renderDriverOutlook(ctx, state, thresholdInfo, checkpoint, driver, trivial) : '',
     driver ? renderSimulation(ctx, state, threshold, checkpoint, driver) : renderSimulationIntro(checkpoint, ctx),
     driver && whatIfState.data && whatIfState.key === whatIfKey(ctx, checkpoint, driver, whatIfRaceOf(ctx, checkpoint))
@@ -465,6 +472,180 @@ function renderCertainties(ctx, checkpoint, driver, threshold) {
         ['Méthode', 'chaque adversaire est crédité de son meilleur résultat encore possible : une conclusion « qualifié » est donc valide à coup sûr'],
       ] : []),
     ])}`);
+}
+
+/** Chrono lisible : 2:31.488. */
+function fmtMs(ms) {
+  if (ms == null) return '—';
+  const t = Math.round(ms);
+  return `${Math.floor(t / 60000)}:${String(Math.floor(t % 60000 / 1000)).padStart(2, '0')}.${String(t % 1000).padStart(3, '0')}`;
+}
+
+const driverLabel = (ctx, id) => {
+  const d = ctx.driversById?.[id] || {};
+  return `#${escHtml(String(d.carNumber ?? '?'))} ${escHtml(d.lastName || '')}`;
+};
+
+function objectiveKey(ctx, checkpoint, driver) {
+  return `${ctx.key}|${checkpoint}|${driver.driverId}|${simSeed}`;
+}
+
+/**
+ * OBJECTIF PILOTE.
+ *
+ * Ce bloc est lu en quelques secondes, juste avant un départ, par quelqu'un qui
+ * doit transmettre une consigne à la radio. Il ne contient donc qu'une cible et
+ * un chrono ; toute la statistique vit en dessous, repliée.
+ *
+ * Il ne s'affiche que pendant une manche : hors manche, il n'y a pas de consigne
+ * à donner, seulement une projection.
+ */
+function renderObjective(ctx, state, threshold, checkpoint, driver) {
+  const raceNum = ctx.raceInProgress ?? null;
+  if (raceNum == null || threshold == null) return '';
+  const key = objectiveKey(ctx, checkpoint, driver);
+
+  if (objectiveState.running && objectiveState.key === key) {
+    return section('strategy', MESSAGES.sectionObjective,
+      '<div class="loading-state"><div class="spinner"></div> Calcul de l\'objectif…</div>');
+  }
+  if (objectiveState.key !== key || !objectiveState.data) {
+    return section('strategy', MESSAGES.sectionObjective, `
+      <p class="prj-n">Traduit la situation réelle en une consigne transmissible. Le calcul simule
+         tous les pilotes non encore passés, coéquipiers de série compris.</p>
+      <button class="btn btn-primary" id="prj-objective">Calculer l'objectif Q${raceNum}</button>`);
+  }
+
+  const { objective: o, rivals, scenarios, maths } = objectiveState.data;
+  if (!o) return '';
+
+  // ── Titre de la consigne, selon la situation ────────────────────────────
+  let titre = '', sous = '', chrono = '';
+  if (o.mode === 'afterRun') {
+    titre = MESSAGES.afterOurRun;
+  } else if (o.mode === 'settled') {
+    titre = MESSAGES.objectiveSettled;
+    sous = MESSAGES.objectiveNone;
+  } else if (o.mode === 'comfortable') {
+    titre = MESSAGES.objectiveComfortable;
+  } else if (o.mode === 'dependent') {
+    titre = MESSAGES.objectiveDependent;
+    sous = o.best ? `Même P${o.best.provisionalTarget} au provisoire ne donne que ${pct(o.best.probability)}.` : '';
+  } else if (o.target) {
+    titre = `Être P${o.target.provisionalTarget} au provisoire de la manche, ou mieux`;
+    chrono = o.target.reference?.beat != null ? fmtMs(o.target.reference.beat) : null;
+    sous = chrono
+      ? (o.exact
+          ? MESSAGES.chronoCertain(chrono, o.target.provisionalTarget)
+          : MESSAGES.chronoProbabilistic(chrono, o.target.provisionalTarget, pct(o.target.probability)))
+      : '';
+  }
+
+  const menace = (o.seriesThreat || []).filter(m => (m.probabilityBeatsTarget ?? 0) >= 0.25);
+  const avertissement = (o.mode === 'target' && chrono && menace.length)
+    ? warn(escHtml(MESSAGES.seriesMatesWarning(chrono, menace.length)))
+    : '';
+
+  const bandeau = `
+    <div class="prj-objective">
+      <div class="prj-objective-main">
+        <div class="prj-objective-goal">🎯 ${escHtml(titre)}</div>
+        ${chrono ? `<div class="prj-objective-chrono">⏱ ${escHtml(chrono)}</div>` : ''}
+      </div>
+      <div class="prj-objective-side">
+        <div class="prj-objective-prob">${pct(o.mode === 'target' ? o.probabilityAtTarget : o.probability)}</div>
+        <div class="prj-objective-prob-label">${o.mode === 'target' ? 'si l\'objectif est atteint' : 'qualification projetée'}</div>
+      </div>
+    </div>
+    ${o.mode === 'target' ? `<p class="prj-objective-compare">
+       Sans cette cible : <strong>${pct(o.probability)}</strong>
+       ${o.justBehind ? ` · une place derrière (P${o.justBehind.provisionalTarget}) : <strong>${pct(o.justBehind.probability)}</strong>` : ''}
+     </p>` : ''}
+    ${sous ? `<p style="margin:var(--sp-sm) 0 0">${escHtml(sous)}</p>` : ''}`;
+
+  // ── Certitude chrono, quand elle existe ─────────────────────────────────
+  const certain = maths && !maths.impossible && !maths.unconditional && maths.beat != null
+    ? `<p style="margin:var(--sp-sm) 0 0">
+         <strong>Cible mathématique</strong> — battre ${escHtml(fmtMs(maths.beat))}
+         (${driverLabel(ctx, maths.beatDriverId)}) rend la qualification acquise quels que soient
+         les résultats restants.</p>`
+    : '';
+
+  // ── Menace des coéquipiers de série ─────────────────────────────────────
+  const serie = o.series ? `
+    <h4 class="prj-section-title" style="margin-top:var(--sp-lg);font-size:.95rem">
+      Série ${o.series.num}${o.series.inferred ? ' (déduite)' : ''} — ${o.series.pendingMates.length} coéquipier${o.series.pendingMates.length > 1 ? 's' : ''} encore à courir</h4>
+    ${o.series.inferred ? `<p class="prj-n">${escHtml(MESSAGES.inferredSeries)}</p>` : ''}
+    ${menace.length ? `<div class="prj-scroll"><table class="prj-table">
+      <thead><tr><th>Coéquipier de série</th><th class="center">Bat le chrono cible</th></tr></thead>
+      <tbody>${o.seriesThreat.map(m => `<tr>
+        <td>${driverLabel(ctx, m.driverId)} ${escHtml(m.firstName || '')}</td>
+        <td class="center">${pct(m.probabilityBeatsTarget)}</td>
+      </tr>`).join('')}</tbody></table></div>` : ''}` : '';
+
+  // ── Scénarios, 3 au plus ────────────────────────────────────────────────
+  const scenariosHtml = scenarios?.length ? `
+    <h4 class="prj-section-title" style="margin-top:var(--sp-lg);font-size:.95rem">Chemins possibles</h4>
+    <ul class="prj-notes">${scenarios.map(sc =>
+      `<li><strong>${escHtml(sc.label)}</strong> — ${pct(sc.probability)}</li>`).join('')}</ul>` : '';
+
+  // ── Détail, replié : c'est la partie ingénieur ──────────────────────────
+  const detail = why('Détail — échelle de cibles et concurrents directs', [
+    ['Manche', `Q${o.raceNum}`],
+    ['Pilotes encore à courir', String(o.pendingOthers)],
+    ['Nature de la cible', o.exact ? 'exacte — plus personne d\'autre ne doit rouler' : 'probabiliste — d\'autres pilotes doivent encore rouler'],
+    ['Échelle de cibles', `<div class="prj-scroll"><table class="prj-table">
+        <thead><tr><th>Cible provisoire</th><th>Chrono à battre</th><th class="center">P(qualif)</th><th class="center">Place médiane</th></tr></thead>
+        <tbody>${(o.ladder || []).map(e => `<tr${o.target && e.provisionalTarget === o.target.provisionalTarget ? ' class="is-target"' : ''}>
+          <td>${e.behindAll ? 'derrière tous les pilotes déjà passés' : `P${e.provisionalTarget}`}</td>
+          <td>${e.reference?.beat != null ? escHtml(fmtMs(e.reference.beat)) : '—'}</td>
+          <td class="center">${pct(e.probability)}</td>
+          <td class="center">${e.medianRacePosition != null ? `P${e.medianRacePosition}` : '—'}</td>
+        </tr>`).join('')}</tbody></table></div>`],
+    ['Concurrents directs', `<div class="prj-scroll"><table class="prj-table">
+        <thead><tr><th>Pilote</th><th class="center">Impact</th><th class="center">S'il réussit</th><th class="center">S'il abandonne</th></tr></thead>
+        <tbody>${(rivals?.all || []).map(r => `<tr>
+          <td>${driverLabel(ctx, r.driverId)}</td>
+          <td class="center">${r.settled ? 'résultat acquis' : `${(100 * r.impact).toFixed(1)} pt`}</td>
+          <td class="center">${r.settled ? '—' : pct(r.probabilityIfRivalBest)}</td>
+          <td class="center">${r.settled ? '—' : pct(r.probabilityIfRivalOut)}</td>
+        </tr>`).join('')}</tbody></table></div>`],
+    ['Seuil « concurrent direct »', `${(100 * (rivals?.minImpact ?? STRATEGY.directRivalMinImpact)).toFixed(0)} points de probabilité — choix de lisibilité, l'impact réel de chacun est listé ci-dessus`],
+    ['Méthode', 'chaque hypothèse simule TOUS les pilotes non encore passés, coéquipiers de série compris, puis relit le classement complet de la manche'],
+    ['Traduction en chrono', escHtml(MESSAGES.chronoIsATranslation)],
+    ['Graine', `<code>${simSeed}</code>`],
+  ]);
+
+  return section('strategy', MESSAGES.sectionObjective,
+    `${bandeau}${avertissement}${certain}${serie}${scenariosHtml}${detail}`);
+}
+
+async function computeObjective(ctx, state, threshold, checkpoint, driver) {
+  const key = objectiveKey(ctx, checkpoint, driver);
+  objectiveState = { key, running: true, data: null };
+  renderContent();
+  await new Promise(r => setTimeout(r, 0));
+
+  const { run } = runBaseSimulation(ctx, state, threshold, checkpoint, driver);
+  const { models } = modelsFor(ctx, state, checkpoint);
+
+  const objective = buildLiveObjective({
+    context: ctx, checkpoint, models, threshold, driverId: driver.driverId,
+    baseRun: run, seed: simSeed,
+  });
+  const rivals = directRivals({
+    context: ctx, checkpoint, models, threshold, driverId: driver.driverId,
+    baseRun: run, seed: simSeed,
+  });
+  const maths = mathematicalChronoTarget({
+    context: ctx, raceNum: ctx.raceInProgress, driverId: driver.driverId, threshold, checkpoint,
+  });
+
+  objectiveState = {
+    key, running: false,
+    data: { objective, rivals, maths, scenarios: pickScenarios({ objective, rivals }) },
+  };
+  renderContent();
 }
 
 function renderDriverOutlook(ctx, state, threshold, checkpoint, driver, trivial) {
@@ -1041,9 +1222,17 @@ function bindSimulationControls(ctx, state, threshold, checkpoint, driver) {
   document.getElementById('prj-matrix')?.addEventListener('click', () => {
     computeMatrix(ctx, state, threshold, checkpoint, driver);
   });
+  document.getElementById('prj-objective')?.addEventListener('click', () => {
+    if (driver) computeObjective(ctx, state, threshold, checkpoint, driver);
+  });
   document.getElementById('prj-seed')?.addEventListener('change', (e) => {
     const v = parseInt(e.target.value, 10);
-    if (Number.isFinite(v)) { simSeed = v; simCache.clear(); whatIfState = { key: null, running: false, progress: 0, data: null }; renderContent(); }
+    if (Number.isFinite(v)) {
+      simSeed = v; simCache.clear();
+      whatIfState = { key: null, running: false, progress: 0, data: null };
+      objectiveState = { key: null, running: false, data: null };
+      renderContent();
+    }
   });
   document.getElementById('prj-profile')?.addEventListener('change', (e) => {
     simProfile = e.target.value; simCache.clear(); renderContent();

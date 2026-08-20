@@ -422,6 +422,12 @@ export function simulateRaceRows(race, buf, models, forcedHere, scale, regulatio
     const f = forcedHere?.[id];
     if (f) {
       if (f.status) incidents.push({ driverId: id, status: f.status });
+      // Chrono imposé : c'est l'hypothèse la plus directement actionnable
+      // pendant une manche en cours — « si je fais 2:44.500 ». Il se comporte
+      // comme un résultat réel : il ancre le classement et n'est pas déplacé.
+      // Contrairement à une PLACE imposée, il n'a besoin d'aucune convention :
+      // une place n'a de sens qu'une fois la manche finie.
+      else if (f.ms != null) finishers.push({ driverId: id, key: f.ms, ms: f.ms, real: true });
       else if (f.position) forcedPlaced.push({ driverId: id, position: f.position });
       continue;
     }
@@ -484,6 +490,11 @@ export function simulateRaceRows(race, buf, models, forcedHere, scale, regulatio
  *        compte). 'checkpoint' reconduit le plateau du checkpoint — c'est le
  *        seul régime admissible en backtest, où la liste d'inscrits d'une
  *        manche future révélerait des forfaits qu'on ne pouvait pas connaître.
+ * @param {number} [params.trackRaceOutcome] — suivre la place et les points du
+ *        pilote analysé DANS cette manche. Pendant une manche en cours, c'est
+ *        cette place-là qui se joue, pas seulement le classement final.
+ * @param {string[]} [params.aheadOfIds] — adversaires dont on compte la
+ *        fréquence à laquelle le pilote analysé les devance DANS cette manche.
  * @param {number} [params.trackStateAfterRace] — suivre aussi l'état du pilote
  *        analysé APRÈS cette manche intermédiaire. Répond à « si je fais P8 en
  *        Q3, dans quelle situation j'arrive avant Q4 ? ».
@@ -505,6 +516,8 @@ export function simulateFromCheckpoint({
   rivalIds = [],
   trackAllDrivers = false,
   trackStateAfterRace = null,
+  trackRaceOutcome = null,
+  aheadOfIds = [],
   entrantsSource = 'session',
   liveResults = 'inProgress',
   // Le defaut de calc.js (2 manches classees) viderait le classement au
@@ -578,6 +591,10 @@ export function simulateFromCheckpoint({
   const interPoints = createTally();
   const interGap = createTally();
   const rivalAhead = new Map(rivalIds.map(id => [id, 0]));
+  const racePosition = createTally();
+  const racePoints = createTally();
+  const beatenInRace = new Map(aheadOfIds.map(id => [id, 0]));
+  let raceCounted = 0;
   const allQualified = trackAllDrivers ? new Map(checkpointDriverIds.map(id => [id, 0])) : null;
   const allSeen = trackAllDrivers ? new Map(checkpointDriverIds.map(id => [id, 0])) : null;
   let qualified = 0, counted = 0;
@@ -598,6 +615,24 @@ export function simulateFromCheckpoint({
         num: race.num,
         rows: simulateRaceRows(race, buf, models, forced?.[race.num] || null, scale, context.regulation),
       });
+    }
+
+    // Résultat du pilote DANS la manche suivie : c'est l'objectif immédiat
+    // que le team peut transmettre, avant même le classement final.
+    if (trackRaceOutcome && focusDriverId) {
+      const r = simulated.find(x => x.num === trackRaceOutcome);
+      const me = r?.rows.find(x => x.driverId === focusDriverId);
+      if (me) {
+        raceCounted++;
+        if (me.position != null) racePosition.add(me.position);
+        if (me.points != null) racePoints.add(me.points);
+        for (const id of beatenInRace.keys()) {
+          const other = r.rows.find(x => x.driverId === id);
+          if (other && me.position != null && other.position != null && me.position < other.position) {
+            beatenInRace.set(id, beatenInRace.get(id) + 1);
+          }
+        }
+      }
     }
 
     // État intermédiaire : la situation dans laquelle le pilote aborde la
@@ -670,6 +705,17 @@ export function simulateFromCheckpoint({
     qualifiedCount: qualified, countedCount: counted,
     positionTally, pointsTally, cutTally, rivals, standingsSample,
     timeScale: scale,
+    raceOutcome: trackRaceOutcome && raceCounted ? {
+      raceNum: trackRaceOutcome,
+      samples: raceCounted,
+      medianPosition: racePosition.quantile(0.5),
+      meanPosition: racePosition.mean,
+      positionDistribution: racePosition.entries(),
+      medianPoints: racePoints.quantile(0.5),
+      /** Fréquence à laquelle le pilote analysé devance chacun, dans CETTE manche. */
+      aheadOf: Object.fromEntries([...beatenInRace.entries()]
+        .map(([id, n]) => [id, n / raceCounted])),
+    } : null,
     intermediate: trackStateAfterRace ? {
       raceNum: trackStateAfterRace,
       medianPosition: interPosition.quantile(0.5),
@@ -705,6 +751,7 @@ function finalResult(r) {
       ? { low: r.cutTally.quantile(0.1), high: r.cutTally.quantile(0.9) } : null,
     rivals: r.rivals || [],
     intermediate: r.intermediate ?? null,
+    raceOutcome: r.raceOutcome ?? null,
     allProbabilities: r.allProbabilities ?? null,
     standingsSample: r.standingsSample || null,
     timeScale: r.timeScale || null,

@@ -180,6 +180,35 @@ export const PERFORMANCE_SOURCE_WEIGHTS = {
  * on montre ce qui est observable, on n'interprète pas l'intention d'un
  * pilote et on ne donne aucune consigne de course.
  */
+/**
+ * OBJECTIF STRATÉGIQUE EN DIRECT.
+ *
+ * Les valeurs ci-dessous décident de ce qui est AFFICHÉ, pas de ce qui est
+ * calculé. Elles sont regroupées ici pour être discutables : un seuil de
+ * concurrent direct à 2 points est un choix de lisibilité, pas une propriété
+ * du modèle. L'impact réel de chaque adversaire reste consultable dans le
+ * détail, quel que soit ce seuil.
+ */
+export const STRATEGY = {
+  /** Amplitude minimale, en probabilité de qualification, pour qu'un adversaire soit dit « concurrent direct ». */
+  directRivalMinImpact: 0.02,
+  /** Adversaires soumis à la mesure causale, après crible gratuit. */
+  rivalCandidates: 8,
+  rivalSimulations: 1200,
+  /** Tirages par chrono candidat. */
+  targetSimulations: 1500,
+  /** Nombre maximum de chronos candidats testés. */
+  maxTargets: 10,
+  /** Au-delà, la situation est dite confortable et aucun objectif n'est imposé. */
+  comfortableAbove: 0.95,
+  /** En deçà même en gagnant la manche, la qualification dépend des concurrents. */
+  dependentBelow: 0.90,
+  /** Confiance visée pour qualifier un objectif de « raisonnable ». */
+  targetConfidence: 0.80,
+  /** Scénarios proposés au team. Au-delà, la lecture devient impraticable. */
+  maxScenarios: 3,
+};
+
 export const MESSAGES = {
   unsupportedRegulation: 'Projection indisponible : règle non supportée',
   insufficientSample:    'Données insuffisantes pour une estimation historique fiable',
@@ -232,6 +261,32 @@ export const MESSAGES = {
     `${real} résultat${real > 1 ? 's' : ''} réel${real > 1 ? 's' : ''} repris tel${real > 1 ? 's' : ''} quel${real > 1 ? 's' : ''} · ${pending} pilote${pending > 1 ? 's' : ''} encore à courir, simulé${pending > 1 ? 's' : ''}.`,
   stillAProjection:      'Une manche reste à disputer après celle-ci : la qualification reste une PROBABILITÉ, pas une certitude.',
   inSimulations:         (pct) => `Dans ${pct} des simulations.`,
+
+  /**
+   * OBJECTIF PILOTE. Ce bloc est lu en quelques secondes, juste avant un
+   * départ. Il ne contient donc jamais de paragraphe statistique — le détail
+   * existe, plus bas, pour l'ingénieur.
+   */
+  sectionObjective:      'OBJECTIF PILOTE — consigne transmissible avant le départ',
+  objectiveBeat:         (label, chrono) => `Battre ${label} — ${chrono}`,
+  objectiveNone:         'Aucun objectif de résultat nécessaire pour la qualification.',
+  objectiveSettled:      'QUALIFICATION MATHÉMATIQUEMENT ACQUISE',
+  objectiveEliminated:   'QUALIFICATION MATHÉMATIQUEMENT IMPOSSIBLE',
+  objectiveComfortable:  'SITUATION CONFORTABLE — large plage de résultats compatible avec la qualification.',
+  objectiveDependent:    'DÉPENDANCE AUX CONCURRENTS — aucun résultat ne suffit à lui seul.',
+  /**
+   * Le piège que l'interface doit nommer explicitement : les coéquipiers de
+   * série partent en même temps et peuvent s'intercaler.
+   */
+  seriesMatesWarning:    (chrono, n) =>
+    `Faire mieux que ${chrono} ne garantit pas cette place : ${n} concurrent${n > 1 ? 's' : ''} de votre série ` +
+    `${n > 1 ? 'ont' : 'a'} une probabilité importante de battre cette référence.`,
+  chronoIsATranslation:  'Le chrono n\'est qu\'une traduction de l\'objectif de rang, calculée sur le classement provisoire réel.',
+  chronoCertain:         (chrono, position) => `Battre ${chrono} garantit actuellement au moins P${position}.`,
+  chronoProbabilistic:   (chrono, position, p) => `Battre ${chrono} donne ${p} d'être P${position} ou mieux à l'issue de la manche.`,
+  lastOfSeries:          'Tous les autres pilotes de la série ont couru : la cible chrono est exacte.',
+  afterOurRun:           'Résultat acquis. La question n\'est plus « que dois-je faire ? » mais « que doivent faire les autres ? ».',
+  inferredSeries:        'Composition de série déduite de l\'ordre de passage, non renseignée dans les résultats.',
 };
 
 /**
