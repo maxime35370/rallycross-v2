@@ -135,7 +135,7 @@ try {
   });
   check('la vue s\'affiche et se construit', built && frame.display !== 'none' && frame.sections > 0,
         JSON.stringify(frame));
-  check('les trois onglets sont présents', frame.tabs.length === 3, frame.tabs.join(' | '));
+  check('les quatre onglets sont présents', frame.tabs.length === 4, frame.tabs.join(' | '));
   await shot('projection-situation');
 
   // ── Onglet « En situation » ───────────────────────────
@@ -179,7 +179,7 @@ try {
           hasGap: /Écart au seuil/.test(txt),
           hasHistoricalRate: /Taux historique/.test(txt),
           hasQ4Table: /Résultat en Q4/.test(txt),
-          hasSimNotice: /pas encore disponible/.test(txt),
+          probability: (txt.match(/Probabilité Monte-Carlo\s*([\d,]+ %)/) || [])[1] || null,
           confBadges: document.querySelectorAll('.prj-conf').length,
         };
       }
@@ -191,9 +191,88 @@ try {
         outlook ? outlook.cards.join(' / ') : 'aucun meeting exploitable');
   check('le panneau « Pourquoi ? » est présent', !!outlook?.hasWhy);
   check('la distribution des résultats Q4 des cas comparables est affichée', !!outlook?.hasQ4Table);
-  check('l\'absence de simulation est annoncée explicitement', !!outlook?.hasSimNotice);
+  // Un seuil mal transmis (objet au lieu du nombre) donnait 0,0 % en silence :
+  // on vérifie donc une VALEUR, pas seulement la présence d'un libellé.
+  check('la probabilité Monte-Carlo est une valeur plausible, pas 0 par défaut',
+        !!outlook?.probability && outlook.probability !== '0,0 %' && outlook.probability !== '100,0 %',
+        outlook?.probability || 'absente');
   check('chaque taux porte un badge de confiance', (outlook?.confBadges || 0) > 0, `${outlook?.confBadges} badges`);
   await shot('projection-pilote');
+
+  // ── Simulation Monte-Carlo ────────────────────────────
+  const sim = await page.evaluate(async () => {
+    const txt = () => document.getElementById('prj-content').textContent;
+    return {
+      hasSim: /Probabilité Monte-Carlo/.test(txt()),
+      hasCut: /Seuil de qualification/.test(txt()),
+      hasPositions: /Distribution du classement final/.test(txt()),
+      hasRivals: /Adversaires susceptibles/.test(txt()),
+      hasSeedField: !!document.getElementById('prj-seed'),
+      hasProfile: !!document.getElementById('prj-profile'),
+      hasWhatIfButton: !!document.getElementById('prj-whatif'),
+      bands: [...document.querySelectorAll('.prj-band')].map(b =>
+        b.className.includes('simulation') ? 'SIM' : b.className.includes('strategy') ? 'STRAT' : 'HIST'),
+    };
+  });
+  check('la probabilité Monte-Carlo est affichée', sim.hasSim);
+  check('distribution du classement final et du seuil de qualification', sim.hasPositions && sim.hasCut);
+  check('les adversaires susceptibles de passer devant sont listés', sim.hasRivals);
+  check('graine et nombre de tirages sont réglables dans l\'interface', sim.hasSeedField && sim.hasProfile);
+  await shot('projection-simulation');
+
+  // ── Reproductibilité par la graine ────────────────────
+  const repro = await page.evaluate(async () => {
+    const read = () => {
+      const cards = [...document.querySelectorAll('.prj-card')];
+      const c = cards.find(x => /Probabilité Monte-Carlo/.test(x.textContent));
+      return c ? c.querySelector('.prj-card-value').textContent.trim() : null;
+    };
+    const first = read();
+    const seed = document.getElementById('prj-seed');
+    seed.value = '777'; seed.dispatchEvent(new Event('change'));
+    await new Promise(r => setTimeout(r, 400));
+    const changed = read();
+    seed.value = String(20260101); seed.dispatchEvent(new Event('change'));
+    await new Promise(r => setTimeout(r, 400));
+    return { first, changed, back: read() };
+  });
+  check('changer la graine change le résultat, la remettre le restaure',
+        repro.first !== repro.changed && repro.first === repro.back,
+        `${repro.first} → ${repro.changed} → ${repro.back}`);
+
+  // ── Scénarios « et si » et résultat cible ─────────────
+  await page.evaluate(() => document.getElementById('prj-whatif')?.click());
+  let whatIfDone = true;
+  try {
+    await page.waitForFunction(() => /Résultat cible/.test(document.getElementById('prj-content')?.textContent || ''),
+      null, { timeout: 120000 });
+  } catch { whatIfDone = false; }
+  const whatIf = await page.evaluate(() => {
+    const txt = document.getElementById('prj-content').textContent;
+    const rows = [...document.querySelectorAll('.prj-table tbody tr')]
+      .filter(tr => /^P\d+|^DNF|^DNS|^DSQ/.test(tr.textContent.trim()));
+    return {
+      hasTarget: /Résultat cible/.test(txt),
+      hasClass: !!document.querySelector('.prj-class'),
+      hasStrategyBand: !!document.querySelector('.prj-band--strategy'),
+      hasMarginal: /Gain d'une place/.test(txt),
+      hasStatuses: /DNF/.test(txt) && /DNS/.test(txt),
+      scenarioRows: rows.length,
+      target: (txt.match(/Résultat cible\s*(P\d+)/) || [])[1] || null,
+    };
+  });
+  check('les scénarios « et si » se calculent jusqu\'au résultat cible', whatIfDone && whatIf.hasTarget,
+        `cible ${whatIf.target}, ${whatIf.scenarioRows} scénarios`);
+  check('gain marginal par place et statuts DNF/DNS/DSQ présents', whatIf.hasMarginal && whatIf.hasStatuses);
+  check('la classification stratégique est affichée dans sa propre section',
+        whatIf.hasClass && whatIf.hasStrategyBand);
+  await shot('projection-scenarios');
+
+  // ── Les trois natures de données restent séparées ─────
+  const bands = await page.evaluate(() => [...document.querySelectorAll('.prj-band')].map(b =>
+    b.className.includes('simulation') ? 'SIM' : b.className.includes('strategy') ? 'STRAT' : 'HIST'));
+  check('historique, simulation et interprétation sont trois sections distinctes',
+        bands.includes('HIST') && bands.includes('SIM') && bands.includes('STRAT'), bands.join(','));
 
   // ── Onglet « Historique » ─────────────────────────────
   await page.evaluate(() => document.querySelector('[data-tab="history"]').click());
@@ -255,6 +334,35 @@ try {
         `${quality.divergenceRows} lignes`);
   check('le détail meeting par meeting est présent', quality.hasGroups, quality.chips.join(', '));
   await shot('projection-qualite');
+
+  // ── Onglet « Backtest » ───────────────────────────────
+  await page.evaluate(() => document.querySelector('[data-tab="backtest"]').click());
+  await page.waitForTimeout(300);
+  await page.evaluate(() => document.getElementById('prj-bt-run').click());
+  let btDone = true;
+  try {
+    await page.waitForFunction(() => /Comparaison globale/.test(document.getElementById('prj-content')?.textContent || ''),
+      null, { timeout: 180000 });
+  } catch { btDone = false; }
+  const bt = await page.evaluate(() => {
+    const txt = document.getElementById('prj-content').textContent;
+    return {
+      hasCompare: /Comparaison globale/.test(txt),
+      hasVerdict: !!document.querySelector('.prj-verdict'),
+      verdict: document.querySelector('.prj-verdict')?.textContent.trim().slice(0, 90) || null,
+      hasCalibration: /Calibration/.test(txt),
+      hasByGap: /par position relative au seuil/.test(txt),
+      hasByCategory: /par catégorie/.test(txt),
+      predictors: [...document.querySelectorAll('.prj-table tbody tr')]
+        .map(tr => tr.children[0]?.textContent.trim().split(' ')[0]).slice(0, 3),
+    };
+  });
+  check('le backtest s\'exécute et compare les trois prédicteurs', btDone && bt.hasCompare,
+        bt.predictors.join(' / '));
+  check('le verdict est affiché explicitement', bt.hasVerdict, bt.verdict);
+  check('calibration, comparaison par écart au seuil et par catégorie', 
+        bt.hasCalibration && bt.hasByGap && bt.hasByCategory);
+  await shot('projection-backtest');
 
   // ── Aucune erreur d'exécution ─────────────────────────
   const real = errors.filter(e => !/net::|Failed to fetch|ERR_|favicon|manifest|qrserver|sw\.js|ServiceWorker/i.test(e));

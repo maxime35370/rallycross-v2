@@ -161,6 +161,11 @@ describe('modules purs — restent testables hors navigateur', () => {
     join('js', 'projection', 'qualificationState.js'),
     join('js', 'projection', 'qualificationHistory.js'),
     join('js', 'projection', 'dataQuality.js'),
+    join('js', 'projection', 'monteCarloEngine.js'),
+    join('js', 'projection', 'driverPerformanceModel.js'),
+    join('js', 'projection', 'scenarioSimulator.js'),
+    join('js', 'projection', 'strategyTargetCalculator.js'),
+    join('js', 'projection', 'qualificationBacktest.js'),
   ];
 
   it('n\'importent ni Firebase ni un module de vue', () => {

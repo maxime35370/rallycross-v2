@@ -272,3 +272,45 @@
   .prj-bar-empty { font-size: .65rem; }
   .prj-card-value { font-size: 1.1rem; }
 }
+
+/* ── LOT 2 : simulation et interprétation stratégique ─── */
+
+.prj-band--strategy {
+  background: rgba(224, 64, 251, 0.15);
+  border-left-color: #e040fb;
+  color: #e79bff;
+}
+
+.prj-bar-fill--sim {
+  background: linear-gradient(90deg, var(--clr-accent), var(--clr-accent-2));
+}
+
+.prj-inline-field {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-xs);
+  font-size: .82rem;
+  color: var(--clr-text-2);
+}
+
+.prj-class {
+  font-family: var(--font-display);
+  padding: 2px 10px;
+  border-radius: var(--r-sm);
+  border: 1px solid;
+}
+.prj-class--green  { color: var(--clr-success); border-color: var(--clr-success); background: var(--clr-success-dim); }
+.prj-class--orange { color: var(--clr-warning); border-color: var(--clr-warning); background: var(--clr-warning-dim); }
+.prj-class--red    { color: var(--clr-danger);  border-color: var(--clr-danger);  background: var(--clr-danger-dim); }
+
+.prj-verdict {
+  margin-top: var(--sp-md);
+  padding: var(--sp-sm) var(--sp-md);
+  border-radius: var(--r-sm);
+  border-left: 3px solid var(--clr-info);
+  background: var(--clr-info-dim);
+  font-size: .9rem;
+}
+.prj-verdict--monteCarlo { border-left-color: var(--clr-success); background: var(--clr-success-dim); }
+.prj-verdict--historical { border-left-color: var(--clr-warning); background: var(--clr-warning-dim); }
+.prj-verdict--tie        { border-left-color: var(--clr-text-3);  background: var(--clr-bg-3); }

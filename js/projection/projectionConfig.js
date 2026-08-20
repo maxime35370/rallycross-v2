@@ -112,7 +112,44 @@ export const CLASSIFICATION = {
 export const SIMULATION = {
   profiles: { dev: 10000, validation: 50000, performance: 100000 },
   defaultProfile: 'dev',
+  /**
+   * Graine par défaut. Elle est TOUJOURS remontée dans les sorties : une
+   * probabilité affichée doit pouvoir être rejouée à l'identique.
+   */
   defaultSeed: 20260101,
+  /**
+   * Les scénarios « et si » sont nombreux (une position forcée par place
+   * possible, plus les statuts). Ils utilisent par défaut moins de tirages que
+   * la probabilité principale, et surtout les MÊMES nombres aléatoires d'un
+   * scénario à l'autre (variables antithétiques communes) : la comparaison
+   * entre deux positions forcées porte alors sur la différence de scénario et
+   * non sur le bruit de tirage.
+   */
+  whatIfSimulations: 2000,
+  /** Tirages utilisés par point de mesure dans le backtest. */
+  backtestSimulations: 3000,
+};
+
+/**
+ * Modèle de performance pilote — toutes les constantes de contraction.
+ *
+ * Volontairement isolées : ce sont les premières valeurs qu'un backtesting
+ * cherchera à recalibrer. Elles sont explicables, pas optimisées.
+ */
+export const PERFORMANCE_MODEL = {
+  /** Observations « virtuelles » tirant la force du pilote vers le milieu de plateau. */
+  priorStrength: 2,
+  /** Poids de la dispersion de plateau face à la dispersion propre du pilote. */
+  dispersionPrior: 6,
+  /** Dispersion latente retenue si le matériau ne permet pas de l'estimer. */
+  defaultDispersion: 0.75,
+  minSigma: 0.30,
+  maxSigma: 1.60,
+  /** Observations « virtuelles » pour le taux d'incident. */
+  incidentPrior: 4,
+  defaultIncidentRate: 0.08,
+  minIncidentRate: 0.01,
+  maxIncidentRate: 0.60,
 };
 
 /**
@@ -146,8 +183,11 @@ export const MESSAGES = {
   historicalObservation: (n, qualified) =>
     `Observé sur ${n} cas comparable${n > 1 ? 's' : ''} : ${qualified} qualifié${qualified > 1 ? 's' : ''} après la dernière manche.`,
   targetBeyond:          (label) => `Au-delà de ${label}, le gain estimé de probabilité de qualification devient faible.`,
+  targetFlat:            'La probabilité estimée de qualification reste stable quelle que soit la place obtenue : aucune place du plateau ne la modifie sensiblement.',
+  targetSensitive:       'La probabilité estimée de qualification varie dès la première place gagnée : chaque place compte sur toute la courbe.',
   sectionHistorical:     'DONNÉES HISTORIQUES — observations réellement mesurées',
-  sectionSimulation:     'SIMULATION — projection statistique',
+  sectionSimulation:     'SIMULATION MONTE-CARLO — projection statistique',
+  sectionStrategy:       'INTERPRÉTATION STRATÉGIQUE — lecture des projections',
 };
 
 /**

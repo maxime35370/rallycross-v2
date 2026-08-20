@@ -5,7 +5,7 @@
    Compatible GitHub Pages (sous-dossier) et racine.
 ═══════════════════════════════════════════════ */
 
-const CACHE_NAME = 'rx-chrono-v33';
+const CACHE_NAME = 'rx-chrono-v34';
 
 // Assets relatifs au scope du SW (pas de / en prefixe)
 const ASSET_PATHS = [
@@ -64,6 +64,11 @@ const ASSET_PATHS = [
   'js/projection/qualificationHistory.js',
   'js/projection/dataQuality.js',
   'js/projection/qualificationData.js',
+  'js/projection/monteCarloEngine.js',
+  'js/projection/driverPerformanceModel.js',
+  'js/projection/scenarioSimulator.js',
+  'js/projection/strategyTargetCalculator.js',
+  'js/projection/qualificationBacktest.js',
   'js/projectionStats.js',
   'css/modules/projection.css',
   'js/videoPlayer.js',

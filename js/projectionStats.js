@@ -30,7 +30,11 @@ import {
   checkRegulationSupport,
 } from './projection/qualificationRules.js';
 import { buildDataQualityReport } from './projection/dataQuality.js';
-import { MESSAGES, MIN_CASES_TO_SHOW_RATE } from './projection/projectionConfig.js';
+import { collectRaceObservations, buildDriverModels, describeModel } from './projection/driverPerformanceModel.js';
+import { simulateFromCheckpoint, whatIfResults } from './projection/scenarioSimulator.js';
+import { computeTargetResult, marginalGains, classifyStrategy } from './projection/strategyTargetCalculator.js';
+import { runBacktest, LEAKAGE_MODES } from './projection/qualificationBacktest.js';
+import { MESSAGES, MIN_CASES_TO_SHOW_RATE, SIMULATION } from './projection/projectionConfig.js';
 
 // ─────────────────────────────────────────────────────────
 // ÉTAT
@@ -62,6 +66,13 @@ const situation = {
   driverId: '',
 };
 
+/** Résultats de simulation, mémorisés par pilote et checkpoint. */
+const simCache = new Map();
+let simSeed = SIMULATION.defaultSeed;
+let simProfile = SIMULATION.defaultProfile;
+let whatIfState = { key: null, running: false, progress: 0, data: null };
+let backtestState = { running: false, progress: 0, data: null, checkpoint: 3, leakageMode: LEAKAGE_MODES[0] };
+
 // ─────────────────────────────────────────────────────────
 // HELPERS DE FORMAT
 // ─────────────────────────────────────────────────────────
@@ -86,9 +97,9 @@ function confBadge(c) {
 }
 
 function band(kind) {
-  return kind === 'simulation'
-    ? `<div class="prj-band prj-band--simulation">${escHtml(MESSAGES.sectionSimulation)}</div>`
-    : `<div class="prj-band prj-band--historical">${escHtml(MESSAGES.sectionHistorical)}</div>`;
+  if (kind === 'simulation') return `<div class="prj-band prj-band--simulation">${escHtml(MESSAGES.sectionSimulation)}</div>`;
+  if (kind === 'strategy')   return `<div class="prj-band prj-band--strategy">${escHtml(MESSAGES.sectionStrategy)}</div>`;
+  return `<div class="prj-band prj-band--historical">${escHtml(MESSAGES.sectionHistorical)}</div>`;
 }
 
 function section(kind, title, body) {
@@ -187,6 +198,7 @@ function renderView() {
     <div class="prj-tabs">
       <button class="prj-tab ${activeTab === 'situation' ? 'is-active' : ''}" data-tab="situation">En situation</button>
       <button class="prj-tab ${activeTab === 'history' ? 'is-active' : ''}" data-tab="history">Historique</button>
+      <button class="prj-tab ${activeTab === 'backtest' ? 'is-active' : ''}" data-tab="backtest">Backtest</button>
       <button class="prj-tab ${activeTab === 'quality' ? 'is-active' : ''}" data-tab="quality">Qualité des données</button>
     </div>
     <div id="prj-content"></div>
@@ -216,6 +228,7 @@ function renderContent() {
 
   if (activeTab === 'situation') renderSituation(el);
   else if (activeTab === 'history') renderHistory(el);
+  else if (activeTab === 'backtest') renderBacktest(el);
   else renderQuality(el);
 }
 
@@ -248,13 +261,17 @@ function renderSituation(el) {
     : ctx.lastCompletedRace;
 
   const state = buildStateAfterRace(ctx, checkpoint);
-  const threshold = resolveQualificationThreshold({
+  // `thresholdInfo` porte la valeur ET sa provenance ; le simulateur, lui,
+  // attend un NOMBRE. Les confondre rendait tout le monde non qualifié en
+  // silence — d'où le nommage explicite.
+  const thresholdInfo = resolveQualificationThreshold({
     regulation: ctx.regulation,
     observedPhaseCounts: ctx.observedPhaseCounts,
     engagedCount: ctx.engagedCount,
   });
+  const threshold = thresholdInfo.threshold;
   const support = checkRegulationSupport(ctx.regulation);
-  const trivial = isTrivialQualification(ctx.engagedCount, threshold.threshold);
+  const trivial = isTrivialQualification(ctx.engagedCount, threshold);
 
   const driver = state.standings.find(d => d.driverId === situation.driverId) || null;
 
@@ -274,6 +291,17 @@ function renderSituation(el) {
           P${d.position} · #${escHtml(String(d.carNumber))} ${escHtml(d.lastName || '')} ${escHtml(d.firstName || '')}
         </option>`).join('')}
       </select>
+    </div>
+    <div class="toolbar" style="flex-wrap:wrap;gap:var(--sp-sm)">
+      <label class="prj-inline-field">Tirages
+        <select class="toolbar-select" id="prj-profile">
+          ${Object.entries(SIMULATION.profiles).map(([id, n]) =>
+            `<option value="${id}" ${id === simProfile ? 'selected' : ''}>${n.toLocaleString('fr-FR')}</option>`).join('')}
+        </select>
+      </label>
+      <label class="prj-inline-field" title="Même graine = simulation strictement reproductible">Graine
+        <input class="toolbar-select" type="number" id="prj-seed" value="${simSeed}" style="width:120px">
+      </label>
     </div>
     ${!support.supported ? warn(`${escHtml(MESSAGES.unsupportedRegulation)} — ${escHtml(support.reasons.join(' '))}`, true) : ''}
     <div id="prj-situation-body"></div>
@@ -298,11 +326,15 @@ function renderSituation(el) {
   if (!support.supported) { body.innerHTML = ''; return; }
 
   body.innerHTML = [
-    renderSituationHeader(ctx, state, threshold, checkpoint, trivial),
-    driver ? renderDriverOutlook(ctx, state, threshold, checkpoint, driver, trivial) : '',
-    renderStandingsTable(state, threshold, driver),
-    renderSimulationPlaceholder(checkpoint, ctx),
+    renderSituationHeader(ctx, state, thresholdInfo, checkpoint, trivial),
+    driver ? renderDriverOutlook(ctx, state, thresholdInfo, checkpoint, driver, trivial) : '',
+    driver ? renderSimulation(ctx, state, threshold, checkpoint, driver) : renderSimulationIntro(checkpoint, ctx),
+    driver && whatIfState.data && whatIfState.key === whatIfKey(ctx, checkpoint, driver)
+      ? renderStrategySection(ctx.plannedRaceCount) : '',
+    renderStandingsTable(state, thresholdInfo, driver),
   ].join('');
+
+  bindSimulationControls(ctx, state, threshold, checkpoint, driver);
 }
 
 function renderSituationHeader(ctx, state, threshold, checkpoint, trivial) {
@@ -433,20 +465,253 @@ function renderStandingsTable(state, threshold, focus) {
   `);
 }
 
-/**
- * L'emplacement de la simulation est matérialisé dès maintenant, vide et
- * annoncé comme tel : mieux vaut une absence explicite qu'un chiffre
- * historique que l'utilisateur prendrait pour une projection.
- */
-function renderSimulationPlaceholder(checkpoint, ctx) {
+/** Aucun pilote sélectionné : on annonce ce que la simulation fera. */
+function renderSimulationIntro(checkpoint, ctx) {
   const remaining = ctx.plannedRaceCount - checkpoint;
-  const body = remaining > 0
-    ? `<p style="margin:0">Simulation ${remaining > 1 ? `des ${remaining} manches restantes` : 'de la manche restante'}
-       (probabilité de qualification, scénarios « et si », résultat cible) : pas encore disponible.
-       Les chiffres ci-dessus sont exclusivement des observations historiques.</p>`
+  return section('simulation', null, remaining > 0
+    ? `<p style="margin:0">Sélectionnez un pilote pour simuler ${remaining > 1 ? `les ${remaining} manches restantes` : 'la manche restante'}.</p>`
     : `<p style="margin:0">Toutes les manches qualificatives sont courues : il n'y a rien à simuler,
-       seule l'analyse réelle s'applique.</p>`;
-  return section('simulation', null, body);
+       seule l'analyse réelle s'applique.</p>`);
+}
+
+// ─────────────────────────────────────────────────────────
+// SIMULATION MONTE-CARLO
+// ─────────────────────────────────────────────────────────
+
+/**
+ * Modèles de performance du meeting, sans donnée postérieure au checkpoint.
+ * Même règle qu'au backtest : ce que le moteur voit en direct est exactement
+ * ce qu'il aurait vu ce jour-là.
+ */
+function modelsFor(ctx, state, checkpoint) {
+  const observations = collectRaceObservations(contexts).filter(o =>
+    o.meetingId !== ctx.meetingId || o.raceNum <= checkpoint);
+  return buildDriverModels({
+    driverIds: state.standings.map(d => d.driverId),
+    observations,
+    scope: {
+      meetingId: ctx.meetingId, year: ctx.meeting?.year,
+      category: ctx.category, circuit: ctx.meeting?.location,
+    },
+  });
+}
+
+function runBaseSimulation(ctx, state, threshold, checkpoint, driver) {
+  const key = `${ctx.key}|${checkpoint}|${driver.driverId}|${simSeed}|${simProfile}`;
+  if (simCache.has(key)) return simCache.get(key);
+
+  const { models, pooled } = modelsFor(ctx, state, checkpoint);
+  // Adversaires suivis : ceux qui gravitent autour de la dernière place
+  // qualificative, seuls capables de faire basculer la situation.
+  const rivalIds = state.standings
+    .filter(d => d.driverId !== driver.driverId && Math.abs(d.position - threshold) <= 4)
+    .map(d => d.driverId);
+
+  const run = simulateFromCheckpoint({
+    context: ctx, checkpoint, models, threshold,
+    focusDriverId: driver.driverId, rivalIds,
+    simulations: SIMULATION.profiles[simProfile], seed: simSeed,
+  });
+  const out = { run, models, pooled, model: models[driver.driverId] };
+  simCache.set(key, out);
+  return out;
+}
+
+function renderSimulation(ctx, state, threshold, checkpoint, driver) {
+  const remaining = ctx.plannedRaceCount - checkpoint;
+  if (remaining <= 0) {
+    return section('simulation', null,
+      `<p style="margin:0">Toutes les manches qualificatives sont courues : le moteur ne simule rien
+       et se contente du résultat réel.</p>`);
+  }
+
+  const { run, model, pooled } = runBaseSimulation(ctx, state, threshold, checkpoint, driver);
+  const lastRace = ctx.plannedRaceCount;
+
+  const cards = [
+    card('Probabilité Monte-Carlo', run.probability != null ? pct(run.probability) : '—',
+      `${run.qualifiedCount}/${run.countedCount} tirages`),
+    card('Classement final médian', run.medianPosition != null ? `P${run.medianPosition}` : '—',
+      `moyenne ${run.meanPosition != null ? run.meanPosition.toFixed(1).replace('.', ',') : '—'}`),
+    card('Score final médian', run.medianPoints != null ? String(run.medianPoints) : '—',
+      `actuel ${driver.totalPoints} pts`),
+    card('Seuil de qualification', run.medianCut != null ? `${run.medianCut} pts` : '—',
+      run.cutRange ? `80 % des cas entre ${run.cutRange.low} et ${run.cutRange.high}` : ''),
+  ].join('');
+
+  return section('simulation', `Projection après Q${lastRace}`, `
+    <div class="prj-cards">${cards}</div>
+    ${model?.weaklyObserved ? warn('Ce pilote est peu observé : sa distribution est volontairement large, et la probabilité qui en découle est d\'autant moins précise.') : ''}
+    ${renderPositionChart(run)}
+    ${why('Comment cette probabilité est-elle obtenue ?', [
+      ['Tirages', `${run.simulations}`],
+      ['Graine', `<code>${run.seed}</code> — même graine, même résultat`],
+      ['Manches simulées', run.remainingRaces.map(n => `Q${n}`).join(', ')],
+      ['Tirages qualifiés', `${run.qualifiedCount} sur ${run.countedCount}`],
+      ['Seuil médian de qualification', run.medianCut != null ? `${run.medianCut} pts` : '—'],
+      ['Score actuel', `${driver.totalPoints} pts`],
+      ...(model ? describeModel(model) : []),
+      ['Dispersion de plateau', pooled ? pooled.dispersion.toFixed(2) : '—'],
+      ['Taux d\'incident de plateau', pooled ? `${(100 * pooled.incidentRate).toFixed(1)} %` : '—'],
+      ['Données utilisées', `manches Q1 à Q${checkpoint} de ce meeting + historique ; aucune donnée postérieure`],
+    ])}
+    ${renderRivals(run)}
+    ${renderWhatIfBlock(ctx, checkpoint, driver, lastRace)}
+  `);
+}
+
+function renderPositionChart(run) {
+  if (!run.positionDistribution.length) return '';
+  const max = Math.max(...run.positionDistribution.map(e => e.share));
+  const rows = run.positionDistribution.map(e => `
+    <div class="prj-bar-row">
+      <div class="prj-bar-label">P${e.value}</div>
+      <div class="prj-bar-track"><div class="prj-bar-fill prj-bar-fill--sim" style="width:${Math.round(100 * e.share / max)}%"></div></div>
+      <div class="prj-bar-value"><strong>${pct(e.share)}</strong> <span class="prj-n">${e.count}</span></div>
+    </div>`).join('');
+  return `<h4 class="prj-section-title" style="margin-top:var(--sp-lg);font-size:.95rem">Distribution du classement final</h4>
+    <div class="prj-chart">${rows}</div>`;
+}
+
+function renderRivals(run) {
+  const rivals = run.rivals.filter(r => r.probabilityAhead != null).slice(0, 6);
+  if (!rivals.length) return '';
+  return `<h4 class="prj-section-title" style="margin-top:var(--sp-lg);font-size:.95rem">
+      Adversaires susceptibles de passer devant</h4>
+    <div class="prj-scroll"><table class="prj-table">
+      <thead><tr><th>Pilote</th><th class="center">Probabilité de finir devant</th></tr></thead>
+      <tbody>${rivals.map(r => `<tr>
+        <td>#${escHtml(String(r.carNumber ?? '?'))} ${escHtml(r.lastName || '')} ${escHtml(r.firstName || '')}</td>
+        <td class="center">${pct(r.probabilityAhead)}</td>
+      </tr>`).join('')}</tbody>
+    </table></div>`;
+}
+
+// ─────────────────────────────────────────────────────────
+// SCÉNARIOS « ET SI » + INTERPRÉTATION STRATÉGIQUE
+// ─────────────────────────────────────────────────────────
+
+function whatIfKey(ctx, checkpoint, driver) {
+  return `${ctx.key}|${checkpoint}|${driver.driverId}|${simSeed}`;
+}
+
+function renderWhatIfBlock(ctx, checkpoint, driver, lastRace) {
+  const key = whatIfKey(ctx, checkpoint, driver);
+  if (whatIfState.key !== key) {
+    return `<h4 class="prj-section-title" style="margin-top:var(--sp-lg);font-size:.95rem">
+        Scénarios « et si » sur Q${lastRace}</h4>
+      <p class="prj-n">Une simulation complète par résultat possible : c'est long, donc lancé à la demande.</p>
+      <button class="btn btn-primary" id="prj-whatif">Calculer les scénarios Q${lastRace}</button>`;
+  }
+  if (whatIfState.running) {
+    return `<h4 class="prj-section-title" style="margin-top:var(--sp-lg);font-size:.95rem">
+        Scénarios « et si » sur Q${lastRace}</h4>
+      <div class="loading-state"><div class="spinner"></div> Simulation ${whatIfState.progress} %…</div>`;
+  }
+  return '';
+}
+
+/** Tableau des scénarios + cible, rendus hors du bloc simulation. */
+function renderStrategySection(lastRace) {
+  const d = whatIfState.data;
+  if (!d) return '';
+  const { entries, target, gains, classification, seed, simulations } = d;
+
+  const rows = entries.map(e => {
+    const g = gains.find(x => x.from === e.position);
+    const isTarget = target.target != null && e.position === target.target;
+    return `<tr class="${isTarget ? 'is-focus' : ''}">
+      <td>${escHtml(e.label)}${isTarget ? ' <span class="prj-chip prj-chip--info">cible</span>' : ''}</td>
+      <td class="center"><strong>${e.probability != null ? pct(e.probability) : '—'}</strong></td>
+      <td class="center">${g ? `${g.gainPct >= 0 ? '+' : ''}${g.gainPct.toFixed(1).replace('.', ',')} pt` : '—'}</td>
+      <td class="center">${e.medianPoints != null ? `${e.medianPoints} pts` : '—'}</td>
+    </tr>`;
+  }).join('');
+
+  return section('strategy', `Scénarios Q${lastRace} et résultat cible`, `
+    <div class="prj-cards">
+      ${card('Résultat cible', target.targetLabel || '—',
+        target.averageGainAtTarget != null ? `gain moyen ${target.averageGainAtTarget.toFixed(2).replace('.', ',')} pt/place` : '')}
+      ${card('Classification', `<span class="prj-class prj-class--${classification.id}">${escHtml(classification.label)}</span>`,
+        escHtml(classification.description))}
+      ${card('Seuil de rendement', `${target.thresholdPct} pt/place`, 'configurable')}
+    </div>
+    <p style="margin:var(--sp-md) 0 var(--sp-sm)">${escHtml(target.statement || '')}</p>
+    <div class="prj-scroll"><table class="prj-table">
+      <thead><tr><th>Résultat imposé en Q${lastRace}</th><th class="center">Probabilité de qualification</th>
+        <th class="center">Gain d'une place</th><th class="center">Score final médian</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>
+    ${why('Comment le résultat cible est-il déterminé ?', [
+      ['Règle', escHtml(target.rule)],
+      ['Seuil τ', `${target.thresholdPct} point de pourcentage par place`],
+      ['Probabilité à P1', target.probabilityAtBest != null ? pct(target.probabilityAtBest) : '—'],
+      ['Probabilité à la cible', target.probabilityAtTarget != null ? pct(target.probabilityAtTarget) : '—'],
+      ['Classification', `${escHtml(classification.label)} — ${escHtml(classification.reason)}`],
+      ['Tirages par scénario', `${simulations}`],
+      ['Graine', `<code>${seed}</code> — identique pour tous les scénarios, pour que la comparaison ne mesure pas le bruit`],
+      ['Nature', 'projection statistique — ni certitude, ni consigne de course'],
+    ])}
+  `);
+}
+
+/** Lance les scénarios en rendant la main au navigateur entre chaque. */
+async function computeWhatIf(ctx, state, threshold, checkpoint, driver) {
+  const lastRace = ctx.plannedRaceCount;
+  const { models } = modelsFor(ctx, state, checkpoint);
+  const entrants = (ctx.races.find(r => r.num === lastRace)?.rows || []).length || state.count;
+
+  whatIfState = { key: whatIfKey(ctx, checkpoint, driver), running: true, progress: 0, data: null };
+  renderContent();
+
+  const entries = [];
+  const positions = Array.from({ length: entrants }, (_, i) => i + 1);
+  const total = positions.length + 1;
+  let done = 0;
+
+  const push = (extra) => {
+    const run = simulateFromCheckpoint({
+      context: ctx, checkpoint, models, threshold, focusDriverId: driver.driverId,
+      forced: { [lastRace]: { [driver.driverId]: extra.forced } },
+      simulations: SIMULATION.whatIfSimulations, seed: simSeed,
+    });
+    entries.push({ ...extra.entry, probability: run.probability, medianPoints: run.medianPoints, medianPosition: run.medianPosition });
+  };
+
+  for (const position of positions) {
+    push({ forced: { position }, entry: { kind: 'position', position, label: `P${position}` } });
+    done++;
+    whatIfState.progress = Math.round(100 * done / total);
+    renderContent();
+    await new Promise(r => setTimeout(r, 0));   // laisse l'interface respirer
+  }
+  for (const status of ['DNF', 'DNS', 'DSQ']) {
+    push({ forced: { status }, entry: { kind: 'status', status, label: status } });
+  }
+
+  const target = computeTargetResult(entries);
+  whatIfState = {
+    key: whatIfState.key, running: false, progress: 100,
+    data: {
+      entries, target, gains: marginalGains(entries),
+      classification: classifyStrategy({ probability: runBaseSimulation(ctx, state, threshold, checkpoint, driver).run.probability, target }),
+      seed: simSeed, simulations: SIMULATION.whatIfSimulations,
+    },
+  };
+  renderContent();
+}
+
+function bindSimulationControls(ctx, state, threshold, checkpoint, driver) {
+  document.getElementById('prj-whatif')?.addEventListener('click', () => {
+    computeWhatIf(ctx, state, threshold, checkpoint, driver);
+  });
+  document.getElementById('prj-seed')?.addEventListener('change', (e) => {
+    const v = parseInt(e.target.value, 10);
+    if (Number.isFinite(v)) { simSeed = v; simCache.clear(); whatIfState = { key: null, running: false, progress: 0, data: null }; renderContent(); }
+  });
+  document.getElementById('prj-profile')?.addEventListener('change', (e) => {
+    simProfile = e.target.value; simCache.clear(); renderContent();
+  });
 }
 
 // ─────────────────────────────────────────────────────────
@@ -618,6 +883,147 @@ function renderFinalRaceAnalysis(obs) {
     `<p class="prj-n">Constat brut : quels résultats ces pilotes ont obtenu, et combien se sont qualifiés.
        Les causes ne sont pas observables dans les données et ne sont donc pas interprétées ici.</p>
      ${tables}`);
+}
+
+// ─────────────────────────────────────────────────────────
+// ONGLET « BACKTEST »
+// ─────────────────────────────────────────────────────────
+
+function renderBacktest(el) {
+  const b = backtestState;
+  el.innerHTML = `
+    <div class="toolbar" style="flex-wrap:wrap;gap:var(--sp-sm)">
+      <select class="toolbar-select" id="prj-bt-cp">
+        ${[1, 2, 3].map(n => `<option value="${n}" ${n === b.checkpoint ? 'selected' : ''}>Après Q${n}</option>`).join('')}
+      </select>
+      <select class="toolbar-select" id="prj-bt-mode">
+        <option value="leaveOneMeetingOut" ${b.leakageMode === 'leaveOneMeetingOut' ? 'selected' : ''}>Meeting analysé exclu</option>
+        <option value="strictlyPrior" ${b.leakageMode === 'strictlyPrior' ? 'selected' : ''}>Meetings antérieurs uniquement</option>
+      </select>
+      <button class="btn btn-primary" id="prj-bt-run" ${b.running ? 'disabled' : ''}>
+        ${b.running ? `Calcul ${b.progress} %…` : 'Lancer le backtest'}</button>
+    </div>
+    <div id="prj-bt-body"></div>`;
+
+  document.getElementById('prj-bt-cp')?.addEventListener('change', e => { backtestState.checkpoint = Number(e.target.value); backtestState.data = null; renderContent(); });
+  document.getElementById('prj-bt-mode')?.addEventListener('change', e => { backtestState.leakageMode = e.target.value; backtestState.data = null; renderContent(); });
+  document.getElementById('prj-bt-run')?.addEventListener('click', () => runBacktestUi());
+
+  const body = document.getElementById('prj-bt-body');
+  if (b.running) { body.innerHTML = `<div class="loading-state"><div class="spinner"></div> ${b.progress} %</div>`; return; }
+  if (!b.data) {
+    body.innerHTML = `<div class="tim-placeholder"><div class="placeholder-icon">🎯</div>
+      <div class="placeholder-title">Le Monte-Carlo apporte-t-il quelque chose ?</div>
+      <div class="placeholder-desc">Chaque meeting historique est rejoué depuis le checkpoint choisi,
+      sans aucune donnée postérieure, et les prédicteurs sont comparés au résultat réel.</div></div>`;
+    return;
+  }
+  body.innerHTML = renderBacktestResults(b.data);
+}
+
+async function runBacktestUi() {
+  backtestState.running = true; backtestState.progress = 0; backtestState.data = null;
+  renderContent();
+  // Laisse le navigateur peindre l'état « en cours » avant de bloquer.
+  await new Promise(r => setTimeout(r, 30));
+  const data = runBacktest({
+    contexts, observations, championshipsById,
+    checkpoint: backtestState.checkpoint,
+    leakageMode: backtestState.leakageMode,
+    seed: simSeed,
+  });
+  backtestState = { ...backtestState, running: false, progress: 100, data };
+  renderContent();
+}
+
+function renderBacktestResults(r) {
+  const num = (v, d = 4) => v == null ? '—' : v.toFixed(d).replace('.', ',');
+  const skill = (v) => v == null ? '—' : `${v >= 0 ? '+' : ''}${(100 * v).toFixed(1).replace('.', ',')} %`;
+
+  const line = (name, e, note) => `<tr>
+    <td>${escHtml(name)}${note ? ` <span class="prj-n">${escHtml(note)}</span>` : ''}</td>
+    <td class="center">${e.n}</td>
+    <td class="center"><strong>${num(e.brier)}</strong></td>
+    <td class="center">${skill(e.skill)}</td>
+    <td class="center">${e.accuracy ? pct(e.accuracy.rate) : '—'}</td>
+  </tr>`;
+
+  const compare = section('strategy', `Comparaison globale — après Q${r.checkpoint}`, `
+    <p class="prj-n" style="margin-bottom:var(--sp-sm)">
+      ${r.groups} meetings × catégorie · ${r.cases} cas pilote · taux de base ${pct(r.baseRate)} ·
+      ${r.simulations} tirages par meeting · graine <code>${r.seed}</code>
+    </p>
+    <div class="prj-scroll"><table class="prj-table">
+      <thead><tr><th>Prédicteur</th><th class="center">Cas</th><th class="center">Brier</th>
+        <th class="center">Compétence</th><th class="center">Justesse @ ${r.decisionThreshold}</th></tr></thead>
+      <tbody>
+        ${line('Climatologie', r.climatology, 'taux global, identique pour tous')}
+        ${line('Historique (LOT 1)', r.historical, `repli ${r.historicalFallbacks} fois`)}
+        ${line('Monte-Carlo (LOT 2)', r.monteCarlo)}
+      </tbody>
+    </table></div>
+    <div class="prj-verdict prj-verdict--${r.verdict.winner}">${escHtml(r.verdict.label)}</div>
+    ${why('Comment la fuite temporelle est-elle évitée ?', [
+      ['Régime', r.leakageMode === 'strictlyPrior' ? 'seuls les meetings antérieurs en date sont utilisés' : 'le meeting analysé est retiré en entier de l\'historique'],
+      ['Manches du meeting analysé', `uniquement Q1 à Q${r.checkpoint}`],
+      ['Liste des partants', 'plateau du checkpoint reconduit — la liste d\'inscrits d\'une manche future révélerait des forfaits'],
+      ['Seuil de qualification', `donnée de format, connue avant le meeting · ${r.thresholdDivergences} groupe(s) où il diffère du règlement`],
+      ['Brier score', 'moyenne des carrés d\'écart entre probabilité annoncée et réalité — plus bas = meilleur'],
+      ['Compétence', 'progression relative face à la climatologie'],
+    ])}`);
+
+  const calib = section('historical', 'Calibration — annoncé contre observé', `
+    <p class="prj-n" style="margin-bottom:var(--sp-sm)">
+      Parmi les pilotes annoncés entre 70 et 80 %, combien se sont réellement qualifiés ?
+      Un modèle calibré colle la diagonale.
+    </p>
+    <div class="prj-scroll"><table class="prj-table">
+      <thead><tr><th>Tranche annoncée</th>
+        <th class="center" colspan="3">Historique</th>
+        <th class="center" colspan="3">Monte-Carlo</th></tr>
+        <tr><th></th><th class="center">n</th><th class="center">annoncé</th><th class="center">observé</th>
+        <th class="center">n</th><th class="center">annoncé</th><th class="center">observé</th></tr></thead>
+      <tbody>${r.historical.calibration.map((h, i) => {
+        const m = r.monteCarlo.calibration[i];
+        if (!h.n && !m.n) return '';
+        const cells = (b) => b.n
+          ? `<td class="center">${b.n}</td><td class="center">${pct(b.meanPredicted)}</td><td class="center">${pct(b.observedRate)}</td>`
+          : `<td class="center prj-dq-off" colspan="3">—</td>`;
+        return `<tr><td>${escHtml(h.label)}</td>${cells(h)}${cells(m)}</tr>`;
+      }).join('')}</tbody>
+    </table></div>`);
+
+  const byGap = section('historical', 'Comparaison par position relative au seuil', `
+    <div class="prj-scroll"><table class="prj-table">
+      <thead><tr><th>Écart au seuil après Q${r.checkpoint}</th><th class="center">Cas</th>
+        <th class="center">Observé</th><th class="center">Brier historique</th>
+        <th class="center">Brier Monte-Carlo</th><th class="center">Meilleur</th></tr></thead>
+      <tbody>${r.byGap.filter(g => g.n >= 5).map(g => `<tr>
+        <td>${escHtml(formatGap(g.gap))}</td>
+        <td class="center">${g.n}</td>
+        <td class="center">${pct(g.observedRate)}</td>
+        <td class="center">${num(g.historical)}</td>
+        <td class="center">${num(g.monteCarlo)}</td>
+        <td class="center">${g.monteCarlo < g.historical ? '<span class="prj-chip prj-chip--ok">Monte-Carlo</span>' : g.monteCarlo > g.historical ? '<span class="prj-chip prj-chip--info">historique</span>' : '<span class="prj-chip">égalité</span>'}</td>
+      </tr>`).join('')}</tbody>
+    </table></div>
+    <p class="prj-n" style="margin-top:var(--sp-sm)">Écarts de moins de 5 cas non affichés.</p>`);
+
+  const byCat = section('historical', 'Comparaison par catégorie', `
+    <div class="prj-scroll"><table class="prj-table">
+      <thead><tr><th>Championnat / catégorie</th><th class="center">Cas</th><th class="center">Observé</th>
+        <th class="center">Brier historique</th><th class="center">Brier Monte-Carlo</th><th class="center">Meilleur</th></tr></thead>
+      <tbody>${r.byCategory.map(c => `<tr>
+        <td>${escHtml(c.key)}${c.n < 30 ? ' <span class="prj-conf prj-conf--low">effectif faible</span>' : ''}</td>
+        <td class="center">${c.n}</td>
+        <td class="center">${pct(c.observedRate)}</td>
+        <td class="center">${num(c.historical)}</td>
+        <td class="center">${num(c.monteCarlo)}</td>
+        <td class="center">${c.monteCarlo < c.historical ? '<span class="prj-chip prj-chip--ok">Monte-Carlo</span>' : '<span class="prj-chip prj-chip--info">historique</span>'}</td>
+      </tr>`).join('')}</tbody>
+    </table></div>`);
+
+  return [compare, calib, byGap, byCat].join('');
 }
 
 // ─────────────────────────────────────────────────────────
