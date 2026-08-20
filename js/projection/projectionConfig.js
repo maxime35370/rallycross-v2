@@ -125,9 +125,16 @@ export const SIMULATION = {
    * entre deux positions forcées porte alors sur la différence de scénario et
    * non sur le bruit de tirage.
    */
-  whatIfSimulations: 2000,
+  whatIfSimulations: 1200,
   /** Tirages utilisés par point de mesure dans le backtest. */
   backtestSimulations: 3000,
+  /**
+   * Tirages par cellule de la matrice de scénarios croisés. À 1 500, une
+   * cellule porte environ ±1,3 point d'incertitude — suffisant pour comparer
+   * des combinaisons, insuffisant pour lire un centième. La marge est remontée
+   * dans la sortie pour être affichée.
+   */
+  matrixSimulations: 1500,
 };
 
 /**
@@ -188,6 +195,22 @@ export const MESSAGES = {
   sectionHistorical:     'DONNÉES HISTORIQUES — observations réellement mesurées',
   sectionSimulation:     'SIMULATION MONTE-CARLO — projection statistique',
   sectionStrategy:       'INTERPRÉTATION STRATÉGIQUE — lecture des projections',
+
+  /**
+   * Trois notions que rien ne doit laisser confondre :
+   *   • la probabilité GLOBALE, tous résultats possibles confondus ;
+   *   • le résultat FORCÉ, qui est une hypothèse, pas une prévision ;
+   *   • la probabilité CONDITIONNELLE à cette hypothèse.
+   * Un « TARGET P13 » lu comme « P13 qualifie » serait un contresens complet :
+   * P13 est la place au-delà de laquelle le gain moyen devient faible, ce qui
+   * ne dit rien sur le niveau de la probabilité elle-même.
+   */
+  probabilityGlobal:     'Probabilité globale — tous résultats possibles confondus, pondérés par leur vraisemblance.',
+  probabilityForced:     'Hypothèse imposée au pilote analysé. Les autres pilotes restent simulés normalement.',
+  probabilityConditional: 'Probabilité de qualification SI cette hypothèse se réalise. Ce n\'est ni une prévision, ni une garantie.',
+  targetNotAGuarantee:   (label, p) =>
+    `${label} n'est pas un seuil de qualification : c'est la place au-delà de laquelle le gain moyen estimé devient faible. `
+    + `Dans cette hypothèse, la probabilité de qualification est estimée à ${p}, pas à 100 %.`,
 };
 
 /**

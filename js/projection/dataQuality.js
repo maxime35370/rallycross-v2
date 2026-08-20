@@ -34,6 +34,8 @@ export function raceCompleteness(race) {
     empty: rows.filter(r => r.ms == null && !r.status).length,
     hasResults: !!race?.hasResults,
     duplicates: race?.duplicateParticipants || 0,
+    legacyIds: race?.legacyIdCount || 0,
+    legacyNewest: race?.legacyNewest || null,
   };
 }
 
@@ -122,7 +124,10 @@ export function buildDataQualityReport(contexts = [], options = {}) {
       isComplete: ctx.isComplete,
       hasAnyResult: ranRaces.length > 0,
       races,
+      legacyIdCount: races.reduce((n, r) => n + (r.legacyIds || 0), 0),
+      legacyNewest: races.reduce((max, r) => (r.legacyNewest && (!max || r.legacyNewest > max)) ? r.legacyNewest : max, null),
       duplicateParticipants: races.reduce((n, r) => n + (r.duplicates || 0), 0),
+      legacyIdCount: races.reduce((n, r) => n + (r.legacyIds || 0), 0),
       threshold: threshold.threshold,
       thresholdSource: threshold.source,
       thresholdLabel: threshold.label,
@@ -164,6 +169,9 @@ export function buildDataQualityReport(contexts = [], options = {}) {
       divergenceCount: divergences.length,
       duplicateParticipants: groups.reduce((n, g) => n + g.duplicateParticipants, 0),
       groupsWithDuplicates: groups.filter(g => g.duplicateParticipants > 0).length,
+      // Protection anti-doublon : etat observable depuis l'application.
+      legacyIdCount: groups.reduce((n, g) => n + g.legacyIdCount, 0),
+      legacyNewest: groups.reduce((max, g) => (g.legacyNewest && (!max || g.legacyNewest > max)) ? g.legacyNewest : max, null),
       thresholdSources: countBy(complete, g => g.thresholdSource),
     },
     groups,

@@ -179,7 +179,7 @@ try {
           hasGap: /Écart au seuil/.test(txt),
           hasHistoricalRate: /Taux historique/.test(txt),
           hasQ4Table: /Résultat en Q4/.test(txt),
-          probability: (txt.match(/Probabilité Monte-Carlo\s*([\d,]+ %)/) || [])[1] || null,
+          probability: (txt.match(/Probabilité globale\s*([\d,]+ %)/) || [])[1] || null,
           confBadges: document.querySelectorAll('.prj-conf').length,
         };
       }
@@ -203,7 +203,7 @@ try {
   const sim = await page.evaluate(async () => {
     const txt = () => document.getElementById('prj-content').textContent;
     return {
-      hasSim: /Probabilité Monte-Carlo/.test(txt()),
+      hasSim: /Probabilité globale/.test(txt()),
       hasCut: /Seuil de qualification/.test(txt()),
       hasPositions: /Distribution du classement final/.test(txt()),
       hasRivals: /Adversaires susceptibles/.test(txt()),
@@ -224,7 +224,7 @@ try {
   const repro = await page.evaluate(async () => {
     const read = () => {
       const cards = [...document.querySelectorAll('.prj-card')];
-      const c = cards.find(x => /Probabilité Monte-Carlo/.test(x.textContent));
+      const c = cards.find(x => /Probabilité globale/.test(x.textContent));
       return c ? c.querySelector('.prj-card-value').textContent.trim() : null;
     };
     const first = read();
@@ -258,7 +258,7 @@ try {
       hasMarginal: /Gain d'une place/.test(txt),
       hasStatuses: /DNF/.test(txt) && /DNS/.test(txt),
       scenarioRows: rows.length,
-      target: (txt.match(/Résultat cible\s*(P\d+)/) || [])[1] || null,
+      target: (txt.match(/Résultat cible Q\d\s*(P\d+)/) || [])[1] || null,
     };
   });
   check('les scénarios « et si » se calculent jusqu\'au résultat cible', whatIfDone && whatIf.hasTarget,
@@ -266,6 +266,20 @@ try {
   check('gain marginal par place et statuts DNF/DNS/DSQ présents', whatIf.hasMarginal && whatIf.hasStatuses);
   check('la classification stratégique est affichée dans sa propre section',
         whatIf.hasClass && whatIf.hasStrategyBand);
+  const wording = await page.evaluate(() => {
+    const txt = document.getElementById('prj-content').textContent;
+    return {
+      global: /Probabilité globale/.test(txt),
+      forced: /Hypothèse imposée/.test(txt),
+      conditional: /Probabilité conditionnelle/.test(txt),
+      notGuarantee: /n'est pas un seuil de qualification/.test(txt),
+      neverGuarantees: !/garantit la qualification/.test(txt),
+    };
+  });
+  check('probabilité globale, hypothèse forcée et probabilité conditionnelle sont distinguées',
+        wording.global && wording.forced && wording.conditional);
+  check('la cible est explicitement présentée comme n\'étant pas une garantie',
+        wording.notGuarantee && wording.neverGuarantees);
   await shot('projection-scenarios');
 
   // ── Les trois natures de données restent séparées ─────
@@ -334,6 +348,82 @@ try {
         `${quality.divergenceRows} lignes`);
   check('le détail meeting par meeting est présent', quality.hasGroups, quality.chips.join(', '));
   await shot('projection-qualite');
+
+  // ── LOT 3 : projection après Q2 ───────────────────────
+  await page.evaluate(() => document.querySelector('[data-tab="situation"]').click());
+  await page.waitForTimeout(500);
+  const q2 = await page.evaluate(async () => {
+    const cp = document.getElementById('prj-checkpoint');
+    cp.value = '2'; cp.dispatchEvent(new Event('change'));
+    await new Promise(r => setTimeout(r, 1200));
+    const txt = document.getElementById('prj-content').textContent;
+    return {
+      checkpoint: document.getElementById('prj-checkpoint').value,
+      remaining: /Reste Q3, Q4/.test(txt),
+      hasProbability: /Probabilité globale/.test(txt),
+      hasRaceSelector: !!document.getElementById('prj-whatif-race'),
+      raceOptions: [...(document.getElementById('prj-whatif-race')?.options || [])].map(o => o.value),
+      hasMatrixButton: !!document.getElementById('prj-matrix'),
+    };
+  });
+  check('le checkpoint après Q2 simule bien deux manches restantes',
+        q2.checkpoint === '2' && q2.remaining && q2.hasProbability, JSON.stringify(q2));
+  check('la manche à imposer est sélectionnable (Q3 ou Q4)',
+        q2.hasRaceSelector && q2.raceOptions.join(',') === '3,4', q2.raceOptions.join(','));
+  check('la matrice croisée est proposée quand deux manches restent', q2.hasMatrixButton);
+  await shot('projection-apres-q2');
+
+  // ── What-if Q3 : état intermédiaire avant Q4 ──────────
+  await page.evaluate(() => document.getElementById('prj-whatif').click());
+  let q3Done = true;
+  try {
+    await page.waitForFunction(() => /Résultat cible Q3/.test(document.getElementById('prj-content')?.textContent || ''),
+      null, { timeout: 180000 });
+  } catch { q3Done = false; }
+  const q3 = await page.evaluate(() => {
+    const txt = document.getElementById('prj-content').textContent;
+    return {
+      hasTargetQ3: /Résultat cible Q3/.test(txt),
+      hasMedianAfterQ3: /Classement médian après Q3/.test(txt),
+      hasPointsAfterQ3: /Points après Q3/.test(txt),
+      hasGapAfterQ3: /Écart au seuil après Q3/.test(txt),
+      hasIncidentBlock: /Manche non terminée/.test(txt),
+      hasSideBySide: /Deux estimations conditionnelles/.test(txt),
+      target: (txt.match(/Résultat cible Q3\s*(P\d+)/) || [])[1] || null,
+    };
+  });
+  check('TARGET Q3 est calculé', q3Done && q3.hasTargetQ3, `cible ${q3.target}`);
+  check('la situation avant Q4 est affichée : classement, points et écart au seuil après Q3',
+        q3.hasMedianAfterQ3 && q3.hasPointsAfterQ3 && q3.hasGapAfterQ3);
+  check('le risque d\'incident est compté séparément des résultats classés',
+        q3.hasIncidentBlock && q3.hasSideBySide);
+  await shot('projection-whatif-q3');
+
+  // ── Matrice Q3 × Q4 ───────────────────────────────────
+  await page.evaluate(() => document.getElementById('prj-matrix')?.click());
+  let matDone = true;
+  try {
+    await page.waitForFunction(() => !!document.querySelector('.prj-matrix'), null, { timeout: 300000 });
+  } catch { matDone = false; }
+  const mat = await page.evaluate(() => {
+    const t = document.querySelector('.prj-matrix');
+    if (!t) return null;
+    const body = [...t.querySelectorAll('tbody tr')];
+    const vals = body.map(tr => [...tr.querySelectorAll('td.prj-cell')].map(td => parseInt(td.textContent, 10)));
+    return {
+      rows: body.length,
+      cols: vals[0]?.length || 0,
+      topLeft: vals[0]?.[0], bottomRight: vals[vals.length - 1]?.[vals[0].length - 1],
+      hasMedian: /Classement médian après Q3/.test(t.textContent),
+      monotoneRow: vals[0] ? vals[0].every((v, i, a) => i === 0 || v <= a[i - 1] + 1) : false,
+    };
+  });
+  check('la matrice Q3 × Q4 se calcule', matDone && mat && mat.rows > 3 && mat.cols > 3,
+        mat ? `${mat.rows}x${mat.cols}` : 'absente');
+  check('la matrice décroît du meilleur au pire scénario',
+        !!mat && mat.topLeft >= mat.bottomRight, mat ? `${mat.topLeft} % → ${mat.bottomRight} %` : '');
+  check('la matrice affiche le classement médian après Q3 par ligne', !!mat?.hasMedian);
+  await shot('projection-matrice');
 
   // ── Onglet « Backtest » ───────────────────────────────
   await page.evaluate(() => document.querySelector('[data-tab="backtest"]').click());

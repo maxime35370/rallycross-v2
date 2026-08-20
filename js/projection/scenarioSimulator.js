@@ -98,6 +98,100 @@ function participantsFor(context, driverIds) {
 }
 
 // ─────────────────────────────────────────────────────────
+// SIMULATION D'UNE MANCHE
+// ─────────────────────────────────────────────────────────
+
+/**
+ * Tire l'aléa d'une manche pour TOUS les pilotes, y compris ceux dont le
+ * résultat sera forcé.
+ *
+ * Tirer aussi pour les pilotes forcés peut sembler gaspilleur ; c'est au
+ * contraire indispensable. La position d'un tirage dans le flux reste ainsi la
+ * même d'un scénario à l'autre, si bien que les autres pilotes vivent
+ * exactement les mêmes courses. Sans cela, comparer « P8 » et « P7 »
+ * reviendrait à comparer deux univers différents.
+ */
+export function drawRace(rng, race, buf) {
+  for (let i = 0; i < race.ids.length; i++) {
+    buf.incident[i] = rng();
+    buf.latent[i] = randomNormal(rng);
+  }
+}
+
+/** Tampons de tirage réutilisables pour une liste de manches. */
+export function makeDrawBuffers(races) {
+  return races.map(r => ({
+    incident: new Float64Array(r.ids.length),
+    latent: new Float64Array(r.ids.length),
+  }));
+}
+
+/**
+ * Produit le classement d'une manche simulée, via buildMqStandings.
+ *
+ * Point unique de vérité de la simulation d'une manche : le simulateur simple
+ * et la matrice de scénarios passent tous deux par ici. Deux implémentations
+ * des mêmes règles finiraient immanquablement par diverger.
+ *
+ * @param {object} race — { num, ids, participants }
+ * @param {object} buf — tampons remplis par drawRace()
+ * @param {object} models
+ * @param {object|null} forcedHere — { driverId: { position } | { status } }
+ * @param {object} scale — sortie de timeScaleOf()
+ * @param {object} regulation
+ * @returns {Array} lignes de classement
+ */
+export function simulateRaceRows(race, buf, models, forcedHere, scale, regulation) {
+  const finishers = [];    // { driverId, x }
+  const incidents = [];    // { driverId, status }
+  const forcedPlaced = []; // { driverId, position }
+
+  for (let i = 0; i < race.ids.length; i++) {
+    const id = race.ids[i];
+    const f = forcedHere?.[id];
+    if (f) {
+      if (f.status) incidents.push({ driverId: id, status: f.status });
+      else if (f.position) forcedPlaced.push({ driverId: id, position: f.position });
+      continue;
+    }
+    const m = models[id];
+    if (!m) { incidents.push({ driverId: id, status: 'DNS' }); continue; }
+    if (buf.incident[i] < m.incidentRate) { incidents.push({ driverId: id, status: 'DNF' }); continue; }
+    finishers.push({ driverId: id, x: m.mu + m.sigma * buf.latent[i] });
+  }
+
+  finishers.sort((a, b) => a.x - b.x);
+  const order = finishers.map(f => f.driverId);
+
+  // Insertion des résultats forcés à leur place exacte : les autres pilotes se
+  // décalent, exactement comme dans une vraie manche.
+  forcedPlaced.sort((a, b) => a.position - b.position);
+  for (const f of forcedPlaced) {
+    const at = Math.min(Math.max(0, f.position - 1), order.length);
+    order.splice(at, 0, f.driverId);
+  }
+
+  // Chronos dérivés du RANG FINAL, donc strictement croissants avec la
+  // position : aucun classement incohérent ne peut sortir d'ici.
+  const n = race.ids.length;
+  const results = new Array(order.length + incidents.length);
+  const z0 = latentFromPosition(1, n) ?? 0;
+  for (let p = 0; p < order.length; p++) {
+    const z = latentFromPosition(p + 1, n) ?? 0;
+    results[p] = {
+      driverId: order[p],
+      ms: Math.round(scale.baseMs + scale.msPerZ * (z - z0)) + p,
+      status: null,
+    };
+  }
+  for (let k = 0; k < incidents.length; k++) {
+    results[order.length + k] = { driverId: incidents[k].driverId, ms: null, status: incidents[k].status };
+  }
+
+  return buildMqStandings(race.participants, results, regulation);
+}
+
+// ─────────────────────────────────────────────────────────
 // SIMULATION
 // ─────────────────────────────────────────────────────────
 
@@ -120,6 +214,9 @@ function participantsFor(context, driverIds) {
  *        compte). 'checkpoint' reconduit le plateau du checkpoint — c'est le
  *        seul régime admissible en backtest, où la liste d'inscrits d'une
  *        manche future révélerait des forfaits qu'on ne pouvait pas connaître.
+ * @param {number} [params.trackStateAfterRace] — suivre aussi l'état du pilote
+ *        analysé APRÈS cette manche intermédiaire. Répond à « si je fais P8 en
+ *        Q3, dans quelle situation j'arrive avant Q4 ? ».
  * @param {boolean} [params.trackAllDrivers] — compter la qualification de TOUS
  *        les pilotes en une seule passe. Indispensable au backtest : une passe
  *        par meeting au lieu d'une par pilote, soit trente fois moins de calcul.
@@ -133,6 +230,7 @@ export function simulateFromCheckpoint({
   seed = SIMULATION.defaultSeed,
   rivalIds = [],
   trackAllDrivers = false,
+  trackStateAfterRace = null,
   entrantsSource = 'session',
   // Le defaut de calc.js (2 manches classees) viderait le classement au
   // checkpoint apres Q1 : le simulateur n'aurait alors AUCUN partant et
@@ -183,6 +281,9 @@ export function simulateFromCheckpoint({
   const positionTally = createTally();
   const pointsTally = createTally();
   const cutTally = createTally();
+  const interPosition = createTally();
+  const interPoints = createTally();
+  const interGap = createTally();
   const rivalAhead = new Map(rivalIds.map(id => [id, 0]));
   const allQualified = trackAllDrivers ? new Map(checkpointDriverIds.map(id => [id, 0])) : null;
   const allSeen = trackAllDrivers ? new Map(checkpointDriverIds.map(id => [id, 0])) : null;
@@ -191,10 +292,7 @@ export function simulateFromCheckpoint({
 
   // Tampons réutilisés : une simulation ne doit pas déclencher d'allocation
   // inutile, le backtest en enchaîne des millions.
-  const draws = races.map(r => ({
-    incident: new Float64Array(r.ids.length),
-    latent: new Float64Array(r.ids.length),
-  }));
+  const draws = makeDrawBuffers(races);
 
   for (let sim = 0; sim < simulations; sim++) {
     const simulated = [];
@@ -202,63 +300,27 @@ export function simulateFromCheckpoint({
     for (let ri = 0; ri < races.length; ri++) {
       const race = races[ri];
       const buf = draws[ri];
+      drawRace(rng, race, buf);
+      simulated.push({
+        num: race.num,
+        rows: simulateRaceRows(race, buf, models, forced?.[race.num] || null, scale, context.regulation),
+      });
+    }
 
-      // On tire TOUJOURS pour tous les pilotes, y compris ceux dont le
-      // résultat est forcé : la position d'un tirage dans le flux reste ainsi
-      // la même d'un scénario à l'autre, ce qui rend les scénarios comparables.
-      for (let i = 0; i < race.ids.length; i++) {
-        buf.incident[i] = rng();
-        buf.latent[i] = randomNormal(rng);
+    // État intermédiaire : la situation dans laquelle le pilote aborde la
+    // manche suivante. C'est une information distincte de la probabilité
+    // finale, et souvent plus parlante pour un team.
+    if (trackStateAfterRace && focusDriverId) {
+      const upTo = buildInterimStandings(
+        [...completed, ...simulated.filter(r => r.num <= trackStateAfterRace)],
+        context.ecBonus, context.regulation, { minClassifiedRaces },
+      );
+      const row = upTo.find(d => d.driverId === focusDriverId);
+      if (row) {
+        interPosition.add(row.position);
+        interPoints.add(row.totalPoints);
+        if (threshold != null) interGap.add(row.position - threshold);
       }
-
-      const forcedHere = forced?.[race.num] || null;
-      const finishers = [];   // { driverId, x }
-      const incidents = [];   // { driverId, status }
-      const forcedPlaced = []; // { driverId, position }
-
-      for (let i = 0; i < race.ids.length; i++) {
-        const id = race.ids[i];
-        const f = forcedHere?.[id];
-        if (f) {
-          if (f.status) incidents.push({ driverId: id, status: f.status });
-          else if (f.position) forcedPlaced.push({ driverId: id, position: f.position });
-          continue;
-        }
-        const m = models[id];
-        if (!m) { incidents.push({ driverId: id, status: 'DNS' }); continue; }
-        if (buf.incident[i] < m.incidentRate) { incidents.push({ driverId: id, status: 'DNF' }); continue; }
-        finishers.push({ driverId: id, x: m.mu + m.sigma * buf.latent[i] });
-      }
-
-      finishers.sort((a, b) => a.x - b.x);
-      const order = finishers.map(f => f.driverId);
-
-      // Insertion des résultats forcés à leur place exacte : les autres
-      // pilotes se décalent, exactement comme dans une vraie manche.
-      forcedPlaced.sort((a, b) => a.position - b.position);
-      for (const f of forcedPlaced) {
-        const at = Math.min(Math.max(0, f.position - 1), order.length);
-        order.splice(at, 0, f.driverId);
-      }
-
-      // Chronos : dérivés du RANG FINAL, donc strictement croissants avec la
-      // position. Aucun classement incohérent ne peut sortir d'ici.
-      const n = race.ids.length;
-      const results = new Array(order.length + incidents.length);
-      const z0 = latentFromPosition(1, n) ?? 0;
-      for (let p = 0; p < order.length; p++) {
-        const z = latentFromPosition(p + 1, n) ?? 0;
-        results[p] = {
-          driverId: order[p],
-          ms: Math.round(scale.baseMs + scale.msPerZ * (z - z0)) + p,
-          status: null,
-        };
-      }
-      for (let k = 0; k < incidents.length; k++) {
-        results[order.length + k] = { driverId: incidents[k].driverId, ms: null, status: incidents[k].status };
-      }
-
-      simulated.push({ num: race.num, rows: buildMqStandings(race.participants, results, context.regulation) });
     }
 
     const standings = buildInterimStandings(
@@ -315,6 +377,16 @@ export function simulateFromCheckpoint({
     qualifiedCount: qualified, countedCount: counted,
     positionTally, pointsTally, cutTally, rivals, standingsSample,
     timeScale: scale,
+    intermediate: trackStateAfterRace ? {
+      raceNum: trackStateAfterRace,
+      medianPosition: interPosition.quantile(0.5),
+      meanPosition: interPosition.mean,
+      medianPoints: interPoints.quantile(0.5),
+      medianGap: interGap.quantile(0.5),
+      positionDistribution: interPosition.entries(),
+      gapDistribution: interGap.entries(),
+      samples: interPosition.total,
+    } : null,
   });
 }
 
@@ -339,6 +411,7 @@ function finalResult(r) {
     cutRange: r.cutTally && r.cutTally.total
       ? { low: r.cutTally.quantile(0.1), high: r.cutTally.quantile(0.9) } : null,
     rivals: r.rivals || [],
+    intermediate: r.intermediate ?? null,
     allProbabilities: r.allProbabilities ?? null,
     standingsSample: r.standingsSample || null,
     timeScale: r.timeScale || null,
@@ -410,4 +483,182 @@ export function whatIfResults({
   }
 
   return { raceNum, entries, seed, simulations, entrants: entrants.length };
+}
+
+// ─────────────────────────────────────────────────────────
+// MATRICE DE SCÉNARIOS CROISÉS
+// ─────────────────────────────────────────────────────────
+
+/**
+ * Probabilité de qualification pour chaque combinaison d'hypothèses sur DEUX
+ * manches — typiquement Q3 en lignes et Q4 en colonnes après Q2.
+ *
+ * ── Pourquoi ce n'est pas une simple double boucle ─────────────────────────
+ * Mesuré sur un plateau réel de 30 pilotes : une manche restante coûte
+ * 0,117 ms par tirage, deux manches 0,170 ms. Une matrice complète
+ * 30 × 30 × 10 000 tirages représente donc **26 minutes de calcul**, ce qui
+ * est hors de question dans un navigateur.
+ *
+ * Trois leviers sont appliqués :
+ *
+ *   1. MUTUALISATION DE LA LIGNE. Pour une hypothèse de ligne donnée, la
+ *      manche de ligne — et toute manche qui n'est ni celle de ligne ni celle
+ *      de colonne — n'est simulée QU'UNE FOIS par tirage, puis réutilisée pour
+ *      toutes les colonnes. Le coût passe de (lignes × colonnes) simulations
+ *      complètes à (lignes) simulations plus (lignes × colonnes) recalculs de
+ *      classement.
+ *
+ *   2. NOMBRES ALÉATOIRES COMMUNS. Toutes les cellules partagent la même
+ *      graine : les autres pilotes vivent exactement les mêmes courses dans
+ *      toute la matrice. Les ÉCARTS entre cellules sont donc estimés bien plus
+ *      précisément que les valeurs absolues — or c'est la comparaison entre
+ *      cellules qui intéresse le lecteur.
+ *
+ *   3. HYPOTHÈSES SÉLECTIONNÉES. Les lignes et colonnes sont une liste de
+ *      places stratégiques, pas tout le plateau. Une matrice 8 × 9 suffit à
+ *      montrer quelles combinaisons laissent de la marge.
+ *
+ * Le nombre de tirages reste explicite dans la sortie : une cellule à 1 500
+ * tirages porte une incertitude d'environ ±1,3 point, ce que l'interface doit
+ * afficher plutôt que de laisser croire à une précision qu'elle n'a pas.
+ *
+ * @param {object} params
+ * @param {object} params.context
+ * @param {number} params.checkpoint
+ * @param {object} params.models
+ * @param {number} params.threshold
+ * @param {string} params.focusDriverId
+ * @param {number} [params.rowRace] — manche des lignes (défaut : checkpoint + 1)
+ * @param {number} [params.colRace] — manche des colonnes (défaut : dernière)
+ * @param {Array} params.rowScenarios — [{ kind, position } | { kind, status }]
+ * @param {Array} params.colScenarios
+ * @param {number} [params.simulations]
+ * @param {number} [params.seed]
+ * @param {Function} [params.onRowDone] — (fait, total) pour la progression
+ * @returns {object}
+ */
+export function simulateScenarioMatrix({
+  context, checkpoint, models = {}, threshold, focusDriverId,
+  rowRace, colRace, rowScenarios = [], colScenarios = [],
+  simulations = SIMULATION.matrixSimulations,
+  seed = SIMULATION.defaultSeed,
+  minClassifiedRaces = PROJECTION_MIN_CLASSIFIED_RACES,
+  onRowDone = null,
+} = {}) {
+  const completed = (context?.races || [])
+    .filter(r => r.hasResults && r.num <= checkpoint)
+    .map(r => ({ num: r.num, rows: r.rows }));
+  const remaining = (context?.races || [])
+    .filter(r => r.num > checkpoint).map(r => r.num).sort((a, b) => a - b);
+
+  const rowNum = rowRace ?? remaining[0];
+  const colNum = colRace ?? remaining[remaining.length - 1];
+  if (!remaining.length || rowNum == null || colNum == null || rowNum === colNum) {
+    return { cells: [], rowRace: rowNum, colRace: colNum, simulations: 0, seed, unsupported: true };
+  }
+
+  const baseStandings = buildInterimStandings(completed, context?.ecBonus, context?.regulation, { minClassifiedRaces });
+  const checkpointIds = baseStandings.map(d => d.driverId);
+  const races = remaining.map(num => {
+    const ids = entrantsOfRace(context, num, checkpointIds);
+    return { num, ids, participants: participantsFor(context, ids) };
+  });
+  const scale = timeScaleOf(context, checkpoint);
+  const colIndex = races.findIndex(r => r.num === colNum);
+
+  const cells = [];
+  for (let ri = 0; ri < rowScenarios.length; ri++) {
+    const row = rowScenarios[ri];
+    // Même graine pour chaque ligne : les autres pilotes vivent les mêmes
+    // courses dans toute la matrice.
+    const rng = createRng(seed);
+    const draws = makeDrawBuffers(races);
+    const counts = new Array(colScenarios.length).fill(0);
+    const seen = new Array(colScenarios.length).fill(0);
+    const interPos = createTally();
+
+    for (let sim = 0; sim < simulations; sim++) {
+      // Toutes les manches sauf celle des colonnes : simulées une seule fois
+      // et réutilisées pour chaque colonne.
+      const fixed = [];
+      for (let i = 0; i < races.length; i++) {
+        drawRace(rng, races[i], draws[i]);
+        if (i === colIndex) continue;
+        const forcedHere = races[i].num === rowNum ? { [focusDriverId]: forcedOf(row) } : null;
+        fixed.push({ num: races[i].num, rows: simulateRaceRows(races[i], draws[i], models, forcedHere, scale, context.regulation) });
+      }
+
+      // Situation dans laquelle le pilote aborde la manche de colonne.
+      const upTo = buildInterimStandings(
+        [...completed, ...fixed.filter(r => r.num <= rowNum)],
+        context.ecBonus, context.regulation, { minClassifiedRaces },
+      );
+      const interRow = upTo.find(d => d.driverId === focusDriverId);
+      if (interRow) interPos.add(interRow.position);
+
+      // Tableau de manches monté une seule fois par tirage : seule la dernière
+      // entrée change d'une colonne à l'autre.
+      const payload = [...completed, ...fixed, null];
+      const last = payload.length - 1;
+
+      for (let ci = 0; ci < colScenarios.length; ci++) {
+        payload[last] = {
+          num: colNum,
+          rows: simulateRaceRows(
+            races[colIndex], draws[colIndex], models,
+            { [focusDriverId]: forcedOf(colScenarios[ci]) }, scale, context.regulation,
+          ),
+        };
+        const standings = buildInterimStandings(
+          payload, context.ecBonus, context.regulation, { minClassifiedRaces },
+        );
+        const focus = standings.find(d => d.driverId === focusDriverId);
+        if (!focus) continue;
+        seen[ci]++;
+        if (isQualifiedByRule(focus.position, threshold)) counts[ci]++;
+      }
+    }
+
+    cells.push({
+      row: { ...row, label: labelOf(row) },
+      medianPositionAfterRow: interPos.quantile(0.5),
+      columns: colScenarios.map((col, ci) => ({
+        col: { ...col, label: labelOf(col) },
+        probability: seen[ci] ? counts[ci] / seen[ci] : null,
+        samples: seen[ci],
+      })),
+    });
+    if (onRowDone) onRowDone(ri + 1, rowScenarios.length);
+  }
+
+  return {
+    cells, rowRace: rowNum, colRace: colNum,
+    simulations, seed,
+    /** Incertitude indicative d'une cellule, en points de pourcentage. */
+    marginOfErrorPct: 100 * Math.sqrt(0.25 / Math.max(1, simulations)),
+    unsupported: false,
+  };
+}
+
+function forcedOf(scenario) {
+  return scenario.kind === 'status' ? { status: scenario.status } : { position: scenario.position };
+}
+
+function labelOf(scenario) {
+  return scenario.kind === 'status' ? scenario.status : `P${scenario.position}`;
+}
+
+/**
+ * Hypothèses par défaut : des places réparties sur tout le plateau, plus
+ * l'abandon. Volontairement peu nombreuses — la matrice sert à repérer les
+ * combinaisons qui laissent de la marge, pas à tabuler chaque place.
+ */
+export function defaultScenarioLadder(fieldSize) {
+  const wanted = [1, 3, 5, 8, 10, 12, 15, 20];
+  const positions = [...new Set(wanted.filter(p => p <= fieldSize))];
+  if (fieldSize > 0 && !positions.includes(fieldSize)) positions.push(fieldSize);
+  return [
+    ...positions.map(position => ({ kind: 'position', position })),
+    { kind: 'status', status: 'DNF' },
+  ];
 }

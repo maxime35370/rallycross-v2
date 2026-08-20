@@ -23,10 +23,15 @@ Brier score (plus bas = meilleur), 30 meetings × catégorie, ~600 cas pilote,
 |---|---|---|---|---|---|
 | après Q1 | meeting exclu | 0,1728 | 0,1249 | **0,0846** | MC −0,0403 |
 | après Q1 | antérieurs seuls | 0,1728 | 0,1342 | **0,0913** | MC −0,0430 |
-| après Q2 | meeting exclu | 0,1738 | 0,0887 | **0,0582** | MC −0,0305 |
-| après Q2 | antérieurs seuls | 0,1738 | 0,1097 | **0,0601** | MC −0,0496 |
-| après Q3 | meeting exclu | 0,1738 | 0,0646 | **0,0423** | MC −0,0223 |
-| après Q3 | antérieurs seuls | 0,1738 | 0,0858 | **0,0420** | MC −0,0438 |
+| après Q2 | meeting exclu | 0,1738 | 0,0887 | **0,0593** | MC −0,0294 |
+| après Q2 | antérieurs seuls | 0,1738 | 0,1097 | **0,0613** | MC −0,0484 |
+| après Q3 | meeting exclu | 0,1738 | 0,0646 | **0,0420** | MC −0,0226 |
+| après Q3 | antérieurs seuls | 0,1738 | 0,0858 | **0,0417** | MC −0,0441 |
+
+> Chiffres actualisés au LOT 3 : la couverture du Monte-Carlo passe à 603/603
+> cas après correction du défaut `minClassifiedRaces` hérité de `calc.js`
+> (voir LOT-3-APRES-Q2.md §4). Les écarts bougent de quelques millièmes, les
+> conclusions sont inchangées.
 
 Justesse au seuil de décision 0,5, après Q3 : climatologie 77,6 %, historique
 91,4 %, Monte-Carlo 95,0 %.

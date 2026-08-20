@@ -31,7 +31,9 @@ import {
 } from './projection/qualificationRules.js';
 import { buildDataQualityReport } from './projection/dataQuality.js';
 import { collectRaceObservations, buildDriverModels, describeModel } from './projection/driverPerformanceModel.js';
-import { simulateFromCheckpoint, whatIfResults } from './projection/scenarioSimulator.js';
+import {
+  simulateFromCheckpoint, simulateScenarioMatrix, defaultScenarioLadder,
+} from './projection/scenarioSimulator.js';
 import { computeTargetResult, marginalGains, classifyStrategy } from './projection/strategyTargetCalculator.js';
 import { runBacktest, LEAKAGE_MODES } from './projection/qualificationBacktest.js';
 import { MESSAGES, MIN_CASES_TO_SHOW_RATE, SIMULATION } from './projection/projectionConfig.js';
@@ -70,7 +72,8 @@ const situation = {
 const simCache = new Map();
 let simSeed = SIMULATION.defaultSeed;
 let simProfile = SIMULATION.defaultProfile;
-let whatIfState = { key: null, running: false, progress: 0, data: null };
+let whatIfState = { key: null, running: false, progress: 0, data: null, raceNum: null };
+let matrixState = { key: null, running: false, progress: 0, data: null };
 let backtestState = { running: false, progress: 0, data: null, checkpoint: 3, leakageMode: LEAKAGE_MODES[0] };
 
 // ─────────────────────────────────────────────────────────
@@ -307,14 +310,24 @@ function renderSituation(el) {
     <div id="prj-situation-body"></div>
   `;
 
+  // Changer de meeting ou de checkpoint change la liste des manches restantes :
+  // la manche retenue pour les scénarios doit repartir de la PROCHAINE, sinon
+  // elle reste figée sur un choix qui n'a plus de sens (par exemple Q4 alors
+  // qu'on vient de reculer au checkpoint après Q2).
+  const resetScenarioRace = () => {
+    whatIfState = { key: null, running: false, progress: 0, data: null, raceNum: null };
+    matrixState = { key: null, running: false, progress: 0, data: null };
+  };
   document.getElementById('prj-meeting')?.addEventListener('change', e => {
     situation.meetingKey = e.target.value;
     situation.checkpoint = null;
     situation.driverId = '';
+    resetScenarioRace();
     renderContent();
   });
   document.getElementById('prj-checkpoint')?.addEventListener('change', e => {
     situation.checkpoint = Number(e.target.value);
+    resetScenarioRace();
     renderContent();
   });
   document.getElementById('prj-driver')?.addEventListener('change', e => {
@@ -329,8 +342,9 @@ function renderSituation(el) {
     renderSituationHeader(ctx, state, thresholdInfo, checkpoint, trivial),
     driver ? renderDriverOutlook(ctx, state, thresholdInfo, checkpoint, driver, trivial) : '',
     driver ? renderSimulation(ctx, state, threshold, checkpoint, driver) : renderSimulationIntro(checkpoint, ctx),
-    driver && whatIfState.data && whatIfState.key === whatIfKey(ctx, checkpoint, driver)
-      ? renderStrategySection(ctx.plannedRaceCount) : '',
+    driver && whatIfState.data && whatIfState.key === whatIfKey(ctx, checkpoint, driver, whatIfRaceOf(ctx, checkpoint))
+      ? renderStrategySection() : '',
+    driver ? renderMatrixBlock(ctx, state, checkpoint, driver) : '',
     renderStandingsTable(state, thresholdInfo, driver),
   ].join('');
 
@@ -529,8 +543,8 @@ function renderSimulation(ctx, state, threshold, checkpoint, driver) {
   const lastRace = ctx.plannedRaceCount;
 
   const cards = [
-    card('Probabilité Monte-Carlo', run.probability != null ? pct(run.probability) : '—',
-      `${run.qualifiedCount}/${run.countedCount} tirages`),
+    card('Probabilité globale', run.probability != null ? pct(run.probability) : '—',
+      `${run.qualifiedCount}/${run.countedCount} tirages · tous résultats confondus`),
     card('Classement final médian', run.medianPosition != null ? `P${run.medianPosition}` : '—',
       `moyenne ${run.meanPosition != null ? run.meanPosition.toFixed(1).replace('.', ',') : '—'}`),
     card('Score final médian', run.medianPoints != null ? String(run.medianPoints) : '—',
@@ -556,7 +570,7 @@ function renderSimulation(ctx, state, threshold, checkpoint, driver) {
       ['Données utilisées', `manches Q1 à Q${checkpoint} de ce meeting + historique ; aucune donnée postérieure`],
     ])}
     ${renderRivals(run)}
-    ${renderWhatIfBlock(ctx, checkpoint, driver, lastRace)}
+    ${renderWhatIfBlock(ctx, checkpoint, driver)}
   `);
 }
 
@@ -591,64 +605,141 @@ function renderRivals(run) {
 // SCÉNARIOS « ET SI » + INTERPRÉTATION STRATÉGIQUE
 // ─────────────────────────────────────────────────────────
 
-function whatIfKey(ctx, checkpoint, driver) {
-  return `${ctx.key}|${checkpoint}|${driver.driverId}|${simSeed}`;
+function whatIfKey(ctx, checkpoint, driver, raceNum) {
+  return `${ctx.key}|${checkpoint}|${driver.driverId}|${simSeed}|r${raceNum}`;
 }
 
-function renderWhatIfBlock(ctx, checkpoint, driver, lastRace) {
-  const key = whatIfKey(ctx, checkpoint, driver);
-  if (whatIfState.key !== key) {
-    return `<h4 class="prj-section-title" style="margin-top:var(--sp-lg);font-size:.95rem">
-        Scénarios « et si » sur Q${lastRace}</h4>
-      <p class="prj-n">Une simulation complète par résultat possible : c'est long, donc lancé à la demande.</p>
-      <button class="btn btn-primary" id="prj-whatif">Calculer les scénarios Q${lastRace}</button>`;
+/** Manche sur laquelle porte le « et si » : la PROCHAINE par défaut. */
+function whatIfRaceOf(ctx, checkpoint) {
+  const remaining = ctx.races.filter(r => r.num > checkpoint).map(r => r.num).sort((a, b) => a - b);
+  return whatIfState.raceNum && remaining.includes(whatIfState.raceNum)
+    ? whatIfState.raceNum : remaining[0];
+}
+
+function renderWhatIfBlock(ctx, checkpoint, driver) {
+  const remaining = ctx.races.filter(r => r.num > checkpoint).map(r => r.num).sort((a, b) => a - b);
+  const raceNum = whatIfRaceOf(ctx, checkpoint);
+  const key = whatIfKey(ctx, checkpoint, driver, raceNum);
+
+  const selector = remaining.length > 1
+    ? `<label class="prj-inline-field">Manche à imposer
+         <select class="toolbar-select" id="prj-whatif-race">
+           ${remaining.map(n => `<option value="${n}" ${n === raceNum ? 'selected' : ''}>Q${n}</option>`).join('')}
+         </select>
+       </label>`
+    : '';
+
+  const head = `<h4 class="prj-section-title" style="margin-top:var(--sp-lg);font-size:.95rem">
+      Scénarios « et si » sur Q${raceNum}</h4>`;
+
+  if (whatIfState.running && whatIfState.key === key) {
+    return `${head}<div class="loading-state"><div class="spinner"></div> Simulation ${whatIfState.progress} %…</div>`;
   }
-  if (whatIfState.running) {
-    return `<h4 class="prj-section-title" style="margin-top:var(--sp-lg);font-size:.95rem">
-        Scénarios « et si » sur Q${lastRace}</h4>
-      <div class="loading-state"><div class="spinner"></div> Simulation ${whatIfState.progress} %…</div>`;
-  }
-  return '';
+  if (whatIfState.key === key && whatIfState.data) return '';
+  return `${head}
+    <p class="prj-n">Une simulation complète par résultat possible : c'est long, donc lancé à la demande.</p>
+    <div class="toolbar" style="gap:var(--sp-sm)">${selector}
+      <button class="btn btn-primary" id="prj-whatif">Calculer les scénarios Q${raceNum}</button>
+    </div>`;
 }
 
 /** Tableau des scénarios + cible, rendus hors du bloc simulation. */
-function renderStrategySection(lastRace) {
+function renderStrategySection() {
   const d = whatIfState.data;
   if (!d) return '';
-  const { entries, target, gains, classification, seed, simulations } = d;
+  const { entries, target, gains, classification, seed, simulations, raceNum, lastRace, marginOfErrorPct } = d;
+  const isIntermediateRace = raceNum < lastRace;
+  const atTarget = target.probabilityAtTarget != null ? pct(target.probabilityAtTarget) : '—';
 
-  const rows = entries.map(e => {
+  const positions = entries.filter(e => e.kind === 'position');
+  const statuses = entries.filter(e => e.kind === 'status');
+
+  const rowOf = (e, highlightTarget) => {
     const g = gains.find(x => x.from === e.position);
-    const isTarget = target.target != null && e.position === target.target;
+    const isTarget = highlightTarget && target.target != null && e.position === target.target;
+    const inter = e.intermediate;
     return `<tr class="${isTarget ? 'is-focus' : ''}">
       <td>${escHtml(e.label)}${isTarget ? ' <span class="prj-chip prj-chip--info">cible</span>' : ''}</td>
       <td class="center"><strong>${e.probability != null ? pct(e.probability) : '—'}</strong></td>
       <td class="center">${g ? `${g.gainPct >= 0 ? '+' : ''}${g.gainPct.toFixed(1).replace('.', ',')} pt` : '—'}</td>
-      <td class="center">${e.medianPoints != null ? `${e.medianPoints} pts` : '—'}</td>
+      ${isIntermediateRace ? `
+        <td class="center">${inter?.medianPosition != null ? `P${inter.medianPosition}` : '—'}</td>
+        <td class="center">${inter?.medianPoints != null ? `${inter.medianPoints} pts` : '—'}</td>
+        <td class="center">${inter?.medianGap != null ? escHtml(formatGap(inter.medianGap)) : '—'}</td>
+      ` : `<td class="center">${e.medianPoints != null ? `${e.medianPoints} pts` : '—'}</td>`}
     </tr>`;
-  }).join('');
+  };
 
-  return section('strategy', `Scénarios Q${lastRace} et résultat cible`, `
+  const headers = isIntermediateRace
+    ? `<th class="center">Classement médian après Q${raceNum}</th>
+       <th class="center">Points après Q${raceNum}</th>
+       <th class="center">Écart au seuil après Q${raceNum}</th>`
+    : `<th class="center">Score final médian</th>`;
+
+  // Le risque d'incident est présenté SÉPARÉMENT des résultats classés : ce
+  // sont deux natures d'événement différentes, et les mélanger dans la même
+  // colonne laisserait croire à un continuum. Aucune recommandation n'est tirée
+  // de cette comparaison — seulement les chiffres.
+  const incident = statuses.length ? `
+    <h4 class="prj-section-title" style="margin-top:var(--sp-lg);font-size:.95rem">
+      Manche non terminée — Q${raceNum}</h4>
+    <p class="prj-n">Événements d'une autre nature qu'un résultat classé : ils sont comptés à part.</p>
+    <div class="prj-scroll"><table class="prj-table">
+      <thead><tr><th>Hypothèse</th><th class="center">Probabilité conditionnelle</th>
+        ${isIntermediateRace ? `<th class="center">Classement médian après Q${raceNum}</th><th class="center">Écart au seuil</th>` : '<th class="center">Score final médian</th>'}</tr></thead>
+      <tbody>${statuses.map(e => `<tr>
+        <td>${escHtml(e.label)}</td>
+        <td class="center"><strong>${e.probability != null ? pct(e.probability) : '—'}</strong></td>
+        ${isIntermediateRace
+          ? `<td class="center">${e.intermediate?.medianPosition != null ? `P${e.intermediate.medianPosition}` : '—'}</td>
+             <td class="center">${e.intermediate?.medianGap != null ? escHtml(formatGap(e.intermediate.medianGap)) : '—'}</td>`
+          : `<td class="center">${e.medianPoints != null ? `${e.medianPoints} pts` : '—'}</td>`}
+      </tr>`).join('')}</tbody>
+    </table></div>
+    ${target.target != null && statuses[0]?.probability != null ? `
+      <p style="margin-top:var(--sp-sm)">Pour mémoire, côte à côte :
+        <strong>${escHtml(target.targetLabel)}</strong> → ${atTarget} ·
+        <strong>${escHtml(statuses[0].label)}</strong> → ${pct(statuses[0].probability)}.
+        <span class="prj-n">Deux estimations conditionnelles, présentées sans interprétation.</span></p>` : ''}` : '';
+
+  return section('strategy', `Scénarios Q${raceNum} et résultat cible`, `
     <div class="prj-cards">
-      ${card('Résultat cible', target.targetLabel || '—',
-        target.averageGainAtTarget != null ? `gain moyen ${target.averageGainAtTarget.toFixed(2).replace('.', ',')} pt/place` : '')}
+      ${card('Probabilité globale', d.baseProbability != null ? pct(d.baseProbability) : '—',
+        `tous résultats Q${raceNum} confondus`)}
+      ${card(`Résultat cible Q${raceNum}`, target.targetLabel || '—',
+        target.averageGainAtTarget != null
+          ? `gain moyen ${target.averageGainAtTarget.toFixed(2).replace('.', ',')} pt/place`
+          : 'chaque place compte sur toute la courbe')}
+      ${card('Probabilité si ce résultat', atTarget, 'conditionnelle, pas une garantie')}
       ${card('Classification', `<span class="prj-class prj-class--${classification.id}">${escHtml(classification.label)}</span>`,
         escHtml(classification.description))}
-      ${card('Seuil de rendement', `${target.thresholdPct} pt/place`, 'configurable')}
     </div>
     <p style="margin:var(--sp-md) 0 var(--sp-sm)">${escHtml(target.statement || '')}</p>
+    ${target.target != null ? warn(escHtml(MESSAGES.targetNotAGuarantee(target.targetLabel, atTarget))) : ''}
     <div class="prj-scroll"><table class="prj-table">
-      <thead><tr><th>Résultat imposé en Q${lastRace}</th><th class="center">Probabilité de qualification</th>
-        <th class="center">Gain d'une place</th><th class="center">Score final médian</th></tr></thead>
-      <tbody>${rows}</tbody>
+      <thead><tr>
+        <th>Hypothèse imposée en Q${raceNum}<br><span class="prj-n">${escHtml(MESSAGES.probabilityForced)}</span></th>
+        <th class="center">Probabilité conditionnelle<br><span class="prj-n">de qualification finale</span></th>
+        <th class="center">Gain d'une place</th>
+        ${headers}</tr></thead>
+      <tbody>${positions.map(e => rowOf(e, true)).join('')}</tbody>
     </table></div>
+    ${incident}
+    <ul class="prj-notes">
+      <li><strong>Probabilité globale</strong> — ${escHtml(MESSAGES.probabilityGlobal)}</li>
+      <li><strong>Hypothèse imposée</strong> — ${escHtml(MESSAGES.probabilityForced)}</li>
+      <li><strong>Probabilité conditionnelle</strong> — ${escHtml(MESSAGES.probabilityConditional)}</li>
+      <li>Chaque valeur est estimée sur ${simulations} tirages, soit environ ± ${marginOfErrorPct.toFixed(1)} point d'incertitude.</li>
+    </ul>
     ${why('Comment le résultat cible est-il déterminé ?', [
       ['Règle', escHtml(target.rule)],
       ['Seuil τ', `${target.thresholdPct} point de pourcentage par place`],
       ['Probabilité à P1', target.probabilityAtBest != null ? pct(target.probabilityAtBest) : '—'],
-      ['Probabilité à la cible', target.probabilityAtTarget != null ? pct(target.probabilityAtTarget) : '—'],
+      ['Probabilité à la cible', atTarget],
+      ['Ce que la cible n\'est PAS', `un seuil de qualification : la probabilité à la cible vaut ${atTarget}, pas 100 %`],
+      ['Statuts exclus du calcul', 'un abandon n\'est pas une place : il est mesuré à part'],
       ['Classification', `${escHtml(classification.label)} — ${escHtml(classification.reason)}`],
-      ['Tirages par scénario', `${simulations}`],
+      ['Tirages par scénario', `${simulations} (± ${marginOfErrorPct.toFixed(1)} pt)`],
       ['Graine', `<code>${seed}</code> — identique pour tous les scénarios, pour que la comparaison ne mesure pas le bruit`],
       ['Nature', 'projection statistique — ni certitude, ni consigne de course'],
     ])}
@@ -657,53 +748,162 @@ function renderStrategySection(lastRace) {
 
 /** Lance les scénarios en rendant la main au navigateur entre chaque. */
 async function computeWhatIf(ctx, state, threshold, checkpoint, driver) {
+  const raceNum = whatIfRaceOf(ctx, checkpoint);
   const lastRace = ctx.plannedRaceCount;
   const { models } = modelsFor(ctx, state, checkpoint);
-  const entrants = (ctx.races.find(r => r.num === lastRace)?.rows || []).length || state.count;
+  const entrants = (ctx.races.find(r => r.num === raceNum)?.rows || []).length || state.count;
 
-  whatIfState = { key: whatIfKey(ctx, checkpoint, driver), running: true, progress: 0, data: null };
+  whatIfState = { key: whatIfKey(ctx, checkpoint, driver, raceNum), running: true, progress: 0, data: null, raceNum };
   renderContent();
 
   const entries = [];
   const positions = Array.from({ length: entrants }, (_, i) => i + 1);
-  const total = positions.length + 1;
+  const statuses = ['DNF', 'DNS', 'DSQ'];
+  const total = positions.length + statuses.length;
   let done = 0;
 
-  const push = (extra) => {
+  const push = (forced, entry) => {
     const run = simulateFromCheckpoint({
       context: ctx, checkpoint, models, threshold, focusDriverId: driver.driverId,
-      forced: { [lastRace]: { [driver.driverId]: extra.forced } },
+      forced: { [raceNum]: { [driver.driverId]: forced } },
       simulations: SIMULATION.whatIfSimulations, seed: simSeed,
+      // Suivi de l'état intermédiaire seulement si la manche imposée n'est pas
+      // la dernière : sinon « après cette manche » et « au final » se confondent.
+      trackStateAfterRace: raceNum < lastRace ? raceNum : null,
     });
-    entries.push({ ...extra.entry, probability: run.probability, medianPoints: run.medianPoints, medianPosition: run.medianPosition });
+    entries.push({
+      ...entry,
+      probability: run.probability,
+      medianPoints: run.medianPoints,
+      medianPosition: run.medianPosition,
+      intermediate: run.intermediate,
+    });
   };
 
   for (const position of positions) {
-    push({ forced: { position }, entry: { kind: 'position', position, label: `P${position}` } });
+    push({ position }, { kind: 'position', position, label: `P${position}` });
     done++;
     whatIfState.progress = Math.round(100 * done / total);
     renderContent();
     await new Promise(r => setTimeout(r, 0));   // laisse l'interface respirer
   }
-  for (const status of ['DNF', 'DNS', 'DSQ']) {
-    push({ forced: { status }, entry: { kind: 'status', status, label: status } });
+  for (const status of statuses) {
+    push({ status }, { kind: 'status', status, label: status });
+    done++;
   }
 
   const target = computeTargetResult(entries);
   whatIfState = {
-    key: whatIfState.key, running: false, progress: 100,
+    key: whatIfState.key, running: false, progress: 100, raceNum,
     data: {
-      entries, target, gains: marginalGains(entries),
+      raceNum, lastRace, entries, target, gains: marginalGains(entries),
+      baseProbability: runBaseSimulation(ctx, state, threshold, checkpoint, driver).run.probability,
       classification: classifyStrategy({ probability: runBaseSimulation(ctx, state, threshold, checkpoint, driver).run.probability, target }),
       seed: simSeed, simulations: SIMULATION.whatIfSimulations,
+      marginOfErrorPct: 100 * Math.sqrt(0.25 / SIMULATION.whatIfSimulations),
     },
   };
   renderContent();
 }
 
+// ─────────────────────────────────────────────────────────
+// MATRICE DE SCÉNARIOS CROISÉS
+// ─────────────────────────────────────────────────────────
+
+function matrixKey(ctx, checkpoint, driver) {
+  return `${ctx.key}|${checkpoint}|${driver.driverId}|${simSeed}`;
+}
+
+function renderMatrixBlock(ctx, state, checkpoint, driver) {
+  const remaining = ctx.races.filter(r => r.num > checkpoint).map(r => r.num).sort((a, b) => a - b);
+  if (remaining.length < 2) return '';
+  const key = matrixKey(ctx, checkpoint, driver);
+
+  if (matrixState.running && matrixState.key === key) {
+    return section('strategy', `Matrice Q${remaining[0]} × Q${remaining[remaining.length - 1]}`,
+      `<div class="loading-state"><div class="spinner"></div> Calcul ${matrixState.progress} %…</div>`);
+  }
+  if (matrixState.key !== key || !matrixState.data) {
+    return section('strategy', `Matrice Q${remaining[0]} × Q${remaining[remaining.length - 1]}`, `
+      <p class="prj-n">Probabilité finale de qualification pour chaque combinaison d'hypothèses sur les deux
+         manches restantes, les autres pilotes restant simulés dans chaque cellule.</p>
+      <p class="prj-n">Une matrice complète place par place coûterait des dizaines de minutes de calcul : les
+         hypothèses sont donc un échantillon de places réparties sur le plateau, et chaque cellule est estimée
+         sur un nombre de tirages annoncé.</p>
+      <button class="btn btn-primary" id="prj-matrix">Calculer la matrice</button>`);
+  }
+  return renderMatrix(matrixState.data);
+}
+
+function renderMatrix(m) {
+  const cols = m.cells[0]?.columns || [];
+  const cell = (p) => {
+    if (p == null) return `<td class="center prj-dq-off">—</td>`;
+    const v = Math.round(100 * p);
+    return `<td class="center prj-cell" style="--p:${v}">${v} %</td>`;
+  };
+  return section('strategy', `Matrice Q${m.rowRace} × Q${m.colRace}`, `
+    <p class="prj-n" style="margin-bottom:var(--sp-sm)">
+      Chaque cellule : probabilité finale de qualification si le pilote fait le résultat de la LIGNE en
+      Q${m.rowRace} et celui de la COLONNE en Q${m.colRace}. Les autres pilotes sont simulés normalement
+      dans chaque cellule — ce n'est jamais une simple addition de points.
+    </p>
+    <div class="prj-scroll"><table class="prj-table prj-matrix">
+      <thead><tr><th>Q${m.rowRace} ＼ Q${m.colRace}</th>
+        ${cols.map(c => `<th class="center">${escHtml(c.col.label)}</th>`).join('')}
+        <th class="center">Classement médian après Q${m.rowRace}</th></tr></thead>
+      <tbody>${m.cells.map(row => `<tr>
+        <th>${escHtml(row.row.label)}</th>
+        ${row.columns.map(c => cell(c.probability)).join('')}
+        <td class="center prj-n">${row.medianPositionAfterRow != null ? `P${row.medianPositionAfterRow}` : '—'}</td>
+      </tr>`).join('')}</tbody>
+    </table></div>
+    ${why('Comment cette matrice est-elle calculée ?', [
+      ['Tirages par cellule', `${m.simulations}`],
+      ['Incertitude indicative', `± ${m.marginOfErrorPct.toFixed(1)} point de pourcentage`],
+      ['Graine', `<code>${m.seed}</code> — identique pour toute la matrice`],
+      ['Mutualisation', `la manche Q${m.rowRace} n'est simulée qu'une fois par tirage, puis réutilisée pour toutes les colonnes`],
+      ['Nombres aléatoires communs', 'les autres pilotes vivent les mêmes courses dans toute la matrice, donc les écarts entre cellules sont plus fiables que les valeurs absolues'],
+      ['Hypothèses retenues', 'un échantillon de places réparties sur le plateau, plus l\'abandon — une matrice complète coûterait des dizaines de minutes'],
+      ['Nature', 'projection statistique conditionnelle à DEUX hypothèses ; ni prévision, ni garantie'],
+    ])}`);
+}
+
+async function computeMatrix(ctx, state, threshold, checkpoint, driver) {
+  const { models } = modelsFor(ctx, state, checkpoint);
+  const ladder = defaultScenarioLadder(state.count);
+  matrixState = { key: matrixKey(ctx, checkpoint, driver), running: true, progress: 0, data: null };
+  renderContent();
+  await new Promise(r => setTimeout(r, 30));
+
+  // Le calcul est découpé ligne par ligne pour que la progression s'affiche.
+  const rows = [];
+  for (let i = 0; i < ladder.length; i++) {
+    const part = simulateScenarioMatrix({
+      context: ctx, checkpoint, models, threshold, focusDriverId: driver.driverId,
+      rowScenarios: [ladder[i]], colScenarios: ladder,
+      simulations: SIMULATION.matrixSimulations, seed: simSeed,
+    });
+    rows.push(...part.cells);
+    matrixState.progress = Math.round(100 * (i + 1) / ladder.length);
+    if (i === ladder.length - 1) {
+      matrixState = { ...matrixState, running: false, data: { ...part, cells: rows } };
+    }
+    renderContent();
+    await new Promise(r => setTimeout(r, 0));
+  }
+}
+
 function bindSimulationControls(ctx, state, threshold, checkpoint, driver) {
   document.getElementById('prj-whatif')?.addEventListener('click', () => {
     computeWhatIf(ctx, state, threshold, checkpoint, driver);
+  });
+  document.getElementById('prj-whatif-race')?.addEventListener('change', (e) => {
+    whatIfState = { key: null, running: false, progress: 0, data: null, raceNum: Number(e.target.value) };
+    renderContent();
+  });
+  document.getElementById('prj-matrix')?.addEventListener('click', () => {
+    computeMatrix(ctx, state, threshold, checkpoint, driver);
   });
   document.getElementById('prj-seed')?.addEventListener('change', (e) => {
     const v = parseInt(e.target.value, 10);
@@ -1056,6 +1256,8 @@ function renderQuality(el) {
     </div>
     ${s.duplicateParticipants ? warn(`${s.duplicateParticipants} document${s.duplicateParticipants > 1 ? 's' : ''} <em>sessionParticipants</em> inscrivent un pilote deux fois à la même manche. Le module les ignore, mais le nombre d'engagés affiché ailleurs dans l'application en est faussé — et avec lui les points attribués aux DNF.`) : ''}`),
 
+    renderDuplicateProtection(s),
+
     section('historical', 'Couverture des checkpoints', `
       <p class="prj-n" style="margin-bottom:var(--sp-sm)">
         Nombre de lignes pilote reconstruites après chaque manche, sur les meetings complets.
@@ -1076,6 +1278,35 @@ function renderQuality(el) {
     renderDivergences(),
     renderGroupsTable(),
   ].join('');
+}
+
+/**
+ * État observable de la protection anti-doublon.
+ *
+ * La règle Firestore ne peut pas être interrogée depuis l'application. Ce qui
+ * PEUT l'être, c'est sa conséquence : si un document à identifiant historique
+ * apparaît avec une date postérieure au déploiement, c'est que la règle n'est
+ * pas active. C'est le seul contrôle honnête possible depuis ici.
+ */
+function renderDuplicateProtection(s) {
+  const date = s.legacyNewest ? String(s.legacyNewest).slice(0, 10) : null;
+  return section('historical', 'Protection contre les inscriptions en double', `
+    <div class="prj-cards">
+      ${card('Identifiants historiques', String(s.legacyIdCount || 0), 'documents antérieurs à la protection')}
+      ${card('Plus récent d\'entre eux', date || '—', 'aucun ne devrait être postérieur au déploiement')}
+      ${card('Doublons subsistants', String(s.duplicateParticipants || 0), 'ignorés au calcul, non supprimés')}
+    </div>
+    <ul class="prj-notes">
+      <li>À l'écriture, l'identifiant d'une inscription est <code>sessionId_driverId</code> : deux enregistrements
+          concurrents du même pilote visent le même document et s'écrasent, au lieu d'en créer deux.</li>
+      <li>La règle Firestore correspondante impose ce format à la création. Elle est versionnée dans
+          <code>firestore.rules</code> mais doit être <strong>déployée manuellement</strong> dans la console
+          — voir <code>docs/qualification-projection/ANTI-DOUBLONS.md</code>.</li>
+      <li>Les documents à identifiant historique ne sont <strong>pas supprimés</strong> par ce module : leur
+          reprise relève d'une migration dédiée.</li>
+      <li>Contrôle : si la date ci-dessus devient postérieure à votre déploiement, c'est que la règle
+          n'est pas active.</li>
+    </ul>`);
 }
 
 function renderDivergences() {

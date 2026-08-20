@@ -19,7 +19,7 @@ import {
   buildMqStandings, buildEcStandings, buildInterimStandings,
   DEFAULT_MIN_CLASSIFIED_RACES,
 } from '../calc.js';
-import { dedupeParticipants } from '../utils.js';
+import { dedupeParticipants, sessionParticipantId } from '../utils.js';
 import { PHASE_ORDER } from './qualificationRules.js';
 
 /**
@@ -101,12 +101,24 @@ export function buildMeetingContext(group, regulation) {
     const results = resBy[s.id] || [];
     const raw = parBy[s.id] || [];
     const { participants, duplicates } = dedupeParticipants(raw, s.id);
+    // Inscriptions portant encore un identifiant aleatoire. Leur presence est
+    // normale (documents anterieurs a la protection) ; ce qui ne le serait pas,
+    // c'est qu'il en apparaisse de NOUVEAUX : cela signifierait que la regle
+    // Firestore n'est pas deployee. D'ou la conservation de la date la plus
+    // recente, seul indicateur observable depuis l'application.
+    const legacy = raw.filter(p => p.id && p.id !== sessionParticipantId(s.id, p.driverId));
+    const legacyNewest = legacy.reduce((max, p) => {
+      const d = p.createdAt?.toDate?.()?.toISOString?.() ?? (typeof p.createdAt === 'string' ? p.createdAt : null);
+      return d && (!max || d > max) ? d : max;
+    }, null);
     return {
       num: s.num,
       sessionId: s.id,
       engagedCount: participants.length,
       /** Documents sessionParticipants en double sur ce pilote et cette manche. */
       duplicateParticipants: duplicates.length,
+      legacyIdCount: legacy.length,
+      legacyNewest,
       // Une manche est « courue » dès qu'un résultat exploitable existe.
       // Indispensable : les meetings à venir ont déjà leurs participants
       // chargés mais aucun résultat, et compteraient sinon comme 100 % de DNS.

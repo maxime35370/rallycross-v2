@@ -314,3 +314,16 @@
 .prj-verdict--monteCarlo { border-left-color: var(--clr-success); background: var(--clr-success-dim); }
 .prj-verdict--historical { border-left-color: var(--clr-warning); background: var(--clr-warning-dim); }
 .prj-verdict--tie        { border-left-color: var(--clr-text-3);  background: var(--clr-bg-3); }
+
+/* ── LOT 3 : matrice de scénarios croisés ─────────────── */
+
+.prj-matrix th { position: sticky; left: 0; background: var(--clr-surface); z-index: 1; }
+.prj-matrix thead th { z-index: 2; }
+
+/* Teinte proportionnelle à la probabilité : la lecture d'ensemble doit être
+   immédiate, mais la valeur reste écrite — la couleur ne remplace pas le
+   chiffre, elle le hiérarchise. */
+.prj-cell {
+  background: color-mix(in srgb, var(--clr-success) calc(var(--p) * 0.55%), transparent);
+  font-variant-numeric: tabular-nums;
+}
