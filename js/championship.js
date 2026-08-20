@@ -7,7 +7,7 @@
 
 import { db } from './firebase.js';
 import { toast } from './app.js';
-import { escHtml } from './utils.js';
+import { escHtml, dedupeParticipants } from './utils.js';
 import { calcInterimStandings, qfPoints, dfPoints, finPoints, calcStatusPoints } from './calc.js';
 import { getChampionshipConfig } from './settings.js';
 import { getActiveChampionship, getActiveChampionshipId } from './context.js';
@@ -50,7 +50,9 @@ async function fsGetResults(sessionId) {
 }
 
 async function fsGetParticipants(sessionId) {
-  return fsQuery('sessionParticipants', [['sessionId', '==', sessionId]]);
+  // Idem calc.getParticipants : on ne compte jamais deux fois un pilote.
+  const rows = await fsQuery('sessionParticipants', [['sessionId', '==', sessionId]]);
+  return dedupeParticipants(rows, sessionId).participants;
 }
 
 // ─────────────────────────────────────────────────────────

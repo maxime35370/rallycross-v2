@@ -346,3 +346,74 @@ export function timecodeKey(sessionType, sessionNum, category) {
   const t = sessionNum ? `${sessionType}${sessionNum}` : sessionType;
   return `${t}__${cat}`;
 }
+// ─────────────────────────────────────────────────────────
+// IDENTIFIANTS DÉTERMINISTES — ANTI-DOUBLON
+// ─────────────────────────────────────────────────────────
+
+/**
+ * Identifiant canonique d'un document `sessionParticipants`.
+ *
+ * Convention maison, déjà appliquée à `results` : l'identifiant du document
+ * PORTE la clé métier. Deux écritures concurrentes pour le même pilote et la
+ * même session visent alors le même document et se écrasent au lieu de créer
+ * deux inscriptions. C'est ce qui rend le doublon structurellement impossible,
+ * là où un `addDoc` + vérification préalable laisse une fenêtre de course.
+ *
+ * La règle Firestore correspondante impose ce format à la création (voir
+ * firestore.rules, match /sessionParticipants) : la contrainte n'est donc pas
+ * seulement une politesse du client.
+ *
+ * @param {string} sessionId
+ * @param {string} driverId
+ * @returns {string}
+ */
+export function sessionParticipantId(sessionId, driverId) {
+  return `${sessionId}_${driverId}`;
+}
+
+/** Identifiant canonique d'un document `results`. Même convention. */
+export function resultId(sessionId, driverId) {
+  return `${sessionId}_${driverId}`;
+}
+
+/**
+ * Dédoublonne des inscriptions par pilote.
+ *
+ * Garde en priorité le document dont l'identifiant est déterministe ; à défaut
+ * le plus ancien. Les documents créés avant l'adoption de l'identifiant
+ * déterministe portent un identifiant aléatoire et peuvent donc être en double.
+ *
+ * Un doublon ne fausse pas seulement un décompte d'affichage : le nombre
+ * d'engagés sert au calcul des points des abandons (`mode: 'engaged_offset'`),
+ * donc un DNF vaudrait les points d'une place inexistante.
+ *
+ * @param {Array} rows — documents sessionParticipants d'UNE session
+ * @param {string} [sessionId] — pour reconnaître l'identifiant déterministe
+ * @returns {{ participants: Array, duplicates: Array }} `duplicates` contient
+ *          les documents écartés, pour permettre un nettoyage éventuel.
+ */
+export function dedupeParticipants(rows = [], sessionId) {
+  const byDriver = new Map();
+  for (const r of rows) {
+    const arr = byDriver.get(r.driverId) || [];
+    arr.push(r);
+    byDriver.set(r.driverId, arr);
+  }
+
+  const participants = [];
+  const duplicates = [];
+  for (const [driverId, docs] of byDriver) {
+    if (docs.length === 1) { participants.push(docs[0]); continue; }
+    const expectedId = sessionParticipantId(sessionId ?? docs[0].sessionId, driverId);
+    const sorted = docs.slice().sort((a, b) => {
+      if (a.id === expectedId && b.id !== expectedId) return -1;
+      if (b.id === expectedId && a.id !== expectedId) return 1;
+      const ta = a.createdAt?.toMillis?.() ?? Date.parse(a.createdAt ?? '') ?? 0;
+      const tb = b.createdAt?.toMillis?.() ?? Date.parse(b.createdAt ?? '') ?? 0;
+      return (isFinite(ta) ? ta : 0) - (isFinite(tb) ? tb : 0);
+    });
+    participants.push(sorted[0]);
+    duplicates.push(...sorted.slice(1));
+  }
+  return { participants, duplicates };
+}

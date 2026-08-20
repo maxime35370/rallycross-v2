@@ -6,7 +6,7 @@
 
 import { db } from './firebase.js';
 import { categoryBadge, sessionBadge, statusBadge } from './app.js';
-import { msToDisplay, escHtml } from './utils.js';
+import { msToDisplay, escHtml, dedupeParticipants } from './utils.js';
 import { calcInterimStandings, calcEcStandings, calcMqStandings, qfPoints, dfPoints, finPoints, calcStatusPoints } from './calc.js';
 import { buildMeetingClassification } from './competition.js';
 import { getChampionshipConfig } from './settings.js';
@@ -80,7 +80,11 @@ async function getParticipants(sessionId) {
     collection(db, 'sessionParticipants'),
     where('sessionId', '==', sessionId)
   ));
-  return snap.docs.map(d => d.data());
+  // Meme dedoublonnage defensif que calc.getParticipants : un pilote inscrit
+  // deux fois (documents anterieurs a l'identifiant deterministe) fausserait
+  // le nombre d'engages et donc les points des abandons.
+  const rows = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  return dedupeParticipants(rows, sessionId).participants;
 }
 
 async function saveToFirestore(collectionName, docId, data) {

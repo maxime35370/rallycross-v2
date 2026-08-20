@@ -56,8 +56,26 @@ service cloud.firestore {
     match /sessionParticipants/{docId} {
       allow read:   if true;
       allow delete: if isRegie();
-      allow create, update: if isRegie() &&
-        hasFields(request.resource.data, ['sessionId','driverId','carNumber']);
+
+      // ANTI-DOUBLON : a la creation, l'identifiant du document DOIT etre
+      // `${sessionId}_${driverId}`. Deux inscriptions concurrentes du meme
+      // pilote visent alors le meme document et s'ecrasent, au lieu de creer
+      // deux inscriptions. Sans cette contrainte, un addDoc suivi d'une
+      // verification laisse une fenetre de course : c'est ainsi que des
+      // doublons ont ete crees en base (voir docs/qualification-projection).
+      allow create: if isRegie() &&
+        hasFields(request.resource.data, ['sessionId','driverId','carNumber']) &&
+        docId == request.resource.data.sessionId + '_' + request.resource.data.driverId;
+
+      // La mise a jour reste possible sur les documents anterieurs a cette
+      // regle (identifiant aleatoire), pour ne pas bloquer la correction ou la
+      // suppression de l'existant. En revanche une inscription ne peut jamais
+      // etre repointee vers un autre pilote ou une autre session : ce serait
+      // un moyen detourne de recreer un doublon.
+      allow update: if isRegie() &&
+        hasFields(request.resource.data, ['sessionId','driverId','carNumber']) &&
+        request.resource.data.sessionId == resource.data.sessionId &&
+        request.resource.data.driverId  == resource.data.driverId;
     }
 
     match /results/{docId} {

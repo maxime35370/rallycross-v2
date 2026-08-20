@@ -10,7 +10,7 @@ import { db } from './firebase.js';
 import { toast } from './app.js';
 import { logAudit } from './audit.js';
 import { requireAuth } from './auth.js';
-import { msToDisplay, inputToMs, msToFields, escHtml, parseTimeString, timecodeKey, buildYoutubeUrl } from './utils.js';
+import { msToDisplay, inputToMs, msToFields, escHtml, parseTimeString, timecodeKey, buildYoutubeUrl, dedupeParticipants } from './utils.js';
 import { getActiveChampionship, getActiveChampionshipId } from './context.js';
 import { mqPoints, qfPoints, dfPoints, finPoints, ecBonusPoints, calcStatusPoints, compareInterimTiebreaker, computeSeriesSizes } from './calc.js';
 import { getChampionshipConfig } from './settings.js';
@@ -169,31 +169,11 @@ async function loadParticipants() {
   let raw = snap.docs.map(d => ({ id: d.id, _ref: d.ref, ...d.data() }));
 
   // Dedupe : nettoie les doublons crees par l'ancienne version de
-  // addParticipant (race condition sur addDoc). On garde le doc avec
-  // l'ID deterministe `${sessionId}_${driverId}` quand il existe, sinon
-  // on garde le plus ancien. Les autres sont supprimes silencieusement
-  // en arriere-plan.
-  const byDriver = new Map();
-  for (const p of raw) {
-    const arr = byDriver.get(p.driverId) || [];
-    arr.push(p);
-    byDriver.set(p.driverId, arr);
-  }
-  const toDelete = [];
-  const kept = [];
-  for (const [driverId, docs] of byDriver) {
-    if (docs.length === 1) { kept.push(docs[0]); continue; }
-    const expectedId = `${selectedSessionId}_${driverId}`;
-    const sorted = docs.slice().sort((a, b) => {
-      if (a.id === expectedId) return -1;
-      if (b.id === expectedId) return 1;
-      const ta = a.createdAt?.toMillis?.() ?? 0;
-      const tb = b.createdAt?.toMillis?.() ?? 0;
-      return ta - tb;
-    });
-    kept.push(sorted[0]);
-    for (let i = 1; i < sorted.length; i++) toDelete.push(sorted[i]);
-  }
+  // addParticipant (addDoc + verification non atomique -> race condition).
+  // La logique de selection vit dans utils.dedupeParticipants, partagee avec
+  // les lectures de calc.js / standings.js / championship.js pour qu'un
+  // doublon donne partout le meme resultat.
+  const { participants: kept, duplicates: toDelete } = dedupeParticipants(raw, selectedSessionId);
   if (toDelete.length > 0) {
     console.warn(`[timing] ${toDelete.length} doublon(s) sessionParticipants detecte(s) sur la session ${selectedSessionId}, nettoyage en arriere-plan`);
     Promise.all(toDelete.map(d => deleteDoc(d._ref).catch(err =>

@@ -19,6 +19,7 @@ import {
   buildMqStandings, buildEcStandings, buildInterimStandings,
   DEFAULT_MIN_CLASSIFIED_RACES,
 } from '../calc.js';
+import { dedupeParticipants } from '../utils.js';
 import { PHASE_ORDER } from './qualificationRules.js';
 
 /**
@@ -99,13 +100,13 @@ export function buildMeetingContext(group, regulation) {
   const races = mqSessions.map(s => {
     const results = resBy[s.id] || [];
     const raw = parBy[s.id] || [];
-    const { participants, duplicates } = dedupeParticipants(raw);
+    const { participants, duplicates } = dedupeParticipants(raw, s.id);
     return {
       num: s.num,
       sessionId: s.id,
       engagedCount: participants.length,
       /** Documents sessionParticipants en double sur ce pilote et cette manche. */
-      duplicateParticipants: duplicates,
+      duplicateParticipants: duplicates.length,
       // Une manche est « courue » dès qu'un résultat exploitable existe.
       // Indispensable : les meetings à venir ont déjà leurs participants
       // chargés mais aucun résultat, et compteraient sinon comme 100 % de DNS.
@@ -168,30 +169,6 @@ export function buildMeetingContext(group, regulation) {
     /** Manches courues sans interruption depuis la première. */
     isComplete: races.length > 0 && races.every(r => r.hasResults),
   };
-}
-
-/**
- * Dédoublonne les participations par pilote.
- *
- * Les documents `sessionParticipants` sont créés avec un identifiant aléatoire,
- * contrairement aux `results` qui utilisent `${sessionId}_${driverId}` : rien
- * n'empêche donc structurellement qu'un pilote soit inscrit deux fois à la même
- * manche, et le cas se produit réellement en base. Un doublon fausserait deux
- * choses à la fois : le nombre d'engagés, qui sert au calcul des points DNF
- * (`mode: 'engaged_offset'`), et la détection des qualifications mécaniques.
- *
- * @returns {{ participants: Array, duplicates: number }}
- */
-export function dedupeParticipants(rows = []) {
-  const seen = new Set();
-  const participants = [];
-  let duplicates = 0;
-  for (const p of rows) {
-    if (seen.has(p.driverId)) { duplicates++; continue; }
-    seen.add(p.driverId);
-    participants.push(p);
-  }
-  return { participants, duplicates };
 }
 
 /** Première phase finale réellement peuplée, ou null. */

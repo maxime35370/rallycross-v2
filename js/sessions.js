@@ -7,7 +7,7 @@
 
 import { db } from './firebase.js';
 import { toast } from './app.js';
-import { escHtml } from './utils.js';
+import { escHtml, sessionParticipantId } from './utils.js';
 import { getChampionshipConfig } from './settings.js';
 import { calcInterimStandings } from './calc.js';
 import { distributeIntoQF, getReserves } from './competition.js';
@@ -148,7 +148,7 @@ async function addParticipant(sessionId, driver) {
   // ou quand plusieurs onglets etaient ouverts).
   // setDoc + merge:true permet d'enregistrer ou de mettre a jour sans
   // creer de nouveau document.
-  const docId = `${sessionId}_${driverId}`;
+  const docId = sessionParticipantId(sessionId, driverId);
   await setDoc(doc(db, 'sessionParticipants', docId), {
     sessionId,
     meetingId:  selectedMeetingId,

@@ -5,6 +5,8 @@
    bareme FFSA 2026 par defaut s'applique.
 ═══════════════════════════════════════════════ */
 
+import { dedupeParticipants } from './utils.js';
+
 // ─────────────────────────────────────────────────────────
 // BAREME PAR DEFAUT (FFSA 2026) — utilise si aucun reglement
 // ─────────────────────────────────────────────────────────
@@ -243,7 +245,13 @@ export async function getParticipants(db, sessionId) {
     collection(db, 'sessionParticipants'),
     where('sessionId', '==', sessionId)
   ));
-  return snap.docs.map(d => d.data());
+  // Dedoublonnage defensif : des inscriptions en double existent en base,
+  // heritees de l'ancienne ecriture par addDoc. Les compter deux fois
+  // gonflerait le nombre d'engages, donc les points attribues aux abandons
+  // (statusRules DNF, mode 'engaged_offset'), et ferait apparaitre le pilote
+  // deux fois au classement de la manche.
+  const rows = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  return dedupeParticipants(rows, sessionId).participants;
 }
 
 // ─────────────────────────────────────────────────────────
