@@ -11,3 +11,6 @@ node_modules/
 
 # Copies de référence produites par tools/qualification-audit/16-non-regression.sh
 js/__base*.js
+
+# Captures de contrôle produites par tools/smoke/captureStrategie.mjs
+tools/smoke/shots/

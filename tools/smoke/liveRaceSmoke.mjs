@@ -191,32 +191,23 @@ try {
   check('le résultat acquis est annoncé comme tel',
         (cert?.enonces || []).some(t => /acquis/.test(t)), (cert?.enonces || [])[0] || '');
 
-  const etatWhatIf = () => page.evaluate(() => {
-    const t = document.getElementById('prj-content').textContent.replace(/\s+/g, ' ');
+  const coherence = await page.evaluate(() => {
+    const t = document.getElementById('prj-content')?.textContent.replace(/\s+/g, ' ') || '';
     return {
-      refus: /déjà acquis — scénario What-if indisponible pour cette manche/.test(t),
-      bouton: !!document.getElementById('prj-whatif'),
+      entete: /STRATÉGIE Q\d+/.exec(t)?.[0] || null,
+      enCours: /EN COURS — \d+\/\d+ résultats/.test(t),
+      situation: document.querySelector('.prj-situation')?.textContent.trim() || null,
+      certitudes: !!document.querySelector('.prj-band--certainties'),
+      liens: document.querySelectorAll('[data-goto-tab]').length,
     };
   });
-
-  const wAcquis = await etatWhatIf();
-  check('le what-if est REFUSÉ pour un pilote déjà passé, avec le message attendu',
-        wAcquis.refus && !wAcquis.bouton, JSON.stringify(wAcquis));
-
-  const autre = await choisir(restant[0]);
-  await page.waitForTimeout(1500);
-  const wRestant = await etatWhatIf();
-  check('le what-if reste DISPONIBLE pour un pilote qui n\'a pas encore couru',
-        wRestant.bouton && !wRestant.refus, `${autre} → ${JSON.stringify(wRestant)}`);
-
-  // Le classement affiché ne doit compter QUE les manches terminées.
-  const coherence = await page.evaluate(() => {
-    const sel = document.getElementById('prj-checkpoint');
-    return { checkpoint: sel?.value, options: [...(sel?.options || [])].map(o => o.textContent.trim()) };
-  });
-  check('le checkpoint reste sur la dernière manche TERMINÉE',
-        coherence.options.every(o => !o.includes(String(4))) || coherence.checkpoint !== '4',
-        JSON.stringify(coherence));
+  check('l\'en-tête nomme la manche stratégique en cours',
+        coherence.entete != null && coherence.enCours, JSON.stringify(coherence));
+  check('la situation est qualifiée d\'un mot lisible',
+        Boolean(coherence.situation), coherence.situation || '');
+  check('le bloc CERTITUDES reste distinct sur l\'écran opérationnel', coherence.certitudes);
+  check('les analyses détaillées sont accessibles en second niveau',
+        coherence.liens >= 3, `${coherence.liens} renvois`);
 
   // Polices Google, QR distant, service worker : ressources externes
   // inaccessibles depuis l'environnement de test, sans rapport avec le module.
@@ -240,20 +231,14 @@ try {
   }, restant);
   await choisir(proche ? proche.value : restant[0]);
   await page.waitForTimeout(800);
-  const lance = await page.evaluate(() => {
-    const b = document.getElementById('prj-objective');
-    if (!b) return false;
-    b.click();
-    return true;
-  });
-  check('le bouton « Calculer l\'objectif » est proposé pendant la manche', lance);
-
-  let objectif = null;
-  if (lance) {
+  // L'écran opérationnel calcule l'objectif de lui-même : en bord de piste, un
+  // clic de plus n'a pas de sens.
+  const lance = true;
+  {
     try {
-      await page.waitForFunction(() => !!document.querySelector('.prj-objective'), null, { timeout: 60000 });
+      await page.waitForFunction(() => !!document.querySelector('.prj-objective'), null, { timeout: 90000 });
     } catch { /* relevé ci-dessous */ }
-    objectif = await page.evaluate(() => {
+    var objectif = await page.evaluate(() => {
       const el = document.querySelector('.prj-objective');
       if (!el) return null;
       const bloc = el.closest('.prj-section');
@@ -266,6 +251,7 @@ try {
       };
     });
   }
+  check('l\'écran opérationnel calcule l\'objectif sans action supplémentaire', Boolean(objectif));
   check('le bloc OBJECTIF affiche une consigne et une probabilité',
         Boolean(objectif?.goal && objectif?.prob), `${objectif?.goal} · ${objectif?.chrono || 'sans chrono'} · ${objectif?.prob}`);
   check('le chrono est présenté comme une traduction de rang, jamais comme une garantie seule',
@@ -277,6 +263,34 @@ try {
   check('l\'avertissement coéquipiers de série apparaît quand il y a lieu',
         !objectif || !/ne garantit pas cette place/.test(objectif.texte)
           || /concurrents? de votre série/.test(objectif.texte));
+
+  // ── Second niveau : l'analyse détaillée ────────────────
+  // Le what-if a quitté l'écran opérationnel ; il vit maintenant sur l'onglet
+  // d'analyse, avec le reste des outils d'ingénierie.
+  await page.evaluate(() => document.querySelector('[data-tab="situation"]').click());
+  await page.waitForTimeout(600);
+  await choisir(dejaCouru[0]);
+  await page.waitForTimeout(1200);
+
+  const etatWhatIf = () => page.evaluate(() => {
+    const t = document.getElementById('prj-content').textContent.replace(/\s+/g, ' ');
+    return {
+      refus: /déjà acquis — scénario What-if indisponible pour cette manche/.test(t),
+      bouton: !!document.getElementById('prj-whatif'),
+    };
+  });
+
+  const wAcquis = await etatWhatIf();
+  check('le what-if est REFUSÉ pour un pilote déjà passé, avec le message attendu',
+        wAcquis.refus && !wAcquis.bouton, JSON.stringify(wAcquis));
+
+  const autre = await choisir(restant[0]);
+  await page.waitForTimeout(1500);
+  const wRestant = await etatWhatIf();
+  check('le what-if reste DISPONIBLE pour un pilote qui n\'a pas encore couru',
+        wRestant.bouton && !wRestant.refus, `${autre} → ${JSON.stringify(wRestant)}`);
+
+  // Le classement affiché ne doit compter QUE les manches terminées.
 
   check('aucune erreur JavaScript', reelles().length === 0, reelles().slice(0, 3).join(' | '));
 } catch (e) {

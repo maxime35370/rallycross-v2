@@ -473,3 +473,68 @@
   font-size: .9rem;
   opacity: .85;
 }
+
+/* ─────────────────────────────────────────────────────────
+   ÉCRAN OPÉRATIONNEL « STRATÉGIE »
+   ───────────────────────────────────────────────────────── */
+
+.prj-strategy-head {
+  margin: var(--sp-md) 0;
+  padding: var(--sp-md);
+  border-radius: var(--radius-md, 8px);
+  background: var(--clr-surface);
+  border: 1px solid var(--clr-border);
+}
+.prj-strategy-title {
+  font-family: var(--font-condensed);
+  font-size: 1.25rem;
+  font-weight: 700;
+  letter-spacing: .02em;
+}
+.prj-strategy-sub {
+  margin-top: var(--sp-xs);
+  font-size: .9rem;
+  opacity: .85;
+}
+
+.prj-situation {
+  display: inline-block;
+  margin-bottom: var(--sp-md);
+  padding: var(--sp-xs) var(--sp-md);
+  border-radius: 999px;
+  font-family: var(--font-condensed);
+  font-size: .85rem;
+  font-weight: 700;
+  letter-spacing: .08em;
+}
+.prj-situation--green   { background: rgba(0, 200, 120, .18); color: #6ee7b0; }
+.prj-situation--orange  { background: var(--clr-accent-dim); color: var(--clr-accent-2); }
+.prj-situation--red     { background: rgba(255, 82, 82, .18); color: #ff8a80; }
+.prj-situation--neutral { background: var(--clr-info-dim); color: var(--clr-info); }
+
+.prj-objective-label {
+  font-size: .72rem;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  opacity: .65;
+}
+
+.prj-objective-risk {
+  margin: var(--sp-sm) 0 0;
+  font-size: .95rem;
+}
+
+.prj-strategy-certain {
+  margin: var(--sp-sm) 0 0;
+  padding: var(--sp-sm) var(--sp-md);
+  border-left: 3px solid #00c878;
+  background: rgba(0, 200, 120, .08);
+  font-size: .92rem;
+}
+
+.prj-strategy-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-sm);
+  margin: var(--sp-lg) 0;
+}

@@ -37,8 +37,8 @@ import {
 } from './projection/scenarioSimulator.js';
 import { buildRaceCertainties } from './projection/raceCertainties.js';
 import {
-  buildLiveObjective, directRivals, pickScenarios, seriesPlan, provisionalOrder,
-  mathematicalChronoTarget,
+  buildLiveObjective, directRivals, pickScenarios, mathematicalChronoTarget,
+  SITUATION_LABELS,
 } from './projection/liveStrategy.js';
 import { computeTargetResult, marginalGains, classifyStrategy } from './projection/strategyTargetCalculator.js';
 import { runBacktest, LEAKAGE_MODES } from './projection/qualificationBacktest.js';
@@ -58,7 +58,7 @@ let contexts = [];
 let championshipsById = {};
 let report = null;
 
-let activeTab = 'situation';
+let activeTab = 'strategy';
 
 const filters = {
   championshipId: '',
@@ -113,6 +113,11 @@ function band(kind) {
   // contient est démontré, pas estimé. La confusion visuelle serait le pire
   // défaut possible de cette vue.
   if (kind === 'certainties') return `<div class="prj-band prj-band--certainties">${escHtml(MESSAGES.sectionCertainties)}</div>`;
+  // L'objectif porte sa propre bande : réutiliser celle de l'interprétation
+  // stratégique afficherait deux titres voisins qui disent presque la même
+  // chose, juste au-dessus de la seule ligne que le team doit lire.
+  if (kind === 'objective') return `<div class="prj-band prj-band--strategy">${escHtml(MESSAGES.sectionObjective)}</div>`;
+  if (kind === 'plain') return '';
   return `<div class="prj-band prj-band--historical">${escHtml(MESSAGES.sectionHistorical)}</div>`;
 }
 
@@ -207,10 +212,11 @@ function renderView() {
 
   el.innerHTML = `
     <div class="section-header">
-      <h2 class="section-title">📐 <span>Projection de qualification</span></h2>
+      <h2 class="section-title">🎯 <span>Stratégie Live</span></h2>
     </div>
     <div class="prj-tabs">
-      <button class="prj-tab ${activeTab === 'situation' ? 'is-active' : ''}" data-tab="situation">En situation</button>
+      <button class="prj-tab ${activeTab === 'strategy' ? 'is-active' : ''}" data-tab="strategy">🎯 Stratégie</button>
+      <button class="prj-tab ${activeTab === 'situation' ? 'is-active' : ''}" data-tab="situation">Analyse détaillée</button>
       <button class="prj-tab ${activeTab === 'history' ? 'is-active' : ''}" data-tab="history">Historique</button>
       <button class="prj-tab ${activeTab === 'backtest' ? 'is-active' : ''}" data-tab="backtest">Backtest</button>
       <button class="prj-tab ${activeTab === 'quality' ? 'is-active' : ''}" data-tab="quality">Qualité des données</button>
@@ -240,7 +246,8 @@ function renderContent() {
     return;
   }
 
-  if (activeTab === 'situation') renderSituation(el);
+  if (activeTab === 'strategy') renderStrategy(el);
+  else if (activeTab === 'situation') renderSituation(el);
   else if (activeTab === 'history') renderHistory(el);
   else if (activeTab === 'backtest') renderBacktest(el);
   else renderQuality(el);
@@ -258,6 +265,310 @@ function situationCandidates() {
     .filter(c => c.lastCompletedRace > 0 || c.raceInProgress != null)
     .sort((a, b) => String(b.meeting?.date).localeCompare(String(a.meeting?.date))
       || String(a.category).localeCompare(String(b.category)));
+}
+
+// ─────────────────────────────────────────────────────────
+// ÉCRAN OPÉRATIONNEL — « STRATÉGIE »
+// ─────────────────────────────────────────────────────────
+
+/**
+ * L'écran qu'on ouvre pendant un meeting.
+ *
+ * Il répond à une seule question à la fois, dans l'ordre où elle se pose :
+ * où en est mon pilote, que doit-il faire, et qu'est-ce qui est déjà acquis.
+ * Tout le reste — Monte-Carlo, historique, matrice, qualité des données — vit
+ * dans les autres onglets ou dans des panneaux repliés.
+ *
+ * La logique s'inverse d'elle-même une fois le pilote passé : la question
+ * devient « que doivent faire les autres ? ».
+ */
+function renderStrategy(el) {
+  const candidates = situationCandidates();
+  if (!candidates.length) {
+    el.innerHTML = `<div class="tim-placeholder"><div class="placeholder-icon">🎯</div>
+      <div class="placeholder-title">Aucun meeting avec des manches courues</div></div>`;
+    return;
+  }
+
+  const ctx = candidates.find(c => c.key === situation.meetingKey) || candidates[0];
+  situation.meetingKey = ctx.key;
+
+  const checkpoint = ctx.completedRaces.includes(situation.checkpoint)
+    ? situation.checkpoint : ctx.lastCompletedRace;
+  const state = buildStateAfterRace(ctx, checkpoint);
+  const thresholdInfo = resolveQualificationThreshold({
+    regulation: ctx.regulation, observedPhaseCounts: ctx.observedPhaseCounts, engagedCount: ctx.engagedCount,
+  });
+  const threshold = thresholdInfo.threshold;
+  const support = checkRegulationSupport(ctx.regulation);
+  const driver = state.standings.find(d => d.driverId === situation.driverId) || null;
+
+  // Manche concernée : celle en cours, sinon la prochaine. Le même écran sert
+  // donc à préparer Q3 après Q2, sans logique séparée.
+  const raceNum = ctx.raceInProgress ?? ctx.races.find(r => r.num > checkpoint)?.num ?? null;
+  const race = raceNum != null ? ctx.races.find(r => r.num === raceNum) : null;
+
+  el.innerHTML = `
+    <div class="toolbar" style="flex-wrap:wrap;gap:var(--sp-sm)">
+      <select class="toolbar-select" id="prj-meeting" style="flex:1;min-width:220px">
+        ${candidates.map(c => `<option value="${escHtml(c.key)}" ${c.key === ctx.key ? 'selected' : ''}>
+          ${escHtml(c.meeting?.date || '')} · ${escHtml(c.meeting?.location || c.meetingId)} · ${escHtml(c.category)}
+        </option>`).join('')}
+      </select>
+      <select class="toolbar-select" id="prj-driver" style="flex:1;min-width:220px">
+        <option value="">— Choisir un pilote —</option>
+        ${state.standings.map(d => `<option value="${escHtml(d.driverId)}" ${d.driverId === situation.driverId ? 'selected' : ''}>
+          P${d.position} · #${escHtml(String(d.carNumber))} ${escHtml(d.lastName || '')} ${escHtml(d.firstName || '')}
+        </option>`).join('')}
+      </select>
+    </div>
+    ${!support.supported ? warn(`${escHtml(MESSAGES.unsupportedRegulation)} — ${escHtml(support.reasons.join(' '))}`, true) : ''}
+    <div id="prj-strategy-body"></div>
+  `;
+
+  document.getElementById('prj-meeting')?.addEventListener('change', e => {
+    situation.meetingKey = e.target.value;
+    situation.checkpoint = null;
+    situation.driverId = '';
+    objectiveState = { key: null, running: false, data: null };
+    renderContent();
+  });
+  document.getElementById('prj-driver')?.addEventListener('change', e => {
+    situation.driverId = e.target.value;
+    objectiveState = { key: null, running: false, data: null };
+    renderContent();
+  });
+
+  const body = document.getElementById('prj-strategy-body');
+  if (!support.supported) { body.innerHTML = ''; return; }
+
+  if (!driver) {
+    body.innerHTML = `${renderLiveBanner(ctx, ctx.raceInProgress != null ? race : null)}
+      <div class="tim-placeholder"><div class="placeholder-icon">🎯</div>
+        <div class="placeholder-title">Choisissez un pilote</div>
+        <div class="placeholder-desc">
+          ${raceNum != null
+            ? `L'objectif portera sur la manche Q${raceNum}${ctx.raceInProgress != null ? ' (en cours)' : ' (à venir)'}.`
+            : 'Toutes les manches qualificatives sont courues.'}
+        </div></div>
+      ${renderStandingsTable(state, thresholdInfo, null)}`;
+    return;
+  }
+
+  const key = objectiveKey(ctx, checkpoint, driver);
+  // Calcul lancé automatiquement : sur cet écran, la consigne est l'objet même
+  // de la visite. Demander un clic supplémentaire n'aurait aucun sens en bord
+  // de piste.
+  if (objectiveState.key !== key && !objectiveState.running && raceNum != null) {
+    computeObjective(ctx, state, threshold, checkpoint, driver);
+  }
+
+  body.innerHTML = [
+    renderStrategyHeadline(ctx, state, thresholdInfo, checkpoint, driver, raceNum),
+    renderStrategyMain(ctx, checkpoint, driver, threshold, raceNum),
+    driver ? renderCertainties(ctx, checkpoint, driver, threshold) : '',
+    renderStrategyLinks(),
+    renderStandingsTable(state, thresholdInfo, driver),
+  ].join('');
+
+  bindSimulationControls(ctx, state, threshold, checkpoint, driver);
+  document.querySelectorAll('[data-goto-tab]').forEach(b => {
+    b.addEventListener('click', () => { activeTab = b.dataset.gotoTab; renderView(); });
+  });
+}
+
+/** Bandeau d'identité : qui, où, contre quel seuil, et sur quelle manche. */
+function renderStrategyHeadline(ctx, state, thresholdInfo, checkpoint, driver, raceNum) {
+  const gap = gapToThreshold(driver.position, thresholdInfo.threshold);
+  const enCours = ctx.raceInProgress === raceNum;
+  const race = raceNum != null ? ctx.races.find(r => r.num === raceNum) : null;
+
+  return `<div class="prj-strategy-head">
+    <div>
+      <div class="prj-strategy-title">
+        ${raceNum != null ? `STRATÉGIE Q${raceNum}` : 'MANCHES TERMINÉES'} —
+        #${escHtml(String(driver.carNumber))} ${escHtml(driver.lastName || '')}
+      </div>
+      <div class="prj-strategy-sub">
+        P${driver.position} intermédiaire · ${driver.totalPoints} pts · seuil P${thresholdInfo.threshold}
+        · ${escHtml(formatGap(gap))}
+        ${race ? ` · Q${raceNum} ${enCours ? `EN COURS — ${race.ranCount}/${race.engagedCount} résultats` : 'à venir'}` : ''}
+      </div>
+    </div>
+  </div>`;
+}
+
+/** Renvoie vers le second niveau, sans le mélanger à la consigne. */
+function renderStrategyLinks() {
+  return `<div class="prj-strategy-links">
+    <button class="btn btn-secondary btn-sm" data-goto-tab="situation">Analyse détaillée · Monte-Carlo, what-if, matrice</button>
+    <button class="btn btn-secondary btn-sm" data-goto-tab="history">Historique comparable</button>
+    <button class="btn btn-secondary btn-sm" data-goto-tab="quality">Qualité des données</button>
+  </div>`;
+}
+
+/**
+ * Le bloc principal : objectif, référence chrono, avertissement série, risque
+ * d'incident, et — après le passage — ce que les autres doivent faire.
+ */
+function renderStrategyMain(ctx, checkpoint, driver, threshold, raceNum) {
+  if (raceNum == null) {
+    return section('certainties', null,
+      '<p style="margin:0">Toutes les manches qualificatives sont courues : le classement est un fait, il n\'y a plus de consigne à donner.</p>');
+  }
+  const key = objectiveKey(ctx, checkpoint, driver);
+  if (objectiveState.key !== key || !objectiveState.data) {
+    return section('objective', null,
+      '<div class="loading-state"><div class="spinner"></div> Calcul de l\'objectif…</div>');
+  }
+
+  const { objective: o, rivals, scenarios, maths } = objectiveState.data;
+  if (!o) return '';
+  const situ = SITUATION_LABELS[o.mode] || SITUATION_LABELS.target;
+
+  // ── Après le passage : que doivent faire les autres ? ───────────────────
+  if (o.mode === 'afterRun') {
+    const r = o.resilience;
+    const acquis = r?.safeWhatever
+      ? `<p class="prj-strategy-certain">Même si tous les ${r.pendingCount} pilotes restants battent son chrono, il reste dans la zone qualificative.</p>`
+      : r && r.maxBeatenBy != null
+        ? `<p class="prj-strategy-certain">Il faudrait qu'au moins ${r.maxBeatenBy + 1} des ${r.pendingCount} pilotes restants battent son chrono pour que sa qualification ne soit plus acquise.</p>`
+        : r
+          ? `<p class="prj-n" style="margin:var(--sp-sm) 0 0">Sa qualification n'est pas encore démontrable : elle dépend des résultats des ${r.pendingCount} pilotes restants. Le chiffre ci-dessus reste une probabilité.</p>`
+          : '';
+    const menaces = (o.threats || []).slice(0, 5);
+    // La situation est qualifiée du même mot avant et après le passage : un
+    // écran qui change de vocabulaire selon le moment se relit mal.
+    const situApres = r?.safeWhatever ? SITUATION_LABELS.settled : situ;
+    return section('objective', null, `
+      <div class="prj-situation prj-situation--${situApres.tone}">${escHtml(situApres.label)}</div>
+      <div class="prj-objective">
+        <div class="prj-objective-main">
+          <div class="prj-objective-goal">✅ Résultat Q${o.raceNum} acquis${r?.provisionalPosition ? ` — P${r.provisionalPosition} provisoire` : ''}</div>
+          ${r?.ms != null ? `<div class="prj-objective-chrono">⏱ ${escHtml(fmtMs(r.ms))}</div>` : ''}
+        </div>
+        <div class="prj-objective-side">
+          <div class="prj-objective-prob">${pct(o.probability)}</div>
+          <div class="prj-objective-prob-label">qualification projetée</div>
+        </div>
+      </div>
+      <p class="prj-objective-compare">${o.remainingToRun} pilote${o.remainingToRun > 1 ? 's' : ''} rest${o.remainingToRun > 1 ? 'ent' : 'e'} à courir.
+         ${escHtml(MESSAGES.afterOurRun)}</p>
+      ${acquis}
+      ${menaces.length ? `<h4 class="prj-section-title" style="margin-top:var(--sp-lg);font-size:.95rem">
+          Qui peut encore le faire basculer</h4>
+        <div class="prj-scroll"><table class="prj-table">
+          <thead><tr><th>Pilote encore à courir</th><th class="center">Finit devant lui</th></tr></thead>
+          <tbody>${menaces.map(m => `<tr>
+            <td>${driverLabel(ctx, m.driverId)} ${escHtml(m.firstName || '')}</td>
+            <td class="center">${pct(m.probabilityAhead)}</td>
+          </tr>`).join('')}</tbody></table></div>` : ''}
+      ${renderObjectiveDetail(ctx, o, rivals)}`);
+  }
+
+  // ── Avant le passage : que doit faire notre pilote ? ────────────────────
+  let titre = '', chrono = null, sous = '';
+  if (o.mode === 'settled') {
+    titre = MESSAGES.objectiveSettled;
+    sous = MESSAGES.objectiveNone;
+  } else if (o.mode === 'comfortable') {
+    titre = 'Large plage de résultats compatible';
+    sous = MESSAGES.objectiveComfortable;
+  } else if (o.mode === 'dependent') {
+    titre = 'Aucun résultat ne suffit à lui seul';
+    sous = o.best ? `Même « ${o.best.label} » ne donne que ${pct(o.best.probability)}.` : '';
+  } else if (o.target) {
+    titre = `${o.target.label} ou mieux`;
+    chrono = o.target.reference?.beat != null ? fmtMs(o.target.reference.beat) : null;
+    sous = chrono
+      ? (o.exact ? MESSAGES.chronoCertain(chrono, o.target.rank)
+                 : MESSAGES.chronoProbabilistic(chrono, o.target.rank, pct(o.target.probability)))
+      : '';
+  }
+
+  const menace = (o.seriesThreat || []).filter(m => (m.probabilityBeatsTarget ?? 0) >= 0.25);
+  const grand = o.mode === 'target' ? o.probabilityAtTarget : o.probability;
+
+  return section('objective', null, `
+    <div class="prj-situation prj-situation--${situ.tone}">${escHtml(situ.label)}</div>
+    <div class="prj-objective">
+      <div class="prj-objective-main">
+        <div class="prj-objective-label">OBJECTIF</div>
+        <div class="prj-objective-goal">🎯 ${escHtml(titre)}</div>
+        ${chrono ? `<div class="prj-objective-label" style="margin-top:var(--sp-sm)">RÉFÉRENCE ACTUELLE</div>
+                    <div class="prj-objective-chrono">⏱ battre ${escHtml(chrono)}</div>` : ''}
+      </div>
+      <div class="prj-objective-side">
+        <div class="prj-objective-prob">${pct(grand)}</div>
+        <div class="prj-objective-prob-label">${o.mode === 'target' ? 'si l\'objectif est atteint' : 'qualification projetée'}</div>
+      </div>
+    </div>
+    ${o.mode === 'target' ? `<p class="prj-objective-compare">
+        Sans cette cible : <strong>${pct(o.probability)}</strong>
+        ${o.justBehind ? ` · une place derrière : <strong>${pct(o.justBehind.probability)}</strong>` : ''}
+      </p>` : ''}
+    ${sous ? `<p style="margin:var(--sp-sm) 0 0">${escHtml(sous)}</p>` : ''}
+    ${menace.length && chrono ? warn(escHtml(MESSAGES.seriesMatesWarning(chrono, menace.length))) : ''}
+    ${o.incident ? `<p class="prj-objective-risk">⚠️ ${escHtml(o.incident.status)} → <strong>${pct(o.incident.probability)}</strong> de qualification</p>` : ''}
+    ${maths && !maths.impossible && !maths.unconditional && maths.beat != null
+      ? `<p class="prj-strategy-certain">Battre ${escHtml(fmtMs(maths.beat))}
+           (${driverLabel(ctx, maths.beatDriverId)}) rend la qualification acquise quels que soient les résultats restants.</p>`
+      : ''}
+    ${scenarios?.length ? `<h4 class="prj-section-title" style="margin-top:var(--sp-lg);font-size:.95rem">Chemins possibles</h4>
+       <ul class="prj-notes">${scenarios.map(sc => `<li><strong>${escHtml(sc.label)}</strong> — ${pct(sc.probability)}</li>`).join('')}</ul>` : ''}
+    ${renderSeriesPanel(ctx, o)}
+    ${renderObjectiveDetail(ctx, o, rivals)}`);
+}
+
+/** Composition de la série et menace des coéquipiers, repliée. */
+function renderSeriesPanel(ctx, o) {
+  if (!o.series) return '';
+  const mates = o.series.pendingMates || [];
+  return why(`Série ${o.series.num} — ${mates.length} coéquipier${mates.length > 1 ? 's' : ''} encore à courir`, [
+    ['Composition', o.series.inferred ? escHtml(MESSAGES.inferredSeries) : 'renseignée dans les résultats'],
+    ['Déjà passés dans la série', String(o.series.ranMembers)],
+    ['Encore à courir', mates.length
+      ? mates.map(m => driverLabel(ctx, m.driverId)).join(' · ')
+      : 'aucun — la cible chrono est exacte'],
+    ...((o.seriesThreat || []).length ? [['Menace sur la cible',
+      `<div class="prj-scroll"><table class="prj-table">
+        <thead><tr><th>Coéquipier</th><th class="center">Bat le chrono cible</th></tr></thead>
+        <tbody>${o.seriesThreat.map(m => `<tr>
+          <td>${driverLabel(ctx, m.driverId)}</td>
+          <td class="center">${pct(m.probabilityBeatsTarget)}</td>
+        </tr>`).join('')}</tbody></table></div>`]] : []),
+  ]);
+}
+
+/** Échelle de cibles et concurrents directs, repliés : c'est la partie ingénieur. */
+function renderObjectiveDetail(ctx, o, rivals) {
+  return why('Pourquoi ? — échelle de cibles et concurrents directs', [
+    ['Manche', `Q${o.raceNum}`],
+    ['Pilotes encore à courir', String(o.pendingOthers)],
+    ['Nature de la cible', o.exact
+      ? 'exacte — plus personne d\'autre ne doit rouler'
+      : 'probabiliste — d\'autres pilotes doivent encore rouler'],
+    ...((o.ladder || []).length ? [['Échelle de cibles', `<div class="prj-scroll"><table class="prj-table">
+        <thead><tr><th>Hypothèse</th><th>Chrono à battre</th><th class="center">P(qualif)</th><th class="center">Place médiane</th></tr></thead>
+        <tbody>${o.ladder.map(e => `<tr${o.target && e.rank === o.target.rank ? ' class="is-target"' : ''}>
+          <td>${escHtml(e.label || `P${e.rank}`)}</td>
+          <td>${e.reference?.beat != null ? escHtml(fmtMs(e.reference.beat)) : '—'}</td>
+          <td class="center">${pct(e.probability)}</td>
+          <td class="center">${e.medianRacePosition != null ? `P${e.medianRacePosition}` : '—'}</td>
+        </tr>`).join('')}</tbody></table></div>`]] : []),
+    ['Concurrents directs', `<div class="prj-scroll"><table class="prj-table">
+        <thead><tr><th>Pilote</th><th class="center">Impact</th><th class="center">S'il réussit</th><th class="center">S'il abandonne</th></tr></thead>
+        <tbody>${(rivals?.all || []).map(r => `<tr>
+          <td>${driverLabel(ctx, r.driverId)}</td>
+          <td class="center">${r.settled ? 'résultat acquis' : `${(100 * r.impact).toFixed(1)} pt`}</td>
+          <td class="center">${r.settled ? '—' : pct(r.probabilityIfRivalBest)}</td>
+          <td class="center">${r.settled ? '—' : pct(r.probabilityIfRivalOut)}</td>
+        </tr>`).join('')}</tbody></table></div>`],
+    ['Seuil « concurrent direct »', `${(100 * (rivals?.minImpact ?? STRATEGY.directRivalMinImpact)).toFixed(0)} points de probabilité — choix de lisibilité ; l'impact de chacun reste listé ci-dessus`],
+    ['Méthode', 'chaque hypothèse simule TOUS les pilotes non encore passés, coéquipiers de série compris, puis relit le classement complet de la manche'],
+    ['Traduction en chrono', escHtml(MESSAGES.chronoIsATranslation)],
+    ['Graine', `<code>${simSeed}</code>`],
+  ]);
 }
 
 function renderSituation(el) {
@@ -453,7 +764,7 @@ function renderCertainties(ctx, checkpoint, driver, threshold) {
   const suite = c.stillAProjection
     ? `<p class="prj-n" style="margin:var(--sp-sm) 0 0">${escHtml(MESSAGES.stillAProjection)}</p>` : '';
 
-  return section('certainties', MESSAGES.sectionCertainties, `
+  return section('certainties', null, `
     <p class="prj-n" style="margin:0 0 var(--sp-sm)">${escHtml(MESSAGES.certaintiesScope)}</p>
     <div class="prj-cards">${cards}</div>
     ${list}
@@ -748,7 +1059,9 @@ function renderStandingsTable(state, threshold, focus) {
     </tr>`;
   }).join('');
 
-  return section('historical', 'Classement intermédiaire au checkpoint', `
+  // Bande neutre : ce tableau est l'état COURANT du meeting, pas une
+  // observation historique. Le libellé « données historiques » y serait faux.
+  return section('plain', 'Classement intermédiaire au checkpoint', `
     <div class="prj-scroll"><table class="prj-table">
       <thead><tr><th class="center">Pos.</th><th class="center">N°</th><th>Pilote</th>
         <th class="center">Points</th><th class="center">Écart au seuil</th></tr></thead>

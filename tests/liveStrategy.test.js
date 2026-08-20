@@ -23,6 +23,7 @@ import { buildDriverModels, collectRaceObservations } from '../js/projection/dri
 import {
   seriesPlan, passingOrder, provisionalOrder, chronoForProvisionalPosition,
   mathematicalChronoTarget, chronoLadder, buildLiveObjective, pickScenarios, directRivals,
+  resilienceAfterRun,
 } from '../js/projection/liveStrategy.js';
 import { makeMeeting, mergeFixtures, PENDING, TEST_REGULATION } from './helpers/projectionFixtures.js';
 
@@ -277,6 +278,87 @@ describe('l\'objectif s\'adapte à la situation', () => {
     expect(Math.max(...p) - Math.min(...p)).toBeGreaterThan(0.05);
     // Et inclure l'hypothèse basse « derrière tous les pilotes déjà passés ».
     expect((o.ladder || []).some(e => e.behindAll)).toBe(true);
+  });
+});
+
+describe('hors direct : préparer la manche suivante', () => {
+  it('sans aucun chrono, l\'échelle porte sur des PLACES et non sur un chrono', () => {
+    // Après Q3, avant que Q4 ne commence : aucune référence chrono n'existe.
+    // Proposer « battre 2:30 » n'aurait aucun sens ; la question utile est
+    // « quelle place viser ? ».
+    const ctx = liveCtx({ done: {} });
+    const models = modelsOf(ctx, 3);
+    const run = simulateFromCheckpoint({
+      context: ctx, checkpoint: 3, models, threshold: 5, focusDriverId: 'D6',
+      simulations: 1500, seed: 5, rivalIds: FIELD.filter(id => id !== 'D6'),
+    });
+    const o = buildLiveObjective({
+      context: ctx, checkpoint: 3, models, threshold: 5, driverId: 'D6',
+      baseRun: run, seed: 5, simulations: 500,
+    });
+
+    expect(o.raceNum).toBe(4);
+    expect(o.hasRun).toBe(false);
+    expect((o.ladder || []).length).toBeGreaterThan(1);
+    for (const e of o.ladder) {
+      expect(e.kind).toBe('position');
+      expect(e.reference.beat).toBeNull();     // aucun chrono de référence
+      expect(e.label).toMatch(/^P\d+ de la manche$/);
+    }
+    // Et le risque d'incident est chiffré : souvent la seule chose utile à
+    // transmettre quand aucune cible n'est imposée.
+    expect(o.incident?.status).toBe('DNF');
+    expect(o.incident?.probability).toBeGreaterThanOrEqual(0);
+  });
+
+  it('la même entrée sert donc après Q1, Q2 ou Q3 sans logique séparée', () => {
+    for (const cp of [1, 2, 3]) {
+      const ctx = liveCtx({ done: {} });
+      const models = modelsOf(ctx, cp);
+      const run = simulateFromCheckpoint({
+        context: ctx, checkpoint: cp, models, threshold: 5, focusDriverId: 'D6',
+        simulations: 600, seed: 5,
+      });
+      const o = buildLiveObjective({
+        context: ctx, checkpoint: cp, models, threshold: 5, driverId: 'D6',
+        baseRun: run, seed: 5, simulations: 300,
+      });
+      expect(o, `checkpoint ${cp}`).not.toBeNull();
+      expect(o.raceNum, `checkpoint ${cp}`).toBe(cp + 1);
+    }
+  });
+});
+
+describe('après le passage, la résilience est un énoncé de certitude', () => {
+  it('elle compte combien de pilotes restants devraient le battre', () => {
+    const ctx = liveCtx({ done: SERIE1 });
+    const r = resilienceAfterRun({ context: ctx, raceNum: 4, driverId: 'D1', threshold: 5, checkpoint: 3 });
+    expect(r.provisionalPosition).toBe(1);
+    expect(r.pendingCount).toBe(5);
+    // Soit un nombre, soit l'aveu qu'on ne peut rien démontrer — jamais une
+    // valeur approchée.
+    expect(r.maxBeatenBy === null || Number.isInteger(r.maxBeatenBy)).toBe(true);
+  });
+
+  it('elle ne s\'applique pas à un pilote qui n\'a pas encore couru', () => {
+    const ctx = liveCtx({ done: SERIE1 });
+    expect(resilienceAfterRun({ context: ctx, raceNum: 4, driverId: 'D6', threshold: 5, checkpoint: 3 })).toBeNull();
+  });
+
+  it('« sûr quoi qu\'il arrive » n\'est jamais démenti par la simulation', () => {
+    const ctx = liveCtx({ done: SERIE1 });
+    const models = modelsOf(ctx, 3);
+    for (const id of Object.keys(SERIE1)) {
+      for (const threshold of [3, 5, 7]) {
+        const r = resilienceAfterRun({ context: ctx, raceNum: 4, driverId: id, threshold, checkpoint: 3 });
+        if (!r?.safeWhatever) continue;
+        const run = simulateFromCheckpoint({
+          context: ctx, checkpoint: 3, models, threshold, focusDriverId: id,
+          simulations: 600, seed: 33,
+        });
+        expect(run.probability, `${id} seuil ${threshold}`).toBe(1);
+      }
+    }
   });
 });
 

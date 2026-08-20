@@ -110,8 +110,17 @@ try {
   check('l\'application démarre avec le stub Firestore', true);
 
   // ── Entrée de menu ────────────────────────────────────
-  const menu = await page.evaluate(() => !!document.querySelector('[data-view="projection"]'));
-  check('entrée de menu « Projection de qualification » présente', menu);
+  const acces = await page.evaluate(() => {
+    const items = [...document.querySelectorAll('[data-view="projection"]')];
+    return {
+      menu: items.some(e => e.classList.contains('menu-item')),
+      tuile: items.some(e => e.classList.contains('home-card')),
+      libelles: items.map(e => e.textContent.replace(/\s+/g, ' ').trim()),
+      doublons: items.filter(e => e.classList.contains('home-card')).length,
+    };
+  });
+  check('entrée de menu « Stratégie Live » présente', acces.menu && acces.libelles.some(l => /Stratégie Live/.test(l)), acces.libelles.join(' | '));
+  check('tuile d\'accueil dédiée, en un seul exemplaire', acces.tuile && acces.doublons === 1, `${acces.doublons} tuile(s)`);
 
   // ── La vue se construit ───────────────────────────────
   await page.evaluate(async () => { (await import('/js/app.js')).showView('projection'); });
@@ -130,15 +139,29 @@ try {
       display: el?.style.display,
       title: document.getElementById('header-view-title')?.textContent,
       tabs: [...document.querySelectorAll('.prj-tab')].map(t => t.textContent.trim()),
+      actif: document.querySelector('.prj-tab.is-active')?.textContent.trim() || null,
       sections: document.querySelectorAll('#prj-content .prj-section').length,
     };
   });
   check('la vue s\'affiche et se construit', built && frame.display !== 'none' && frame.sections > 0,
         JSON.stringify(frame));
-  check('les quatre onglets sont présents', frame.tabs.length === 4, frame.tabs.join(' | '));
-  await shot('projection-situation');
+  // L'écran opérationnel est le premier onglet ET l'onglet actif par défaut :
+  // on ouvre cette vue pendant un meeting pour une consigne, pas pour un
+  // tableau de statistiques.
+  check('l\'onglet Stratégie est le premier et l\'onglet actif par défaut',
+        /Stratégie/.test(frame.tabs[0] || '') && /Stratégie/.test(frame.actif || ''),
+        `${frame.tabs.join(' | ')} · actif : ${frame.actif}`);
+  check('les statistiques détaillées restent accessibles en second niveau',
+        frame.tabs.length === 5 && frame.tabs.slice(1).some(t => /Analyse détaillée/.test(t)),
+        frame.tabs.join(' | '));
+  await shot('strategie-live');
 
-  // ── Onglet « En situation » ───────────────────────────
+  // ── Onglet « Analyse détaillée » ──────────────────────
+  // L'écran par défaut est désormais opérationnel ; les contrôles fins vivent
+  // au second niveau, et c'est là qu'on poursuit le parcours.
+  await page.evaluate(() => document.querySelector('[data-tab="situation"]').click());
+  await page.waitForTimeout(600);
+  await shot('projection-situation');
   const situation = await page.evaluate(() => ({
     meetings: document.getElementById('prj-meeting')?.options.length || 0,
     checkpoints: [...(document.getElementById('prj-checkpoint')?.options || [])].map(o => o.textContent.trim()),

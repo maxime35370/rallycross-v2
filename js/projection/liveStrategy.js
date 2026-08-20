@@ -293,6 +293,91 @@ export function mathematicalChronoTarget({
   return { raceNum, driverId, threshold, maxRealAhead: null, beat: null, unconditional: false, impossible: true };
 }
 
+/**
+ * APRÈS le passage de notre pilote : combien d'adversaires restants devraient le
+ * devancer pour que sa qualification cesse d'être acquise ?
+ *
+ * La lecture s'inverse — ce n'est plus lui qui agit. Son chrono est figé, donc
+ * sa position finale dans la manche ne dépend plus que du NOMBRE de pilotes
+ * restants qui le battront. On fait donc varier ce nombre, de zéro à tous, et on
+ * cherche le dernier pour lequel la qualification reste démontrée.
+ *
+ * C'est un énoncé de CERTITUDE : le calcul est un encadrement, chaque adversaire
+ * étant crédité de son meilleur résultat encore possible.
+ *
+ * @returns {object|null} { pendingCount, maxBeatenBy, safeWhatever, statement }
+ */
+export function resilienceAfterRun({
+  context, raceNum, driverId, threshold, checkpoint = null,
+  minClassifiedRaces = PROJECTION_MIN_CLASSIFIED_RACES,
+} = {}) {
+  const race = (context?.races || []).find(r => r.num === raceNum);
+  if (!race || threshold == null) return null;
+  const cp = checkpoint ?? context.lastCompletedRace;
+  const reg = context.regulation;
+
+  const row = race.rows.find(r => r.driverId === driverId);
+  if (!row || (row.ms == null && !row.status)) return null;      // pas encore passé
+  const restants = race.pendingDriverIds.filter(id => id !== driverId);
+
+  const ordre = provisionalOrder(context, raceNum);
+  const devantReels = ordre.findIndex(x => x.driverId === driverId);
+  if (devantReels < 0) return null;                               // statut, pas de chrono
+
+  const completed = (context.races || [])
+    .filter(r => r.isComplete && r.num <= cp).map(r => ({ num: r.num, rows: r.rows }));
+  const standings = buildInterimStandings(completed, context.ecBonus, reg, { minClassifiedRaces });
+  const totals = new Map(standings.map(d => [d.driverId, d.totalPoints]));
+  if (!totals.has(driverId)) return null;
+
+  const n = race.engagedCount;
+  const laterRaces = (context.races || []).filter(r => r.num > raceNum);
+  const meilleurPossible = Math.max(mqPoints(1, reg) ?? 0,
+    ...statusesOf(reg).map(st => calcStatusPoints(st, 'MQ', n, reg) ?? 0));
+
+  const maxOf = (id) => {
+    let total = totals.get(id) ?? 0;
+    const r = race.rows.find(x => x.driverId === id);
+    total += (r && (r.ms != null || r.status)) ? (r.points ?? 0) : meilleurPossible;
+    for (const later of laterRaces) {
+      if (later.rows.some(x => x.driverId === id)) total += meilleurPossible;
+    }
+    return total;
+  };
+
+  /** Qualification démontrée si exactement `j` pilotes restants le devancent ? */
+  const acquis = (j) => {
+    const position = devantReels + 1 + j;
+    const minTotal = (totals.get(driverId) ?? 0) + (mqPoints(position, reg) ?? 0);
+    let peuventPasser = 0;
+    for (const d of standings) {
+      if (d.driverId === driverId) continue;
+      if (maxOf(d.driverId) >= minTotal) peuventPasser++;
+    }
+    return peuventPasser + 1 <= threshold;
+  };
+
+  let max = -1;
+  for (let j = 0; j <= restants.length; j++) {
+    if (!acquis(j)) break;
+    max = j;
+  }
+
+  return {
+    raceNum, driverId, threshold,
+    provisionalPosition: devantReels + 1,
+    ms: row.ms ?? null,
+    pendingCount: restants.length,
+    /** Nombre maximum de pilotes restants pouvant le devancer sans le sortir. */
+    maxBeatenBy: max < 0 ? null : max,
+    /** Vrai si même tous les pilotes restants devant lui le laissent qualifié. */
+    safeWhatever: max >= restants.length,
+    /** Vrai si sa qualification n'est déjà plus démontrable. */
+    notDemonstrable: max < 0,
+    laterRaces: laterRaces.map(r => r.num),
+  };
+}
+
 // ─────────────────────────────────────────────────────────
 // CONCURRENTS DIRECTS — PAR IMPACT MESURÉ
 // ─────────────────────────────────────────────────────────
@@ -391,9 +476,16 @@ export function chronoLadder({
 } = {}) {
   const entries = [];
   for (const t of targets) {
+    // Une manche non commencée n'a pas de classement provisoire : l'hypothèse
+    // porte alors sur une PLACE, seule formulation qui ait un sens avant le
+    // premier chrono. Dès qu'un chrono réel existe, on repasse au chrono, qui
+    // lui n'est pas ambigu.
+    const hypothese = t.ms != null ? { ms: t.ms }
+      : t.status ? { status: t.status }
+        : { position: t.position };
     const run = simulateFromCheckpoint({
       context, checkpoint, models, threshold, focusDriverId: driverId,
-      forced: { [raceNum]: { [driverId]: { ms: t.ms } } },
+      forced: { [raceNum]: { [driverId]: hypothese } },
       simulations, seed, liveResults, minClassifiedRaces,
       trackRaceOutcome: raceNum,
       aheadOfIds: seriesMates,
@@ -453,7 +545,24 @@ export function seriesMateThreat({
  */
 function candidateTargets(context, raceNum, driverId, max) {
   const ordre = provisionalOrder(context, raceNum).filter(x => x.driverId !== driverId);
-  if (!ordre.length) return [];
+
+  // Manche pas encore commencée : aucune référence chrono n'existe. L'échelle
+  // porte alors sur les places de la manche, ce qui reste la question utile
+  // pour préparer la manche suivante après Q1, Q2 ou Q3.
+  if (!ordre.length) {
+    const race = (context?.races || []).find(r => r.num === raceNum);
+    const n = race?.engagedCount || 0;
+    if (!n) return [];
+    const pas = Math.max(1, Math.ceil(n / Math.max(1, max - 1)));
+    const places = new Set([1]);
+    for (let p = 1; p <= n; p += pas) places.add(p);
+    places.add(n);
+    return [...places].sort((a, b) => a - b).map(position => ({
+      kind: 'position', rank: position, position,
+      label: `P${position} de la manche`,
+      reference: { target: position, beat: null, certain: false },
+    }));
+  }
 
   const positions = new Set();
   const n = ordre.length;
@@ -468,12 +577,16 @@ function candidateTargets(context, raceNum, driverId, max) {
     if (!t?.beat) continue;
     // Un chrono strictement meilleur, d'un millième : traduction la plus fidèle
     // de « faire mieux que ».
-    cibles.push({ provisionalTarget: p, ms: t.beat - 1, reference: t });
+    cibles.push({
+      kind: 'chrono', rank: p, provisionalTarget: p, ms: t.beat - 1,
+      label: `P${p} au provisoire`, reference: t,
+    });
   }
   // « Derrière tous les pilotes déjà passés » : hypothèse basse indispensable.
   const dernier = ordre[n - 1];
   cibles.push({
-    provisionalTarget: n + 1, ms: dernier.ms + 1000, behindAll: true,
+    kind: 'chrono', rank: n + 1, provisionalTarget: n + 1, ms: dernier.ms + 1000,
+    behindAll: true, label: 'derrière tous les pilotes déjà passés',
     reference: { target: n + 1, beat: null, certain: false },
   });
   return cibles;
@@ -537,6 +650,7 @@ export function buildLiveObjective({
     return {
       ...commun, mode: 'afterRun',
       settled: Boolean(maths?.unconditional),
+      resilience: resilienceAfterRun({ context, raceNum, driverId, threshold, checkpoint, minClassifiedRaces }),
       threats: menaces,
       remainingToRun: autresRestants.length,
     };
@@ -552,6 +666,18 @@ export function buildLiveObjective({
     targets, simulations, seed, seriesMates: mate, liveResults, minClassifiedRaces,
   }).entries;
 
+  // Risque d'incident : c'est souvent la seule information utile à un pilote
+  // confortable, et elle manque à toute échelle de places.
+  const statutPire = forceableStatuses(context?.regulation).includes('DNF') ? 'DNF' : null;
+  const incident = statutPire ? {
+    status: statutPire,
+    probability: simulateFromCheckpoint({
+      context, checkpoint, models, threshold, focusDriverId: driverId,
+      forced: { [raceNum]: { [driverId]: { status: statutPire } } },
+      simulations, seed, liveResults, minClassifiedRaces,
+    }).probability,
+  } : null;
+
   const cibles = candidateTargets(context, raceNum, driverId, maxTargets);
   let entries = cibles.length ? evaluer(cibles) : [];
 
@@ -560,19 +686,22 @@ export function buildLiveObjective({
   // consigne. On ne raffine que l'intervalle utile, pour ne pas payer une
   // simulation par place du plateau.
   if (entries.length > 1) {
-    const tri = [...entries].sort((a, b) => a.provisionalTarget - b.provisionalTarget);
+    const tri = [...entries].sort((a, b) => a.rank - b.rank);
     const ok = [...tri].reverse().find(e => (e.probability ?? 0) >= STRATEGY.targetConfidence);
     const ko = tri.find(e => (e.probability ?? 0) < STRATEGY.targetConfidence
-      && (!ok || e.provisionalTarget > ok.provisionalTarget));
-    if (ok && ko && ko.provisionalTarget - ok.provisionalTarget > 1) {
+      && (!ok || e.rank > ok.rank));
+    if (ok && ko && ko.rank - ok.rank > 1) {
       const manquantes = [];
-      for (let p = ok.provisionalTarget + 1; p < ko.provisionalTarget; p++) {
+      for (let p = ok.rank + 1; p < ko.rank; p++) {
+        if (ok.kind === 'position') {
+          manquantes.push({ kind: 'position', rank: p, position: p, label: `P${p} de la manche`, reference: { target: p, beat: null, certain: false } });
+          continue;
+        }
         const t = chronoForProvisionalPosition(context, raceNum, p, { excludeDriverId: driverId });
-        if (t?.beat) manquantes.push({ provisionalTarget: p, ms: t.beat - 1, reference: t });
+        if (t?.beat) manquantes.push({ kind: 'chrono', rank: p, provisionalTarget: p, ms: t.beat - 1, label: `P${p} au provisoire`, reference: t });
       }
       if (manquantes.length) {
-        entries = [...entries, ...evaluer(manquantes)]
-          .sort((a, b) => a.provisionalTarget - b.provisionalTarget);
+        entries = [...entries, ...evaluer(manquantes)].sort((a, b) => a.rank - b.rank);
       }
     }
   }
@@ -584,20 +713,20 @@ export function buildLiveObjective({
 
   if (meilleur && meilleur.probability != null && meilleur.probability < STRATEGY.dependentBelow) {
     return {
-      ...commun, mode: 'dependent',
+      ...commun, mode: 'dependent', incident,
       best: meilleur, ladder: ladder.entries,
       /** Adversaires dont dépend la qualification, à mesurer séparément. */
     };
   }
 
   if (proba != null && proba >= STRATEGY.comfortableAbove) {
-    return { ...commun, mode: 'comfortable', ladder: ladder.entries };
+    return { ...commun, mode: 'comfortable', incident, ladder: ladder.entries };
   }
 
   // ── Cas normal : la cible la plus permissive atteignant la confiance visée
   const atteignables = ladder.entries
     .filter(e => e.probability != null && e.probability >= STRATEGY.targetConfidence)
-    .sort((a, b) => b.provisionalTarget - a.provisionalTarget);
+    .sort((a, b) => b.rank - a.rank);
   const cible = atteignables[0] || null;
   // Si même « derrière tous les pilotes déjà passés » suffit, aucune consigne de
   // résultat n'a de sens : le dire vaut mieux que d'inventer une cible.
@@ -608,18 +737,18 @@ export function buildLiveObjective({
   const exact = autresRestants.length === 0;
 
   if (aucunObjectifUtile) {
-    return { ...commun, mode: 'comfortable', ladder: ladder.entries, coversWorstCase: true };
+    return { ...commun, mode: 'comfortable', incident, ladder: ladder.entries, coversWorstCase: true };
   }
 
   // « Juste derrière » : la place immédiatement moins bonne. C'est ce qui donne
   // sa valeur à la cible — une consigne dont le manquement ne change rien n'en
   // est pas une.
   const juste = ladder.entries
-    .filter(e => e.provisionalTarget > cible?.provisionalTarget)
-    .sort((a, b) => a.provisionalTarget - b.provisionalTarget)[0] || null;
+    .filter(e => e.rank > (cible?.rank ?? -1))
+    .sort((a, b) => a.rank - b.rank)[0] || null;
 
   return {
-    ...commun, mode: 'target',
+    ...commun, mode: 'target', incident,
     target: cible,
     /** Probabilité si la cible est atteinte, et si elle est manquée d'une place. */
     probabilityAtTarget: cible?.probability ?? null,
@@ -639,6 +768,18 @@ export function buildLiveObjective({
 }
 
 /**
+ * Libellé de situation, dérivé du mode. Une seule échelle, pour qu'un même mot
+ * veuille toujours dire la même chose à l'écran.
+ */
+export const SITUATION_LABELS = {
+  settled:     { key: 'settled',     label: 'QUALIFICATION ACQUISE', tone: 'green' },
+  comfortable: { key: 'comfortable', label: 'CONFORTABLE',           tone: 'green' },
+  target:      { key: 'target',      label: 'SENSIBLE',              tone: 'orange' },
+  dependent:   { key: 'dependent',   label: 'DÉPENDANCE AUX CONCURRENTS', tone: 'red' },
+  afterRun:    { key: 'afterRun',    label: 'RÉSULTAT ACQUIS',       tone: 'neutral' },
+};
+
+/**
  * Deux ou trois scénarios stratégiques, choisis pour être LISIBLES.
  *
  * Trente combinaisons seraient exactes et inutilisables. On retient donc des
@@ -653,7 +794,7 @@ export function pickScenarios({ objective, rivals, max = STRATEGY.maxScenarios }
   if (objective?.target) {
     out.push({
       kind: 'ownResult',
-      label: `Être P${objective.target.provisionalTarget} au provisoire ou mieux`,
+      label: `${objective.target.label} ou mieux`,
       ms: objective.target.ms,
       probability: objective.target.probability,
       reference: objective.target.reference,
@@ -662,13 +803,13 @@ export function pickScenarios({ objective, rivals, max = STRATEGY.maxScenarios }
 
   // 2. Un cran plus ambitieux, s'il change vraiment quelque chose.
   const plusHaut = ladder
-    .filter(e => objective?.target && e.provisionalTarget < objective.target.provisionalTarget)
-    .sort((a, b) => b.provisionalTarget - a.provisionalTarget)[0];
+    .filter(e => objective?.target && e.rank < objective.target.rank)
+    .sort((a, b) => b.rank - a.rank)[0];
   if (plusHaut && objective?.target
       && (plusHaut.probability ?? 0) - (objective.target.probability ?? 0) >= STRATEGY.directRivalMinImpact) {
     out.push({
       kind: 'ownResultBetter',
-      label: `Être P${plusHaut.provisionalTarget} au provisoire ou mieux`,
+      label: `${plusHaut.label} ou mieux`,
       ms: plusHaut.ms, probability: plusHaut.probability,
       reference: plusHaut.reference,
     });

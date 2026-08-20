@@ -18,7 +18,7 @@ const VIEW_TITLES = {
   startAnalysis: '🎥 Analyse des départs',
   startStats:    '📈 Stats des départs',
   stats:         '📊 Statistiques',
-  projection:    '📐 Projection de qualification',
+  projection:    '🎯 Stratégie Live',
   config:        'Configuration',
   settings:      'Reglages Championnats',
   audit:         'Journal d\'audit',
