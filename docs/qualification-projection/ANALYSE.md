@@ -303,6 +303,33 @@ points et de positions. Le simulateur doit donc produire, pour chaque manche
 simulée, **une position et un chrono plausible cohérent avec elle** — sinon la
 règle `last_manche_time` (FFSA) et le fallback FIA sont inapplicables.
 
+### 4.10 — Participations en double dans `sessionParticipants`
+*(découvert pendant le LOT 0, après la rédaction initiale de ce document)*
+
+`results` a un identifiant déterministe `${sessionId}_${driverId}`, donc les
+doublons y sont structurellement impossibles. `sessionParticipants` est créé
+avec un identifiant aléatoire : rien n'empêche d'inscrire deux fois le même
+pilote à la même manche. Le cas se produit réellement :
+
+```
+2026-08-30  Loheac   / D4  — effectifs par manche : 38 / 24 / 24 / 24  → 14 doublons en Q1
+2026-09-20  Mayenne  / D3  — effectifs par manche : 31 / 31 / 48 / 31  → 17 doublons en Q3
+```
+
+Les deux meetings sont à venir et n'ont aucun résultat : les statistiques
+historiques ne sont donc pas polluées aujourd'hui. Mais l'impact serait réel dès
+que ces meetings seront courus, et il ne se limite pas à ce module :
+
+* le nombre d'engagés sert au calcul des points DNF (`mode: 'engaged_offset'`),
+  donc un DNF de Loheac D4 vaudrait les points de la place 39 au lieu de 25 ;
+* un pilote en double apparaîtrait deux fois au classement de la manche ;
+* la détection des qualifications mécaniques (§4.5) serait faussée.
+
+Le module de projection **dédoublonne par pilote** avant tout calcul et
+**signale** le nombre de doublons dans l'écran « Qualité des données ». La
+correction des documents eux-mêmes, et l'éventuel passage de
+`sessionParticipants` à un identifiant déterministe, restent à décider.
+
 ### 4.9 — Points d'attention mineurs
 * `results.status` est limité à `DNS | DNF | DSQ | DSQ_RACE` par les règles
   Firestore. Le « What if » couvre donc DNF / DNS / DSQ / DSQ_RACE ; il n'existe

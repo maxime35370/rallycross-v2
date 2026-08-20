@@ -154,6 +154,13 @@ describe('modules purs — restent testables hors navigateur', () => {
     join('js', 'calc.js'), join('js', 'utils.js'),
     join('js', 'startAnalysisCalc.js'), join('js', 'startStatsCalc.js'),
     join('js', 'videoPlayerCalc.js'),
+    // Module « projection de qualification » : tout le dossier est pur sauf
+    // qualificationData.js, seul autorisé à parler à Firestore.
+    join('js', 'projection', 'projectionConfig.js'),
+    join('js', 'projection', 'qualificationRules.js'),
+    join('js', 'projection', 'qualificationState.js'),
+    join('js', 'projection', 'qualificationHistory.js'),
+    join('js', 'projection', 'dataQuality.js'),
   ];
 
   it('n\'importent ni Firebase ni un module de vue', () => {

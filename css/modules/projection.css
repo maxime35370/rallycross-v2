@@ -1,0 +1,274 @@
+/* ═══════════════════════════════════════════════
+   PROJECTION.CSS — Vue « Projection de qualification »
+
+   Règle visuelle structurante : ce qui a été MESURÉ et ce qui sera SIMULÉ
+   ne doivent jamais se confondre. Les deux familles de blocs ont donc des
+   couleurs d'accent distinctes et un bandeau d'en-tête explicite.
+═══════════════════════════════════════════════ */
+
+/* ── Onglets ─────────────────────────────────────────── */
+
+.prj-tabs {
+  display: flex;
+  gap: var(--sp-xs);
+  border-bottom: 1px solid var(--clr-border);
+  margin-bottom: var(--sp-md);
+  overflow-x: auto;
+}
+
+.prj-tab {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--clr-text-2);
+  font-family: var(--font-condensed);
+  font-size: 1rem;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  padding: var(--sp-sm) var(--sp-md);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color var(--tr-fast), border-color var(--tr-fast);
+}
+.prj-tab:hover { color: var(--clr-text); }
+.prj-tab.is-active { color: var(--clr-accent); border-bottom-color: var(--clr-accent); }
+
+/* ── Bandeaux de nature de donnée ────────────────────── */
+
+.prj-band {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-sm);
+  font-family: var(--font-condensed);
+  font-size: .82rem;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  padding: var(--sp-xs) var(--sp-sm);
+  border-radius: var(--r-sm) var(--r-sm) 0 0;
+  border-left: 3px solid;
+}
+.prj-band--historical {
+  background: var(--clr-info-dim);
+  border-left-color: var(--clr-info);
+  color: var(--clr-info);
+}
+.prj-band--simulation {
+  background: var(--clr-accent-dim);
+  border-left-color: var(--clr-accent);
+  color: var(--clr-accent-2);
+}
+
+.prj-section {
+  background: var(--clr-surface);
+  border: 1px solid var(--clr-border);
+  border-radius: var(--r-md);
+  margin-bottom: var(--sp-lg);
+  overflow: hidden;
+}
+.prj-section > .prj-body { padding: var(--sp-md); }
+
+.prj-section-title {
+  font-family: var(--font-condensed);
+  font-size: 1.05rem;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--clr-text);
+  margin: 0 0 var(--sp-sm);
+}
+
+/* ── Cartes de chiffres ──────────────────────────────── */
+
+.prj-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: var(--sp-sm);
+}
+
+.prj-card {
+  background: var(--clr-bg-3);
+  border: 1px solid var(--clr-border);
+  border-radius: var(--r-sm);
+  padding: var(--sp-sm);
+}
+.prj-card-label {
+  font-size: .72rem;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--clr-text-3);
+  margin-bottom: 2px;
+}
+.prj-card-value {
+  font-family: var(--font-display);
+  font-size: 1.3rem;
+  color: var(--clr-text);
+}
+.prj-card-sub { font-size: .75rem; color: var(--clr-text-2); }
+
+/* ── Confiance et effectifs ──────────────────────────── */
+
+.prj-n {
+  font-size: .78rem;
+  color: var(--clr-text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.prj-conf {
+  display: inline-block;
+  font-size: .7rem;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid;
+}
+.prj-conf--high   { color: var(--clr-success); border-color: var(--clr-success); background: var(--clr-success-dim); }
+.prj-conf--medium { color: var(--clr-warning); border-color: var(--clr-warning); background: var(--clr-warning-dim); }
+.prj-conf--low    { color: var(--clr-danger);  border-color: var(--clr-danger);  background: var(--clr-danger-dim); }
+
+.prj-warning {
+  display: flex;
+  gap: var(--sp-sm);
+  align-items: flex-start;
+  background: var(--clr-warning-dim);
+  border-left: 3px solid var(--clr-warning);
+  border-radius: var(--r-sm);
+  padding: var(--sp-sm);
+  font-size: .85rem;
+  color: var(--clr-text);
+  margin-bottom: var(--sp-md);
+}
+.prj-warning--blocking {
+  background: var(--clr-danger-dim);
+  border-left-color: var(--clr-danger);
+}
+.prj-notes { margin: var(--sp-sm) 0 0; padding-left: 1.1rem; font-size: .85rem; color: var(--clr-text-2); }
+.prj-notes li { margin-bottom: 2px; }
+
+/* ── Courbe en barres (écart au seuil / points) ──────── */
+
+.prj-chart { display: flex; flex-direction: column; gap: 3px; }
+
+.prj-bar-row {
+  display: grid;
+  grid-template-columns: 112px 1fr minmax(190px, auto);
+  align-items: center;
+  gap: var(--sp-sm);
+  font-size: .85rem;
+}
+.prj-bar-label { color: var(--clr-text-2); font-variant-numeric: tabular-nums; }
+.prj-bar-label.is-cut { color: var(--clr-accent); font-weight: 600; }
+
+.prj-bar-track {
+  position: relative;
+  height: 20px;
+  background: var(--clr-bg-3);
+  border-radius: var(--r-sm);
+  overflow: hidden;
+}
+.prj-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--clr-info), #6cc0ff);
+  border-radius: var(--r-sm);
+}
+.prj-bar-track.is-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed var(--clr-border-2);
+  background: transparent;
+}
+.prj-bar-empty {
+  font-size: .72rem;
+  color: var(--clr-text-3);
+  letter-spacing: .02em;
+}
+.prj-bar-value {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  display: flex;
+  gap: var(--sp-xs);
+  align-items: center;
+  justify-content: flex-end;
+}
+
+/* ── Tableaux ────────────────────────────────────────── */
+
+.prj-table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+.prj-table th {
+  text-align: left;
+  font-family: var(--font-condensed);
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  font-size: .78rem;
+  color: var(--clr-text-3);
+  border-bottom: 1px solid var(--clr-border);
+  padding: var(--sp-xs) var(--sp-sm);
+  white-space: nowrap;
+}
+.prj-table td {
+  padding: var(--sp-xs) var(--sp-sm);
+  border-bottom: 1px solid var(--clr-border);
+  font-variant-numeric: tabular-nums;
+}
+.prj-table tr:last-child td { border-bottom: none; }
+.prj-table tr.is-focus td { background: var(--clr-accent-dim); }
+.prj-table td.center, .prj-table th.center { text-align: center; }
+
+.prj-scroll { overflow-x: auto; }
+
+/* ── Ligne de seuil dans le classement en situation ──── */
+
+.prj-cutline td {
+  border-bottom: 2px dashed var(--clr-accent) !important;
+}
+
+.prj-chip {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: var(--r-sm);
+  font-size: .72rem;
+  border: 1px solid var(--clr-border-2);
+  color: var(--clr-text-2);
+}
+.prj-chip--ok   { color: var(--clr-success); border-color: var(--clr-success); }
+.prj-chip--ko   { color: var(--clr-danger);  border-color: var(--clr-danger); }
+.prj-chip--info { color: var(--clr-info);    border-color: var(--clr-info); }
+
+/* ── Panneau « Pourquoi ? » ──────────────────────────── */
+
+.prj-why { margin-top: var(--sp-sm); }
+.prj-why > summary {
+  cursor: pointer;
+  font-size: .82rem;
+  color: var(--clr-info);
+  list-style: none;
+  user-select: none;
+}
+.prj-why > summary::-webkit-details-marker { display: none; }
+.prj-why > summary::before { content: '❔ '; }
+.prj-why[open] > summary::before { content: '❕ '; }
+.prj-why-body {
+  margin-top: var(--sp-sm);
+  padding: var(--sp-sm);
+  background: var(--clr-bg-3);
+  border: 1px solid var(--clr-border);
+  border-radius: var(--r-sm);
+  font-size: .82rem;
+  color: var(--clr-text-2);
+}
+.prj-why-body dl { display: grid; grid-template-columns: auto 1fr; gap: 2px var(--sp-sm); margin: 0; }
+.prj-why-body dt { color: var(--clr-text-3); }
+.prj-why-body dd { margin: 0; color: var(--clr-text); font-variant-numeric: tabular-nums; }
+
+/* ── Écran qualité des données ───────────────────────── */
+
+.prj-dq-race { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.prj-dq-ok   { color: var(--clr-success); }
+.prj-dq-warn { color: var(--clr-warning); }
+.prj-dq-off  { color: var(--clr-text-3); }
+
+@media (max-width: 640px) {
+  .prj-bar-row { grid-template-columns: 84px 1fr minmax(150px, auto); font-size: .78rem; }
+  .prj-bar-empty { font-size: .65rem; }
+  .prj-card-value { font-size: 1.1rem; }
+}

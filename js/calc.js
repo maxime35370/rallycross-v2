@@ -250,13 +250,18 @@ export async function getParticipants(db, sessionId) {
 // CALCUL CLASSEMENT EC
 // ─────────────────────────────────────────────────────────
 
-export async function calcEcStandings(db, sessions, regulation) {
-  const ecSession = sessions.find(s => s.type === 'EC');
-  if (!ecSession) return [];
-
-  const results      = await getResults(db, ecSession.id);
-  const participants = await getParticipants(db, ecSession.id);
-  const resultMap    = {};
+/**
+ * Version PURE du classement EC : ne touche pas a Firestore, donc testable
+ * et reutilisable par le module de projection (qui recharge les documents
+ * en amont pour tout un meeting d'un coup au lieu d'une requete par session).
+ *
+ * @param {Array} participants — documents sessionParticipants de la session EC
+ * @param {Array} results      — documents results de la session EC
+ * @param {object} [regulation]
+ * @returns {Array} lignes triees avec position et bonusPoints
+ */
+export function buildEcStandings(participants = [], results = [], regulation) {
+  const resultMap = {};
   results.forEach(r => { resultMap[r.driverId] = r; });
 
   const rows = participants.map(p => ({
@@ -285,14 +290,36 @@ export async function calcEcStandings(db, sessions, regulation) {
   });
 }
 
+export async function calcEcStandings(db, sessions, regulation) {
+  const ecSession = sessions.find(s => s.type === 'EC');
+  if (!ecSession) return [];
+  const results      = await getResults(db, ecSession.id);
+  const participants = await getParticipants(db, ecSession.id);
+  return buildEcStandings(participants, results, regulation);
+}
+
 // ─────────────────────────────────────────────────────────
 // CALCUL CLASSEMENT MQ (une manche)
 // ─────────────────────────────────────────────────────────
 
-export async function calcMqStandings(db, session, regulation) {
-  const results      = await getResults(db, session.id);
-  const participants = await getParticipants(db, session.id);
-  const resultMap    = {};
+/**
+ * Version PURE du classement d'une manche qualificative.
+ *
+ * Reproduit exactement le comportement historique, y compris ses conventions
+ * de placement des statuts, qui doivent etre respectees a l'identique par
+ * toute simulation sous peine de rendre historique et projection incomparables :
+ *   • DNF      → position = engages + 1 (tous les DNF a la meme position) ;
+ *   • DSQ_RACE → position = engages + 3 ;
+ *   • DNS/DSQ  → position = null (hors classement de la manche) ;
+ *   • sans temps ni statut → position null et points null (non couru).
+ *
+ * @param {Array} participants — documents sessionParticipants de la manche
+ * @param {Array} results      — documents results de la manche
+ * @param {object} [regulation]
+ * @returns {Array}
+ */
+export function buildMqStandings(participants = [], results = [], regulation) {
+  const resultMap = {};
   results.forEach(r => { resultMap[r.driverId] = r; });
 
   const rows = participants.map(p => ({
@@ -323,6 +350,12 @@ export async function calcMqStandings(db, session, regulation) {
   noResult.forEach(r => result.push({ ...r, position: null, points: null }));
 
   return result;
+}
+
+export async function calcMqStandings(db, session, regulation) {
+  const results      = await getResults(db, session.id);
+  const participants = await getParticipants(db, session.id);
+  return buildMqStandings(participants, results, regulation);
 }
 
 // ─────────────────────────────────────────────────────────
@@ -435,25 +468,37 @@ export function compareInterimTiebreaker(a, b, regulation, mqNumsDescending = []
 // ─────────────────────────────────────────────────────────
 
 /**
- * @param {object} db          - instance Firestore
- * @param {Array}  sessions    - sessions du meeting+catégorie courant
- * @param {object} [regulation] - reglement optionnel
- * @returns {Array} standings triés avec position et interimPoints
+ * Seuil par defaut de manches classees exigees pour figurer au classement
+ * intermediaire. C'est la regle FFSA historique de l'application ; elle est
+ * desormais surchargeable parce qu'elle est une regle d'ATTRIBUTION DES POINTS
+ * intermediaires, pas une regle de classement : l'appliquer a un checkpoint
+ * intermediaire (etat apres Q1) viderait le classement de tous ses pilotes.
+ * Toute la chaine existante (standings.js, championship.js, stats.js) appelle
+ * sans option et conserve donc strictement le comportement d'origine.
  */
-export async function calcInterimStandings(db, sessions, regulation) {
-  const mqSessions = sessions.filter(s => s.type === 'MQ').sort((a, b) => a.num - b.num);
-  if (mqSessions.length === 0) return [];
+export const DEFAULT_MIN_CLASSIFIED_RACES = 2;
 
-  // Points bonus EC
-  const ecStandings = await calcEcStandings(db, sessions, regulation);
-  const ecBonus = {};
-  ecStandings.forEach(r => { ecBonus[r.driverId] = r.bonusPoints ?? 0; });
+/**
+ * Version PURE du classement intermediaire.
+ *
+ * @param {Array} raceStandings — [{ num, rows }] ou rows = sortie de
+ *        buildMqStandings() pour la manche `num`. L'ordre n'importe pas :
+ *        le tri par num est fait ici.
+ * @param {object} [ecBonus]    — { driverId → points bonus essais }
+ * @param {object} [regulation]
+ * @param {object} [options]
+ * @param {number} [options.minClassifiedRaces=2] — manches classees exigees
+ * @returns {Array} standings tries avec position et interimPoints
+ */
+export function buildInterimStandings(raceStandings, ecBonus = {}, regulation, options) {
+  const minClassifiedRaces = options?.minClassifiedRaces ?? DEFAULT_MIN_CLASSIFIED_RACES;
+  const races = [...(raceStandings || [])].sort((a, b) => a.num - b.num);
+  if (races.length === 0) return [];
 
   // Collecter tous les pilotes et leurs points + chronos MQ
   const driverMap = {};
-  for (const mq of mqSessions) {
-    const standings = await calcMqStandings(db, mq, regulation);
-    standings.forEach(r => {
+  for (const race of races) {
+    (race.rows || []).forEach(r => {
       if (!driverMap[r.driverId]) {
         driverMap[r.driverId] = {
           driverId:  r.driverId,
@@ -467,10 +512,10 @@ export async function calcInterimStandings(db, sessions, regulation) {
         };
       }
       if (r.points !== null && r.points !== undefined) {
-        driverMap[r.driverId].mqPoints[mq.num] = r.points ?? 0;
-        driverMap[r.driverId].mqPos[mq.num]    = r.position;
+        driverMap[r.driverId].mqPoints[race.num] = r.points ?? 0;
+        driverMap[r.driverId].mqPos[race.num]    = r.position;
         if (r.ms != null && !r.status) {
-          driverMap[r.driverId].mqMs[mq.num] = r.ms;
+          driverMap[r.driverId].mqMs[race.num] = r.ms;
         }
         if (r.status !== 'DNS' && r.status !== 'DSQ') {
           driverMap[r.driverId].mqCount++;
@@ -479,18 +524,17 @@ export async function calcInterimStandings(db, sessions, regulation) {
     });
   }
 
-  // Règle : au moins 2 MQ classées
-  const eligible = Object.values(driverMap).filter(d => d.mqCount >= 2);
+  const eligible = Object.values(driverMap).filter(d => d.mqCount >= minClassifiedRaces);
 
   eligible.forEach(d => {
     d.totalMqPoints = Object.values(d.mqPoints).reduce((s, p) => s + p, 0);
-    d.ecBonus       = ecBonus[d.driverId] ?? 0;
+    d.ecBonus       = ecBonus?.[d.driverId] ?? 0;
     d.totalPoints   = d.totalMqPoints + d.ecBonus;
   });
 
   // Tiebreaker : nums des manches du plus recent au plus ancien (pour
   // departager par chrono de la derniere manche le cas echeant).
-  const mqNumsDescending = mqSessions.map(s => s.num).sort((a, b) => b - a);
+  const mqNumsDescending = races.map(s => s.num).sort((a, b) => b - a);
   const tiebreakerMode   = regulation?.interimTiebreaker;
 
   // Tri en cas d'egalite de points :
@@ -505,7 +549,7 @@ export async function calcInterimStandings(db, sessions, regulation) {
     if (tiebreakerMode) {
       return compareInterimTiebreaker(a, b, regulation, mqNumsDescending);
     }
-    for (let n = mqSessions.length; n >= 1; n--) {
+    for (const n of mqNumsDescending) {
       const pa = a.mqPoints[n] ?? -1;
       const pb = b.mqPoints[n] ?? -1;
       if (pb !== pa) return pb - pa;
@@ -526,7 +570,7 @@ export async function calcInterimStandings(db, sessions, regulation) {
       } else if (sameAll) {
         // Comportement legacy : ex aequo si tous les points par manche
         // sont identiques.
-        for (let n = mqSessions.length; n >= 1; n--) {
+        for (const n of mqNumsDescending) {
           if ((d.mqPoints[n] ?? -1) !== (prev.mqPoints[n] ?? -1)) { sameAll = false; break; }
         }
       }
@@ -537,4 +581,28 @@ export async function calcInterimStandings(db, sessions, regulation) {
   });
 
   return eligible;
+}
+
+/**
+ * @param {object} db          - instance Firestore
+ * @param {Array}  sessions    - sessions du meeting+catégorie courant
+ * @param {object} [regulation] - reglement optionnel
+ * @param {object} [options]   - { minClassifiedRaces } (defaut : 2)
+ * @returns {Array} standings triés avec position et interimPoints
+ */
+export async function calcInterimStandings(db, sessions, regulation, options) {
+  const mqSessions = sessions.filter(s => s.type === 'MQ').sort((a, b) => a.num - b.num);
+  if (mqSessions.length === 0) return [];
+
+  // Points bonus EC
+  const ecStandings = await calcEcStandings(db, sessions, regulation);
+  const ecBonus = {};
+  ecStandings.forEach(r => { ecBonus[r.driverId] = r.bonusPoints ?? 0; });
+
+  const raceStandings = [];
+  for (const mq of mqSessions) {
+    raceStandings.push({ num: mq.num, rows: await calcMqStandings(db, mq, regulation) });
+  }
+
+  return buildInterimStandings(raceStandings, ecBonus, regulation, options);
 }

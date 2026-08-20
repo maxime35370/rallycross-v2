@@ -18,6 +18,7 @@ const VIEW_TITLES = {
   startAnalysis: '🎥 Analyse des départs',
   startStats:    '📈 Stats des départs',
   stats:         '📊 Statistiques',
+  projection:    '📐 Projection de qualification',
   config:        'Configuration',
   settings:      'Reglages Championnats',
   audit:         'Journal d\'audit',
@@ -359,6 +360,7 @@ async function loadApp() {
   const { initStats }          = await import('./stats.js');
   const { initStartAnalysis }  = await import('./startAnalysis.js');
   const { initStartStats }     = await import('./startStats.js');
+  const { initProjection }     = await import('./projectionStats.js');
   const { initSettings } = await import('./settings.js');
   const { initAudit }    = await import('./audit.js');
   // Enregistrement des modules de vue. Chaque init est isolé : si l'un échoue
@@ -374,6 +376,7 @@ async function loadApp() {
   safeInit(initStats, 'stats');
   safeInit(initStartAnalysis, 'startAnalysis');
   safeInit(initStartStats, 'startStats');
+  safeInit(initProjection, 'projection');
   safeInit(initSettings, 'settings');
   safeInit(initAudit, 'audit');
   safeInit(initHomeQr, 'homeQr');   // QR d'accueil (isolé : ne doit pas bloquer la vue courante)

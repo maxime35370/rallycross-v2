@@ -27,6 +27,7 @@
   <link rel="stylesheet" href="css/modules/settings.css">
   <link rel="stylesheet" href="css/modules/startAnalysis.css">
   <link rel="stylesheet" href="css/modules/startStats.css">
+  <link rel="stylesheet" href="css/modules/projection.css">
   <link rel="stylesheet" href="css/modules/videoPlayer.css">
 
   <!-- Cloudflare Web Analytics — visiteurs uniques du site, GRATUIT et SANS cookie (pas de bandeau RGPD).
@@ -98,6 +99,7 @@
       <li class="menu-separator"></li>
       <li><a class="menu-item" data-view="stats" href="#">📊 Statistiques</a></li>
       <li><a class="menu-item" data-view="startStats" href="#">📈 Stats des départs</a></li>
+      <li><a class="menu-item" data-view="projection" href="#">📐 Projection de qualification</a></li>
       <li><a class="menu-item" data-view="spectator" href="#">📺 Mode Spectateur</a></li>
       <li class="menu-separator"></li>
       <li><a class="menu-item" data-view="audit" href="#">📋 Journal d'audit</a></li>
@@ -280,6 +282,15 @@
       <div class="view-placeholder">
         <div class="placeholder-icon">📈</div>
         <div class="placeholder-title">Statistiques des départs</div>
+        <div class="placeholder-desc">Chargement…</div>
+      </div>
+    </div>
+
+    <!-- VUE : Projection de qualification -->
+    <div class="view" id="view-projection" style="display:none">
+      <div class="view-placeholder">
+        <div class="placeholder-icon">📐</div>
+        <div class="placeholder-title">Projection de qualification</div>
         <div class="placeholder-desc">Chargement…</div>
       </div>
     </div>

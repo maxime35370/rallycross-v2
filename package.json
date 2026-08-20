@@ -6,7 +6,8 @@
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
-    "smoke": "node tools/smoke/smoke.mjs"
+    "smoke": "node tools/smoke/smoke.mjs",
+    "smoke:projection": "node tools/smoke/projectionSmoke.mjs"
   },
   "devDependencies": {
     "vitest": "^3.1.1",

@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest';
 import {
   mqPoints, ecBonusPoints, interimPoints, dfPoints, finPoints,
   calcPointsFromScale, calcStatusPoints, compareInterimTiebreaker,
+  buildEcStandings, buildMqStandings, buildInterimStandings,
+  DEFAULT_MIN_CLASSIFIED_RACES,
 } from '../js/calc.js';
 
 // ─────────────────────────────────────────────────────────
@@ -370,5 +372,129 @@ describe('compareInterimTiebreaker · best_positions_then_time (FIA / Euro RX)',
   it('gere les entrees malformees (null, undefined)', () => {
     expect(compareInterimTiebreaker(null, null, reg, [1])).toBe(0);
     expect(compareInterimTiebreaker({}, {}, reg, [1])).toBe(0);
+  });
+});
+
+// ─────────────────────────────────────────────────────────
+// Fonctions PURES extraites pour le module de projection
+//
+// buildEcStandings / buildMqStandings / buildInterimStandings sont les mêmes
+// calculs que calcEcStandings / calcMqStandings / calcInterimStandings, mais
+// sans Firestore. Les versions asynchrones se contentent désormais de charger
+// les documents puis de leur déléguer : toute divergence entre les deux serait
+// une régression silencieuse du classement affiché dans l'application.
+// ─────────────────────────────────────────────────────────
+
+describe('buildMqStandings (pur)', () => {
+  const parts = ['A', 'B', 'C', 'D'].map((d, i) => ({ driverId: d, carNumber: i + 1, firstName: d, lastName: d }));
+
+  it('classe les finisseurs au chrono et attribue le bareme', () => {
+    const res = [
+      { driverId: 'A', ms: 1200 }, { driverId: 'B', ms: 1000 },
+      { driverId: 'C', ms: 1100 }, { driverId: 'D', ms: 1300 },
+    ];
+    const rows = buildMqStandings(parts, res);
+    const byId = Object.fromEntries(rows.map(r => [r.driverId, r]));
+    expect(byId.B.position).toBe(1);
+    expect(byId.B.points).toBe(50);
+    expect(byId.C.position).toBe(2);
+    expect(byId.C.points).toBe(45);
+    expect(byId.D.position).toBe(4);
+    expect(byId.D.points).toBe(40);   // 44 - 4
+  });
+
+  it('place les DNF en engages + 1 et les DSQ_RACE en engages + 3', () => {
+    const res = [
+      { driverId: 'A', ms: 1000 }, { driverId: 'B', status: 'DNF' },
+      { driverId: 'C', status: 'DSQ_RACE' }, { driverId: 'D', status: 'DNS' },
+    ];
+    const byId = Object.fromEntries(buildMqStandings(parts, res).map(r => [r.driverId, r]));
+    expect(byId.B.position).toBe(5);
+    expect(byId.C.position).toBe(7);
+    expect(byId.D.position).toBe(null);
+    expect(byId.D.points).toBe(0);
+  });
+
+  it('laisse points et position a null quand rien n\'est saisi', () => {
+    const byId = Object.fromEntries(buildMqStandings(parts, []).map(r => [r.driverId, r]));
+    expect(byId.A).toMatchObject({ position: null, points: null });
+  });
+
+  it('tolere des entrees vides', () => {
+    expect(buildMqStandings()).toEqual([]);
+  });
+});
+
+describe('buildEcStandings (pur)', () => {
+  it('classe au chrono et attribue le bonus, les non-classes en fin', () => {
+    const parts = ['A', 'B', 'C'].map(d => ({ driverId: d, carNumber: 1, firstName: d, lastName: d }));
+    const rows = buildEcStandings(parts, [
+      { driverId: 'A', ms: 1100 }, { driverId: 'B', ms: 1000 }, { driverId: 'C', status: 'DNS' },
+    ]);
+    expect(rows.map(r => r.driverId)).toEqual(['B', 'A', 'C']);
+    expect(rows[0]).toMatchObject({ position: 1, bonusPoints: 5 });
+    expect(rows[1]).toMatchObject({ position: 2, bonusPoints: 4 });
+    expect(rows[2]).toMatchObject({ position: null, bonusPoints: 0 });
+  });
+});
+
+describe('buildInterimStandings (pur) — minClassifiedRaces', () => {
+  const rowsFor = (order) => order.map((d, i) => ({
+    driverId: d, carNumber: 1, firstName: d, lastName: d,
+    ms: 1000 + i, status: null, position: i + 1, points: mqPoints(i + 1),
+  }));
+
+  it('exige 2 manches classees par defaut — comportement historique inchange', () => {
+    const one = buildInterimStandings([{ num: 1, rows: rowsFor(['A', 'B']) }]);
+    expect(one).toEqual([]);
+    expect(DEFAULT_MIN_CLASSIFIED_RACES).toBe(2);
+  });
+
+  it('accepte une seule manche quand on le demande explicitement', () => {
+    const one = buildInterimStandings(
+      [{ num: 1, rows: rowsFor(['A', 'B']) }], {}, undefined, { minClassifiedRaces: 1 },
+    );
+    expect(one.map(d => d.driverId)).toEqual(['A', 'B']);
+    expect(one[0].totalPoints).toBe(50);
+    expect(one[0].position).toBe(1);
+  });
+
+  it('cumule les manches et applique le bonus essais', () => {
+    const st = buildInterimStandings(
+      [{ num: 1, rows: rowsFor(['A', 'B']) }, { num: 2, rows: rowsFor(['B', 'A']) }],
+      { A: 5 },
+    );
+    const byId = Object.fromEntries(st.map(d => [d.driverId, d]));
+    expect(byId.A.totalMqPoints).toBe(50 + 45);
+    expect(byId.A.ecBonus).toBe(5);
+    expect(byId.A.totalPoints).toBe(100);
+    expect(byId.B.totalPoints).toBe(95);
+    expect(byId.A.position).toBe(1);
+  });
+
+  it('trie les manches quel que soit l\'ordre d\'entree', () => {
+    const desordre = buildInterimStandings([
+      { num: 2, rows: rowsFor(['B', 'A']) },
+      { num: 1, rows: rowsFor(['A', 'B']) },
+    ], {}, { interimTiebreaker: 'last_manche_time' });
+    const ordre = buildInterimStandings([
+      { num: 1, rows: rowsFor(['A', 'B']) },
+      { num: 2, rows: rowsFor(['B', 'A']) },
+    ], {}, { interimTiebreaker: 'last_manche_time' });
+    expect(desordre.map(d => d.driverId)).toEqual(ordre.map(d => d.driverId));
+  });
+
+  it('detecte les ex aequo sans tiebreaker configure', () => {
+    const st = buildInterimStandings([
+      { num: 1, rows: rowsFor(['A', 'B']) },
+      { num: 2, rows: rowsFor(['A', 'B']) },
+    ], {}, {});
+    // A et B n'ont pas les memes points : positions 1 et 2
+    expect(st.map(d => d.position)).toEqual([1, 2]);
+  });
+
+  it('tolere une entree vide', () => {
+    expect(buildInterimStandings([])).toEqual([]);
+    expect(buildInterimStandings(null)).toEqual([]);
   });
 });
