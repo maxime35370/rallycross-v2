@@ -37,6 +37,16 @@ export const TEST_REGULATION = {
 };
 
 /**
+ * Sentinelle « pilote engagé mais pas encore passé ».
+ *
+ * En production, un pilote qui n'a pas encore couru n'a AUCUN document
+ * `results` — vérifié sur les données réelles : sur 2 755 résultats de manche,
+ * aucun n'est dépourvu à la fois de chrono et de statut. La fixture reproduit
+ * donc ce cas en inscrivant le pilote sans créer de résultat.
+ */
+export const PENDING = Object.freeze({ __pending: true });
+
+/**
  * Construit un meeting complet.
  *
  * @param {object} spec
@@ -89,7 +99,8 @@ export function makeMeeting(spec) {
       ms: isStatus ? (value.ms ?? null) : value,
       status: isStatus ? (value.status ?? null) : null,
       manualPosition: isStatus ? (value.manualPosition ?? null) : null,
-      serie: null, couloir: null,
+      serie: isStatus ? (value.serie ?? null) : null,
+      couloir: null,
     });
   };
 
@@ -107,7 +118,11 @@ export function makeMeeting(spec) {
     // Les engagés d'une manche : ceux qui y figurent, sinon tout le plateau.
     const entrants = race ? Object.keys(race) : drivers;
     for (const d of entrants) addParticipant(id, d);
-    if (race) for (const [d, v] of Object.entries(race)) addResult(id, 'MQ', d, v);
+    // PENDING : le pilote est inscrit mais aucun résultat n'est créé.
+    if (race) for (const [d, v] of Object.entries(race)) {
+      if (v === PENDING) continue;
+      addResult(id, 'MQ', d, v);
+    }
   }
 
   for (const [type, ids] of Object.entries(phases)) {
@@ -143,7 +158,8 @@ export function makeOrderedMeeting({ id = 'M1', orders, phases, category, champi
     const race = {};
     order.forEach((entry, i) => {
       if (typeof entry === 'string') race[entry] = 1000 + i * 100;
-      else race[entry.driver] = { status: entry.status };
+      else if (entry.pending) race[entry.driver] = PENDING;
+      else race[entry.driver] = { status: entry.status, serie: entry.serie ?? null };
     });
     races[num] = race;
   }

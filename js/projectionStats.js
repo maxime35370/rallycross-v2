@@ -33,7 +33,9 @@ import { buildDataQualityReport } from './projection/dataQuality.js';
 import { collectRaceObservations, buildDriverModels, describeModel } from './projection/driverPerformanceModel.js';
 import {
   simulateFromCheckpoint, simulateScenarioMatrix, defaultScenarioLadder,
+  hasRealResult,
 } from './projection/scenarioSimulator.js';
+import { buildRaceCertainties } from './projection/raceCertainties.js';
 import { computeTargetResult, marginalGains, classifyStrategy } from './projection/strategyTargetCalculator.js';
 import { runBacktest, LEAKAGE_MODES } from './projection/qualificationBacktest.js';
 import { MESSAGES, MIN_CASES_TO_SHOW_RATE, SIMULATION } from './projection/projectionConfig.js';
@@ -100,8 +102,12 @@ function confBadge(c) {
 }
 
 function band(kind) {
-  if (kind === 'simulation') return `<div class="prj-band prj-band--simulation">${escHtml(MESSAGES.sectionSimulation)}</div>`;
-  if (kind === 'strategy')   return `<div class="prj-band prj-band--strategy">${escHtml(MESSAGES.sectionStrategy)}</div>`;
+  if (kind === 'simulation')  return `<div class="prj-band prj-band--simulation">${escHtml(MESSAGES.sectionSimulation)}</div>`;
+  if (kind === 'strategy')    return `<div class="prj-band prj-band--strategy">${escHtml(MESSAGES.sectionStrategy)}</div>`;
+  // Quatrième bande, volontairement distincte des trois autres : ce qu'elle
+  // contient est démontré, pas estimé. La confusion visuelle serait le pire
+  // défaut possible de cette vue.
+  if (kind === 'certainties') return `<div class="prj-band prj-band--certainties">${escHtml(MESSAGES.sectionCertainties)}</div>`;
   return `<div class="prj-band prj-band--historical">${escHtml(MESSAGES.sectionHistorical)}</div>`;
 }
 
@@ -241,8 +247,10 @@ function renderContent() {
 
 /** Meetings ayant au moins une manche courue — les seuls exploitables ici. */
 function situationCandidates() {
+  // Une manche en cours suffit à rendre le meeting analysable, même si aucune
+  // manche n'est encore terminée : c'est justement le direct.
   return contexts
-    .filter(c => c.lastCompletedRace > 0)
+    .filter(c => c.lastCompletedRace > 0 || c.raceInProgress != null)
     .sort((a, b) => String(b.meeting?.date).localeCompare(String(a.meeting?.date))
       || String(a.category).localeCompare(String(b.category)));
 }
@@ -262,6 +270,11 @@ function renderSituation(el) {
   const checkpoint = checkpoints.includes(situation.checkpoint)
     ? situation.checkpoint
     : ctx.lastCompletedRace;
+  // Le moteur est piloté par l'état RÉEL du meeting : la manche en cours n'est
+  // pas un cas particulier « après Q3 », c'est simplement la première manche
+  // encore ouverte au checkpoint courant.
+  const live = ctx.raceInProgress != null && checkpoint === ctx.lastCompletedRace
+    ? ctx.races.find(r => r.num === ctx.raceInProgress) : null;
 
   const state = buildStateAfterRace(ctx, checkpoint);
   // `thresholdInfo` porte la valeur ET sa provenance ; le simulateur, lui,
@@ -285,8 +298,10 @@ function renderSituation(el) {
           ${escHtml(c.meeting?.date || '')} · ${escHtml(c.meeting?.location || c.meetingId)} · ${escHtml(c.category)}
         </option>`).join('')}
       </select>
-      <select class="toolbar-select" id="prj-checkpoint">
-        ${checkpoints.map(n => `<option value="${n}" ${n === checkpoint ? 'selected' : ''}>Après Q${n}</option>`).join('')}
+      <select class="toolbar-select" id="prj-checkpoint" ${checkpoints.length ? '' : 'disabled'}>
+        ${checkpoints.length
+          ? checkpoints.map(n => `<option value="${n}" ${n === checkpoint ? 'selected' : ''}>Après Q${n}</option>`).join('')
+          : '<option>Aucune manche terminée</option>'}
       </select>
       <select class="toolbar-select" id="prj-driver" style="flex:1;min-width:200px">
         <option value="">— Choisir un pilote —</option>
@@ -340,6 +355,8 @@ function renderSituation(el) {
 
   body.innerHTML = [
     renderSituationHeader(ctx, state, thresholdInfo, checkpoint, trivial),
+    renderLiveBanner(ctx, live),
+    driver ? renderCertainties(ctx, checkpoint, driver, threshold) : '',
     driver ? renderDriverOutlook(ctx, state, thresholdInfo, checkpoint, driver, trivial) : '',
     driver ? renderSimulation(ctx, state, threshold, checkpoint, driver) : renderSimulationIntro(checkpoint, ctx),
     driver && whatIfState.data && whatIfState.key === whatIfKey(ctx, checkpoint, driver, whatIfRaceOf(ctx, checkpoint))
@@ -367,6 +384,87 @@ function renderSituationHeader(ctx, state, threshold, checkpoint, trivial) {
     : '';
 
   return section('historical', null, `${trivialNote}<div class="prj-cards">${cards}</div>`);
+}
+
+/**
+ * Bandeau « manche en cours » : combien de résultats réels, combien de pilotes
+ * restent, et où en sont les séries — en disant ce qu'on sait, et seulement ça.
+ */
+function renderLiveBanner(ctx, live) {
+  if (!live) return '';
+  const c = buildRaceCertainties({ context: ctx, driverId: null, threshold: null });
+  const d = c.description;
+  const pending = live.pendingDriverIds
+    .map(id => ctx.driversById?.[id])
+    .filter(Boolean)
+    .map(p => `#${escHtml(String(p.carNumber ?? '?'))} ${escHtml(p.lastName || '')}`);
+
+  return `<div class="prj-live">
+    <div class="prj-live-head">
+      <span class="prj-live-dot"></span>
+      <strong>${escHtml(d.drivers)}</strong>
+    </div>
+    <div class="prj-live-bar">
+      <div class="prj-live-bar-fill" style="width:${Math.round(100 * live.ranCount / Math.max(1, live.engagedCount))}%"></div>
+    </div>
+    <p class="prj-n" style="margin:var(--sp-xs) 0 0">${escHtml(d.series)}</p>
+    <p class="prj-n" style="margin:var(--sp-xs) 0 0">
+      ${escHtml(MESSAGES.hybridNotice(live.ranCount, live.pendingDriverIds.length))}
+    </p>
+    ${pending.length ? `<p class="prj-n" style="margin:var(--sp-xs) 0 0">Restent à courir : ${pending.join(' · ')}</p>` : ''}
+  </div>`;
+}
+
+/**
+ * Bloc CERTITUDES.
+ *
+ * Règle absolue : rien ici ne provient d'un tirage. Une métrique voisine mais
+ * non déterministe reste dans le bloc simulation, sous la forme « dans X % des
+ * simulations » — jamais présentée comme un fait.
+ */
+function renderCertainties(ctx, checkpoint, driver, threshold) {
+  const c = buildRaceCertainties({ context: ctx, driverId: driver.driverId, threshold, checkpoint });
+  if (c.raceNum == null) return '';
+
+  const b = c.bounds;
+  const cards = [
+    card('Position provisoire', b?.hasRun && b.provisionalPosition != null ? `P${b.provisionalPosition}` : (b?.status || '—'),
+      b?.hasRun ? `manche ${c.raceNum} courue` : `pas encore passé en manche ${c.raceNum}`),
+    card('Meilleure position possible', b ? `P${b.bestPosition}` : '—',
+      b?.hasRun ? 'aucun pilote déjà classé derrière ne peut repasser devant' : 'tout reste ouvert'),
+    card('Pire position théorique', b ? `P${b.worstPosition}` : '—',
+      b ? `si les ${b.pendingCount} pilote${b.pendingCount > 1 ? 's' : ''} restant${b.pendingCount > 1 ? 's' : ''} le devance${b.pendingCount > 1 ? 'nt' : ''}` : ''),
+    card('Points de la manche', c.points && c.points.min === c.points.max ? String(c.points.min)
+      : (c.points ? `${c.points.min} – ${c.points.max}` : '—'),
+      c.points?.includesIncident ? 'borne basse : abandon compris' : 'encadrement exact'),
+  ].join('');
+
+  const list = c.statements.length
+    ? `<ul class="prj-certainties">${c.statements.map(x => `<li>${escHtml(x.text)}</li>`).join('')}</ul>`
+    : `<p class="prj-n" style="margin:0">Aucun énoncé ne peut être démontré à ce stade.</p>`;
+
+  const suite = c.stillAProjection
+    ? `<p class="prj-n" style="margin:var(--sp-sm) 0 0">${escHtml(MESSAGES.stillAProjection)}</p>` : '';
+
+  return section('certainties', MESSAGES.sectionCertainties, `
+    <p class="prj-n" style="margin:0 0 var(--sp-sm)">${escHtml(MESSAGES.certaintiesScope)}</p>
+    <div class="prj-cards">${cards}</div>
+    ${list}
+    ${suite}
+    ${why('Sur quoi repose chaque énoncé ?', [
+      ['Nature', 'déduction — aucun tirage, aucune graine, aucun modèle'],
+      ['Manche en cours', `Q${c.raceNum}`],
+      ['Résultats déjà connus', `${c.progress.ranCount} sur ${c.progress.engagedCount}`],
+      ['Séries', escHtml(c.description.series)],
+      ['Dernière manche du meeting', c.isLastRace ? 'oui — un verdict est possible' : 'non — la qualification reste une probabilité'],
+      ['Verdict mathématique', c.verdict ? escHtml(c.verdict.state) : 'sans objet'],
+      ...(c.verdict ? [
+        ['Total minimum garanti', String(c.verdict.minTotal)],
+        ['Total maximum atteignable', String(c.verdict.maxTotal)],
+        ['Adversaires pouvant encore passer devant', String(c.verdict.rivalsAbleToPass)],
+        ['Méthode', 'chaque adversaire est crédité de son meilleur résultat encore possible : une conclusion « qualifié » est donc valide à coup sûr'],
+      ] : []),
+    ])}`);
 }
 
 function renderDriverOutlook(ctx, state, threshold, checkpoint, driver, trivial) {
@@ -553,8 +651,20 @@ function renderSimulation(ctx, state, threshold, checkpoint, driver) {
       run.cutRange ? `80 % des cas entre ${run.cutRange.low} et ${run.cutRange.high}` : ''),
   ].join('');
 
+  // Une probabilité de 100 % sur N tirages n'est PAS une certitude : elle dit
+  // que le cas contraire n'est pas apparu, pas qu'il est impossible. Le bloc
+  // CERTITUDES, lui, ne contient que du démontrable.
+  const extreme = run.probability === 1 || run.probability === 0;
+  const nuance = extreme
+    ? `<p class="prj-n" style="margin:var(--sp-sm) 0 0">
+         ${escHtml(MESSAGES.inSimulations(pct(run.probability)))}
+         Sur ${run.simulations} tirages, le cas contraire n'est pas apparu — ce n'est pas une démonstration
+         qu'il est impossible. Seul le bloc CERTITUDES énonce ce qui est acquis.</p>`
+    : '';
+
   return section('simulation', `Projection après Q${lastRace}`, `
     <div class="prj-cards">${cards}</div>
+    ${nuance}
     ${model?.weaklyObserved ? warn('Ce pilote est peu observé : sa distribution est volontairement large, et la probabilité qui en découle est d\'autant moins précise.') : ''}
     ${renderPositionChart(run)}
     ${why('Comment cette probabilité est-elle obtenue ?', [
@@ -631,6 +741,24 @@ function renderWhatIfBlock(ctx, checkpoint, driver) {
 
   const head = `<h4 class="prj-section-title" style="margin-top:var(--sp-lg);font-size:.95rem">
       Scénarios « et si » sur Q${raceNum}</h4>`;
+
+  // Le pilote a déjà couru cette manche : il n'y a plus d'hypothèse à explorer.
+  // Proposer quand même le bouton laisserait croire qu'un autre résultat est
+  // encore possible.
+  if (hasRealResult(ctx, raceNum, driver.driverId)) {
+    const autres = remaining.filter(n => !hasRealResult(ctx, n, driver.driverId));
+    return `${head}
+      ${warn(escHtml(MESSAGES.whatIfUnavailable(raceNum)))}
+      ${autres.length
+        ? `<div class="toolbar" style="gap:var(--sp-sm)">
+             <label class="prj-inline-field">Manche à imposer
+               <select class="toolbar-select" id="prj-whatif-race">
+                 ${autres.map(n => `<option value="${n}">Q${n}</option>`).join('')}
+               </select>
+             </label>
+           </div>`
+        : '<p class="prj-n">Aucune manche ne reste ouverte à un scénario pour ce pilote.</p>'}`;
+  }
 
   if (whatIfState.running && whatIfState.key === key) {
     return `${head}<div class="loading-state"><div class="spinner"></div> Simulation ${whatIfState.progress} %…</div>`;
@@ -749,6 +877,9 @@ function renderStrategySection() {
 /** Lance les scénarios en rendant la main au navigateur entre chaque. */
 async function computeWhatIf(ctx, state, threshold, checkpoint, driver) {
   const raceNum = whatIfRaceOf(ctx, checkpoint);
+  // Garde de dernier recours : le moteur lèverait de toute façon, mieux vaut
+  // ne pas avoir déclenché le calcul.
+  if (hasRealResult(ctx, raceNum, driver.driverId)) { renderContent(); return; }
   const lastRace = ctx.plannedRaceCount;
   const { models } = modelsFor(ctx, state, checkpoint);
   const entrants = (ctx.races.find(r => r.num === raceNum)?.rows || []).length || state.count;
@@ -817,6 +948,11 @@ function matrixKey(ctx, checkpoint, driver) {
 function renderMatrixBlock(ctx, state, checkpoint, driver) {
   const remaining = ctx.races.filter(r => r.num > checkpoint).map(r => r.num).sort((a, b) => a - b);
   if (remaining.length < 2) return '';
+  const acquis = remaining.find(n => hasRealResult(ctx, n, driver.driverId));
+  if (acquis != null) {
+    return section('strategy', `Matrice Q${remaining[0]} × Q${remaining[remaining.length - 1]}`,
+      warn(escHtml(MESSAGES.whatIfUnavailable(acquis))));
+  }
   const key = matrixKey(ctx, checkpoint, driver);
 
   if (matrixState.running && matrixState.key === key) {

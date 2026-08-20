@@ -213,7 +213,9 @@ export function runBacktest({
 
     const run = simulateFromCheckpoint({
       context: ctx, checkpoint, models, threshold,
-      simulations, seed, trackAllDrivers: true, entrantsSource,
+      // `liveResults: 'none'` : en backtest, le meeting analysé est terminé.
+      // Reprendre le moindre résultat postérieur au checkpoint serait une fuite.
+      simulations, seed, trackAllDrivers: true, entrantsSource, liveResults: 'none',
     });
 
     // ── Historique, meeting analysé exclu ──

@@ -166,6 +166,7 @@ describe('modules purs — restent testables hors navigateur', () => {
     join('js', 'projection', 'scenarioSimulator.js'),
     join('js', 'projection', 'strategyTargetCalculator.js'),
     join('js', 'projection', 'qualificationBacktest.js'),
+    join('js', 'projection', 'raceCertainties.js'),
   ];
 
   it('n\'importent ni Firebase ni un module de vue', () => {

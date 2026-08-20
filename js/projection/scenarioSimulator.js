@@ -24,6 +24,25 @@
    dernière manche courue du meeting, et sont strictement croissants avec la
    position : aucun classement impossible ne peut être produit.
 
+   ── Manche EN COURS : mode hybride réel + simulé ────────────────────────────
+   Une manche partiellement courue n'est ni ignorée ni traitée comme finie :
+   les résultats déjà acquis sont REPRIS TELS QUELS et seuls les pilotes non
+   encore passés sont tirés. Le classement de la manche est ensuite produit par
+   buildMqStandings() sur le mélange des deux, donc par le code de l'application.
+
+   La donnée réelle est immuable, et cette immuabilité est structurelle plutôt
+   que déclarative : un pilote déjà passé n'est jamais tiré, jamais forçable, et
+   son chrono sert d'ANCRE. Les chronos simulés sont répartis dans les
+   intervalles laissés libres entre ces ancres. Il en découle mécaniquement que
+   l'ordre relatif des pilotes réels est le même dans les 10 000 tirages, et que
+   personne ne peut « doubler » un pilote réel autrement qu'en s'intercalant à
+   une place que le classement autorise.
+
+   Cas particulier volontaire : quand une manche n'a AUCUN résultat réel, la
+   formule de chrono retombe exactement sur celle d'avant le mode hybride, au
+   millième près. Une manche entièrement simulée est donc rigoureusement
+   inchangée.
+
    ── Scénarios forcés ───────────────────────────────────────────────────────
    Forcer un résultat pour le pilote analysé ne fige QUE lui : les autres
    continuent d'être tirés normalement, et le classement est recalculé en
@@ -97,6 +116,65 @@ function participantsFor(context, driverIds) {
   });
 }
 
+/**
+ * Résultats DÉJÀ ACQUIS sur une manche, sous la forme attendue par le
+ * simulateur.
+ *
+ * @param {object} context
+ * @param {number} raceNum
+ * @param {string} [mode='inProgress'] — quelles manches peuvent fournir du réel.
+ *        'inProgress' : uniquement une manche commencée et non terminée. C'est
+ *        le seul régime sûr par défaut pour la SIMULATION : une manche
+ *        postérieure au checkpoint et déjà terminée existe en backtest, et lire
+ *        ses résultats serait une fuite temporelle caractérisée.
+ *        'live' : toute manche ayant au moins un résultat, terminée ou non.
+ *        Réservé à la lecture de l'état réel courant (bloc CERTITUDES), jamais
+ *        au tirage.
+ *        'none' : aucune reprise de réel, simulation pure.
+ * @returns {object|null} { driverId: { ms, status } } ou null
+ */
+export function realResultsOfRace(context, raceNum, mode = 'inProgress') {
+  if (mode === 'none') return null;
+  const race = (context?.races || []).find(r => r.num === raceNum);
+  if (!race) return null;
+  if (mode === 'inProgress' && !race.isInProgress) return null;
+  if (mode === 'live' && !race.hasResults) return null;
+
+  const out = {};
+  for (const row of race.rows || []) {
+    if (row.ms == null && !row.status) continue;
+    out[row.driverId] = { ms: row.ms ?? null, status: row.status || null };
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+/**
+ * Scénarios « et si » qui prétendraient réécrire une donnée déjà acquise.
+ *
+ * Un pilote qui a déjà roulé n'a plus de résultat hypothétique : il a un
+ * résultat. Le moteur REFUSE le scénario plutôt que de l'appliquer
+ * silencieusement — un what-if silencieusement ignoré afficherait une
+ * probabilité conditionnelle sans condition, c'est-à-dire un chiffre faux.
+ *
+ * @returns {Array} [{ raceNum, driverId, real }]
+ */
+export function forcedConflicts(context, forced, mode = 'inProgress') {
+  const out = [];
+  for (const [num, byDriver] of Object.entries(forced || {})) {
+    const real = realResultsOfRace(context, Number(num), mode);
+    if (!real) continue;
+    for (const driverId of Object.keys(byDriver || {})) {
+      if (real[driverId]) out.push({ raceNum: Number(num), driverId, real: real[driverId] });
+    }
+  }
+  return out;
+}
+
+/** Le pilote a-t-il déjà un résultat acquis sur cette manche ? */
+export function hasRealResult(context, raceNum, driverId, mode = 'inProgress') {
+  return Boolean(realResultsOfRace(context, raceNum, mode)?.[driverId]);
+}
+
 // ─────────────────────────────────────────────────────────
 // SIMULATION D'UNE MANCHE
 // ─────────────────────────────────────────────────────────
@@ -127,13 +205,80 @@ export function makeDrawBuffers(races) {
 }
 
 /**
- * Produit le classement d'une manche simulée, via buildMqStandings.
+ * Attribue les chronos d'une manche à partir de l'ordre d'arrivée.
+ *
+ * Les entrées RÉELLES sont des ancres : leur chrono est recopié à l'identique,
+ * jamais recalculé. Les entrées simulées sont réparties dans les intervalles
+ * libres entre deux ancres. Trois propriétés en découlent, et ce sont
+ * exactement celles dont le classement a besoin :
+ *
+ *   · les chronos réels sont conservés au millième près ;
+ *   · les chronos sont strictement croissants avec la position, donc aucun
+ *     classement impossible ne peut sortir d'ici ;
+ *   · deux pilotes n'ont jamais le même chrono, donc aucun ex aequo arbitraire.
+ *
+ * Sans aucune ancre — manche entièrement simulée — la formule utilisée est
+ * MOT POUR MOT celle d'avant le mode hybride : une manche simulée de bout en
+ * bout produit donc exactement les mêmes chronos qu'auparavant.
+ *
+ * @param {Array} order — entrées classées : { driverId, ms, real }
+ * @param {object} scale
+ * @param {number} fieldSize — plateau de la manche, pour la formule de rang
+ * @returns {number[]} chronos, dans l'ordre de `order`
+ */
+export function assignChronos(order, scale, fieldSize) {
+  const out = new Array(order.length);
+  const step = Math.max(1, Math.round(Math.abs(scale.msPerZ) * 0.05));
+  const z0 = latentFromPosition(1, fieldSize) ?? 0;
+  /** Formule historique : chrono déduit du RANG dans la manche. */
+  const byRank = (p) => Math.round(scale.baseMs + scale.msPerZ * ((latentFromPosition(p + 1, fieldSize) ?? 0) - z0)) + p;
+
+  let i = 0;
+  while (i < order.length) {
+    if (order[i].real) { out[i] = order[i].ms; i++; continue; }
+
+    let j = i;
+    while (j < order.length && !order[j].real) j++;
+    const k = j - i;
+    const lo = i > 0 ? out[i - 1] : null;
+    const hi = j < order.length ? order[j].ms : null;
+
+    for (let t = 0; t < k; t++) {
+      if (lo == null && hi == null) {
+        // Aucune ancre : comportement historique, à l'identique.
+        out[i + t] = byRank(i + t);
+      } else if (lo != null && hi != null) {
+        // Intervalle borné des deux côtés. Quand la place le permet, on reste
+        // sur des millisecondes entières, plus crédibles à la lecture ;
+        // l'espacement régulier garantit alors la stricte croissance.
+        out[i + t] = (hi - lo >= k + 1)
+          ? lo + Math.round((hi - lo) * (t + 1) / (k + 1))
+          : (hi > lo ? lo + (hi - lo) * (t + 1) / (k + 1) : lo + 1e-6 * (t + 1));
+      } else if (hi != null) {
+        // Pilotes simulés DEVANT le premier réel : on descend sous son chrono.
+        const room = Math.min(step, Math.max(1, Math.floor((hi - 1) / Math.max(1, k))));
+        out[i + t] = hi - (k - t) * room;
+      } else {
+        // Pilotes simulés DERRIÈRE le dernier réel : on remonte au-dessus.
+        out[i + t] = lo + (t + 1) * step;
+      }
+    }
+    i = j;
+  }
+  return out;
+}
+
+/**
+ * Produit le classement d'une manche, via buildMqStandings.
  *
  * Point unique de vérité de la simulation d'une manche : le simulateur simple
  * et la matrice de scénarios passent tous deux par ici. Deux implémentations
  * des mêmes règles finiraient immanquablement par diverger.
  *
- * @param {object} race — { num, ids, participants }
+ * `race.real` porte les résultats déjà acquis. Un pilote qui y figure n'est ni
+ * tiré, ni forcé, ni déplacé : la donnée réelle prime sur tout le reste.
+ *
+ * @param {object} race — { num, ids, participants, real? }
  * @param {object} buf — tampons remplis par drawRace()
  * @param {object} models
  * @param {object|null} forcedHere — { driverId: { position } | { status } }
@@ -142,47 +287,59 @@ export function makeDrawBuffers(races) {
  * @returns {Array} lignes de classement
  */
 export function simulateRaceRows(race, buf, models, forcedHere, scale, regulation) {
-  const finishers = [];    // { driverId, x }
+  const real = race.real || null;
+  const finishers = [];    // { driverId, key, ms, real }
   const incidents = [];    // { driverId, status }
   const forcedPlaced = []; // { driverId, position }
+  const n = race.ids.length;
+  const z0 = latentFromPosition(1, n) ?? 0;
 
-  for (let i = 0; i < race.ids.length; i++) {
+  for (let i = 0; i < n; i++) {
     const id = race.ids[i];
+
+    // 1. Donnée acquise : elle passe avant le tirage ET avant le scénario.
+    const r = real?.[id];
+    if (r) {
+      if (r.status) incidents.push({ driverId: id, status: r.status });
+      else finishers.push({ driverId: id, key: r.ms, ms: r.ms, real: true });
+      continue;
+    }
+
+    // 2. Résultat imposé par un scénario « et si ».
     const f = forcedHere?.[id];
     if (f) {
       if (f.status) incidents.push({ driverId: id, status: f.status });
       else if (f.position) forcedPlaced.push({ driverId: id, position: f.position });
       continue;
     }
+
+    // 3. Pilote encore à courir : tirage.
     const m = models[id];
     if (!m) { incidents.push({ driverId: id, status: 'DNS' }); continue; }
     if (buf.incident[i] < m.incidentRate) { incidents.push({ driverId: id, status: 'DNF' }); continue; }
-    finishers.push({ driverId: id, x: m.mu + m.sigma * buf.latent[i] });
+    const x = m.mu + m.sigma * buf.latent[i];
+    finishers.push({ driverId: id, key: scale.baseMs + scale.msPerZ * (x - z0), real: false });
   }
 
-  finishers.sort((a, b) => a.x - b.x);
-  const order = finishers.map(f => f.driverId);
+  // Classement de la manche : les chronos réels et les forces simulées sont
+  // comparés sur la MÊME échelle de temps, ce qui est précisément ce qui permet
+  // à un pilote encore à courir de se placer devant ou derrière un pilote déjà
+  // passé, sans jamais modifier l'ordre relatif de ceux qui ont déjà couru.
+  finishers.sort((a, b) => a.key - b.key);
+  const order = finishers;
 
   // Insertion des résultats forcés à leur place exacte : les autres pilotes se
   // décalent, exactement comme dans une vraie manche.
   forcedPlaced.sort((a, b) => a.position - b.position);
   for (const f of forcedPlaced) {
     const at = Math.min(Math.max(0, f.position - 1), order.length);
-    order.splice(at, 0, f.driverId);
+    order.splice(at, 0, { driverId: f.driverId, key: null, real: false });
   }
 
-  // Chronos dérivés du RANG FINAL, donc strictement croissants avec la
-  // position : aucun classement incohérent ne peut sortir d'ici.
-  const n = race.ids.length;
+  const chronos = assignChronos(order, scale, n);
   const results = new Array(order.length + incidents.length);
-  const z0 = latentFromPosition(1, n) ?? 0;
   for (let p = 0; p < order.length; p++) {
-    const z = latentFromPosition(p + 1, n) ?? 0;
-    results[p] = {
-      driverId: order[p],
-      ms: Math.round(scale.baseMs + scale.msPerZ * (z - z0)) + p,
-      status: null,
-    };
+    results[p] = { driverId: order[p].driverId, ms: chronos[p], status: null };
   }
   for (let k = 0; k < incidents.length; k++) {
     results[order.length + k] = { driverId: incidents[k].driverId, ms: null, status: incidents[k].status };
@@ -220,6 +377,10 @@ export function simulateRaceRows(race, buf, models, forcedHere, scale, regulatio
  * @param {boolean} [params.trackAllDrivers] — compter la qualification de TOUS
  *        les pilotes en une seule passe. Indispensable au backtest : une passe
  *        par meeting au lieu d'une par pilote, soit trente fois moins de calcul.
+ * @param {string} [params.liveResults='inProgress'] — reprise des résultats
+ *        déjà acquis sur une manche EN COURS. 'inProgress' est le régime normal
+ *        en direct ; 'none' impose une simulation pure et est utilisé par le
+ *        backtest, où aucune manche n'est censée être en cours.
  * @param {number} [params.minClassifiedRaces]
  * @returns {object}
  */
@@ -232,15 +393,28 @@ export function simulateFromCheckpoint({
   trackAllDrivers = false,
   trackStateAfterRace = null,
   entrantsSource = 'session',
+  liveResults = 'inProgress',
   // Le defaut de calc.js (2 manches classees) viderait le classement au
   // checkpoint apres Q1 : le simulateur n'aurait alors AUCUN partant et
   // renverrait silencieusement zero probabilite. On aligne donc le defaut sur
   // celui du module de projection.
   minClassifiedRaces = PROJECTION_MIN_CLASSIFIED_RACES,
 } = {}) {
+  // `isComplete` : une manche en cours n'a distribué ses points qu'à une partie
+  // du plateau et ne peut pas entrer dans l'état de départ. Elle est reprise
+  // plus bas, résultat par résultat, dans la manche simulée correspondante.
   const completed = (context?.races || [])
-    .filter(r => r.hasResults && r.num <= checkpoint)
+    .filter(r => r.isComplete && r.num <= checkpoint)
     .map(r => ({ num: r.num, rows: r.rows }));
+
+  const conflicts = forcedConflicts(context, forced, liveResults);
+  if (conflicts.length) {
+    const c = conflicts[0];
+    throw new Error(
+      `Résultat déjà acquis en manche ${c.raceNum} pour ${c.driverId} : ` +
+      'un scénario ne peut pas réécrire une donnée réelle.',
+    );
+  }
 
   const remaining = (context?.races || [])
     .filter(r => r.num > checkpoint)
@@ -273,9 +447,15 @@ export function simulateFromCheckpoint({
     const ids = entrantsSource === 'checkpoint'
       ? [...checkpointDriverIds]
       : entrantsOfRace(context, num, checkpointDriverIds);
-    return { num, ids, participants: participantsFor(context, ids) };
+    return {
+      num, ids, participants: participantsFor(context, ids),
+      real: realResultsOfRace(context, num, liveResults),
+    };
   });
-  const scale = timeScaleOf(context, checkpoint);
+  // La manche en cours est la référence de temps la plus fraîche du meeting :
+  // ses chronos réels servent d'échelle aux pilotes qui restent à passer.
+  const scale = timeScaleOf(context, context?.raceInProgress != null && liveResults !== 'none'
+    ? Math.max(checkpoint, context.raceInProgress) : checkpoint);
   const rng = createRng(seed);
 
   const positionTally = createTally();
@@ -443,10 +623,22 @@ export function whatIfResults({
   simulations = SIMULATION.whatIfSimulations,
   seed = SIMULATION.defaultSeed,
   entrantsSource = 'session',
+  liveResults = 'inProgress',
   minClassifiedRaces = PROJECTION_MIN_CLASSIFIED_RACES,
 } = {}) {
+  // Le pilote a déjà couru cette manche : il n'y a plus de scénario à explorer,
+  // seulement un fait. On le dit explicitement plutôt que de renvoyer un tableau
+  // vide, qui passerait pour une absence de données.
+  const acquired = realResultsOfRace(context, raceNum, liveResults)?.[focusDriverId] || null;
+  if (acquired) {
+    return {
+      raceNum, entries: [], seed, simulations: 0, entrants: 0,
+      unavailable: 'alreadyRaced', realResult: acquired,
+    };
+  }
+
   const baseStandings = buildInterimStandings(
-    (context?.races || []).filter(r => r.hasResults && r.num <= checkpoint).map(r => ({ num: r.num, rows: r.rows })),
+    (context?.races || []).filter(r => r.isComplete && r.num <= checkpoint).map(r => ({ num: r.num, rows: r.rows })),
     context?.ecBonus, context?.regulation, { minClassifiedRaces },
   );
   const entrants = entrantsSource === 'checkpoint'
@@ -461,7 +653,7 @@ export function whatIfResults({
     const run = simulateFromCheckpoint({
       context, checkpoint, models, threshold, focusDriverId,
       forced: { [raceNum]: { [focusDriverId]: { position } } },
-      simulations, seed, entrantsSource, minClassifiedRaces,
+      simulations, seed, entrantsSource, liveResults, minClassifiedRaces,
     });
     entries.push({
       kind: 'position', position, label: `P${position}`,
@@ -473,7 +665,7 @@ export function whatIfResults({
     const run = simulateFromCheckpoint({
       context, checkpoint, models, threshold, focusDriverId,
       forced: { [raceNum]: { [focusDriverId]: { status } } },
-      simulations, seed, entrantsSource, minClassifiedRaces,
+      simulations, seed, entrantsSource, liveResults, minClassifiedRaces,
     });
     entries.push({
       kind: 'status', status, label: status,
@@ -482,7 +674,7 @@ export function whatIfResults({
     });
   }
 
-  return { raceNum, entries, seed, simulations, entrants: entrants.length };
+  return { raceNum, entries, seed, simulations, entrants: entrants.length, unavailable: null, realResult: null };
 }
 
 // ─────────────────────────────────────────────────────────
@@ -542,11 +734,12 @@ export function simulateScenarioMatrix({
   rowRace, colRace, rowScenarios = [], colScenarios = [],
   simulations = SIMULATION.matrixSimulations,
   seed = SIMULATION.defaultSeed,
+  liveResults = 'inProgress',
   minClassifiedRaces = PROJECTION_MIN_CLASSIFIED_RACES,
   onRowDone = null,
 } = {}) {
   const completed = (context?.races || [])
-    .filter(r => r.hasResults && r.num <= checkpoint)
+    .filter(r => r.isComplete && r.num <= checkpoint)
     .map(r => ({ num: r.num, rows: r.rows }));
   const remaining = (context?.races || [])
     .filter(r => r.num > checkpoint).map(r => r.num).sort((a, b) => a - b);
@@ -556,14 +749,27 @@ export function simulateScenarioMatrix({
   if (!remaining.length || rowNum == null || colNum == null || rowNum === colNum) {
     return { cells: [], rowRace: rowNum, colRace: colNum, simulations: 0, seed, unsupported: true };
   }
+  // Le pilote a déjà couru l'une des deux manches croisées : la matrice n'a
+  // plus d'objet sur cet axe, son résultat y est acquis.
+  const acquiredAxis = [rowNum, colNum].find(num => realResultsOfRace(context, num, liveResults)?.[focusDriverId]);
+  if (acquiredAxis != null) {
+    return {
+      cells: [], rowRace: rowNum, colRace: colNum, simulations: 0, seed,
+      unsupported: true, unavailable: 'alreadyRaced', acquiredRace: acquiredAxis,
+    };
+  }
 
   const baseStandings = buildInterimStandings(completed, context?.ecBonus, context?.regulation, { minClassifiedRaces });
   const checkpointIds = baseStandings.map(d => d.driverId);
   const races = remaining.map(num => {
     const ids = entrantsOfRace(context, num, checkpointIds);
-    return { num, ids, participants: participantsFor(context, ids) };
+    return {
+      num, ids, participants: participantsFor(context, ids),
+      real: realResultsOfRace(context, num, liveResults),
+    };
   });
-  const scale = timeScaleOf(context, checkpoint);
+  const scale = timeScaleOf(context, context?.raceInProgress != null && liveResults !== 'none'
+    ? Math.max(checkpoint, context.raceInProgress) : checkpoint);
   const colIndex = races.findIndex(r => r.num === colNum);
 
   const cells = [];

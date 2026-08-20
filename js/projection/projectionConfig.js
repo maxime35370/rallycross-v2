@@ -211,6 +211,27 @@ export const MESSAGES = {
   targetNotAGuarantee:   (label, p) =>
     `${label} n'est pas un seuil de qualification : c'est la place au-delà de laquelle le gain moyen estimé devient faible. `
     + `Dans cette hypothèse, la probabilité de qualification est estimée à ${p}, pas à 100 %.`,
+
+  /**
+   * Manche EN COURS. Le bloc CERTITUDES ne contient que des énoncés
+   * DÉMONTRABLES — vrais dans tous les déroulements encore possibles, pas dans
+   * 99 % des tirages. Une métrique voisine mais non déterministe existe parfois ;
+   * elle appartient alors au bloc simulation, sous la forme « dans X % des
+   * simulations… », et jamais ici.
+   */
+  sectionCertainties:    'CERTITUDES — vrai quoi qu\'il arrive dans cette manche',
+  certaintiesScope:      'Ces énoncés sont démontrés à partir des résultats déjà acquis et du règlement. Ils ne dépendent d\'aucun tirage.',
+  raceInProgress:        (num, ran, engaged) =>
+    `Manche ${num} EN COURS — ${ran} résultat${ran > 1 ? 's' : ''} sur ${engaged} connu${ran > 1 ? 's' : ''}.`,
+  seriesFromEntered:     (done, total) =>
+    `${done} / ${total} séries terminées d'après les séries renseignées.`,
+  seriesUnknown:         'Répartition en séries non renseignée pour les pilotes restants : le nombre de séries terminées ne peut pas être établi.',
+  whatIfUnavailable:     (num) =>
+    `Résultat Q${num} déjà acquis — scénario What-if indisponible pour cette manche.`,
+  hybridNotice:          (real, pending) =>
+    `${real} résultat${real > 1 ? 's' : ''} réel${real > 1 ? 's' : ''} repris tel${real > 1 ? 's' : ''} quel${real > 1 ? 's' : ''} · ${pending} pilote${pending > 1 ? 's' : ''} encore à courir, simulé${pending > 1 ? 's' : ''}.`,
+  stillAProjection:      'Une manche reste à disputer après celle-ci : la qualification reste une PROBABILITÉ, pas une certitude.',
+  inSimulations:         (pct) => `Dans ${pct} des simulations.`,
 };
 
 /**

@@ -37,6 +37,37 @@ function textOf(value, out = []) {
   return out;
 }
 
+describe('certitude et probabilité ne se disent pas de la même façon', () => {
+  it('le libellé du bloc CERTITUDES ne contient aucun vocabulaire probabiliste', () => {
+    for (const key of ['sectionCertainties', 'certaintiesScope']) {
+      expect(MESSAGES[key], key).not.toMatch(/%|probab|estim|simulation|chance/i);
+    }
+  });
+
+  it('la formulation non déterministe existe et s\'annonce comme telle', () => {
+    // Une métrique utile mais issue d'un tirage doit pouvoir être dite — hors
+    // du bloc CERTITUDES, et sous une forme qui nomme sa source.
+    expect(MESSAGES.inSimulations('98,0 %')).toBe('Dans 98,0 % des simulations.');
+  });
+
+  it('le rappel « une manche reste à courir » interdit toute lecture définitive', () => {
+    expect(MESSAGES.stillAProjection).toMatch(/PROBABILITÉ/);
+    expect(MESSAGES.stillAProjection).not.toMatch(/certitude,|acquis/i);
+  });
+
+  it('le refus de what-if nomme la manche concernée', () => {
+    expect(MESSAGES.whatIfUnavailable(4)).toBe(
+      'Résultat Q4 déjà acquis — scénario What-if indisponible pour cette manche.');
+    expect(MESSAGES.whatIfUnavailable(2)).toContain('Q2');
+  });
+
+  it('le compte de séries dit d\'où il vient', () => {
+    expect(MESSAGES.seriesFromEntered(2, 6)).toBe(
+      '2 / 6 séries terminées d\'après les séries renseignées.');
+    expect(MESSAGES.seriesUnknown).toMatch(/ne peut pas être établi/);
+  });
+});
+
 describe('formulations interdites', () => {
   it('la liste est non vide et couvre le cas emblématique', () => {
     expect(FORBIDDEN_WORDINGS.length).toBeGreaterThan(0);

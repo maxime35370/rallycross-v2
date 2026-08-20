@@ -17,7 +17,7 @@
 
 import {
   buildMqStandings, buildEcStandings, buildInterimStandings,
-  DEFAULT_MIN_CLASSIFIED_RACES,
+  computeSeriesSizes, DEFAULT_MIN_CLASSIFIED_RACES,
 } from '../calc.js';
 import { dedupeParticipants, sessionParticipantId } from '../utils.js';
 import { PHASE_ORDER } from './qualificationRules.js';
@@ -111,6 +111,13 @@ export function buildMeetingContext(group, regulation) {
       const d = p.createdAt?.toDate?.()?.toISOString?.() ?? (typeof p.createdAt === 'string' ? p.createdAt : null);
       return d && (!max || d > max) ? d : max;
     }, null);
+    // Un pilote a REELLEMENT couru si et seulement si son resultat porte un
+    // chrono ou un statut. Critere verifie sur les donnees de production :
+    // sur 2 755 resultats de manche, aucun n'a ni l'un ni l'autre. Un pilote
+    // pas encore passe n'a donc simplement pas de document exploitable.
+    const ranIds = new Set(results.filter(r => r.ms != null || r.status).map(r => r.driverId));
+    const pendingDriverIds = participants.map(p => p.driverId).filter(id => !ranIds.has(id));
+
     return {
       num: s.num,
       sessionId: s.id,
@@ -119,10 +126,20 @@ export function buildMeetingContext(group, regulation) {
       duplicateParticipants: duplicates.length,
       legacyIdCount: legacy.length,
       legacyNewest,
-      // Une manche est « courue » dès qu'un résultat exploitable existe.
-      // Indispensable : les meetings à venir ont déjà leurs participants
-      // chargés mais aucun résultat, et compteraient sinon comme 100 % de DNS.
-      hasResults: results.some(r => r.ms != null || r.status),
+
+      // `hasResults` signifie « au moins un pilote a couru », PAS « la manche
+      // est terminee ». Confondre les deux faisait entrer un meeting en cours
+      // dans l'historique avec une manche incomplete, et produisait un
+      // classement melangeant des totaux sur 3 et sur 4 manches.
+      hasResults: ranIds.size > 0,
+      ranCount: ranIds.size,
+      pendingDriverIds,
+      /** Terminee : TOUS les engages ont un resultat reel. */
+      isComplete: participants.length > 0 && pendingDriverIds.length === 0,
+      /** En cours : commencee mais pas finie. */
+      isInProgress: ranIds.size > 0 && pendingDriverIds.length > 0,
+
+      series: seriesStateOf(participants, results, ranIds, regulation),
       rows: buildMqStandings(participants, results, regulation),
     };
   });
@@ -160,7 +177,11 @@ export function buildMeetingContext(group, regulation) {
     observedPhaseDriverIds[phase] = ids;
   }
 
-  const completedRaces = races.filter(r => r.hasResults).map(r => r.num);
+  // Seules les manches TERMINEES fondent un checkpoint : une manche en cours
+  // ne peut pas servir d'etat de reference, ses points n'etant acquis que pour
+  // une partie du plateau.
+  const completedRaces = races.filter(r => r.isComplete).map(r => r.num);
+  const inProgress = races.find(r => r.isInProgress) || null;
 
   return {
     key: group?.key,
@@ -176,10 +197,73 @@ export function buildMeetingContext(group, regulation) {
     plannedRaceCount: races.length,
     completedRaces,
     lastCompletedRace: completedRaces.length ? Math.max(...completedRaces) : 0,
+    /** Manche actuellement en cours, ou null. */
+    raceInProgress: inProgress ? inProgress.num : null,
+    inProgressRace: inProgress,
     /** Effectif du meeting : le plus grand plateau observé sur une manche. */
     engagedCount: races.reduce((n, r) => Math.max(n, r.engagedCount), 0),
-    /** Manches courues sans interruption depuis la première. */
-    isComplete: races.length > 0 && races.every(r => r.hasResults),
+    /** Toutes les manches prevues sont integralement courues. */
+    isComplete: races.length > 0 && races.every(r => r.isComplete),
+  };
+}
+
+/**
+ * Etat des series d'une manche.
+ *
+ * La structure ATTENDUE (nombre de series et tailles) est toujours calculable
+ * depuis le nombre d'engages et le reglement. En revanche l'APPARTENANCE d'un
+ * pilote a une serie n'est connue que si le champ `serie` a ete saisi — il est
+ * facultatif, et n'est renseigne en pratique que pour les pilotes ayant deja
+ * couru. On ne peut donc pas deduire de facon fiable combien de series sont
+ * terminees quand des pilotes restent a courir sans serie assignee.
+ *
+ * D'ou la distinction explicite : le compte de PILOTES est fiable, le compte de
+ * SERIES ne l'est que si toutes les appartenances sont connues. L'interface doit
+ * dire laquelle des deux elle affiche.
+ */
+export function seriesStateOf(participants, results, ranIds, regulation) {
+  const n = participants.length;
+  const perSeries = Number(regulation?.sessionConfig?.MQ?.driversPerSeries) || 5;
+  const mode = regulation?.seriesDistributionMode || 'ffsa';
+  const expectedSizes = n > 0 ? computeSeriesSizes(n, perSeries, mode) : [];
+
+  const byNum = new Map();
+  let assigned = 0;
+  for (const r of results) {
+    if (r.serie == null) continue;
+    assigned++;
+    if (!byNum.has(r.serie)) byNum.set(r.serie, []);
+    byNum.get(r.serie).push(r.driverId);
+  }
+
+  // Une serie n'est declaree terminee que si sa composition est connue ET
+  // complete ET que tous ses membres ont couru. Sans cela, elle est « inconnue »
+  // plutot que supposee.
+  const known = [...byNum.entries()].sort((a, b) => a[0] - b[0]).map(([num, driverIds]) => {
+    const expectedSize = expectedSizes[num - 1] ?? null;
+    const allRan = driverIds.every(id => ranIds.has(id));
+    return {
+      num, driverIds,
+      size: driverIds.length,
+      expectedSize,
+      complete: allRan && expectedSize != null && driverIds.length === expectedSize,
+    };
+  });
+
+  return {
+    expectedCount: expectedSizes.length,
+    expectedSizes,
+    known,
+    completeCount: known.filter(x => x.complete).length,
+    /** Vrai si chaque pilote a une serie connue : le compte de series est alors sur. */
+    membershipFullyKnown: n > 0 && assigned === n,
+    /**
+     * Au moins un pilote porte une serie. Le compte de series TERMINEES reste
+     * exact meme sans connaitre toutes les appartenances : une serie n'est
+     * declaree terminee que si ses membres connus atteignent la taille attendue,
+     * ce qui interdit qu'un pilote encore a courir lui appartienne.
+     */
+    anyAssigned: assigned > 0,
   };
 }
 
@@ -212,7 +296,9 @@ export function actualNextPhaseDriverIds(context) {
  */
 export function buildStateAfterRace(context, raceNum, options) {
   const minClassifiedRaces = options?.minClassifiedRaces ?? PROJECTION_MIN_CLASSIFIED_RACES;
-  const races = (context?.races || []).filter(r => r.num <= raceNum && r.hasResults);
+  // `isComplete` et non `hasResults` : une manche en cours n'a distribue ses
+  // points qu'a une partie du plateau et ne peut pas fonder un classement.
+  const races = (context?.races || []).filter(r => r.num <= raceNum && r.isComplete);
 
   const standings = races.length
     ? buildInterimStandings(
@@ -244,7 +330,7 @@ export function buildStateAfterRace(context, raceNum, options) {
 export function buildAllStates(context, options) {
   const out = {};
   for (const r of context?.races || []) {
-    if (!r.hasResults) continue;
+    if (!r.isComplete) continue;
     out[r.num] = buildStateAfterRace(context, r.num, options);
   }
   return out;
@@ -261,9 +347,11 @@ export function buildAllStates(context, options) {
  */
 export function raceResultOf(context, raceNum, driverId) {
   const race = (context?.races || []).find(r => r.num === raceNum);
-  if (!race || !race.hasResults) return null;
+  if (!race) return null;
   const row = race.rows.find(r => r.driverId === driverId);
-  if (!row) return null;
+  // Un pilote qui n'a pas encore couru n'a pas de resultat, meme si la manche
+  // a commence pour d'autres.
+  if (!row || (row.ms == null && !row.status)) return null;
   return {
     position: row.status ? null : row.position,
     status: row.status || null,

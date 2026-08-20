@@ -327,3 +327,85 @@
   background: color-mix(in srgb, var(--clr-success) calc(var(--p) * 0.55%), transparent);
   font-variant-numeric: tabular-nums;
 }
+
+/* ─────────────────────────────────────────────────────────
+   MANCHE EN COURS + CERTITUDES
+
+   Quatrième couleur, volontairement éloignée des trois autres : le vert
+   « acquis » ne doit jamais pouvoir être confondu avec l'orange
+   « simulation » ni le violet « interprétation ». Ce qui est démontré et ce
+   qui est estimé se lisent au premier coup d'œil.
+   ───────────────────────────────────────────────────────── */
+
+.prj-band--certainties {
+  background: rgba(0, 200, 120, 0.15);
+  border-left-color: #00c878;
+  color: #6ee7b0;
+}
+
+.prj-certainties {
+  margin: var(--sp-md) 0 0;
+  padding-left: 1.1rem;
+  list-style: none;
+}
+.prj-certainties li {
+  position: relative;
+  padding: var(--sp-xs) 0;
+  font-size: .9rem;
+  line-height: 1.45;
+  border-bottom: 1px solid var(--clr-border);
+}
+.prj-certainties li:last-child { border-bottom: 0; }
+.prj-certainties li::before {
+  content: '✓';
+  position: absolute;
+  left: -1.1rem;
+  color: #00c878;
+  font-weight: 700;
+}
+
+.prj-live {
+  display: block;
+  margin: var(--sp-md) 0;
+  padding: var(--sp-sm) var(--sp-md);
+  border: 1px solid rgba(255, 82, 82, 0.45);
+  border-radius: var(--radius-md, 8px);
+  background: rgba(255, 82, 82, 0.08);
+}
+.prj-live-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-sm);
+  font-family: var(--font-condensed);
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  font-size: .85rem;
+}
+.prj-live-dot {
+  width: .6rem;
+  height: .6rem;
+  border-radius: 50%;
+  background: #ff5252;
+  box-shadow: 0 0 0 0 rgba(255, 82, 82, .7);
+  animation: prj-live-pulse 1.8s infinite;
+}
+@keyframes prj-live-pulse {
+  70%  { box-shadow: 0 0 0 .45rem rgba(255, 82, 82, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(255, 82, 82, 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .prj-live-dot { animation: none; }
+}
+
+.prj-live-bar {
+  margin-top: var(--sp-sm);
+  height: .4rem;
+  border-radius: .2rem;
+  background: var(--clr-border);
+  overflow: hidden;
+}
+.prj-live-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #ff5252, #ffab40);
+  transition: width .3s ease;
+}
