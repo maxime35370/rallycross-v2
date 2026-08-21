@@ -12,7 +12,63 @@
    gris 114, canaux en **BGR**, valeurs **0–255 non normalisées**.
 ═══════════════════════════════════════════════ */
 
-export const INPUT_SIZE = 416;
+/**
+ * Modèles disponibles.
+ *
+ * ⚠️ La taille d'entrée n'est PAS commune : YOLOX-tiny travaille en 416 et
+ * produit 3549 ancres, YOLOX-s en 640 et en produit 8400. Décoder une sortie
+ * de 8400 ancres avec les grilles de 416 ne donne pas une erreur, cela donne
+ * des boîtes fausses — d'où `assertAnchorCount()`, appelé avant tout décodage.
+ *
+ * Tout le reste — pré-traitement, décodage, fusion, seuils — est rigoureusement
+ * identique d'un modèle à l'autre : c'est la condition pour que la comparaison
+ * tiny / s ait un sens.
+ */
+export const MODELS = {
+  tiny: {
+    id: 'tiny',
+    label: 'YOLOX-tiny',
+    file: 'yolox_tiny.onnx',
+    inputSize: 416,
+    approxMo: 20,
+    url: 'https://github.com/Megvii-BaseDetection/YOLOX/releases/download/0.1.1rc0/yolox_tiny.onnx',
+  },
+  s: {
+    id: 's',
+    label: 'YOLOX-s',
+    file: 'yolox_s.onnx',
+    inputSize: 640,
+    approxMo: 35,
+    url: 'https://github.com/Megvii-BaseDetection/YOLOX/releases/download/0.1.1rc0/yolox_s.onnx',
+  },
+};
+
+export const DEFAULT_MODEL = 'tiny';
+
+/** Taille d'entrée par défaut — celle de YOLOX-tiny. */
+export const INPUT_SIZE = MODELS.tiny.inputSize;
+
+export const STRIDES = [8, 16, 32];
+
+/** Nombre d'ancres attendu pour une taille d'entrée : 416 → 3549, 640 → 8400. */
+export function anchorCount(size, strides = STRIDES) {
+  return strides.reduce((t, s) => t + (size / s) ** 2, 0);
+}
+
+/**
+ * Garde-fou : la sortie du réseau doit correspondre aux grilles utilisées.
+ * Sans lui, charger YOLOX-s avec les grilles de tiny produirait silencieusement
+ * des boîtes fausses au lieu d'une erreur.
+ */
+export function assertAnchorCount(rawLength, size, classCount = 80) {
+  const attendu = anchorCount(size) * (5 + classCount);
+  if (rawLength !== attendu) {
+    throw new Error(
+      `sortie de ${rawLength} valeurs incompatible avec une entrée de ${size} px `
+      + `(${attendu} attendues) : le modèle et la taille d'entrée ne correspondent pas`);
+  }
+  return true;
+}
 
 export const COCO_CLASSES = [
   'person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus', 'train', 'truck', 'boat',
@@ -66,7 +122,7 @@ export function letterbox(width, height, size = INPUT_SIZE) {
  * Grilles et pas de YOLOX pour une taille d'entrée donnée.
  * 416 → 52² + 26² + 13² = 3549 ancres, dans cet ordre.
  */
-export function buildGrids(size = INPUT_SIZE, strides = [8, 16, 32]) {
+export function buildGrids(size = INPUT_SIZE, strides = STRIDES) {
   const gx = [], gy = [], st = [];
   for (const stride of strides) {
     const n = size / stride;

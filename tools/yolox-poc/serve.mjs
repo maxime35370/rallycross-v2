@@ -21,10 +21,10 @@ import { existsSync, statSync, createReadStream } from 'node:fs';
 import { join, extname, resolve, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { MODELS, DEFAULT_MODEL } from './lib/detect.mjs';
+
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const MODELE_DIR = join(ROOT, 'tools', 'yolox-poc', 'modele');
-const MODELE = join(MODELE_DIR, 'yolox_tiny.onnx');
-const MODELE_URL = 'https://github.com/Megvii-BaseDetection/YOLOX/releases/download/0.1.1rc0/yolox_tiny.onnx';
 const ORT_DIR = join(ROOT, 'node_modules', 'onnxruntime-web', 'dist');
 const PORT = Number(process.env.YOLOX_PORT || 8798);
 const CHROMIUM = process.env.CHROMIUM_PATH || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
@@ -32,6 +32,40 @@ const CHROMIUM = process.env.CHROMIUM_PATH || '/opt/pw-browsers/chromium-1194/ch
 const args = process.argv.slice(2);
 const CHECK = args.includes('--check') ? args[args.indexOf('--check') + 1] : null;
 const SEUIL = args.includes('--seuil') ? args[args.indexOf('--seuil') + 1] : '0.30';
+const MODELE = args.includes('--modele') ? args[args.indexOf('--modele') + 1] : DEFAULT_MODEL;
+const PRECHARGER = args.includes('--precharger');
+
+if (!MODELS[MODELE]) {
+  console.error(`\n  modèle inconnu : « ${MODELE} ». Disponibles : ${Object.keys(MODELS).join(', ')}\n`);
+  process.exit(1);
+}
+
+/**
+ * Télécharge un modèle s'il manque, et le met en cache sur le disque.
+ *
+ * L'URL vient TOUJOURS du registre, jamais de la requête : le nom de fichier
+ * demandé par la page ne sert qu'à choisir une entrée connue.
+ */
+const enCours = new Map();
+async function assurerModele(file) {
+  const modele = Object.values(MODELS).find(m => m.file === file);
+  if (!modele) return null;
+  const chemin = join(MODELE_DIR, modele.file);
+  if (existsSync(chemin)) return chemin;
+  if (enCours.has(modele.id)) return enCours.get(modele.id);
+
+  const promesse = (async () => {
+    console.log(`  téléchargement de ${modele.label} (~${modele.approxMo} Mo)…`);
+    await mkdir(MODELE_DIR, { recursive: true });
+    const r = await fetch(modele.url);
+    if (!r.ok) throw new Error(`HTTP ${r.status} sur ${modele.url}`);
+    await writeFile(chemin, Buffer.from(await r.arrayBuffer()));
+    console.log(`  ${modele.file} enregistré (${(statSync(chemin).size / 1048576).toFixed(1)} Mo)`);
+    return chemin;
+  })();
+  enCours.set(modele.id, promesse);
+  return promesse;
+}
 
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
@@ -46,16 +80,15 @@ if (!existsSync(ORT_DIR)) {
   console.error('\n  onnxruntime-web est absent. Lance d\'abord :  npm install\n');
   process.exit(1);
 }
-if (!existsSync(MODELE)) {
-  console.log('\n  Téléchargement de YOLOX-tiny (Apache 2.0, ~20 Mo)…');
-  await mkdir(MODELE_DIR, { recursive: true });
-  const r = await fetch(MODELE_URL);
-  if (!r.ok) {
-    console.error(`  échec : HTTP ${r.status}. Télécharge le fichier à la main depuis\n  ${MODELE_URL}\n  et place-le dans ${MODELE_DIR}\n`);
-    process.exit(1);
-  }
-  await writeFile(MODELE, Buffer.from(await r.arrayBuffer()));
-  console.log(`  modèle enregistré (${(statSync(MODELE).size / 1048576).toFixed(1)} Mo)`);
+// Les modèles sont récupérés à la demande, à la première requête de la page.
+// `--precharger` les prend tous d'avance, pour préparer une machine hors ligne.
+try {
+  if (PRECHARGER) for (const m of Object.values(MODELS)) await assurerModele(m.file);
+  else await assurerModele(MODELS[CHECK ? MODELE : DEFAULT_MODEL].file);
+} catch (err) {
+  console.error(`\n  échec du téléchargement : ${err.message}`);
+  console.error(`  Récupère les .onnx à la main et place-les dans ${MODELE_DIR}\n`);
+  process.exit(1);
 }
 
 // ── Serveur ─────────────────────────────────────────────
@@ -67,7 +100,10 @@ const server = createServer(async (req, res) => {
     let file;
     if (path === '/' || path === '/__page') file = join(ROOT, 'tools', 'yolox-poc', 'page.html');
     else if (path.startsWith('/__ort/')) file = join(ORT_DIR, basename(path));
-    else if (path.startsWith('/__modele/')) file = join(MODELE_DIR, basename(path));
+    else if (path.startsWith('/__modele/')) {
+      file = await assurerModele(basename(path));
+      if (!file) { res.writeHead(404); res.end('modèle inconnu'); return; }
+    }
     else if (path.startsWith('/__media/')) file = join(mediaDir || '', basename(path));
     else file = join(ROOT, path);
 
@@ -89,6 +125,7 @@ await new Promise(ok => server.listen(PORT, '127.0.0.1', ok));
 
 if (!CHECK) {
   console.log(`\n  Banc de détection : http://127.0.0.1:${PORT}/__page`);
+  console.log(`  Modèles : ${Object.values(MODELS).map(m => `${m.label} (${m.inputSize} px)`).join(' · ')}`);
   console.log('  Ouvre-le, puis sélectionne les images du corpus ET son corpus.json.');
   console.log('  Tout reste local : aucune image n\'est envoyée nulle part.');
   console.log('  Ctrl+C pour arrêter.\n');
@@ -98,14 +135,14 @@ if (!CHECK) {
   const browser = await chromium.launch({ executablePath: existsSync(CHROMIUM) ? CHROMIUM : undefined });
   const page = await browser.newPage();
   page.on('pageerror', e => console.error('  [page]', e.message));
-  await page.goto(`http://127.0.0.1:${PORT}/__page?auto=/__media/${encodeURIComponent(basename(CHECK))}&seuil=${SEUIL}`);
+  await page.goto(`http://127.0.0.1:${PORT}/__page?auto=/__media/${encodeURIComponent(basename(CHECK))}&seuil=${SEUIL}&modele=${MODELE}`);
   await page.waitForFunction(() => window.__pret, null, { timeout: 180000 });
   const err = await page.evaluate(() => window.__erreur);
   const dets = await page.evaluate(() => window.__resultats?.[0]?.detections ?? []);
   await browser.close();
   server.close();
   if (err) { console.error(`\n  échec : ${err}\n`); process.exit(1); }
-  console.log(`\n  ${basename(CHECK)} — seuil ${SEUIL} — ${dets.length} détection(s)\n`);
+  console.log(`\n  ${basename(CHECK)} — ${MODELS[MODELE].label} (${MODELS[MODELE].inputSize} px) — seuil ${SEUIL} — ${dets.length} détection(s)\n`);
   for (const d of dets) {
     const alt = d.alsoDetectedAs?.length ? ` (aussi ${d.alsoDetectedAs.join(', ')})` : '';
     console.log(`    ${d.label.padEnd(8)} ${d.score.toFixed(3)}  [${d.box.join(', ')}]${alt}`);

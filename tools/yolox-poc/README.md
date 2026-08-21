@@ -16,7 +16,7 @@ annotations : rien ici ne suppose que le modèle connaît la vérité terrain.
 
 | | |
 |---|---|
-| Modèle | **YOLOX-tiny** exporté en ONNX, **Apache 2.0**, ~20 Mo |
+| Modèles | **YOLOX-tiny** (416 px, ~20 Mo) et **YOLOX-s** (640 px, ~35 Mo), ONNX, **Apache 2.0** |
 | Exécution | **ONNX Runtime Web** (WebAssembly), dans ton navigateur |
 | Où vont les images | **nulle part.** Le navigateur les ouvre depuis le disque, l'inférence est locale |
 | Classes | `car`, `truck`, `bus` uniquement — voir plus bas |
@@ -37,6 +37,34 @@ node tools\yolox-poc\serve.mjs           # télécharge le modèle au premier la
 
 Ouvre l'URL affichée, puis sélectionne **les images du corpus et son `corpus.json`** — le manifeste
 donne la zone de chaque image et l'ordre départ → sortie V1, au lieu de l'ordre alphabétique.
+
+### Comparer YOLOX-tiny et YOLOX-s
+
+Le sélecteur **Modèle** relance les mêmes images avec l'autre modèle. Le pré-traitement, le
+décodage, la NMS et les seuils sont rigoureusement identiques — c'est la condition pour que la
+comparaison ait un sens. Seule la taille d'entrée suit le modèle, parce qu'elle lui appartient :
+
+| | entrée | ancres | poids |
+|---|---|---|---|
+| YOLOX-tiny | 416 × 416 | 3 549 | ~20 Mo |
+| YOLOX-s | 640 × 640 | 8 400 | ~35 Mo |
+
+Décoder les 8 400 ancres de `s` avec les grilles de `tiny` ne lèverait aucune erreur : cela
+produirait des boîtes fausses. `assertAnchorCount()` vérifie donc la correspondance avant tout
+décodage, et `tests/yoloxDetect.test.js` couvre les deux sens de l'incompatibilité.
+
+**Ce qui est conservé au changement de modèle** : `carsVisible`, `carsDetectable` et
+`carsOrderCritical` — la vérité terrain appartient à l'image, pas au modèle, et la ré-annoter
+ferait porter les deux passes sur des références différentes.
+**Ce qui repart à zéro** : `missed` et les verdicts par détection, qui dépendent de ce que le
+modèle a trouvé.
+
+Chaque export porte le modèle utilisé et un nom de fichier distinct —
+`rapport-detection-tiny.json`, `rapport-detection-s.json` — pour qu'un rapport n'écrase jamais
+l'autre.
+
+Les modèles sont téléchargés à la demande dans `tools/yolox-poc/modele/` (dossier ignoré par git).
+`--precharger` les récupère tous d'avance.
 
 Pour chaque image : les boîtes et leurs scores, la liste des détections, et tes champs d'annotation.
 
@@ -111,21 +139,22 @@ L'inférence elle-même a été vérifiée **par comparaison avec l'implémentat
 
 | | référence Python | ce portage JS |
 |---|---|---|
-| image déjà en 416×416 | `truck 0.619 [255.1, 55.6, 375.1, 122.0]` | `truck 0.619 [255, 56, 375, 122]` |
+| YOLOX-tiny, image en 416×416 | `truck 0.619 [255.1, 55.6, 375.1, 122.0]` | `truck 0.619 [255, 56, 375, 122]` |
+| YOLOX-s, image en 640×640 | `truck 0.764 [384.3, 82.4, 579.6, 190.7]` | `truck 0.764 [384, 82, 580, 191]` |
 
 **Identique.** Sur une image qui doit être réduite, les scores diffèrent de quelques centièmes : le
 filtre de redimensionnement du canvas n'est pas celui de PIL. L'écart est constant d'un modèle à
 l'autre, donc une comparaison YOLOX-tiny / YOLOX-s sur les mêmes images reste valide.
 
 ```powershell
-node tools\yolox-poc\serve.mjs --check <image.jpg>      # contrôle automatique en Chromium
+node tools\yolox-poc\serve.mjs --check <image.jpg> --modele s    # contrôle automatique en Chromium
 ```
 
 ---
 
 ## Licences
 
-- **YOLOX** (code et poids) : Apache 2.0 — Megvii.
+- **YOLOX** (code et poids `tiny` et `s`) : Apache 2.0 — Megvii.
 - **ONNX Runtime Web** : MIT — Microsoft.
 - Le modèle est téléchargé depuis la page des versions du projet YOLOX, dans
   `tools/yolox-poc/modele/`, dossier ignoré par git.

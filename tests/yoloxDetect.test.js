@@ -14,10 +14,52 @@
 
 import { describe, it, expect } from 'vitest';
 import {
-  INPUT_SIZE, COCO_CLASSES, VEHICLE_CLASSES, VEHICLE_CLASS_IDS,
+  INPUT_SIZE, MODELS, DEFAULT_MODEL, COCO_CLASSES, VEHICLE_CLASSES, VEHICLE_CLASS_IDS,
+  anchorCount, assertAnchorCount,
   letterbox, buildGrids, decodeOutput, iou, mergeVehicleDetections,
   scoreImage, aggregate, verdict,
 } from '../tools/yolox-poc/lib/detect.mjs';
+
+describe('registre des modèles', () => {
+  it('déclare tiny et s, avec des tailles d\'entrée DIFFÉRENTES', () => {
+    // C'est le piège de l'ajout de YOLOX-s : tiny travaille en 416, s en 640.
+    // Réutiliser 416 pour s ne lèverait aucune erreur, cela produirait
+    // simplement des boîtes fausses.
+    expect(Object.keys(MODELS).sort()).toEqual(['s', 'tiny']);
+    expect(MODELS.tiny.inputSize).toBe(416);
+    expect(MODELS.s.inputSize).toBe(640);
+    expect(DEFAULT_MODEL).toBe('tiny');
+    expect(INPUT_SIZE).toBe(MODELS.tiny.inputSize);
+  });
+
+  it('pointe sur des poids ONNX publiés par le projet YOLOX', () => {
+    for (const m of Object.values(MODELS)) {
+      expect(m.file).toMatch(/\.onnx$/);
+      expect(m.url).toMatch(/^https:\/\/github\.com\/Megvii-BaseDetection\/YOLOX\//);
+      expect(m.url.endsWith(m.file)).toBe(true);
+    }
+  });
+});
+
+describe('anchorCount / assertAnchorCount', () => {
+  it('donne le nombre d\'ancres de chaque modèle', () => {
+    expect(anchorCount(416)).toBe(3549);
+    expect(anchorCount(640)).toBe(8400);
+    expect(buildGrids(640).count).toBe(8400);
+  });
+
+  it('refuse une sortie qui ne correspond pas à la taille d\'entrée', () => {
+    // Le cas exact qu'on veut rendre impossible : décoder les 8400 ancres de
+    // YOLOX-s avec les grilles de 416, ou l'inverse.
+    expect(() => assertAnchorCount(3549 * 85, 640)).toThrow(/incompatible/);
+    expect(() => assertAnchorCount(8400 * 85, 416)).toThrow(/incompatible/);
+  });
+
+  it('accepte les couples cohérents', () => {
+    expect(assertAnchorCount(3549 * 85, 416)).toBe(true);
+    expect(assertAnchorCount(8400 * 85, 640)).toBe(true);
+  });
+});
 
 describe('classes retenues', () => {
   it('ne garde que des véhicules', () => {
@@ -92,6 +134,17 @@ describe('decodeOutput', () => {
   it('écarte ce qui est sous le seuil', () => {
     const { data, grids } = raw(0, { cx: 0.5, cy: 0.5, w: 0, h: 0, obj: 0.8, classId: 2, prob: 0.5 });
     expect(decodeOutput(data, grids, 1, { scoreThreshold: 0.5 })).toEqual([]);
+  });
+
+  it('décode à l\'identique en 640, seule la grille change', () => {
+    const grids = buildGrids(640);
+    const data = new Float32Array(grids.count * 85);
+    // Ancre 0 : grille (0,0), pas 8 — comme en 416.
+    data[0] = 0.5; data[1] = 0.5; data[2] = 0; data[3] = 0;
+    data[4] = 0.9; data[5 + 2] = 0.9;
+    const [d] = decodeOutput(data, grids, 1, { scoreThreshold: 0.5 });
+    expect(d.label).toBe('car');
+    expect(d.box.map(v => Math.round(v))).toEqual([0, 0, 8, 8]);
   });
 
   it('ne renvoie que les classes demandées', () => {

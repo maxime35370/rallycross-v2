@@ -39,6 +39,7 @@
     <label>Images du corpus + <code>corpus.json</code> :
       <input type="file" id="pick" accept="image/png,image/jpeg,application/json,.json" multiple>
     </label>
+    <label>Modèle <select id="modele"></select></label>
     <label>Seuil de confiance <input type="number" id="seuil" min="0.05" max="0.9" step="0.05" value="0.30"></label>
     <label>IoU de fusion <input type="number" id="iou" min="0.1" max="0.9" step="0.05" value="0.45"></label>
     <button id="relancer">Relancer</button>
@@ -61,8 +62,8 @@
 <script src="/__ort/ort.min.js"></script>
 <script type="module">
 import {
-  INPUT_SIZE, VEHICLE_CLASS_IDS, letterbox, buildGrids, decodeOutput,
-  mergeVehicleDetections, scoreImage, aggregate, verdict,
+  MODELS, DEFAULT_MODEL, VEHICLE_CLASS_IDS, letterbox, buildGrids, decodeOutput,
+  assertAnchorCount, mergeVehicleDetections, scoreImage, aggregate, verdict,
 } from '/tools/yolox-poc/lib/detect.mjs';
 
 const ort = window.ort;
@@ -70,37 +71,51 @@ ort.env.wasm.wasmPaths = '/__ort/';
 ort.env.wasm.numThreads = 1;
 ort.env.logLevel = 'error';
 
-const GRIDS = buildGrids(INPUT_SIZE);
 const COULEURS = ['#e8000d', '#0a7d28', '#0b57d0', '#b06f00', '#7a1fa2', '#00838f', '#c2185b'];
 
 const etat = document.getElementById('etat');
-let session = null;
+// Un jeu de grilles et une session par modèle : tiny travaille en 416,
+// s en 640. Tout le reste du traitement leur est commun.
+const grilles = new Map();
+const sessions = new Map();
 let corpus = null;                 // corpus.json fourni
 let fichiers = [];                 // { file, nom, zone, image }
 let resultats = [];                // par image : détections + annotation
+let modeleCourant = DEFAULT_MODEL;
+
+const selModele = document.getElementById('modele');
+selModele.innerHTML = Object.values(MODELS)
+  .map(m => `<option value="${m.id}">${m.label} · ${m.inputSize} px</option>`).join('');
+selModele.value = DEFAULT_MODEL;
+
+function grillesDe(size) {
+  if (!grilles.has(size)) grilles.set(size, buildGrids(size));
+  return grilles.get(size);
+}
 
 // ─────────────────────────────────────────────────────────
 // MODÈLE
 // ─────────────────────────────────────────────────────────
 
-async function chargerModele() {
-  if (session) return session;
-  etat.textContent = 'chargement du modèle…';
-  session = await ort.InferenceSession.create('/__modele/yolox_tiny.onnx', {
+async function chargerModele(modele) {
+  if (sessions.has(modele.id)) return sessions.get(modele.id);
+  etat.textContent = `chargement de ${modele.label} (~${modele.approxMo} Mo)…`;
+  const s = await ort.InferenceSession.create(`/__modele/${modele.file}`, {
     executionProviders: ['wasm'],
     graphOptimizationLevel: 'all',
   });
-  return session;
+  sessions.set(modele.id, s);
+  return s;
 }
 
 /** Prépare le tenseur d'entrée : ratio conservé, fond gris 114, BGR 0–255. */
-function preparer(image) {
-  const box = letterbox(image.naturalWidth, image.naturalHeight, INPUT_SIZE);
+function preparer(image, size) {
+  const box = letterbox(image.naturalWidth, image.naturalHeight, size);
   const c = document.createElement('canvas');
-  c.width = INPUT_SIZE; c.height = INPUT_SIZE;
+  c.width = size; c.height = size;
   const ctx = c.getContext('2d', { willReadFrequently: true });
   ctx.fillStyle = 'rgb(114,114,114)';
-  ctx.fillRect(0, 0, INPUT_SIZE, INPUT_SIZE);
+  ctx.fillRect(0, 0, size, size);
   // Sans cette qualité, la réduction d'une image 1080p vers 416 px utilise un
   // filtre grossier : mesuré sur l'image de référence, le score de la même
   // détection passait de 0,77 à 0,69 — assez pour franchir un seuil.
@@ -108,23 +123,26 @@ function preparer(image) {
   ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(image, 0, 0, box.width, box.height);
 
-  const px = ctx.getImageData(0, 0, INPUT_SIZE, INPUT_SIZE).data;
-  const n = INPUT_SIZE * INPUT_SIZE;
+  const px = ctx.getImageData(0, 0, size, size).data;
+  const n = size * size;
   const data = new Float32Array(3 * n);
   for (let i = 0; i < n; i++) {
     data[i] = px[i * 4 + 2];             // B
     data[n + i] = px[i * 4 + 1];         // G
     data[2 * n + i] = px[i * 4];         // R
   }
-  return { tensor: new ort.Tensor('float32', data, [1, 3, INPUT_SIZE, INPUT_SIZE]), ratio: box.ratio };
+  return { tensor: new ort.Tensor('float32', data, [1, 3, size, size]), ratio: box.ratio };
 }
 
-async function detecter(image, seuil, iouThr) {
-  const s = await chargerModele();
-  const { tensor, ratio } = preparer(image);
+async function detecter(image, modele, seuil, iouThr) {
+  const s = await chargerModele(modele);
+  const { tensor, ratio } = preparer(image, modele.inputSize);
   const sortie = await s.run({ images: tensor });
   const brut = sortie[s.outputNames[0]].data;
-  const brutes = decodeOutput(brut, GRIDS, ratio, {
+  // Refuse de décoder une sortie qui ne correspond pas aux grilles : mieux
+  // vaut une erreur franche que des boîtes fausses.
+  assertAnchorCount(brut.length, modele.inputSize);
+  const brutes = decodeOutput(brut, grillesDe(modele.inputSize), ratio, {
     scoreThreshold: seuil,
     classIds: VEHICLE_CLASS_IDS,     // uniquement les classes véhicule
   });
@@ -268,7 +286,8 @@ function majBilan() {
         <td class="num">${g.criticalRecall == null ? '—' : (g.criticalRecall * 100).toFixed(1) + ' %'}</td>
       </tr>
     </table>
-    <p style="margin-top:10px"><strong>Verdict étape 1 (détection) : <span class="${v.code === 'go' ? 'ok' : v.code === 'yolox_s' ? 'ko' : 'warn'}">${v.label}</span></strong></p>
+    <p style="margin-top:10px"><strong>${MODELS[modeleCourant].label} — verdict étape 1 (détection) :
+      <span class="${v.code === 'go' ? 'ok' : v.code === 'yolox_s' ? 'ko' : 'warn'}">${v.label}</span></strong></p>
     <p class="sub">Ce verdict ne porte que sur la détection. Le suivi, l'association voiture ↔ pilote
     et l'ordre au premier virage restent entiers : un bon rappel ici ne garantit pas un ordre juste.</p>`;
 }
@@ -280,25 +299,45 @@ function majBilan() {
 async function lancer() {
   const seuil = Number(document.getElementById('seuil').value);
   const iouThr = Number(document.getElementById('iou').value);
+  modeleCourant = selModele.value;
+  const modele = MODELS[modeleCourant];
   document.getElementById('avertSeuil').innerHTML = seuil < 0.25
     ? `<div class="avert">Seuil de ${seuil.toFixed(2)} : sous 0,25 on gagne du rappel en fabriquant des faux positifs. Le chiffre obtenu ne serait pas comparable.</div>`
     : '';
 
+  // La vérité terrain appartient à l'IMAGE, pas au modèle : on la conserve
+  // d'un modèle à l'autre, sinon comparer tiny et s obligerait à tout
+  // ré-annoter et les deux passes ne porteraient plus sur la même référence.
+  // En revanche `missed` et les verdicts par détection dépendent de ce que le
+  // modèle a trouvé : ils repartent à zéro.
+  const verite = new Map(resultats.map(r => [r.nom, {
+    carsVisible: r.ann.carsVisible,
+    carsDetectable: r.ann.carsDetectable,
+    carsOrderCritical: r.ann.carsOrderCritical,
+  }]));
+
   resultats = [];
   for (const [index, f] of fichiers.entries()) {
-    etat.textContent = `analyse ${index + 1}/${fichiers.length}…`;
-    const detections = await detecter(f.image, seuil, iouThr);
+    etat.textContent = `${modele.label} — analyse ${index + 1}/${fichiers.length}…`;
+    const detections = await detecter(f.image, modele, seuil, iouThr);
+    const connu = verite.get(f.nom) || {};
     resultats.push({
       index, nom: f.nom, zone: f.zone, image: f.image, detections,
-      ann: { carsVisible: null, carsDetectable: null, carsOrderCritical: null, missed: 0, missedOrderCritical: 0 },
+      ann: {
+        carsVisible: connu.carsVisible ?? null,
+        carsDetectable: connu.carsDetectable ?? null,
+        carsOrderCritical: connu.carsOrderCritical ?? null,
+        missed: 0, missedOrderCritical: 0,
+      },
     });
   }
-  etat.textContent = `${fichiers.length} image(s) · seuil ${seuil} · IoU ${iouThr}`;
+  etat.textContent = `${modele.label} (${modele.inputSize} px) · ${fichiers.length} image(s) · seuil ${seuil} · IoU ${iouThr}`;
   rendre();
   window.__resultats = resultats.map(r => ({
     nom: r.nom, zone: r.zone,
     detections: r.detections.map(d => ({ label: d.label, score: d.score, box: d.box.map(v => Math.round(v)), alsoDetectedAs: d.alsoDetectedAs })),
   }));
+  window.__modele = modele.id;
 }
 
 document.getElementById('pick').addEventListener('change', async (e) => {
@@ -330,6 +369,7 @@ document.getElementById('pick').addEventListener('change', async (e) => {
 });
 
 document.getElementById('relancer').addEventListener('click', () => fichiers.length && lancer());
+selModele.addEventListener('change', () => fichiers.length && lancer());
 
 document.addEventListener('click', (e) => {
   const v = e.target.dataset?.verdict;
@@ -365,9 +405,17 @@ document.addEventListener('input', (e) => {
 
 document.getElementById('exporter').addEventListener('click', () => {
   const annotees = resultats.map(compter);
+  const modele = MODELS[modeleCourant];
   const rapport = {
     schema: 'rx-detection/1',
-    modele: 'YOLOX-tiny ONNX (Apache 2.0)',
+    // Objet, et non chaîne : deux rapports doivent se comparer sans ambiguïté.
+    modele: {
+      id: modele.id,
+      label: modele.label,
+      file: modele.file,
+      inputSize: modele.inputSize,
+      licence: 'Apache 2.0',
+    },
     seuilConfiance: Number(document.getElementById('seuil').value),
     iouFusion: Number(document.getElementById('iou').value),
     classes: 'car, truck, bus — NMS commune à ces trois classes',
@@ -390,7 +438,8 @@ document.getElementById('exporter').addEventListener('click', () => {
     createdAt: new Date().toISOString(),
   };
   const a = document.createElement('a');
-  a.download = 'rapport-detection.json';
+  // Nom distinct par modèle : le rapport tiny ne doit jamais être écrasé.
+  a.download = `rapport-detection-${modele.id}.json`;
   a.href = URL.createObjectURL(new Blob([JSON.stringify(rapport, null, 2)], { type: 'application/json' }));
   a.click();
   window.__rapport = rapport;
@@ -406,6 +455,7 @@ if (auto) {
     fichiers = [{ nom: auto.split('/').pop(), zone: null, image }];
     const p = new URLSearchParams(location.search);
     if (p.get('seuil')) document.getElementById('seuil').value = p.get('seuil');
+    if (p.get('modele') && MODELS[p.get('modele')]) selModele.value = p.get('modele');
     await lancer();
     window.__pret = true;
   })().catch(e => { window.__erreur = e.message; window.__pret = true; });
