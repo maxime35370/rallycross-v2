@@ -738,7 +738,13 @@ function applySourceForCurrent() {
     return;
   }
   _loadedKey = key;
-  if (wantsFile) player.loadFile(sharedFile, at);
+  // Cadence annoncée au lecteur plutôt que devinée — mais UNIQUEMENT si elle a
+  // été établie sur CE fichier : un autre enregistrement peut avoir une autre
+  // cadence, et l'annoncer à tort désactiverait la mesure sans rien signaler.
+  const knownFps = sharedFile && current.video.fileName === sharedFile.name
+    ? current.video.fps
+    : null;
+  if (wantsFile) player.loadFile(sharedFile, at, { fps: knownFps });
   else player.loadYoutube(resolved.youtubeId, at);
 }
 

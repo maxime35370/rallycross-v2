@@ -142,6 +142,24 @@ export function estimateFps(deltas = []) {
   return bestGap <= 0.05 ? best : Math.round(raw * 1000) / 1000;
 }
 
+/**
+ * Valide une cadence ANNONCÉE, par opposition à `estimateFps()` qui en mesure
+ * une. Elle vient de `ffprobe` (champ `fps` du sidecar `rx-extract/1`), donc
+ * d'une source exacte : on ne la recale sur aucune valeur standard, on se
+ * contente de la refuser si elle est absurde.
+ *
+ * Arrondie à 3 décimales pour rester lisible à l'affichage et donner le même
+ * nombre que `estimateFps()` sur les cadences NTSC (30000/1001 → 29.97).
+ *
+ * @param {number|string|null} value
+ * @returns {number|null} cadence utilisable, ou null
+ */
+export function normalizeFps(value) {
+  const f = Number(value);
+  if (!Number.isFinite(f) || f <= 0 || f > 1000) return null;
+  return Number(f.toFixed(3));
+}
+
 /** Durée d'une image, en secondes. */
 export function frameDuration(fps) {
   const f = Number(fps);

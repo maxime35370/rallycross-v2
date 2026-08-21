@@ -15,7 +15,7 @@
 
 import {
   computeVideoRect, projectBox, sanitizeBoxes, boxLabelText, BOX_STATUS_COLORS,
-  clampTime, stepTime, estimateFps, frameDuration, DEFAULT_FPS, ratesFor,
+  clampTime, stepTime, estimateFps, normalizeFps, frameDuration, DEFAULT_FPS, ratesFor,
 } from './videoPlayerCalc.js';
 
 const YT_API_SRC = 'https://www.youtube.com/iframe_api';
@@ -74,7 +74,8 @@ export function createVideoPlayer(container, opts = {}) {
     objectUrl: null,
     fileName: null,
     duration: 0,
-    fps: null,              // mesurée pour un fichier local, inconnue sur YouTube
+    fps: null,              // annoncée ou mesurée pour un fichier local, inconnue sur YouTube
+    fpsSource: null,        // 'declared' | 'measured' | null
     fpsSamples: [],
     lastFrameTime: null,
     rate: 1,
@@ -201,6 +202,7 @@ export function createVideoPlayer(container, opts = {}) {
     state.video = null;
     state.kind = null;
     state.fps = null;
+    state.fpsSource = null;
     state.fpsSamples = [];
     state.lastFrameTime = null;
     state.duration = 0;
@@ -262,15 +264,28 @@ export function createVideoPlayer(container, opts = {}) {
   /**
    * Charge un fichier local. Le fichier reste sur la machine : on n'utilise
    * qu'une URL d'objet en mémoire, jamais de téléversement.
+   *
+   * `options.fps` permet d'ANNONCER la cadence au lieu de la laisser deviner.
+   * C'est ce que fournit le sidecar `rx-extract/1` de tools/extract-manche/,
+   * mesuré par ffprobe. Sans elle, la cadence est mesurée via
+   * `requestVideoFrameCallback` — que Firefox n'implémente pas, auquel cas le
+   * pas retombe silencieusement sur DEFAULT_FPS : deux images d'écart par clic
+   * sur une vidéo à 50 img/s.
+   *
    * @param {File} file
    * @param {number} [startAt]
+   * @param {{fps?:number}} [options]
    */
-  function loadFile(file, startAt = 0) {
+  function loadFile(file, startAt = 0, options = {}) {
     clearSource();
     if (!file) return;
     state.kind = 'file';
     state.fileName = file.name;
     empty.style.display = 'none';
+
+    // Une cadence annoncée est exacte : elle prime sur toute mesure ultérieure.
+    const declaredFps = normalizeFps(options?.fps);
+    if (declaredFps) { state.fps = declaredFps; state.fpsSource = 'declared'; }
 
     const url = URL.createObjectURL(file);
     state.objectUrl = url;
@@ -292,7 +307,8 @@ export function createVideoPlayer(container, opts = {}) {
       if (startAt > 0) video.currentTime = clampTime(startAt, state.duration);
       resizeCanvas();
       opts.onReady?.({
-        kind: 'file', duration: state.duration, fps: state.fps, fileName: file.name,
+        kind: 'file', duration: state.duration, fps: state.fps,
+        fpsSource: state.fpsSource, fileName: file.name,
       });
     });
     video.addEventListener('timeupdate', () => opts.onTime?.(video.currentTime));
@@ -303,8 +319,9 @@ export function createVideoPlayer(container, opts = {}) {
       opts.onError?.('Format vidéo non lisible par le navigateur');
     });
 
-    // Mesure de la cadence : indispensable pour un vrai « image par image ».
-    if (typeof video.requestVideoFrameCallback === 'function') {
+    // Mesure de la cadence : indispensable pour un vrai « image par image »,
+    // mais inutile quand elle a déjà été annoncée.
+    if (!declaredFps && typeof video.requestVideoFrameCallback === 'function') {
       const onFrame = (_now, meta) => {
         if (state.destroyed || state.video !== video) return;
         if (state.lastFrameTime != null) {
@@ -314,9 +331,13 @@ export function createVideoPlayer(container, opts = {}) {
             if (state.fpsSamples.length > 40) state.fpsSamples.shift();
             if (state.fpsSamples.length >= 8 && state.fps == null) {
               state.fps = estimateFps(state.fpsSamples);
-              if (state.fps) opts.onReady?.({
-                kind: 'file', duration: state.duration, fps: state.fps, fileName: file.name,
-              });
+              if (state.fps) {
+                state.fpsSource = 'measured';
+                opts.onReady?.({
+                  kind: 'file', duration: state.duration, fps: state.fps,
+                  fpsSource: 'measured', fileName: file.name,
+                });
+              }
             }
           }
         }
@@ -430,6 +451,8 @@ export function createVideoPlayer(container, opts = {}) {
     get kind()     { return state.kind; },
     get duration() { return state.duration; },
     get fps()      { return state.fps; },
+    /** 'declared' (sidecar ffprobe), 'measured' (rVFC) ou null. */
+    get fpsSource() { return state.fpsSource; },
     get rate()     { return state.rate; },
     get fileName() { return state.fileName; },
     get frameStep() { return frameDuration(state.fps || DEFAULT_FPS); },

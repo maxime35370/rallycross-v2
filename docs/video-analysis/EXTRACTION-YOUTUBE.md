@@ -13,11 +13,13 @@
 >   cette analyse, ou dans le code de `js/videoPlayer.js` / `js/videoPlayerCalc.js` du dépôt ;
 > - 📐 **estimé** — calcul ou comportement documenté, **non mesuré**.
 >
-> **Limite honnête de cette analyse : l'extraction n'a pas pu être exécutée.** L'environnement
-> d'analyse n'a pas d'accès sortant vers YouTube (la politique réseau répond `403` au `CONNECT`
-> vers `www.youtube.com:443`) et n'a pas `ffmpeg`. Les mécanismes ont donc été vérifiés **dans le
-> code de yt-dlp**, pas sur la vidéo Kerlabo. Le §12 décrit le POC de 30 minutes qui transforme
-> chaque 📐 en mesure, sur ta machine.
+> **Limite honnête de cette analyse : l'extraction n'a pas pu être exécutée sur YouTube.**
+> L'environnement d'analyse n'a pas d'accès sortant vers YouTube (la politique réseau répond `403`
+> au `CONNECT` vers `www.youtube.com:443`). Les mécanismes ont donc été vérifiés **dans le code de
+> yt-dlp**, puis **mesurés hors YouTube** — sur un fichier de contrôle servi en HTTP `Range` depuis
+> la machine, avec exactement les arguments que yt-dlp construit (§2.4). Ce qui reste non vérifié,
+> c'est le comportement des formats servis par `googlevideo.com`. Le §12 décrit le POC de
+> 30 minutes qui le tranche, sur ta machine.
 
 ---
 
@@ -27,8 +29,8 @@
 |---|---|
 | 1. yt-dlp + FFmpeg convient-il ? | **Oui.** C'est l'outil exact pour ce besoin, sans détournement |
 | 2. Peut-on ne récupérer que la plage utile ? | **Oui** ✅ — `--download-sections` bascule sur le téléchargeur ffmpeg, qui pose `-ss`/`-t` **avant** `-i` (seek HTTP par plages d'octets) |
-| 3. Précision réellement obtenue | **À l'image près** avec `--force-keyframes-at-cuts` ; **jusqu'à ~1 GOP d'avance (2–10 s)** sans lui |
-| 4. Quantité téléchargée | 📐 **~25–60 Mo** pour 50 s en 1080p, contre **~10–15 Go** pour les 6 h — soit **~0,3 %** |
+| 3. Précision réellement obtenue | **À l'image** avec `--force-keyframes-at-cuts` — ✅ mesuré : 2650 images pour 53 s à 50 img/s, `start_time = 0`, **aucune image de pré-roll**. Sans lui : 100 images de pré-roll à timestamps négatifs, masquées par une edit list (§2.2) |
+| 4. Quantité téléchargée | ✅ mesuré hors YouTube : **25,8 Mo sur 124 Mo** pour 53 s sur 400 s, en 2 requêtes `Range`. Transposé à une VOD de 6 h : 📐 **~0,3 %** |
 | 5. Meilleure architecture | **Option A — script local**, avec passerelle *File System Access* en option A+. **Option B écartée** (Private Network Access), **Option C écartée** (déjà tranché en rév. 6) |
 | 6. Compatibilité `videoPlayer.js` | **Totale** via `loadFile()`, à condition d'imposer **MP4 / H.264 / AAC / yuv420p / CFR / start_time = 0** |
 | 7. Lien avec YOLOX | **Direct** : l'extrait est exactement l'entrée que `AUTOMATION-ARCHITECTURE.md` attend, et il fait *baisser* le coût d'analyse |
@@ -153,22 +155,61 @@ Une retransmission YouTube est encodée avec un **GOP** (intervalle entre images
 ne peut commencer qu'à une image-clé : le fichier obtenu démarre donc **jusqu'à un GOP avant**
 l'instant demandé.
 
-Pire pour l'analyse : **cet écart n'est pas connu**. Le muxer MP4 réécrit les timestamps de sortie
-à partir de 0, donc rien dans le fichier ne dit « je commence en réalité 3,84 s trop tôt ». On perd
-l'origine (point 2 ci-dessus). C'est rédhibitoire pour reporter un timecode dans Firestore.
+**Correction de la révision 1 de ce document.** J'y écrivais que « cet écart n'est pas connu » et
+que l'origine était perdue. ✅ **C'est faux, et c'est maintenant mesuré** (§2.5) : ffmpeg conserve
+les images de pré-roll avec des **timestamps négatifs** (−2,000 s à −0,020 s dans l'essai) et un
+drapeau *discard*, et une **edit list** MP4 fait démarrer la présentation exactement à l'instant
+demandé. `ffprobe` annonce alors `start_time = 0` et la bonne durée.
+
+Le risque réel n'est donc pas la perte de l'origine, mais un **déplacement du risque vers le
+lecteur** : les images en trop sont physiquement dans le fichier, et un lecteur qui ignore l'edit
+list ou les drapeaux *discard* les affiche — toute la chronologie glisse alors d'un GOP, sans que
+rien ne le signale. C'est le pire mode de défaillance : silencieux.
 
 ### 2.3 Les deux stratégies, et celle qu'on retient
 
-| Stratégie | Commande | Précision borne | Origine connue | Coût CPU | Qualité image |
-|---|---|---|---|---|---|
-| **Rapide** | `--download-sections` seul | ❌ ± 1 GOP (2–10 s) | ❌ perdue | nul | intacte (copie) |
-| **Précise** ✅ **retenue** | `+ --force-keyframes-at-cuts` | ✅ à l'image | ✅ `t=0` ≡ `T0` | 📐 5–20 s | réencodage CRF 18 ≈ visuellement transparent |
-| Deux passes maison | plage large en copie, puis recoupe locale | ✅ à l'image | ⚠️ nécessite de sonder le PTS du premier paquet | 2 × | idem |
+Mesuré sur un fichier de contrôle de 400 s à 50 img/s avec un GOP de 5 s, coupe demandée à 27,000 s
+(entre deux images-clés) :
 
-**Recommandation : la stratégie précise.** Le réencodage porte sur **50 secondes**, pas sur 6 heures.
-La troisième voie n'apporte rien de plus et ajoute une étape fragile.
+| Stratégie | Commande | Paquets écrits | Présentation | Origine | Coût CPU | Qualité |
+|---|---|---|---|---|---|---|
+| **Rapide** | `--download-sections` seul | ✅ mesuré **2750** (100 de pré-roll) | 53,000 s, `start_time = 0` | ⚠️ portée par l'edit list | ✅ **~0 s** | intacte (copie) |
+| **Précise** ✅ **retenue** | `+ --force-keyframes-at-cuts` | ✅ mesuré **2650** = 53 s × 50 exactement | 53,000 s, `start_time = 0` | ✅ dans le fichier lui-même | ✅ mesuré **5,4 s** | réencodage CRF 18 |
+| Deux passes maison | plage large en copie, puis recoupe locale | — | — | ✅ | 2 × | idem |
 
-### 2.4 Et la marge « départ − 3 s → fin + 3 s » ?
+**Recommandation inchangée, pour une meilleure raison : la stratégie précise.** Non plus parce que
+la copie perdrait l'origine — elle ne la perd pas — mais parce qu'elle produit un fichier **sans
+aucune image de pré-roll et sans timestamp négatif** : sa justesse ne dépend d'aucune interprétation
+d'edit list par le navigateur. Le réencodage porte sur 53 secondes, pas sur 6 heures.
+
+Le mode rapide reste disponible (`--mode fast`) et redevient intéressant si le POC montre que Chrome
+respecte correctement l'edit list : il est ~10× plus rapide et sans perte. L'outil **compte les
+images de pré-roll et le signale** au lieu de laisser deviner.
+
+### 2.4 Ce qui a pu être mesuré sans YouTube ✅
+
+L'accès à YouTube reste bloqué dans l'environnement d'analyse, mais le mécanisme a pu être vérifié
+de bout en bout **hors YouTube**, en servant un fichier de 400 s (124 Mo) depuis un serveur HTTP
+local gérant les requêtes `Range`, et en pointant ffmpeg dessus avec exactement les arguments que
+construit `FFmpegFD` :
+
+| Mesure | Résultat |
+|---|---|
+| Requêtes HTTP émises | **2** : `bytes=0-` (3,38 Mo, en-tête et index) puis `bytes=8400703-` (21,13 Mo) |
+| Octets réellement transférés | **25,8 Mo sur 124 Mo**, pour une fenêtre de 53 s sur 400 s |
+| Seek | ✅ ffmpeg saute directement à l'octet correspondant : **le début du fichier n'est pas parcouru** |
+| Durée | 5,4 s, réencodage compris |
+| Sortie | h264 / yuv420p / 50 img/s CFR / `start_time = 0` / 2650 images |
+
+Le surcoût fixe est la lecture d'en-tête (3,4 Mo ici). Sur une VOD de 6 h, la fenêtre utile pèse le
+même ordre de grandeur qu'ici en valeur absolue, mais rapportée à ~12 Go elle représente **~0,3 %**.
+
+⚠️ Ce que cet essai **ne prouve pas** : que les formats servis par `googlevideo.com` se comportent
+pareil. Le code de yt-dlp indique que `FFmpegFD` accepte les protocoles `http`, `https` et
+`http_dash_segments` — ceux qu'utilise YouTube — mais **pas** `file`, ce qui a été constaté en
+essayant (« This format cannot be partially downloaded »). Seul le POC du §12 tranche.
+
+### 2.5 Et la marge « départ − 3 s → fin + 3 s » ?
 
 Elle reste **fortement recommandée**, mais pour une autre raison que celle imaginée. Elle ne sert
 plus à compenser l'imprécision de la coupe (résolue au §2.3) : elle sert à **absorber l'imprécision
@@ -492,6 +533,10 @@ voir §10.
 | **Outil A** | `tools/extract-manche/extract.mjs` : recette → commande → `.mp4` + `.json` + contrôle `ffprobe`. Sans dépendance npm, comme les autres `tools/*.mjs` | **~1/2 journée** |
 | **A+ côté V2** | panneau « Extraire la manche » qui compose la recette + dossier `Extraits/` reconnu | **~1 journée** |
 | **fps explicite** dans le lecteur | `loadFile(file, startAt, { fps })` + tests | **~1 h** |
+
+> ✅ **Réalisé depuis** : l'outil A existe — `tools/extract-manche/` (script, lanceur Windows,
+> sidecar `rx-extract/1`, contrôle ffprobe, plan du corpus), couvert par `tests/extractManche.test.js`.
+> Le correctif `loadFile(file, startAt, { fps })` du §5.3 est également en place.
 
 Aucune de ces étapes ne touche à l'existant : ce sont des ajouts, conformément au pattern en 6
 points d'insertion décrit dans `ARCHITECTURE.md` §1.2.

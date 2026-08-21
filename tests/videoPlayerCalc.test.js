@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   parseVideoSource, resolveStartTime, youtubeIdOfMeetingVideo,
-  estimateFps, frameDuration, clampTime, stepTime, frameOf,
+  estimateFps, normalizeFps, frameDuration, clampTime, stepTime, frameOf,
   formatPreciseTime, parsePreciseTime,
   YOUTUBE_RATES, LOCAL_RATES, ratesFor, nextRate,
   computeVideoRect, projectBox, normalizeBox, sanitizeBoxes, boxLabelText,
@@ -114,6 +114,29 @@ describe('estimateFps', () => {
     const fps = estimateFps([0.125, 0.125, 0.125, 0.125]);
     expect(fps).toBeCloseTo(8, 3);
     expect(COMMON_FPS).not.toContain(fps);
+  });
+});
+
+describe('normalizeFps — cadence ANNONCÉE (sidecar ffprobe)', () => {
+  it('accepte une cadence plausible et l\'arrondit à 3 décimales', () => {
+    expect(normalizeFps(50)).toBe(50);
+    expect(normalizeFps('25')).toBe(25);
+    expect(normalizeFps(30000 / 1001)).toBe(29.97);   // même valeur qu'estimateFps
+    expect(normalizeFps(23.976023976)).toBe(23.976);
+  });
+
+  it('refuse ce qui n\'est pas une cadence — jamais de valeur par défaut', () => {
+    // Renvoyer DEFAULT_FPS ici recréerait exactement le repli silencieux que
+    // cette fonction existe pour supprimer.
+    for (const bad of [0, -25, null, undefined, '', 'cinquante', NaN, Infinity, 5000]) {
+      expect(normalizeFps(bad)).toBeNull();
+    }
+  });
+
+  it('ne recale sur aucune valeur standard, contrairement à estimateFps', () => {
+    // Elle vient de ffprobe : elle est exacte, il n'y a rien à corriger.
+    expect(normalizeFps(48)).toBe(48);
+    expect(normalizeFps(19.5)).toBe(19.5);
   });
 });
 

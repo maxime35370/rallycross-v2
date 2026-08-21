@@ -14,3 +14,20 @@ js/__base*.js
 
 # Captures de contrôle produites par tools/smoke/captureStrategie.mjs
 tools/smoke/shots/
+
+# Extraits vidéo et corpus d'images produits par tools/extract-manche/.
+# Le dépôt est PUBLIC : aucune image de retransmission ne doit y entrer
+# (docs/video-analysis/EXTRACTION-YOUTUBE.md §7.3 et §13.5). Seuls le sidecar
+# JSON recopié ailleurs et les résultats chiffrés sont versionnables.
+tools/extract-manche/extraits/
+docs/video-analysis/corpus/
+**/corpus/*.png
+**/corpus/*.jpg
+**/corpus/*.jpeg
+
+# Conteneurs vidéo et fichiers temporaires de yt-dlp / FFmpeg
+*.webm
+*.mov
+*.m4a
+*.part
+*.ytdl
