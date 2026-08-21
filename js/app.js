@@ -22,6 +22,7 @@ const VIEW_TITLES = {
   config:        'Configuration',
   settings:      'Reglages Championnats',
   audit:         'Journal d\'audit',
+  access:        '🔑 Accès team',
 };
 
 // ── État courant ───────────────────────────────
@@ -363,6 +364,7 @@ async function loadApp() {
   const { initProjection }     = await import('./projectionStats.js');
   const { initSettings } = await import('./settings.js');
   const { initAudit }    = await import('./audit.js');
+  const { initAccessAdmin } = await import('./access/accessAdmin.js');
   // Enregistrement des modules de vue. Chaque init est isolé : si l'un échoue
   // (ex. génération du QR d'accueil), il ne doit PAS empêcher la ré-émission
   // finale du 'viewchange' — sinon un accès direct par lien (#spectator…) resterait
@@ -379,6 +381,7 @@ async function loadApp() {
   safeInit(initProjection, 'projection');
   safeInit(initSettings, 'settings');
   safeInit(initAudit, 'audit');
+  safeInit(initAccessAdmin, 'accessAdmin');
   safeInit(initHomeQr, 'homeQr');   // QR d'accueil (isolé : ne doit pas bloquer la vue courante)
 
   // La vue initiale (showView au démarrage — ex. deep-link #spectator via QR /

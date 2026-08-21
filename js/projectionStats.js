@@ -43,6 +43,12 @@ import {
 import { computeTargetResult, marginalGains, classifyStrategy } from './projection/strategyTargetCalculator.js';
 import { runBacktest, LEAKAGE_MODES } from './projection/qualificationBacktest.js';
 import { MESSAGES, MIN_CASES_TO_SHOW_RATE, SIMULATION, STRATEGY } from './projection/projectionConfig.js';
+import { isAdmin, isRealUser, isVerifiedUser } from './auth.js';
+import { getAccessState, loadPersonByDriver } from './access/licenses.js';
+import {
+  allowedDriverIds, canAnalyseDriver, denialMessage, accessSummary,
+  viewerState, VIEWER,
+} from './access/licenseCalc.js';
 
 // ─────────────────────────────────────────────────────────
 // ÉTAT
@@ -82,6 +88,142 @@ let whatIfState = { key: null, running: false, progress: 0, data: null, raceNum:
 let matrixState = { key: null, running: false, progress: 0, data: null };
 let objectiveState = { key: null, running: false, data: null };
 let backtestState = { running: false, progress: 0, data: null, checkpoint: 3, leakageMode: LEAKAGE_MODES[0] };
+
+// ─────────────────────────────────────────────────────────
+// ACCÈS COMMERCIAL
+//
+// Le moteur n'est PAS touché : il continue de charger tout le plateau et
+// d'utiliser tous les pilotes comme adversaires dans les simulations. Seul
+// le PILOTE ANALYSÉ est restreint — c'est-à-dire le sélecteur, et lui seul.
+//
+// Et il faut le dire clairement : tant que js/projection/* est servi au
+// navigateur, ce filtre est un confort d'interface, pas une barrière. La
+// protection réelle est dans les règles Firestore, qui empêchent quiconque
+// de se fabriquer une licence. Voir docs/monetisation/PLAN-A0-ET-POC-VIDEO.md §1.6.
+// ─────────────────────────────────────────────────────────
+
+/** driverId → personId, chargé une fois depuis la collection publique `drivers`. */
+let _personByDriver = new Map();
+
+async function ensurePersonMap() {
+  if (_personByDriver.size) return;
+  try { _personByDriver = await loadPersonByDriver(); }
+  catch (e) { console.error('[projection] carte pilote', e); }
+}
+
+/**
+ * Construit le verrou pour un contexte meeting × catégorie.
+ *
+ * @returns {{admin, ready, allowed:Set<string>, licenses, meeting, needsLogin, needsVerify}}
+ */
+function buildGate(ctx, standings = []) {
+  const access = getAccessState();
+  const admin = isAdmin();
+  const meeting = {
+    id: ctx?.meetingId,
+    championshipId: ctx?.meeting?.championshipId ?? null,
+    year: ctx?.meeting?.year,
+  };
+  // On ne présente au filtre QUE les inscriptions réellement au départ de
+  // ce meeting : une même fiche pilote peut porter une inscription dans un
+  // autre championnat, qui n'a rien à faire ici.
+  const driverIds = standings.map(d => d.driverId);
+  const allowed = allowedDriverIds({
+    licenses: access.licenses, personByDriver: _personByDriver,
+    driverIds, meeting, isAdmin: admin,
+  });
+  const viewer = viewerState({
+    isAdmin: admin, isRealUser: isRealUser(), isVerified: isVerifiedUser(),
+    accessReady: access.ready, licenses: access.licenses,
+  });
+  return {
+    admin,
+    viewer,
+    ready: viewer.ready,
+    allowed,
+    licenses: access.licenses,
+    meeting,
+  };
+}
+
+/** Bandeau : ce à quoi ce compte a droit, ici et maintenant. */
+function renderAccessBanner(gate) {
+  if (gate.admin) {
+    return `<div class="acc-banner acc-banner--admin">
+      <span class="acc-banner__icon">🔑</span>
+      <span><strong>Administrateur</strong></span>
+      <span class="acc-banner__scope">accès complet, tous pilotes et tous meetings</span>
+    </div>`;
+  }
+  if (!gate.licenses.length) return '';
+  const resume = accessSummary({ licenses: gate.licenses });
+  if (!resume.length) return '';
+  return `<div class="acc-banner">
+    <span class="acc-banner__icon">🔑</span>
+    <span><strong>Votre accès</strong></span>
+    <span class="acc-banner__scope">${resume.map(r =>
+      `${escHtml(r.personLabel)} — ${escHtml(r.scopeLabel)}`).join(' · ')}</span>
+  </div>`;
+}
+
+/**
+ * Écran affiché quand rien n'est analysable ici.
+ *
+ * Jamais un écran vide : un client qui a bien un accès, mais ailleurs, doit
+ * comprendre en une phrase que ce n'est pas une panne.
+ */
+function renderLocked(gate) {
+  if (gate.viewer.level === VIEWER.anonymous) {
+    return `<div class="acc-locked">
+      <div class="acc-locked__icon">🔒</div>
+      <div class="acc-locked__title">Stratégie Live est réservé aux teams disposant d'un accès</div>
+      <div class="acc-locked__msg">Connectez-vous depuis le menu pour retrouver vos pilotes.</div>
+      <div class="acc-locked__hint">Les classements, le championnat, les statistiques et le mode
+        spectateur restent accessibles sans compte.</div>
+    </div>`;
+  }
+  if (gate.viewer.level === VIEWER.unverified) {
+    return `<div class="acc-locked">
+      <div class="acc-locked__icon">✉️</div>
+      <div class="acc-locked__title">Adresse e-mail à vérifier</div>
+      <div class="acc-locked__msg">Votre accès s'ouvrira dès que votre adresse sera confirmée.
+        Ouvrez le lien reçu par e-mail, puis cliquez <strong>« J'ai vérifié »</strong> dans le menu.</div>
+      <div class="acc-locked__hint">Sans ce clic, la session garde son ancien jeton pendant une heure :
+        l'adresse est bien vérifiée, mais l'application ne le sait pas encore.</div>
+    </div>`;
+  }
+  const reason = gate.licenses.length ? 'wrong_scope' : 'no_license';
+  return `<div class="acc-locked">
+    <div class="acc-locked__icon">🔒</div>
+    <div class="acc-locked__title">Analyse non incluse</div>
+    <div class="acc-locked__msg">${escHtml(denialMessage(reason, { hasAnyLicense: gate.licenses.length > 0 }))}</div>
+    ${gate.licenses.length ? `<div class="acc-locked__hint">Accès en cours :
+      ${accessSummary({ licenses: gate.licenses }).map(r =>
+        `${escHtml(r.personLabel)} — ${escHtml(r.scopeLabel)}`).join(' · ') || '—'}</div>` : ''}
+  </div>`;
+}
+
+/** Message précis quand un pilote choisi sort du périmètre. */
+function renderDriverDenial(gate, driverId) {
+  const d = canAnalyseDriver({
+    licenses: gate.licenses, driverId, personByDriver: _personByDriver,
+    meeting: gate.meeting, isAdmin: gate.admin,
+  });
+  if (d.allowed) return '';
+  return `<div class="acc-locked">
+    <div class="acc-locked__icon">🔒</div>
+    <div class="acc-locked__title">Analyse non incluse</div>
+    <div class="acc-locked__msg">${escHtml(denialMessage(d.reason, { hasAnyLicense: gate.licenses.length > 0 }))}</div>
+  </div>`;
+}
+
+/** Options du sélecteur, restreintes aux inscriptions autorisées. */
+function driverOptions(standings, gate, selectedId) {
+  const list = standings.filter(d => gate.allowed.has(d.driverId));
+  return list.map(d => `<option value="${escHtml(d.driverId)}" ${d.driverId === selectedId ? 'selected' : ''}>
+      P${d.position} · #${escHtml(String(d.carNumber))} ${escHtml(d.lastName || '')} ${escHtml(d.firstName || '')}
+    </option>`).join('');
+}
 
 // ─────────────────────────────────────────────────────────
 // HELPERS DE FORMAT
@@ -301,6 +443,49 @@ function renderStrategy(el) {
   });
   const threshold = thresholdInfo.threshold;
   const support = checkRegulationSupport(ctx.regulation);
+
+  // ── Verrou commercial ────────────────────────────────────────────────
+  const gate = buildGate(ctx, state.standings);
+  if (!gate.ready) {
+    el.innerHTML = `<div class="loading-state"><div class="spinner"></div> Vérification de votre accès…</div>`;
+    return;
+  }
+  // Un pilote sélectionné puis devenu hors périmètre — changement de
+  // meeting, ou licence révoquée pendant la session — ne doit pas rester
+  // affiché : on le libère et on explique.
+  if (situation.driverId && !gate.allowed.has(situation.driverId)) {
+    situation.driverId = '';
+    objectiveState = { key: null, running: false, data: null };
+  }
+
+  // Rien d'analysable ICI — mais le sélecteur de meeting RESTE affiché.
+  //
+  // Le masquer serait un piège : un team qui a acheté Lohéac FFSA et dont
+  // l'écran s'ouvre sur Lohéac Euro RX verrait « analyse non incluse » sans
+  // aucun moyen d'atteindre le meeting qu'il a payé. Il conclurait que le
+  // produit ne marche pas. Seuls le sélecteur de PILOTE et l'analyse sont
+  // verrouillés ; la navigation entre meetings ne l'est jamais.
+  if (!gate.allowed.size) {
+    el.innerHTML = `
+      ${renderAccessBanner(gate)}
+      <div class="toolbar" style="flex-wrap:wrap;gap:var(--sp-sm)">
+        <select class="toolbar-select" id="prj-meeting" style="flex:1;min-width:220px">
+          ${candidates.map(c => `<option value="${escHtml(c.key)}" ${c.key === ctx.key ? 'selected' : ''}>
+            ${escHtml(c.meeting?.date || '')} · ${escHtml(c.meeting?.location || c.meetingId)} · ${escHtml(c.category)}
+          </option>`).join('')}
+        </select>
+      </div>
+      ${renderLocked(gate)}`;
+    document.getElementById('prj-meeting')?.addEventListener('change', e => {
+      situation.meetingKey = e.target.value;
+      situation.checkpoint = null;
+      situation.driverId = '';
+      objectiveState = { key: null, running: false, data: null };
+      renderContent();
+    });
+    return;
+  }
+
   const driver = state.standings.find(d => d.driverId === situation.driverId) || null;
 
   // Manche concernée : celle en cours, sinon la prochaine. Le même écran sert
@@ -309,6 +494,7 @@ function renderStrategy(el) {
   const race = raceNum != null ? ctx.races.find(r => r.num === raceNum) : null;
 
   el.innerHTML = `
+    ${renderAccessBanner(gate)}
     <div class="toolbar" style="flex-wrap:wrap;gap:var(--sp-sm)">
       <select class="toolbar-select" id="prj-meeting" style="flex:1;min-width:220px">
         ${candidates.map(c => `<option value="${escHtml(c.key)}" ${c.key === ctx.key ? 'selected' : ''}>
@@ -317,9 +503,7 @@ function renderStrategy(el) {
       </select>
       <select class="toolbar-select" id="prj-driver" style="flex:1;min-width:220px">
         <option value="">— Choisir un pilote —</option>
-        ${state.standings.map(d => `<option value="${escHtml(d.driverId)}" ${d.driverId === situation.driverId ? 'selected' : ''}>
-          P${d.position} · #${escHtml(String(d.carNumber))} ${escHtml(d.lastName || '')} ${escHtml(d.firstName || '')}
-        </option>`).join('')}
+        ${driverOptions(state.standings, gate, situation.driverId)}
       </select>
     </div>
     ${!support.supported ? warn(`${escHtml(MESSAGES.unsupportedRegulation)} — ${escHtml(support.reasons.join(' '))}`, true) : ''}
@@ -605,9 +789,43 @@ function renderSituation(el) {
   const support = checkRegulationSupport(ctx.regulation);
   const trivial = isTrivialQualification(ctx.engagedCount, threshold);
 
+  // Même verrou que l'écran opérationnel : l'onglet d'analyse détaillée
+  // donne accès aux mêmes probabilités, il ne peut pas être plus permissif.
+  const gate = buildGate(ctx, state.standings);
+  if (!gate.ready) {
+    el.innerHTML = `<div class="loading-state"><div class="spinner"></div> Vérification de votre accès…</div>`;
+    return;
+  }
+  if (situation.driverId && !gate.allowed.has(situation.driverId)) {
+    situation.driverId = '';
+    objectiveState = { key: null, running: false, data: null };
+  }
+  // Même principe que l'écran opérationnel : le sélecteur de meeting reste
+  // accessible pour que le team puisse rejoindre son périmètre.
+  if (!gate.allowed.size) {
+    el.innerHTML = `
+      ${renderAccessBanner(gate)}
+      <div class="toolbar" style="flex-wrap:wrap;gap:var(--sp-sm)">
+        <select class="toolbar-select" id="prj-meeting" style="flex:1;min-width:220px">
+          ${candidates.map(c => `<option value="${escHtml(c.key)}" ${c.key === ctx.key ? 'selected' : ''}>
+            ${escHtml(c.meeting?.date || '')} · ${escHtml(c.meeting?.location || c.meetingId)} · ${escHtml(c.category)}
+          </option>`).join('')}
+        </select>
+      </div>
+      ${renderLocked(gate)}`;
+    document.getElementById('prj-meeting')?.addEventListener('change', e => {
+      situation.meetingKey = e.target.value;
+      situation.checkpoint = null;
+      situation.driverId = '';
+      renderContent();
+    });
+    return;
+  }
+
   const driver = state.standings.find(d => d.driverId === situation.driverId) || null;
 
   el.innerHTML = `
+    ${renderAccessBanner(gate)}
     <div class="toolbar" style="flex-wrap:wrap;gap:var(--sp-sm)">
       <select class="toolbar-select" id="prj-meeting" style="flex:1;min-width:220px">
         ${candidates.map(c => `<option value="${escHtml(c.key)}" ${c.key === ctx.key ? 'selected' : ''}>
@@ -621,9 +839,7 @@ function renderSituation(el) {
       </select>
       <select class="toolbar-select" id="prj-driver" style="flex:1;min-width:200px">
         <option value="">— Choisir un pilote —</option>
-        ${state.standings.map(d => `<option value="${escHtml(d.driverId)}" ${d.driverId === situation.driverId ? 'selected' : ''}>
-          P${d.position} · #${escHtml(String(d.carNumber))} ${escHtml(d.lastName || '')} ${escHtml(d.firstName || '')}
-        </option>`).join('')}
+        ${driverOptions(state.standings, gate, situation.driverId)}
       </select>
     </div>
     <div class="toolbar" style="flex-wrap:wrap;gap:var(--sp-sm)">
@@ -2024,11 +2240,23 @@ export function initProjection() {
   document.addEventListener('viewchange', async e => {
     if (e.detail.view !== 'projection') return;
     renderView();
+    await ensurePersonMap();
     if (!_loaded && !_loading) {
       await load();
-      renderContent();
     }
+    renderContent();
   });
+
+  // Connexion, déconnexion, attribution ou RÉVOCATION d'une licence : les
+  // droits sont suivis en temps réel, donc l'écran se réaligne sans que le
+  // team ait à recharger la page. C'est ce qui rend une révocation
+  // immédiate plutôt que théorique.
+  const onAccessChanged = () => {
+    if (document.getElementById('view-projection')?.style.display === 'none') return;
+    renderContent();
+  };
+  document.addEventListener('accesschange', onAccessChanged);
+  document.addEventListener('authchange', onAccessChanged);
 
   // Un changement de championnat peut modifier les règlements chargés :
   // on repart des documents plutôt que d'un cache potentiellement obsolète.

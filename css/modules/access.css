@@ -1,0 +1,119 @@
+/* ═══════════════════════════════════════════════
+   ACCESS.CSS — Écran « Accès team » et bandeau d'accès de Stratégie Live.
+
+   Volontairement minimal : l'écran réutilise .card, .table-wrap, .form-*,
+   .btn et .badge de components.css. Ce fichier n'ajoute que ce qui manque —
+   les encarts d'information et le bandeau d'accès.
+═══════════════════════════════════════════════ */
+
+/* ── Encarts ─────────────────────────────────── */
+.acc-alert {
+  padding: var(--sp-sm) var(--sp-md);
+  border-radius: var(--r-md);
+  border: 1px solid;
+  font-size: .88rem;
+  margin: var(--sp-sm) 0;
+  line-height: 1.5;
+}
+.acc-alert--err  { background: var(--clr-danger-dim);  border-color: var(--clr-danger);  color: var(--clr-danger); }
+.acc-alert--warn { background: var(--clr-warning-dim); border-color: var(--clr-warning); color: var(--clr-warning); }
+
+.acc-hint {
+  font-size: .84rem;
+  color: var(--clr-text-2);
+  line-height: 1.6;
+  margin: var(--sp-sm) 0;
+}
+.acc-hint .badge { margin-right: 4px; }
+
+/* ── Bloc d'attribution ──────────────────────── */
+.acc-grant {
+  margin-top: var(--sp-lg);
+  padding-top: var(--sp-md);
+  border-top: 1px solid var(--clr-border);
+}
+.acc-summary {
+  background: var(--clr-bg-3);
+  border-radius: var(--r-md);
+  padding: var(--sp-sm) var(--sp-md);
+  font-size: .88rem;
+  line-height: 1.5;
+  margin: var(--sp-md) 0;
+}
+
+/* ══════════════════════════════════════════════
+   BANDEAU D'ACCÈS — Stratégie Live
+   Dit ce que le team a le droit d'analyser, ou pourquoi il ne l'a pas.
+   Un écran vide laisserait croire à une panne.
+═══════════════════════════════════════════════ */
+.acc-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-sm);
+  flex-wrap: wrap;
+  padding: var(--sp-sm) var(--sp-md);
+  border-radius: var(--r-md);
+  border: 1px solid var(--clr-border);
+  background: var(--clr-bg-2);
+  font-size: .86rem;
+  margin-bottom: var(--sp-md);
+}
+.acc-banner--admin { border-color: var(--clr-accent); }
+.acc-banner__icon  { font-size: 1rem; flex-shrink: 0; }
+.acc-banner__scope { color: var(--clr-text-2); }
+.acc-banner .badge { margin-left: 2px; }
+
+/* ── Écran de refus ──────────────────────────── */
+.acc-locked {
+  text-align: center;
+  padding: var(--sp-xl) var(--sp-md);
+  max-width: 560px;
+  margin: 0 auto;
+}
+.acc-locked__icon  { font-size: 2.4rem; margin-bottom: var(--sp-sm); }
+.acc-locked__title { font-size: 1.05rem; font-weight: 600; margin-bottom: var(--sp-sm); }
+.acc-locked__msg   { color: var(--clr-text-2); font-size: .92rem; line-height: 1.65; }
+.acc-locked__hint  { color: var(--clr-text-3); font-size: .82rem; margin-top: var(--sp-md); line-height: 1.6; }
+
+/* ══════════════════════════════════════════════
+   FORMULAIRE D'AUTHENTIFICATION — menu
+═══════════════════════════════════════════════ */
+.auth-form-title {
+  font-size: .78rem;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--clr-text-3);
+  margin-bottom: 2px;
+}
+.auth-links {
+  display: flex;
+  gap: var(--sp-sm);
+  flex-wrap: wrap;
+  margin-top: 2px;
+}
+.btn-link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--clr-text-3);
+  font-size: .78rem;
+  cursor: pointer;
+  text-decoration: underline;
+}
+.btn-link:hover { color: var(--clr-accent); }
+
+.auth-notice {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-sm);
+  flex-wrap: wrap;
+  background: var(--clr-warning-dim);
+  border: 1px solid var(--clr-warning);
+  color: var(--clr-warning);
+  border-radius: var(--r-md);
+  padding: var(--sp-xs) var(--sp-sm);
+  font-size: .78rem;
+  margin-top: var(--sp-xs);
+  line-height: 1.4;
+}
+.auth-error--ok { color: var(--clr-success); }
