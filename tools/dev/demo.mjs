@@ -126,6 +126,18 @@ async function seed() {
   // Kerlabo est une autre date : sans quoi il serait indiscernable de Lohéac.
   fixtures[2].meeting.date = '2026-07-26';
 
+  // ── Meeting À VENIR : engagements saisis, AUCUN chrono ────────────────
+  // Reproduit la situation d'avant-meeting : la régie a saisi les
+  // inscriptions, aucune manche n'est courue. Le team doit-il pouvoir
+  // préparer sa stratégie ? C'est ce que cette entrée permet de vérifier.
+  const avenir = meetingFixture({
+    meetingId: 'mtg_dreux_avenir', championshipId: FFSA,
+    location: 'Dreux (à venir)', category: 'Supercar',
+  });
+  avenir.meeting.date = '2026-10-11';
+  avenir.results = [];                     // aucun chrono
+  fixtures.push({ ...avenir, champ: FFSA });
+
   for (const f of fixtures) {
     await put('meetings', f.meeting.id, f.meeting);
     for (const s of f.sessions) await put('sessions', s.id, s);
@@ -377,6 +389,24 @@ async function main() {
     }
   } else {
     console.log('   ⚠️ meeting FFSA introuvable');
+  }
+
+  // Meeting À VENIR : engagements saisis, aucun chrono. Que montre l'écran ?
+  const avenir = options.find(o => /venir/.test(o.t));
+  if (avenir) {
+    await page2.selectOption('#prj-meeting', avenir.v);
+    await page2.waitForTimeout(2500);
+    const pil = await page2.$$eval('#prj-driver option', els => els.map(e => e.textContent.trim()));
+    console.log('   ⋯ meeting à venir — pilotes proposés :', pil.join(' | ') || '(pas de sélecteur)');
+    await shot(page2, '09-team-meeting-a-venir');
+    if (pil.length > 1) {
+      await page2.selectOption('#prj-driver', await page2.$$eval('#prj-driver option', e => e[1].value));
+      await page2.waitForTimeout(4000);
+      await shot(page2, '10-team-avant-course');
+    }
+    // On revient sur le meeting couru pour la suite du scénario.
+    const couru = options.find(o => /Lohéac/.test(o.t) && /Supercar/.test(o.t));
+    if (couru) { await page2.selectOption('#prj-meeting', couru.v); await page2.waitForTimeout(2000); }
   }
 
   // Le meeting Euro RX n'apparaît PLUS dans la liste : depuis que le

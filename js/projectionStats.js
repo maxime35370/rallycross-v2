@@ -474,7 +474,14 @@ function situationCandidates() {
   // Une manche en cours suffit à rendre le meeting analysable, même si aucune
   // manche n'est encore terminée : c'est justement le direct.
   return contexts
-    .filter(c => c.lastCompletedRace > 0 || c.raceInProgress != null)
+    // `engagedCount > 0` : un meeting dont les ENGAGEMENTS sont saisis apparaît
+    // dès maintenant, avant le moindre chrono. Il n'y a encore rien à
+    // analyser — un classement intermédiaire suppose au moins une manche
+    // terminée — mais le team voit que son meeting est connu et attendu, au
+    // lieu de le chercher en vain dans une liste où il n'existe pas.
+    // Un meeting sans aucun engagement reste écarté : il n'encombrerait la
+    // liste pour personne.
+    .filter(c => c.lastCompletedRace > 0 || c.raceInProgress != null || c.engagedCount > 0)
     .sort((a, b) => String(b.meeting?.date).localeCompare(String(a.meeting?.date))
       || String(a.category).localeCompare(String(b.category)));
 }
