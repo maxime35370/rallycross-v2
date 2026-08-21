@@ -187,7 +187,9 @@ function renderLocked(gate) {
       <div class="acc-locked__icon">✉️</div>
       <div class="acc-locked__title">Adresse e-mail à vérifier</div>
       <div class="acc-locked__msg">Votre accès s'ouvrira dès que votre adresse sera confirmée.
-        Le lien de vérification se renvoie depuis le menu.</div>
+        Ouvrez le lien reçu par e-mail, puis cliquez <strong>« J'ai vérifié »</strong> dans le menu.</div>
+      <div class="acc-locked__hint">Sans ce clic, la session garde son ancien jeton pendant une heure :
+        l'adresse est bien vérifiée, mais l'application ne le sait pas encore.</div>
     </div>`;
   }
   const reason = gate.licenses.length ? 'wrong_scope' : 'no_license';

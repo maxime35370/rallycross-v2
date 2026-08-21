@@ -98,11 +98,13 @@ function renderAuthUI() {
         <div class="auth-notice">
           <span>✉️ Adresse non vérifiée — l'accès Stratégie Live la demande.</span>
           <button class="btn btn-sm btn-secondary" id="auth-verify-btn">Renvoyer l'e-mail</button>
+          <button class="btn btn-sm btn-primary" id="auth-refresh-btn">J'ai vérifié</button>
         </div>` : ''}
       <div class="auth-error" id="auth-error"></div>
     `;
     document.getElementById('auth-logout-btn')?.addEventListener('click', logout);
     document.getElementById('auth-verify-btn')?.addEventListener('click', onSendVerification);
+    document.getElementById('auth-refresh-btn')?.addEventListener('click', onRefreshClaims);
     return;
   }
 
@@ -233,6 +235,44 @@ async function onResetClick() {
   } catch (err) {
     console.error('Reset error:', err);
     setAuthError(AUTH_MESSAGES[err.code] || "Erreur d'envoi.");
+  }
+}
+
+/**
+ * Reprend en compte une adresse qui vient d'être vérifiée.
+ *
+ * ── Le piège, et il est certain sans ce bouton ─────────────────────────
+ * Les règles Firestore lisent `request.auth.token.email_verified`, une
+ * valeur figée dans le JETON. Cliquer le lien reçu par e-mail met à jour le
+ * COMPTE, pas le jeton déjà en main : l'onglet ouvert continue de présenter
+ * `email_verified: false` jusqu'au renouvellement automatique, soit une
+ * heure. Pendant ce temps, l'utilisateur a fait ce qu'on lui demandait et
+ * l'accès reste fermé — la pire des situations.
+ *
+ * `reload()` relit le compte, `getIdToken(true)` force un jeton neuf, et
+ * l'application se réaligne aussitôt.
+ */
+async function onRefreshClaims() {
+  if (!currentUser) return;
+  try {
+    await currentUser.reload();
+    await currentUser.getIdToken(true);
+    renderAuthUI();
+    applyAdminVisibility();
+    if (currentUser.emailVerified) {
+      toast('Adresse vérifiée ✓', 'success');
+      // Les droits se relisent avec le nouveau jeton : sans cela, la
+      // souscription précédente reste sur un refus des règles.
+      import('./access/licenses.js')
+        .then(m => m.subscribeMyAccess(currentUser))
+        .catch(e => console.error('Accès commercial :', e));
+      document.dispatchEvent(new CustomEvent('authchange', { detail: { user: currentUser } }));
+    } else {
+      setAuthError("Adresse toujours pas vérifiée. Ouvrez le lien reçu par e-mail, puis réessayez.");
+    }
+  } catch (err) {
+    console.error('Refresh error:', err);
+    setAuthError('Impossible de rafraîchir la session.');
   }
 }
 
