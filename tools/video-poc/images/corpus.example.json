@@ -1,0 +1,16 @@
+{
+  "_comment": "Renommer en corpus.json. Facultatif : sert uniquement à afficher le contexte de chaque image dans le rapport, et à croiser plus tard les échecs avec les conditions de prise de vue.",
+
+  "01-loheac-mq2-s3-virage1.jpg": {
+    "start":      "Lohéac · MQ2 · série 3",
+    "angle":      "large latéral",
+    "moment":     "premier virage",
+    "difficulte": ["poussiere", "chevauchement"]
+  },
+  "02-loheac-mq2-s3-grille.jpg": {
+    "start":      "Lohéac · MQ2 · série 3",
+    "angle":      "large latéral",
+    "moment":     "ligne de départ",
+    "difficulte": []
+  }
+}
