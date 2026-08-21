@@ -80,6 +80,9 @@ const ASSET_PATHS = [
   // être en cache comme les autres, sinon l'application hors ligne perdrait
   // le filtrage du sélecteur de pilote.
   'js/access/licenseCalc.js',
+  'js/access/licenses.js',
+  'js/access/accessAdmin.js',
+  'css/modules/access.css',
 ];
 
 // ── Installation : pre-cache des assets statiques ──

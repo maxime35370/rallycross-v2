@@ -28,6 +28,7 @@
   <link rel="stylesheet" href="css/modules/startAnalysis.css">
   <link rel="stylesheet" href="css/modules/startStats.css">
   <link rel="stylesheet" href="css/modules/projection.css">
+  <link rel="stylesheet" href="css/modules/access.css">
   <link rel="stylesheet" href="css/modules/videoPlayer.css">
 
   <!-- Cloudflare Web Analytics — visiteurs uniques du site, GRATUIT et SANS cookie (pas de bandeau RGPD).
@@ -102,6 +103,7 @@
       <li><a class="menu-item" data-view="projection" href="#">🎯 Stratégie Live</a></li>
       <li><a class="menu-item" data-view="spectator" href="#">📺 Mode Spectateur</a></li>
       <li class="menu-separator"></li>
+      <li><a class="menu-item" data-view="access" href="#">🔑 Accès team</a></li>
       <li><a class="menu-item" data-view="audit" href="#">📋 Journal d'audit</a></li>
       <li class="menu-separator"></li>
       <li><a class="menu-item menu-item--config" data-view="config" href="#">⚙️ Configuration</a></li>
@@ -315,6 +317,9 @@
 
     <!-- VUE : Journal d'audit -->
     <div class="view" id="view-audit" style="display:none"></div>
+
+    <!-- VUE : Accès team (licences Stratégie Live) — régie uniquement -->
+    <div class="view" id="view-access" style="display:none"></div>
 
     <!-- VUE : Réglages Championnats (bureau uniquement) -->
     <div class="view" id="view-settings" style="display:none"></div>

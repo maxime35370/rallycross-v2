@@ -371,7 +371,26 @@ service cloud.firestore {
     // Un membre voit les membres de SON team (l'interface affiche « vous et
     // 2 autres »), jamais ceux d'un autre.
     match /teamMembers/{docId} {
-      allow read: if isRegie() || isTeamMember(resource.data.teamId);
+      // ── get ET list SEPARES, et ce n'est pas cosmetique ─────────────
+      //
+      // Pour une REQUETE, Firestore exige que la regle soit prouvable a
+      // partir des CONTRAINTES DE LA REQUETE, pas seulement vraie pour
+      // chaque document rendu. Une regle en `resource.data.teamId` est
+      // verifiable sur une lecture unitaire, mais pas sur une requete
+      // filtree sur `uid` : le moteur n'a alors aucun document a inspecter
+      // et repond « Property teamId is undefined ».
+      //
+      // Or la toute premiere requete de l'application est exactement
+      // celle-la : « quels sont MES teams ? », filtree sur uid. Symptome
+      // observe en navigateur avant correction : aucun team trouve, aucune
+      // licence lue, et un « analyse non incluse » affiche a un client qui
+      // avait bel et bien un acces.
+      //
+      // La regle de `list` porte donc sur `uid`, exactement ce que le client
+      // contraint. Lister les appartenances d'un autre reste refuse.
+      allow get:  if isRegie() || isTeamMember(resource.data.teamId);
+      allow list: if isRegie()
+                  || (isVerified() && resource.data.uid == request.auth.uid);
 
       allow create, update: if isRegie()
         && hasFields(request.resource.data, ['teamId','uid','role'])

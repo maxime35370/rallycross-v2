@@ -294,6 +294,7 @@ body:not(.is-admin) .menu-item[data-view="engagements"],
 body:not(.is-admin) .menu-item[data-view="sessions"],
 body:not(.is-admin) .menu-item[data-view="timing"],
 body:not(.is-admin) .menu-item[data-view="audit"],
+body:not(.is-admin) .menu-item[data-view="access"],
 body:not(.is-admin) .menu-item[data-view="config"],
 body:not(.is-admin) .menu-item[data-view="settings"],
 body:not(.is-admin) .menu-section--admin,
@@ -309,7 +310,11 @@ body:not(.is-admin) #home-alert {
   display: none !important;
 }
 
-/* Formulaire de connexion : masqué au public, révélé seulement via l'URL ?login. */
+/* Formulaire de connexion : autrefois masqué au public et révélé par ?login,
+   quand l'outil n'était qu'administratif. Un team qui dispose d'un accès doit
+   pouvoir se connecter sans URL secrète, donc la classe est posée en
+   permanence par js/auth.js. La règle reste ici comme point de bascule si l'on
+   veut à nouveau masquer le formulaire. */
 body:not(.show-login) .auth-login-form { display: none !important; }
 
 /* ════════════════════════════════

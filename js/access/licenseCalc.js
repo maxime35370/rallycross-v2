@@ -263,6 +263,54 @@ export function allowedDriverIds({
 }
 
 // ─────────────────────────────────────────────────────────
+// ÉTAT DU VISITEUR
+// ─────────────────────────────────────────────────────────
+
+/** Niveaux, du plus ouvert au plus fermé. */
+export const VIEWER = {
+  admin:      'admin',       // accès total, aucune licence requise
+  loading:    'loading',     // droits pas encore connus — ne RIEN affirmer
+  anonymous:  'anonymous',   // pas de compte, ou session anonyme (pronostics)
+  unverified: 'unverified',  // compte réel, adresse non confirmée
+  none:       'none',        // compte valide, aucune licence
+  licensed:   'licensed',    // au moins une licence lisible
+};
+
+/**
+ * Que doit montrer Stratégie Live à ce visiteur ?
+ *
+ * Séparé du rendu pour être testable sans DOM ni Firebase — c'est la table
+ * de décision que le lot A0 doit garantir, et elle mérite mieux qu'une
+ * vérification à l'œil.
+ *
+ * ── Pourquoi `loading` est un niveau à part ────────────────────────────
+ * Tant que les licences ne sont pas chargées, on ne peut pas dire « vous
+ * n'avez pas accès » : ce serait faux à chaque ouverture de page, et c'est
+ * précisément le message qui fait douter un client qui a payé. On affiche
+ * une attente, jamais un refus.
+ *
+ * @param {object} p
+ * @param {boolean} p.isAdmin @param {boolean} p.isRealUser
+ * @param {boolean} p.isVerified @param {boolean} p.accessReady
+ * @param {Array} p.licenses
+ * @returns {{level:string, ready:boolean, canSeeAnything:boolean}}
+ */
+export function viewerState({
+  isAdmin = false, isRealUser = false, isVerified = false,
+  accessReady = false, licenses = [],
+} = {}) {
+  // L'administrateur passe avant tout, y compris avant le chargement des
+  // droits : il n'en a aucun à charger.
+  if (isAdmin) return { level: VIEWER.admin, ready: true, canSeeAnything: true };
+  if (!isRealUser) return { level: VIEWER.anonymous, ready: true, canSeeAnything: false };
+  if (!isVerified) return { level: VIEWER.unverified, ready: true, canSeeAnything: false };
+  if (!accessReady) return { level: VIEWER.loading, ready: false, canSeeAnything: false };
+  return licenses.length
+    ? { level: VIEWER.licensed, ready: true, canSeeAnything: true }
+    : { level: VIEWER.none, ready: true, canSeeAnything: false };
+}
+
+// ─────────────────────────────────────────────────────────
 // LIBELLÉS
 // ─────────────────────────────────────────────────────────
 
@@ -294,9 +342,14 @@ export function denialMessage(reason, { hasAnyLicense = false } = {}) {
 
 /** Libellé court d'une portée, pour l'écran d'administration et le bandeau. */
 export function scopeLabel(license, { meetingLabel = null, championshipLabel = null } = {}) {
-  const champ = championshipLabel || license?.championshipId || '?';
+  // Ordre de préférence : le libellé fourni par l'appelant (qui a les
+  // référentiels sous la main), puis celui FIGÉ sur la licence à
+  // l'attribution, puis l'identifiant brut en dernier recours. Ce dernier
+  // cas ne devrait jamais s'afficher à un client.
+  const champ = championshipLabel || license?.championshipLabel || license?.championshipId || '?';
   if (license?.scope === 'season') return `Saison ${champ} ${license.year}`;
-  return `${meetingLabel || license?.meetingId || '?'} · ${champ}`;
+  const mtg = meetingLabel || license?.meetingLabel || license?.meetingId || '?';
+  return `${mtg} · ${champ}`;
 }
 
 /**
@@ -312,7 +365,8 @@ export function accessSummary({ licenses = [], now = Date.now(), personsById = {
       return {
         licenseId: l.id,
         personId: l.personId,
-        personLabel: p ? `${p.firstName || ''} ${p.lastName || ''}`.trim() : l.personId,
+        personLabel: p ? `${p.firstName || ''} ${p.lastName || ''}`.trim()
+                       : (l.personLabel || l.personId),
         scope: l.scope,
         scopeLabel: scopeLabel(l, {
           championshipLabel: championshipsById[l.championshipId]?.name,

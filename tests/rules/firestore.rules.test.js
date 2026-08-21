@@ -321,6 +321,24 @@ describe('teams — on ne s\'invite pas soi-même', () => {
     await assertFails(getDoc(doc(alice(), 'teamMembers', `${TEAM_B}_${CAROL}`)));
   });
 
+  it('⚠️ un membre RETROUVE ses teams par requête — c\'est le premier appel de l\'application', async () => {
+    // Trou de couverture réel : les tests ne vérifiaient que la lecture d'un
+    // document PAR SON IDENTIFIANT, jamais la REQUÊTE que fait vraiment
+    // l'application au démarrage. Or Firestore n'évalue pas une requête comme
+    // une lecture unitaire — une règle qui marche sur `get` peut échouer sur
+    // `list`. Résultat observé dans le navigateur : teamIds vide, aucune
+    // licence, et un « accès non inclus » affiché à un client qui payait.
+    const snap = await assertSucceeds(
+      getDocs(query(collection(alice(), 'teamMembers'), where('uid', '==', ALICE))),
+    );
+    expect(snap.docs.map(d => d.data().teamId)).toEqual([TEAM_A]);
+  });
+
+  it('⚠️ … mais il ne peut pas lister les appartenances de quelqu\'un d\'autre', async () => {
+    await assertFails(getDocs(query(collection(alice(), 'teamMembers'), where('uid', '==', CAROL))));
+    await assertFails(getDocs(collection(alice(), 'teamMembers')));
+  });
+
   it('13 · ⚠️ s\'ajouter soi-même à un team est refusé', async () => {
     await assertFails(setDoc(doc(diane(), 'teamMembers', `${TEAM_A}_${DIANE}`), {
       teamId: TEAM_A, uid: DIANE, role: 'member',
