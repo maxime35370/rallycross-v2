@@ -26,7 +26,7 @@ Rallycross V2 est un **site statique pur**, sans build, sans bundler, sans CI :
 
 - modules ES chargés directement depuis `js/`, SDK Firebase importé du CDN gstatic ;
 - pas de `firebase.json`, pas de `functions/`, pas de `.github/workflows` ;
-- présence de `.nojekyll`, `manifest.json`, `sw.js` → hébergement **vraisemblablement GitHub Pages** (à confirmer de ton côté, c'est une hypothèse déduite des fichiers, pas une certitude) ;
+- hébergement **Netlify** (`rxchrono.netlify.app`), avec compatibilité GitHub Pages conservée dans le code (`.nojekyll`, détection du sous-dossier `/rallycross-v2/` dans `index.html:342`). *[Corrigé le 2026-08-21 : la première rédaction de ce document supposait GitHub Pages. La source est `docs/video-analysis/ARCHITECTURE.md` §1.1, `overlay/_lib/obs-control.js:40` et `index.html:34`. Voir `IMPACT-HEBERGEMENT-ET-VIDEO.md` §1.]* ;
 - **il n'y a strictement aucun code serveur aujourd'hui.** Tout ce que fait l'application, elle le fait dans le navigateur, contre Firestore en direct.
 
 C'est le point structurant de toute cette analyse.
@@ -192,8 +192,8 @@ Aujourd'hui la racine du dépôt *est* le site. Il n'y a aucun moyen d'exclure `
 
 Deux voies, la seconde est la bonne :
 
-1. Déplacer le moteur hors de la racine publiée (`engine/projection/`), importé par la Function et par les tests. Conserve la propriété « aucun build ». Mais GitHub Pages publie la racine → il faudrait passer par un dossier `docs/` ou une branche `gh-pages`, ce qui complique.
-2. **Migrer l'hébergement vers Firebase Hosting.** Comme les Cloud Functions imposent de toute façon le plan Blaze, autant en tirer parti : `firebase.json` déclare précisément ce qui est publié et ce qui est ignoré, on obtient des réécritures `/api/*` vers les functions, et tout vit dans un seul projet. **C'est la recommandation.** Prévoir une demi-journée pour la bascule et le domaine.
+1. Rester sur Netlify et déplacer le site dans un sous-dossier publié (`netlify.toml` : `publish = "public"`), le moteur restant hors de ce dossier. Conserve la propriété « aucun build », mais impose de déplacer l'intégralité du site.
+2. **Migrer l'hébergement vers Firebase Hosting.** La liste `ignore` de `firebase.json` exclut `js/projection/**` du déploiement **sans déplacer un seul fichier**. On obtient en plus des réécritures `/api/*` vers les functions et un seul projet à administrer. **C'est la recommandation** — analyse détaillée dans `IMPACT-HEBERGEMENT-ET-VIDEO.md`. Prévoir une demi-journée à une journée.
 
 ### 2.4 Risque résiduel, à assumer
 
@@ -727,7 +727,7 @@ Cela colle exactement à ton calendrier Lohéac : **le lot B seul suffit à ta d
 
 ## 15. Ce que je recommande de décider maintenant
 
-1. **Confirmer l'hébergement actuel** (GitHub Pages ?) — cela conditionne le lot C.
+1. ~~Confirmer l'hébergement actuel~~ — **fait** : c'est Netlify. La migration vers Firebase Hosting est **souhaitable mais pas obligatoire**, et elle n'est sur le chemin critique d'aucun autre lot. Voir `IMPACT-HEBERGEMENT-ET-VIDEO.md`.
 2. **Faire l'audit de `personId`** avant toute chose : combien de `drivers` n'ont pas de fiche, combien de fiches sont en doublon. C'est un script en lecture seule d'une heure, sur le patron de `tools/qualification-audit/`. Le résultat peut changer l'estimation du lot B.
 3. **Accepter le principe** : ce qu'on protège, c'est le calcul, pas la donnée. Si ce principe n'est pas acceptable, il n'y a pas de produit vendable ici.
 4. **Faire A + B avant Lohéac**, montrer l'outil, offrir deux ou trois accès d'essai — et ne décider de C et D qu'après avoir vu la réaction des teams.
