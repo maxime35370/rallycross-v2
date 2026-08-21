@@ -183,16 +183,49 @@ describe('buildYtDlpArgs', () => {
     expect(args[0]).toBe(base.url);
   });
 
+  it('active un moteur JavaScript quand on lui donne un chemin Node', () => {
+    // Sans lui, la liste de formats revient tronquée (aucun avc1 1080p60
+    // constaté sur la vidéo Kerlabo) et le débit peut être bridé.
+    const args = buildYtDlpArgs({ ...base, nodePath: 'C:\\Program Files\\nodejs\\node.exe' });
+    const i = args.indexOf('--js-runtimes');
+    expect(i).toBeGreaterThan(-1);
+    expect(args[i + 1]).toBe('node:C:\\Program Files\\nodejs\\node.exe');
+  });
+
+  it('n\'ajoute rien quand aucun chemin Node n\'est fourni', () => {
+    expect(buildYtDlpArgs(base)).not.toContain('--js-runtimes');
+  });
+
+  it('respecte un sélecteur de format imposé', () => {
+    const args = buildYtDlpArgs({ ...base, format: '299+140' });
+    expect(args[args.indexOf('-f') + 1]).toBe('299+140');
+  });
+
   it('refuse une URL vide', () => {
     expect(() => buildYtDlpArgs({ ...base, url: '' })).toThrow();
   });
 });
 
 describe('formatSelector', () => {
-  it('n\'exige pas d\'avc1 en mode précis — on réencode de toute façon', () => {
-    // Une vidéo servie uniquement en VP9/AV1 échouerait sinon pour rien.
-    expect(formatSelector('precise')).not.toContain('avc1');
-    expect(formatSelector('fast')).toContain('avc1');
+  it('préfère l\'avc1 dans les deux modes', () => {
+    // Constaté sur la vidéo Kerlabo : laissé libre, yt-dlp choisit l'AV1
+    // (itag 399, 2681 kbit/s) alors que l'avc1 (299, 5040 kbit/s) est la piste
+    // au plus haut débit ET la moins coûteuse à décoder.
+    expect(formatSelector('precise').split('/')[0]).toContain('avc1');
+    expect(formatSelector('fast').split('/')[0]).toContain('avc1');
+  });
+
+  it('écarte les pistes m3u8 au profit du DASH sur HTTP', () => {
+    expect(formatSelector('precise').split('/')[0]).toContain('protocol^=https');
+  });
+
+  it('garde un repli sans avc1 en mode précis, pas en mode rapide', () => {
+    // Le mode précis réencode : il peut partir de n'importe quel codec.
+    // Le mode rapide copie : sans avc1 le fichier serait illisible par Safari.
+    const precise = formatSelector('precise').split('/');
+    expect(precise.length).toBeGreaterThan(2);
+    expect(precise.slice(1).some(c => !c.includes('avc1'))).toBe(true);
+    expect(formatSelector('fast')).toContain('ext=mp4');
   });
 });
 
@@ -304,6 +337,7 @@ describe('buildSidecar', () => {
       youtubeId: '_SqxZQl5zzQ', url: 'https://youtu.be/_SqxZQl5zzQ',
       sourceStart: 20546, sourceEnd: 20590, padBefore: 3, padAfter: 6,
       clipStart: 20543, clipDuration: 53, v1At: 20554, origin: 'manual', mode: 'precise',
+      format: '299+140',
     },
     probe: { file: 'Kerlabo_2026_D3_Q3_S4.mp4', fps: 50, width: 1920, height: 1080, codec: 'h264', startTime: 0, duration: 53, frames: 2650, sizeBytes: 28311552 },
     tool: { label: 'yt-dlp 2026.08.19 + ffmpeg 7.1', command: ['yt-dlp', '--no-playlist'] },
@@ -319,6 +353,7 @@ describe('buildSidecar', () => {
     expect(sidecar).toMatchObject({
       youtubeId: '_SqxZQl5zzQ', sourceStart: 20546, sourceEnd: 20590,
       padBefore: 3, padAfter: 6, clipStart: 20543, v1At: 20554, origin: 'manual',
+      mode: 'precise', format: '299+140',
     });
   });
 

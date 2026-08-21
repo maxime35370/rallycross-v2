@@ -661,7 +661,31 @@ ffmpeg -version       # attendu : 7.x
 ffprobe -version
 ```
 
-### Étape 1 — Reconnaissance, sans rien télécharger
+### Étape 1 — Reconnaissance, sans rien télécharger ✅ **faite**
+
+Résultat réel sur `_SqxZQl5zzQ` :
+
+| Mesure | Valeur |
+|---|---|
+| Durée | **21 605 s = 6 h 00 min 05** |
+| Définition / cadence | 1920×1080 à **60 img/s** (et non 50) |
+| `was_live` | **True** — c'est une rediffusion de direct, l'inconnue du §3.3 |
+| Poids total | **7,5 Go** pour la piste retenue automatiquement |
+| Formats 1080p60 | `299` avc1 **5040 kbit/s** · `303` vp9 3112 kbit/s · `399` av01 2681 kbit/s · `312` avc1 8019 kbit/s en m3u8 |
+
+Deux enseignements qui ont modifié l'outil :
+
+1. **Un moteur JavaScript est indispensable.** Sans lui, yt-dlp ne peut pas exécuter le script de
+   signature de YouTube : la liste revenait **tronquée** — aucun avc1 1080p60 — et le débit risquait
+   d'être bridé. Corrigé par `pip install yt-dlp-ejs` et `--js-runtimes node:<chemin>`, que l'outil
+   passe désormais tout seul (Node est forcément présent, c'est lui qui l'exécute).
+2. **Il faut demander l'avc1 explicitement.** Laissé libre, yt-dlp prenait l'AV1 (399) : plus léger,
+   mais plus coûteux à décoder et moins bien doté en débit que le 299. Le sélecteur préfère
+   maintenant l'avc1 en DASH `https`, avec repli sur n'importe quel codec en mode précis.
+
+À 7,5 Go pour 21 605 s, la fenêtre de 53 s pèse 📐 **~33 Mo en avc1** (5040 kbit/s), soit **~0,3 %**.
+
+### Étape 1 bis — commandes de reconnaissance
 
 ```powershell
 yt-dlp -F "https://youtu.be/_SqxZQl5zzQ"

@@ -179,6 +179,8 @@ export function explainFailure(stderr = '') {
       "La vidéo n'est pas accessible publiquement (privée, supprimée, réservée ou géo-bloquée).\n  → aucun contournement : vérifie l'URL, ou demande l'accès au titulaire des droits."],
     [/Requested format is not available/i,
       "Aucun format ne correspond au sélecteur demandé.\n  → relance avec --mode precise (il n'exige pas d'avc1), ou inspecte : yt-dlp -F <url>"],
+    [/No supported JavaScript runtime|js.?runtime/i,
+      "yt-dlp n'a pas de moteur JavaScript : la liste de formats sera tronquée et le débit bridé.\n  → si yt-dlp a été installé par pip : python -m pip install --upgrade yt-dlp-ejs"],
     [/nsig extraction failed|Some formats may be missing|player.*decrypt|Unable to download (?:API page|webpage)|HTTP Error 40[039]/i,
       "YouTube a probablement changé son extracteur, ou l'accès réseau est filtré.\n  → yt-dlp -U (ou winget upgrade yt-dlp.yt-dlp), puis relance."],
     [/Unable to connect to proxy|getaddrinfo|Network is unreachable|Temporary failure in name resolution|timed out/i,

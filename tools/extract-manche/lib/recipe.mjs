@@ -160,13 +160,31 @@ export const FFMPEG_OUT_ARGS = [
   '-movflags', '+faststart',
 ].join(' ');
 
-/** Sélecteur de format. En mode précis on réencode de toute façon : inutile
- *  d'exiger de l'avc1 en entrée, ce qui ferait échouer une vidéo servie
- *  uniquement en VP9/AV1. En mode rapide au contraire, la copie impose l'avc1. */
+/**
+ * Sélecteur de format, par ordre de préférence décroissant.
+ *
+ * Trois enseignements de la reconnaissance faite sur la vidéo Kerlabo :
+ *
+ *  1. **Préférer l'avc1 même en mode précis.** Laissé libre, yt-dlp choisit
+ *     l'AV1 (itag 399) parce qu'il est plus léger. Mais il faut alors décoder
+ *     de l'AV1 1080p60 avant de réencoder, et sur cette vidéo l'avc1 (itag 299,
+ *     5040 kbit/s) est la piste au plus haut débit — donc la plus détaillée
+ *     pour une analyse de détection. Le surcoût de téléchargement (~33 Mo au
+ *     lieu de ~18 Mo pour 53 s) est négligeable, le gain en CPU ne l'est pas.
+ *  2. **Écarter les pistes m3u8.** YouTube expose les mêmes définitions en HLS
+ *     (311, 312…) et en DASH sur HTTP (298, 299…). Le seek par plages d'octets
+ *     que suppose `--download-sections` est immédiat sur les secondes ; sur les
+ *     premières il dépend du découpage en segments. On prend donc `https`.
+ *  3. **Garder des replis.** Toutes les vidéos n'offrent pas d'avc1 : le mode
+ *     précis réencode de toute façon, il peut donc se rabattre sur n'importe
+ *     quel codec. Le mode rapide, lui, copie : sans avc1 + mp4a le fichier
+ *     produit serait de l'AV1/Opus, illisible par Safari et lourd à décoder
+ *     image par image.
+ */
 export function formatSelector(mode) {
-  return mode === 'fast'
-    ? 'bv*[vcodec^=avc1][height<=1080]+ba[acodec^=mp4a]/b[ext=mp4]'
-    : 'bv*[height<=1080]+ba/b';
+  const avc = 'bv*[vcodec^=avc1][height<=1080][protocol^=https]+ba[acodec^=mp4a][protocol^=https]';
+  if (mode === 'fast') return `${avc}/b[ext=mp4]`;
+  return `${avc}/bv*[height<=1080][protocol^=https]+ba[protocol^=https]/bv*[height<=1080]+ba/b`;
 }
 
 /**
@@ -180,16 +198,22 @@ export function formatSelector(mode) {
  * @param {'precise'|'fast'} [p.mode]
  * @returns {string[]}
  */
-export function buildYtDlpArgs({ url, window: win, outputTemplate, mode = 'precise' }) {
+export function buildYtDlpArgs({ url, window: win, outputTemplate, mode = 'precise', format = null, nodePath = null }) {
   if (!url) throw new Error('URL manquante');
   const args = [
     url,
     '--no-playlist',            // une URL peut porter « &list=… » : on ne veut qu'elle
     '--no-progress',
     '--no-warnings',
-    '-f', formatSelector(mode),
+    '-f', format || formatSelector(mode),
     '--download-sections', sectionArg(win),
   ];
+  // Sans moteur JavaScript, yt-dlp ne peut pas exécuter le script de signature
+  // de YouTube : la liste de formats revient tronquée (constaté : aucun avc1
+  // 1080p60) et le téléchargement risque d'être bridé. L'option est ADDITIVE
+  // (le défaut « deno » reste prioritaire s'il est installé) et Node est
+  // forcément présent puisque c'est lui qui exécute cet outil.
+  if (nodePath) args.push('--js-runtimes', `node:${nodePath}`);
   if (mode === 'precise') {
     args.push('--force-keyframes-at-cuts');
     args.push('--downloader-args', `ffmpeg_o:${FFMPEG_OUT_ARGS}`);
@@ -341,6 +365,7 @@ export function buildSidecar({ identity = {}, recipe = {}, probe = {}, tool = {}
     v1At: num(recipe.v1At),
     origin: recipe.origin || 'manual',
     mode: recipe.mode || 'precise',
+    format: recipe.format || null,
 
     // 3 · constat
     file: probe.file || null,

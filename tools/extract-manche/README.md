@@ -21,6 +21,17 @@ winget install yt-dlp.yt-dlp     # l'exécutable embarque son Python : rien d'au
 winget install Gyan.FFmpeg       # fournit ffmpeg ET ffprobe, tous deux obligatoires
 ```
 
+Si yt-dlp a été installé **par pip** plutôt que par winget, il lui manque son moteur JavaScript :
+
+```powershell
+python -m pip install --upgrade yt-dlp-ejs
+```
+
+Sans lui, yt-dlp ne peut pas exécuter le script de signature de YouTube : la liste de formats revient
+**tronquée** et le débit peut être bridé. Constaté sur la vidéo Kerlabo — aucun H.264 1080p60 n'était
+proposé avant l'installation, et tous sont apparus après. L'outil passe de lui-même
+`--js-runtimes node:<chemin>` : Node est forcément présent puisque c'est lui qui l'exécute.
+
 Node.js 22 est déjà nécessaire au dépôt (Vitest). Rouvre le terminal après l'installation, puis :
 
 ```powershell
@@ -50,6 +61,22 @@ Avant de lancer quoi que ce soit :
 | `--verifier` | contrôle seulement la présence et l'âge de yt-dlp / ffmpeg / ffprobe |
 | `--dry-run` | affiche la commande yt-dlp exacte, sur une seule ligne, et s'arrête |
 | `--plan-corpus` | affiche les images du corpus YOLOX que produirait `--v1` — n'en produit aucune |
+
+`--format` impose un sélecteur yt-dlp (`299+140` par exemple) au lieu du choix automatique. Utile
+pour comparer deux pistes sur exactement les mêmes images.
+
+### Quel format est choisi
+
+Par défaut, l'outil demande **de l'avc1 (H.264) servi en DASH sur HTTP**, avec des replis. Deux
+raisons, mesurées sur la vidéo Kerlabo :
+
+- laissé libre, yt-dlp choisit l'**AV1** (itag 399, 2681 kbit/s) parce qu'il est plus léger — mais il
+  faut alors décoder de l'AV1 1080p60 avant de réencoder, et l'**avc1** (itag 299, 5040 kbit/s) est
+  la piste au **plus haut débit**, donc la plus détaillée pour une analyse de détection ;
+- les mêmes définitions existent en **m3u8** (HLS) et en **https** (DASH). Le seek par plages
+  d'octets qu'exige `--download-sections` est immédiat sur les secondes.
+
+Le mode précis se rabat sur n'importe quel codec si l'avc1 manque — il réencode de toute façon.
 
 ---
 

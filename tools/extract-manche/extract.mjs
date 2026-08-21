@@ -89,6 +89,7 @@ ${C.bold('Réglages')}
   --pad-apres <s>         marge après  (défaut ${DEFAULT_PAD_AFTER})
   --v1 <timecode>         abord du 1er virage — repère du futur corpus YOLOX
   --mode <precise|fast>   défaut « precise » : coupe à l'image
+  --format <selecteur>    impose un format yt-dlp (ex. « 299+140 ») au lieu du choix auto
   --sortie <dossier>      défaut tools/extract-manche/extraits/
   --nom <base>            force le nom de base du fichier
   --origin <texte>        « manual » (défaut) ou « auto:... » — trace la provenance
@@ -187,6 +188,11 @@ function buildRecipe(args) {
   const mode = String(get('mode') || 'precise').toLowerCase();
   if (!['precise', 'fast'].includes(mode)) fail(`--mode inconnu : « ${mode} ». Attendu « precise » ou « fast ».`);
 
+  // Sélecteur imposé à la main (« 299+140 » par exemple) : court-circuite le
+  // choix automatique quand on veut comparer deux pistes sur les mêmes images.
+  const formatRaw = get('format', 'f');
+  const format = typeof formatRaw === 'string' && formatRaw ? formatRaw : null;
+
   const baseName = String(get('nom', 'name') || '') || buildBaseName(identity) || `extrait_${youtubeId}`;
   const outDir = resolve(process.cwd(), String(get('sortie', 'outDir') || DEFAULT_OUT));
 
@@ -194,7 +200,7 @@ function buildRecipe(args) {
     url: String(url), youtubeId,
     sourceStart, sourceEnd, v1At,
     ...win,
-    mode,
+    mode, format,
     origin: String(get('origin') || 'manual'),
     identity, baseName, outDir,
   };
@@ -211,6 +217,7 @@ function printRecipe(r) {
   console.log(`  marges   -${r.padBefore} s / +${r.padAfter} s  ->  extrait ${toHms(r.clipStart)} -> ${toHms(r.clipEnd)}  ${C.dim(`(${r.clipDuration.toFixed(1)} s)`)}`);
   if (r.v1At != null) console.log(`  V1       ${toHms(r.v1At)}`);
   console.log(`  mode     ${r.mode === 'precise' ? "précis (coupe à l'image, réencodage de la seule fenêtre)" : 'rapide (copie, coupe sur image-clé)'}`);
+  if (r.format) console.log(`  format   ${r.format} ${C.dim('(imposé)')}`);
 }
 
 function printTools(check) {
@@ -261,6 +268,10 @@ const ytArgs = buildYtDlpArgs({
   window: { clipStart: recipe.clipStart, clipEnd: recipe.clipEnd },
   outputTemplate,
   mode: recipe.mode,
+  format: recipe.format,
+  // Node exécute cet outil : son chemin est donc toujours connu et valide,
+  // même s'il n'est pas dans le PATH vu par yt-dlp.
+  nodePath: process.execPath,
 });
 
 if (args['dry-run'] || args.dryRun) {
@@ -274,12 +285,26 @@ if (args['dry-run'] || args.dryRun) {
 
 if (args['plan-corpus'] || args.planCorpus) {
   // Planification seulement : aucune image n'est produite (EXTRACTION-YOUTUBE.md §13).
-  const fps = Number(pick(args, 'fps')) || 50;
+  // La cadence exacte vit dans le sidecar de l'extrait, quand il existe déjà :
+  // la deviner alors qu'elle est écrite à côté serait absurde.
+  const sidecarPath = join(recipe.outDir, `${recipe.baseName}.json`);
+  let fps = Number(pick(args, 'fps')) || null;
+  let fpsSource = fps ? '--fps' : null;
+  if (!fps && existsSync(sidecarPath)) {
+    try {
+      const known = Number(JSON.parse(readFileSync(sidecarPath, 'utf8'))?.fps);
+      if (Number.isFinite(known) && known > 0) { fps = known; fpsSource = 'sidecar'; }
+    } catch { /* sidecar illisible : on retombe sur la valeur par défaut */ }
+  }
+  if (!fps) { fps = 50; fpsSource = 'défaut'; }
   const plan = planCorpusFrames({
     baseName: recipe.baseName, startAt: recipe.sourceStart, v1At: recipe.v1At,
     clipStart: recipe.clipStart, clipDuration: recipe.clipDuration, fps,
   });
-  console.log(`\n${C.bold('-- Corpus prévu')} ${C.dim(`(${fps} img/s, aucune image produite)`)}`);
+  console.log(`\n${C.bold('-- Corpus prévu')} ${C.dim(`(${fps} img/s d'après ${fpsSource}, aucune image produite)`)}`);
+  if (fpsSource === 'défaut') {
+    console.log(`  ${C.yellow('!')} cadence supposée : passe --fps, ou extrais d'abord la manche (le sidecar la portera).`);
+  }
   if (!plan.length) console.log(`  ${C.yellow('!')} aucune zone : précise --v1 pour les zones du premier virage.`);
   for (const f of plan) {
     console.log(`  ${f.zone.padEnd(14)} ${toHms(f.absoluteTime)}  image ${String(f.clipFrame).padStart(5)}  ${C.dim(f.file)}`);
@@ -333,6 +358,7 @@ writeFileSync(sidecarFile, `${JSON.stringify(buildSidecar({
     padBefore: recipe.padBefore, padAfter: recipe.padAfter,
     clipStart: recipe.clipStart, clipDuration: recipe.clipDuration,
     v1At: recipe.v1At, origin: recipe.origin, mode: recipe.mode,
+    format: recipe.format,
   },
   probe: { ...s, file: basename(outFile) },
   tool: {
