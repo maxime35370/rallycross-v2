@@ -324,7 +324,10 @@ export function createVideoPlayer(container, opts = {}) {
     if (!declaredFps && typeof video.requestVideoFrameCallback === 'function') {
       const onFrame = (_now, meta) => {
         if (state.destroyed || state.video !== video) return;
-        if (state.lastFrameTime != null) {
+        // Hors vitesse normale, `mediaTime` avance de plusieurs images entre
+        // deux présentations : une lecture à ×2 ferait mesurer la moitié de la
+        // cadence réelle, et l'erreur resterait acquise pour toute la session.
+        if (state.lastFrameTime != null && state.rate === 1) {
           const d = meta.mediaTime - state.lastFrameTime;
           if (d > 0) {
             state.fpsSamples.push(d);

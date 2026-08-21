@@ -379,11 +379,54 @@ correction naturelle : **l'outil connaît la cadence exacte** (`ffprobe -show_en
 stream=r_frame_rate`) et peut l'écrire dans le sidecar JSON. Le lecteur n'aurait plus à deviner —
 `estimateFps()` deviendrait un simple filet de sécurité.
 
-→ **Amélioration recommandée** (à faire plus tard, hors du périmètre d'aujourd'hui) : accepter un
-`fps` explicite dans `loadFile(file, startAt, { fps })`. Une dizaine de lignes, testables dans
-`tests/videoPlayerCalc.test.js`.
+→ ✅ **Fait, et le défaut était pire que prévu.** Constaté sur le premier extrait réel : le lecteur
+numérotait les images à **30 img/s sur un fichier à 60**, sans rien signaler. Le départ marqué à
+43,000 s affichait `#1290` au lieu de `#2580`, et « image suivante » avançait de 33 ms au lieu de
+16,7 ms.
 
-### 5.4 Ce que l'extrait apporte au lecteur, en plus
+La cause n'est pas Firefox : `requestVideoFrameCallback` mesure la cadence de **présentation**, pas
+celle du fichier. Quand le navigateur ne suit pas — du 1080p60 à 12 Mbit/s avec une image-clé toutes
+les 10 images, c'est exigeant — il présente une image sur deux, et `estimateFps()` mesurait
+scrupuleusement 30. Pire : 30 appartient à `COMMON_FPS`, donc le recalage sur une valeur standard
+transformait une mesure fausse en valeur d'apparence légitime.
+
+Trois corrections, dans cet ordre d'importance :
+
+1. **Le sidecar fait autorité.** Le sélecteur de fichiers accepte désormais la vidéo **et** son
+   `.json` ; `parseExtractSidecar()` valide le schéma `rx-extract/1` et la cadence est *annoncée* au
+   lecteur (`loadFile(file, startAt, { fps })`) au lieu d'être devinée.
+2. **La mesure est durcie.** `estimateFps()` prend le **quartile bas** des écarts et non la médiane :
+   la présentation ne peut que perdre des images, jamais en inventer, donc le vrai pas est du côté
+   des plus petits écarts. Sur des pertes intermittentes elle retrouve 60 là où la médiane donnait
+   30. La mesure est aussi suspendue hors vitesse ×1, où `mediaTime` avance de plusieurs images
+   entre deux présentations.
+3. **La provenance est affichée** : « 60 img/s (sidecar) » ou « 30 img/s (mesurée) ». Une cadence
+   devinée ne doit plus jamais avoir l'air d'un fait.
+
+Vérifié dans un vrai navigateur par `tools/smoke/videoPlayerFps.mjs` (voir §5.5).
+
+### 5.4 Contrôle navigateur de la cadence
+
+`tools/smoke/videoPlayerFps.mjs` charge un fichier dans le **vrai** lecteur, dans un **vrai**
+navigateur, et vérifie six points : vidéo réellement décodée, cadence retenue, provenance, pas
+théorique, **pas réellement appliqué par `step('frame')`**, et numéros d'image à deux instants.
+
+```
+node tools/smoke/videoPlayerFps.mjs <extrait.mp4>   # automatique, Chromium de Playwright
+node tools/smoke/videoPlayerFps.mjs --serve         # sert la page : à ouvrir dans SON navigateur
+```
+
+Résultat sur un fichier de contrôle à 60 img/s, décodé : les six contrôles passent, `frameOf(43)`
+vaut **2580**, `frameOf(51)` vaut **3060**, et le pas mesuré est de **16,666 ms**.
+
+⚠️ **Limite du mode automatique** : le Chromium livré avec Playwright est une compilation sans
+codecs propriétaires — `canPlayType('avc1')` y renvoie une chaîne vide. Il ne peut donc pas décoder
+un extrait H.264, et le contrôle « vidéo réellement décodée » échoue franchement au lieu de laisser
+passer un faux vert. Pour un test complet sur un extrait réel, c'est `--serve` et son propre Chrome
+qu'il faut utiliser — d'autant que la cadence de présentation dépend de la machine, de l'écran et du
+décodeur, jamais du seul fichier.
+
+### 5.5 Ce que l'extrait apporte au lecteur, en plus
 
 Un fichier de 50 secondes est **entièrement en mémoire**. Le `seek` est instantané, le pas à pas
 arrière aussi — alors qu'aujourd'hui, sur l'iframe YouTube, `step()` retombe sur un pas de 0,2 s

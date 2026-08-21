@@ -26,6 +26,7 @@ import { createVideoPlayer } from './videoPlayer.js';
 import {
   parseVideoSource, resolveStartTime, formatPreciseTime, buildVideoBlock,
   keyboardAction, neighbourStartId, nextRate, ratesFor, SHORTCUT_HELP,
+  parseExtractSidecar, pairExtractFiles,
 } from './videoPlayerCalc.js';
 
 // ─────────────────────────────────────────────────────────
@@ -50,6 +51,7 @@ let _initialised      = false;
 let player          = null;
 let videoCollapsed  = false;
 let sharedFile      = null;   // fichier local courant, réutilisé d'une série à l'autre
+let sharedSidecar   = null;   // bloc « rx-extract/1 » accompagnant ce fichier, s'il a été fourni
 let videoState      = { time: 0, playing: false, ready: false, error: '' };
 let _keysBound      = false;
 
@@ -634,9 +636,9 @@ function videoShellHtml() {
     <div class="vp-source">
       <input type="text" class="vp-url" id="sanl-vurl" placeholder="Lien YouTube (https://youtu.be/…)">
       <button class="vp-btn" id="sanl-vload">Charger</button>
-      <label class="vp-btn vp-file-label">
-        📁 Fichier local
-        <input type="file" id="sanl-vfile" accept="video/*">
+      <label class="vp-btn vp-file-label" title="Sélectionne la vidéo ET son .json : la cadence exacte y est écrite">
+        📁 Fichier local <span class="vp-file-hint">(+ son .json)</span>
+        <input type="file" id="sanl-vfile" accept="video/*,application/json,.json" multiple>
       </label>
       <span class="vp-local-note" id="sanl-vsource"></span>
     </div>
@@ -738,12 +740,12 @@ function applySourceForCurrent() {
     return;
   }
   _loadedKey = key;
-  // Cadence annoncée au lecteur plutôt que devinée — mais UNIQUEMENT si elle a
-  // été établie sur CE fichier : un autre enregistrement peut avoir une autre
-  // cadence, et l'annoncer à tort désactiverait la mesure sans rien signaler.
-  const knownFps = sharedFile && current.video.fileName === sharedFile.name
-    ? current.video.fps
-    : null;
+  // Cadence annoncée au lecteur plutôt que devinée. Le sidecar l'emporte : il
+  // décrit le fichier chargé, quelle que soit la série sélectionnée. À défaut,
+  // on ne réutilise la cadence enregistrée que si elle a été établie sur CE
+  // fichier — l'annoncer à tort désactiverait la mesure sans rien signaler.
+  const knownFps = sharedSidecar?.fps
+    ?? (sharedFile && current.video.fileName === sharedFile.name ? current.video.fps : null);
   if (wantsFile) player.loadFile(sharedFile, at, { fps: knownFps });
   else player.loadYoutube(resolved.youtubeId, at);
 }
@@ -777,7 +779,13 @@ function refreshVideoUi() {
     if (kind === 'file') bits.push(`📁 ${escHtml(player.fileName || '')}`);
     else if (kind === 'youtube') bits.push('▶ YouTube');
     else bits.push('aucune source');
-    if (player?.fps) bits.push(`${player.fps} img/s`);
+    // La provenance est affichée : une cadence mesurée peut être fausse (elle
+    // reflète la présentation, pas le fichier), une cadence de sidecar non.
+    if (player?.fps) {
+      bits.push(`${player.fps} img/s ${player.fpsSource === 'declared' ? '(sidecar)' : '(mesurée)'}`);
+    } else if (player?.kind === 'file') {
+      bits.push('cadence inconnue');
+    }
     if (r.source === 'meeting') {
       bits.push(r.approximate
         ? '⚠️ timecode du meeting : il vise la 1ʳᵉ série de cette session'
@@ -850,16 +858,32 @@ function bindVideoControls() {
     refreshVideoUi();
   });
 
-  document.getElementById('sanl-vfile')?.addEventListener('change', (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  document.getElementById('sanl-vfile')?.addEventListener('change', async (e) => {
+    const { video: file, sidecar } = pairExtractFiles(e.target.files || []);
+    if (!file) { toast('Aucun fichier vidéo dans la sélection', 'error'); return; }
+
+    // Le sidecar porte la cadence relevée par ffprobe à l'extraction. La lire
+    // vaut infiniment mieux que la deviner : `requestVideoFrameCallback` mesure
+    // la cadence de PRÉSENTATION, qui tombe à 30 dès que le navigateur saute
+    // une image sur deux — ce qui arrive sur du 1080p60.
+    sharedSidecar = null;
+    if (sidecar) {
+      try {
+        sharedSidecar = parseExtractSidecar(await sidecar.text());
+        if (!sharedSidecar) toast(`${sidecar.name} n'est pas un sidecar rx-extract/1`, 'error');
+      } catch {
+        toast(`Lecture impossible de ${sidecar.name}`, 'error');
+      }
+    }
+
     // Le fichier reste sur la machine : aucune donnée n'est envoyée à Firebase.
     sharedFile = file;
     current.video.kind = 'file';
     current.video.fileName = file.name;
+    if (sharedSidecar?.fps) current.video.fps = sharedSidecar.fps;
     current.dirty = true;
     _loadedKey = `file:${file.name}`;
-    player.loadFile(file, current.video.startAt ?? 0);
+    player.loadFile(file, current.video.startAt ?? 0, { fps: sharedSidecar?.fps ?? null });
     refreshVideoUi();
   });
 

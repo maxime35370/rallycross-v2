@@ -193,6 +193,14 @@
   font-family: var(--font-mono, ui-monospace, monospace);
 }
 
+/* Rappel discret : le .json porte la cadence exacte, que le navigateur ne
+   sait pas toujours mesurer correctement (voir js/videoPlayer.js). */
+.vp-file-hint {
+  font-weight: 400;
+  opacity: 0.65;
+  font-size: 0.9em;
+}
+
 .vp-local-note {
   font-size: 0.74rem;
   color: var(--clr-text-3);

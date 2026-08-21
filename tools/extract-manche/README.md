@@ -166,6 +166,26 @@ provenance, jamais à brancher un comportement différent.
 
 ---
 
+## Vérifier la cadence dans le navigateur
+
+Le lecteur mesurait la cadence avec `requestVideoFrameCallback`, qui rapporte la cadence de
+**présentation** et non celle du fichier : sur un 1080p60 exigeant, un navigateur qui saute une image
+sur deux fait mesurer 30 img/s, et les numéros d'image sont alors faux d'un facteur deux, sans le
+moindre signal. C'est pour cela que le sidecar existe — et que le lecteur affiche désormais
+« 60 img/s (sidecar) » ou « 30 img/s (mesurée) ».
+
+Dans l'application, sélectionne **la vidéo et son `.json` ensemble** dans « 📁 Fichier local ».
+
+Pour contrôler :
+
+```powershell
+node tools\smoke\videoPlayerFps.mjs --serve
+```
+
+Ouvre l'URL affichée dans **ton** navigateur, sélectionne les deux fichiers, et lis le tableau :
+cadence mesurée contre cadence annoncée, pas image par image réellement appliqué, et numéros d'image
+aux instants de ton choix. C'est le seul test qui dise ce que fait vraiment ta machine.
+
 ## Tests
 
 La couche pure — fenêtre, marges, nommage, arguments yt-dlp, contrôle ffprobe, sidecar, plan du

@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   parseVideoSource, resolveStartTime, youtubeIdOfMeetingVideo,
   estimateFps, normalizeFps, frameDuration, clampTime, stepTime, frameOf,
+  parseExtractSidecar, pairExtractFiles, EXTRACT_SCHEMA,
   formatPreciseTime, parsePreciseTime,
   YOUTUBE_RATES, LOCAL_RATES, ratesFor, nextRate,
   computeVideoRect, projectBox, normalizeBox, sanitizeBoxes, boxLabelText,
@@ -114,6 +115,85 @@ describe('estimateFps', () => {
     const fps = estimateFps([0.125, 0.125, 0.125, 0.125]);
     expect(fps).toBeCloseTo(8, 3);
     expect(COMMON_FPS).not.toContain(fps);
+  });
+});
+
+describe('estimateFps — résistance aux images sautées', () => {
+  it('retrouve 60 alors que la majorité des images est sautée', () => {
+    // Cas réel : un extrait 1080p60 présenté en partie à 30 img/s. La médiane
+    // tombait sur 1/30 et renvoyait 30 — une valeur « plausible », donc une
+    // erreur silencieuse. Le quartile bas retrouve la bonne cadence, parce que
+    // la présentation ne peut que PERDRE des images, jamais en inventer.
+    const deltas = [...Array(8).fill(1 / 60), ...Array(12).fill(2 / 60)];
+    expect(estimateFps(deltas)).toBe(60);
+  });
+
+  it('ne transforme pas une vraie vidéo à 30 en 60', () => {
+    expect(estimateFps(Array(20).fill(1 / 30))).toBe(30);
+  });
+
+  it('reste juste sur une cadence propre', () => {
+    expect(estimateFps(Array(20).fill(1 / 50))).toBe(50);
+    expect(estimateFps(Array(20).fill(1001 / 30000))).toBe(29.97);
+  });
+});
+
+describe('parseExtractSidecar', () => {
+  const valide = {
+    schema: 'rx-extract/1', fps: 60, clipStart: 20543, sourceStart: 20546,
+    v1At: 20554, youtubeId: '_SqxZQl5zzQ', file: 'Kerlabo.mp4',
+    serie: 4, sessionType: 'MQ', sessionNum: 3, category: 'D3', location: 'Kerlabo',
+  };
+
+  it('lit un sidecar produit par tools/extract-manche', () => {
+    const r = parseExtractSidecar(JSON.stringify(valide));
+    expect(r).toMatchObject({ fps: 60, clipStart: 20543, v1At: 20554, serie: 4, category: 'D3' });
+  });
+
+  it('refuse tout ce qui n\'est pas ce schéma', () => {
+    // Un JSON quelconque déposé par erreur ne doit pas imposer une cadence.
+    expect(parseExtractSidecar(JSON.stringify({ fps: 60 }))).toBeNull();
+    expect(parseExtractSidecar(JSON.stringify({ ...valide, schema: 'autre/2' }))).toBeNull();
+    expect(parseExtractSidecar('pas du json')).toBeNull();
+    expect(parseExtractSidecar('')).toBeNull();
+    expect(parseExtractSidecar(null)).toBeNull();
+  });
+
+  it('neutralise une cadence absurde plutôt que de la propager', () => {
+    expect(parseExtractSidecar(JSON.stringify({ ...valide, fps: 0 })).fps).toBeNull();
+    expect(parseExtractSidecar(JSON.stringify({ ...valide, fps: 'soixante' })).fps).toBeNull();
+    expect(EXTRACT_SCHEMA).toBe('rx-extract/1');
+  });
+});
+
+describe('pairExtractFiles', () => {
+  const f = (name, type = '') => ({ name, type });
+
+  it('apparie la vidéo et son sidecar par le nom de base', () => {
+    const r = pairExtractFiles([f('autre.json'), f('K_Q3_S4.mp4'), f('K_Q3_S4.json')]);
+    expect(r.video.name).toBe('K_Q3_S4.mp4');
+    expect(r.sidecar.name).toBe('K_Q3_S4.json');
+  });
+
+  it('accepte un couple unique même si les noms diffèrent', () => {
+    const r = pairExtractFiles([f('manche.mp4'), f('description.json')]);
+    expect(r.sidecar.name).toBe('description.json');
+  });
+
+  it('n\'apparie rien quand le choix est ambigu', () => {
+    const r = pairExtractFiles([f('a.mp4'), f('b.mp4'), f('x.json'), f('y.json')]);
+    expect(r.video.name).toBe('a.mp4');
+    expect(r.sidecar).toBeNull();
+  });
+
+  it('reconnaît une vidéo par son type quand l\'extension est inhabituelle', () => {
+    expect(pairExtractFiles([f('rush', 'video/mp4')]).video.name).toBe('rush');
+  });
+
+  it('supporte une sélection vide ou sans vidéo', () => {
+    expect(pairExtractFiles([])).toEqual({ video: null, sidecar: null });
+    expect(pairExtractFiles([f('seul.json')]).sidecar.name).toBe('seul.json');
+    expect(pairExtractFiles(undefined)).toEqual({ video: null, sidecar: null });
   });
 });
 
