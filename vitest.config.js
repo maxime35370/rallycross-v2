@@ -8,6 +8,8 @@ export default defineConfig({
     // Vitest casse `npm test` à la racine : Vitest charge le fichier, n'y
     // trouve pas de suite à son format, et échoue. Ils se lancent depuis leur
     // propre dossier (`npm test` dans tools/video-poc).
-    exclude: [...configDefaults.exclude, 'tools/**'],
+    // `tests/rules/` exige l'émulateur Firestore et une JVM : ces tests ont
+    // leur propre configuration et leur propre script (`npm run test:rules`).
+    exclude: [...configDefaults.exclude, 'tools/**', 'tests/rules/**'],
   },
 });
