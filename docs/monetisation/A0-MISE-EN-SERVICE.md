@@ -65,6 +65,37 @@ souvent en indésirables** — c'est la première chose à dire au team.
 Le dépôt versionne `firestore.rules` ; **la console ne le lit pas**. Il faut
 copier-coller.
 
+### Ce que la publication change exactement — **vérifié**
+
+Les règles de production ont été comparées bloc par bloc au dépôt et aux
+nouvelles règles, le 2026-08-21.
+
+> **Production et `main` sont IDENTIQUES sur les 23 blocs.** Aucune
+> modification n'a été faite directement dans la console depuis le dernier
+> commit. Publier ne perdra donc rien.
+>
+> **Conséquence pratique : le fichier de rollback est déjà dans git.**
+> `git show origin/main:firestore.rules` rend exactement les règles
+> actuellement en production. Une sauvegarde locale reste utile, mais elle
+> n'est plus la seule copie.
+
+| Bloc | Effet de la publication |
+|---|---|
+| `users`, `teams`, `teamMembers`, `licenses` | **ajoutés** |
+| `drivers` | **durci** — `personId` devient obligatoire |
+| `persons` | **durci** — `reviewFlag` borné à deux valeurs |
+| En-tête du fichier | **fonctions ajoutées** — `isSignedIn`, `isVerified`, `isTeamMember`, `nonEmpty`, `validLicense`, `validReviewFlag`, `meetingIdOf` ; `isRegie` passe en `get('email','')` |
+| Les 19 autres blocs | **inchangés** |
+
+**Rien n'est retiré.**
+
+> ⚠️ **Le seul changement qui peut te gêner est `drivers.personId`.** C'est
+> pour lui que le test 4 ci-dessous existe. Les 284 inscriptions en base en
+> ont une, et `js/drivers.js` en calcule toujours une, donc l'enregistrement
+> doit passer. Si un enregistrement de pilote était refusé, cela signifierait
+> qu'un `personId` est nul : republie les anciennes règles, dis-le-moi, et on
+> traite le cas avant de recommencer.
+
 ### Avant de publier — garder l'ancienne version
 
 *Console Firebase → Firestore Database → Rules* → **sélectionner tout le
