@@ -31,3 +31,8 @@ docs/video-analysis/corpus/
 *.m4a
 *.part
 *.ytdl
+
+# Modèle et rapports du banc de détection (tools/yolox-poc/) — jamais versionnés
+tools/yolox-poc/modele/
+rapport-detection.json
+boxes__*.png

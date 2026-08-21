@@ -1,0 +1,413 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Banc de détection YOLOX-tiny — Rallycross V2</title>
+<style>
+  :root { --bd:#d8d8d8; --bg:#fafafa; --ok:#0a7d28; --ko:#b30021; --warn:#8a6100; }
+  body { font:14px/1.55 system-ui,sans-serif; margin:0; padding:20px; background:var(--bg); color:#1b1b1b; }
+  h1 { font-size:1.15rem; margin:0 0 4px; }
+  .sub { color:#666; margin:0 0 16px; }
+  .panneau { background:#fff; border:1px solid var(--bd); border-radius:8px; padding:12px 14px; margin-bottom:14px; }
+  .rangee { display:flex; gap:16px; align-items:center; flex-wrap:wrap; }
+  label { font-size:13px; }
+  input[type=number] { width:62px; }
+  canvas { max-width:100%; border:1px solid var(--bd); border-radius:4px; display:block; }
+  table { border-collapse:collapse; width:100%; font-size:13px; }
+  th,td { border:1px solid var(--bd); padding:4px 7px; text-align:left; }
+  th { background:#f0f0f0; }
+  td.num, th.num { text-align:right; font-variant-numeric:tabular-nums; }
+  .zone { font-weight:600; }
+  .det { cursor:pointer; }
+  .det.rejet { text-decoration:line-through; opacity:.5; }
+  .pastille { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:5px; vertical-align:-1px; }
+  button { font:inherit; padding:4px 10px; border:1px solid var(--bd); background:#fff; border-radius:4px; cursor:pointer; }
+  button.actif { background:#1b1b1b; color:#fff; }
+  .ok { color:var(--ok); font-weight:600; } .ko { color:var(--ko); font-weight:600; }
+  .warn { color:var(--warn); }
+  .avert { background:#fff6e0; border-left:3px solid var(--warn); padding:8px 10px; margin:8px 0; font-size:13px; }
+  pre { background:#f4f4f4; padding:10px; overflow:auto; font-size:12px; max-height:340px; }
+  .grille { display:grid; grid-template-columns:minmax(0,1.6fr) minmax(260px,1fr); gap:14px; align-items:start; }
+</style>
+
+<h1>Banc de détection YOLOX-tiny</h1>
+<p class="sub">
+  Le modèle propose, <strong>tu tranches</strong>. Rappel et précision ne sont calculés qu'à partir
+  de tes annotations : rien ici ne suppose que le modèle connaît la vérité terrain.
+</p>
+
+<div class="panneau">
+  <div class="rangee">
+    <label>Images du corpus + <code>corpus.json</code> :
+      <input type="file" id="pick" accept="image/png,image/jpeg,application/json,.json" multiple>
+    </label>
+    <label>Seuil de confiance <input type="number" id="seuil" min="0.05" max="0.9" step="0.05" value="0.30"></label>
+    <label>IoU de fusion <input type="number" id="iou" min="0.1" max="0.9" step="0.05" value="0.45"></label>
+    <button id="relancer">Relancer</button>
+    <span id="etat" class="sub"></span>
+  </div>
+  <div id="avertSeuil"></div>
+</div>
+
+<div id="images"></div>
+
+<div class="panneau">
+  <h2 style="font-size:1rem;margin:0 0 8px">Bilan</h2>
+  <div id="bilan"><p class="sub">Annote les images pour obtenir un chiffre.</p></div>
+  <div class="rangee" style="margin-top:10px">
+    <button id="exporter">Exporter le rapport JSON</button>
+    <span class="sub">Les images restent sur ta machine : rien n'est envoyé.</span>
+  </div>
+</div>
+
+<script src="/__ort/ort.min.js"></script>
+<script type="module">
+import {
+  INPUT_SIZE, VEHICLE_CLASS_IDS, letterbox, buildGrids, decodeOutput,
+  mergeVehicleDetections, scoreImage, aggregate, verdict,
+} from '/tools/yolox-poc/lib/detect.mjs';
+
+const ort = window.ort;
+ort.env.wasm.wasmPaths = '/__ort/';
+ort.env.wasm.numThreads = 1;
+ort.env.logLevel = 'error';
+
+const GRIDS = buildGrids(INPUT_SIZE);
+const COULEURS = ['#e8000d', '#0a7d28', '#0b57d0', '#b06f00', '#7a1fa2', '#00838f', '#c2185b'];
+
+const etat = document.getElementById('etat');
+let session = null;
+let corpus = null;                 // corpus.json fourni
+let fichiers = [];                 // { file, nom, zone, image }
+let resultats = [];                // par image : détections + annotation
+
+// ─────────────────────────────────────────────────────────
+// MODÈLE
+// ─────────────────────────────────────────────────────────
+
+async function chargerModele() {
+  if (session) return session;
+  etat.textContent = 'chargement du modèle…';
+  session = await ort.InferenceSession.create('/__modele/yolox_tiny.onnx', {
+    executionProviders: ['wasm'],
+    graphOptimizationLevel: 'all',
+  });
+  return session;
+}
+
+/** Prépare le tenseur d'entrée : ratio conservé, fond gris 114, BGR 0–255. */
+function preparer(image) {
+  const box = letterbox(image.naturalWidth, image.naturalHeight, INPUT_SIZE);
+  const c = document.createElement('canvas');
+  c.width = INPUT_SIZE; c.height = INPUT_SIZE;
+  const ctx = c.getContext('2d', { willReadFrequently: true });
+  ctx.fillStyle = 'rgb(114,114,114)';
+  ctx.fillRect(0, 0, INPUT_SIZE, INPUT_SIZE);
+  // Sans cette qualité, la réduction d'une image 1080p vers 416 px utilise un
+  // filtre grossier : mesuré sur l'image de référence, le score de la même
+  // détection passait de 0,77 à 0,69 — assez pour franchir un seuil.
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(image, 0, 0, box.width, box.height);
+
+  const px = ctx.getImageData(0, 0, INPUT_SIZE, INPUT_SIZE).data;
+  const n = INPUT_SIZE * INPUT_SIZE;
+  const data = new Float32Array(3 * n);
+  for (let i = 0; i < n; i++) {
+    data[i] = px[i * 4 + 2];             // B
+    data[n + i] = px[i * 4 + 1];         // G
+    data[2 * n + i] = px[i * 4];         // R
+  }
+  return { tensor: new ort.Tensor('float32', data, [1, 3, INPUT_SIZE, INPUT_SIZE]), ratio: box.ratio };
+}
+
+async function detecter(image, seuil, iouThr) {
+  const s = await chargerModele();
+  const { tensor, ratio } = preparer(image);
+  const sortie = await s.run({ images: tensor });
+  const brut = sortie[s.outputNames[0]].data;
+  const brutes = decodeOutput(brut, GRIDS, ratio, {
+    scoreThreshold: seuil,
+    classIds: VEHICLE_CLASS_IDS,     // uniquement les classes véhicule
+  });
+  return mergeVehicleDetections(brutes, iouThr);
+}
+
+// ─────────────────────────────────────────────────────────
+// RENDU
+// ─────────────────────────────────────────────────────────
+
+function dessiner(canvas, image, detections) {
+  canvas.width = image.naturalWidth;
+  canvas.height = image.naturalHeight;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(image, 0, 0);
+  const echelle = Math.max(1, canvas.width / 900);
+  ctx.lineWidth = 3 * echelle;
+  ctx.font = `600 ${Math.round(15 * echelle)}px system-ui, sans-serif`;
+  ctx.textBaseline = 'bottom';
+
+  detections.forEach((d, i) => {
+    const couleur = COULEURS[i % COULEURS.length];
+    const [x1, y1, x2, y2] = d.box;
+    ctx.globalAlpha = d.rejet ? 0.3 : 1;
+    ctx.strokeStyle = couleur;
+    ctx.setLineDash(d.rejet ? [8, 6] : []);
+    ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+    ctx.setLineDash([]);
+    const txt = `${i + 1} ${d.label} ${d.score.toFixed(2)}`;
+    const w = ctx.measureText(txt).width + 10 * echelle;
+    const h = 21 * echelle;
+    ctx.fillStyle = couleur;
+    ctx.fillRect(x1, Math.max(h, y1) - h, w, h);
+    ctx.fillStyle = '#fff';
+    ctx.fillText(txt, x1 + 5 * echelle, Math.max(h, y1) - 4 * echelle);
+    ctx.globalAlpha = 1;
+  });
+}
+
+function ligneDetection(r, d, i) {
+  const couleur = COULEURS[i % COULEURS.length];
+  const alt = d.alsoDetectedAs.length ? ` <span class="sub">(aussi ${d.alsoDetectedAs.join(', ')})</span>` : '';
+  const sup = d.suppressed ? ` <span class="sub">· ${d.suppressed} doublon(s) fusionné(s)</span>` : '';
+  return `<tr class="det ${d.rejet ? 'rejet' : ''}" data-img="${r.index}" data-det="${i}">
+    <td><span class="pastille" style="background:${couleur}"></span>${i + 1}</td>
+    <td>${d.label}${alt}${sup}</td>
+    <td class="num">${d.score.toFixed(3)}</td>
+    <td>${Math.round(d.box[2] - d.box[0])}×${Math.round(d.box[3] - d.box[1])}</td>
+    <td><button data-verdict="${r.index}:${i}">${d.rejet ? d.motif : 'validée'}</button></td>
+  </tr>`;
+}
+
+const MOTIFS = ['validée', 'faux positif', 'doublon'];
+
+function rendre() {
+  const hote = document.getElementById('images');
+  hote.innerHTML = resultats.map((r) => `
+    <div class="panneau">
+      <div class="rangee" style="justify-content:space-between">
+        <span class="zone">${r.zone || r.nom}</span>
+        <span class="sub">${r.nom} · ${r.detections.length} détection(s)</span>
+      </div>
+      <div class="grille" style="margin-top:8px">
+        <canvas id="cv-${r.index}"></canvas>
+        <div>
+          <table>
+            <tr><th>#</th><th>classe</th><th class="num">score</th><th>taille</th><th>verdict</th></tr>
+            ${r.detections.map((d, i) => ligneDetection(r, d, i)).join('') || '<tr><td colspan="5" class="ko">aucune détection</td></tr>'}
+          </table>
+          <table style="margin-top:10px">
+            <tr><th colspan="2">Ton annotation</th></tr>
+            <tr><td>voitures visibles</td><td><input type="number" min="0" data-a="carsVisible" data-i="${r.index}" value="${r.ann.carsVisible ?? ''}"></td></tr>
+            <tr><td><strong>détectables</strong> <span class="sub">(&gt; moitié de carrosserie)</span></td><td><input type="number" min="0" data-a="carsDetectable" data-i="${r.index}" value="${r.ann.carsDetectable ?? ''}"></td></tr>
+            <tr><td>critiques pour l'ordre V1</td><td><input type="number" min="0" data-a="carsOrderCritical" data-i="${r.index}" value="${r.ann.carsOrderCritical ?? ''}"></td></tr>
+            <tr><td>ratées</td><td><input type="number" min="0" data-a="missed" data-i="${r.index}" value="${r.ann.missed}"></td></tr>
+            <tr><td>ratées critiques</td><td><input type="number" min="0" data-a="missedOrderCritical" data-i="${r.index}" value="${r.ann.missedOrderCritical}"></td></tr>
+          </table>
+          <div id="coh-${r.index}"></div>
+          <button data-png="${r.index}" style="margin-top:8px">Télécharger l'image annotée</button>
+        </div>
+      </div>
+    </div>`).join('');
+
+  for (const r of resultats) {
+    dessiner(document.getElementById(`cv-${r.index}`), r.image, r.detections);
+    majCoherence(r);
+  }
+  majBilan();
+}
+
+function majCoherence(r) {
+  const el = document.getElementById(`coh-${r.index}`);
+  if (!el) return;
+  const s = scoreImage(compter(r));
+  if (r.ann.carsDetectable == null) { el.innerHTML = ''; return; }
+  el.innerHTML = s.coherent
+    ? `<p class="sub">rappel ${(s.recall * 100).toFixed(0)} % · précision ${s.precision == null ? '—' : (s.precision * 100).toFixed(0) + ' %'}</p>`
+    : `<div class="avert">Annotation incohérente : ${r.ann.carsDetectable} détectables − ${r.ann.missed} ratées
+       ≠ ${compter(r).truePositives} détection(s) validée(s). Corrige l'un ou l'autre.</div>`;
+}
+
+function compter(r) {
+  const validees = r.detections.filter(d => !d.rejet).length;
+  const rejetees = r.detections.filter(d => d.rejet).length;
+  return { ...r.ann, truePositives: validees, falsePositives: rejetees };
+}
+
+function majBilan() {
+  const annotees = resultats.filter(r => Number.isFinite(r.ann.carsDetectable)).map(compter);
+  const el = document.getElementById('bilan');
+  if (!annotees.length) { el.innerHTML = '<p class="sub">Annote au moins une image pour obtenir un chiffre.</p>'; return; }
+
+  const lignes = resultats.map((r) => {
+    const s = scoreImage(compter(r));
+    const c = compter(r);
+    return `<tr>
+      <td class="zone">${r.zone || r.nom}</td>
+      <td class="num">${r.ann.carsDetectable ?? '—'}</td>
+      <td class="num">${c.truePositives}</td>
+      <td class="num">${r.ann.missed}</td>
+      <td class="num">${c.falsePositives}</td>
+      <td class="num">${s.recall == null ? '—' : (s.recall * 100).toFixed(0) + ' %'}</td>
+      <td class="num">${s.precision == null ? '—' : (s.precision * 100).toFixed(0) + ' %'}</td>
+      <td class="num">${s.criticalRecall == null ? '—' : (s.criticalRecall * 100).toFixed(0) + ' %'}</td>
+    </tr>`;
+  }).join('');
+
+  const g = aggregate(annotees);
+  const v = verdict(g.recall);
+  el.innerHTML = `
+    <table>
+      <tr><th>zone</th><th class="num">détectables</th><th class="num">validées</th><th class="num">ratées</th>
+          <th class="num">rejetées</th><th class="num">rappel</th><th class="num">précision</th><th class="num">rappel critique</th></tr>
+      ${lignes}
+      <tr style="font-weight:600;background:#f7f7f7">
+        <td>TOTAL (${g.images} images)</td>
+        <td class="num">${g.carsDetectable}</td><td class="num">${g.truePositives}</td>
+        <td class="num">${g.missed}</td><td class="num">${g.falsePositives}</td>
+        <td class="num">${g.recall == null ? '—' : (g.recall * 100).toFixed(1) + ' %'}</td>
+        <td class="num">${g.precision == null ? '—' : (g.precision * 100).toFixed(1) + ' %'}</td>
+        <td class="num">${g.criticalRecall == null ? '—' : (g.criticalRecall * 100).toFixed(1) + ' %'}</td>
+      </tr>
+    </table>
+    <p style="margin-top:10px"><strong>Verdict étape 1 (détection) : <span class="${v.code === 'go' ? 'ok' : v.code === 'yolox_s' ? 'ko' : 'warn'}">${v.label}</span></strong></p>
+    <p class="sub">Ce verdict ne porte que sur la détection. Le suivi, l'association voiture ↔ pilote
+    et l'ordre au premier virage restent entiers : un bon rappel ici ne garantit pas un ordre juste.</p>`;
+}
+
+// ─────────────────────────────────────────────────────────
+// PIPELINE
+// ─────────────────────────────────────────────────────────
+
+async function lancer() {
+  const seuil = Number(document.getElementById('seuil').value);
+  const iouThr = Number(document.getElementById('iou').value);
+  document.getElementById('avertSeuil').innerHTML = seuil < 0.25
+    ? `<div class="avert">Seuil de ${seuil.toFixed(2)} : sous 0,25 on gagne du rappel en fabriquant des faux positifs. Le chiffre obtenu ne serait pas comparable.</div>`
+    : '';
+
+  resultats = [];
+  for (const [index, f] of fichiers.entries()) {
+    etat.textContent = `analyse ${index + 1}/${fichiers.length}…`;
+    const detections = await detecter(f.image, seuil, iouThr);
+    resultats.push({
+      index, nom: f.nom, zone: f.zone, image: f.image, detections,
+      ann: { carsVisible: null, carsDetectable: null, carsOrderCritical: null, missed: 0, missedOrderCritical: 0 },
+    });
+  }
+  etat.textContent = `${fichiers.length} image(s) · seuil ${seuil} · IoU ${iouThr}`;
+  rendre();
+  window.__resultats = resultats.map(r => ({
+    nom: r.nom, zone: r.zone,
+    detections: r.detections.map(d => ({ label: d.label, score: d.score, box: d.box.map(v => Math.round(v)), alsoDetectedAs: d.alsoDetectedAs })),
+  }));
+}
+
+document.getElementById('pick').addEventListener('change', async (e) => {
+  const liste = Array.from(e.target.files);
+  const json = liste.find(f => /\.json$/i.test(f.name));
+  corpus = null;
+  if (json) {
+    try {
+      const brut = JSON.parse(await json.text());
+      if (brut?.schema === 'rx-corpus/1') corpus = brut;
+      else etat.textContent = `${json.name} n'est pas un manifeste rx-corpus/1`;
+    } catch { etat.textContent = `${json.name} illisible`; }
+  }
+  const zoneDe = (nom) => corpus?.frames?.find(f => f.file === nom)?.zone || null;
+
+  fichiers = [];
+  for (const f of liste.filter(f => /\.(png|jpe?g)$/i.test(f.name))) {
+    const image = new Image();
+    image.src = URL.createObjectURL(f);
+    await image.decode();
+    fichiers.push({ file: f, nom: f.name, zone: zoneDe(f.name), image });
+  }
+  // Ordre du manifeste quand il existe : départ -> sortie V1, pas l'alphabet.
+  if (corpus) {
+    const rang = new Map(corpus.frames.map((f, i) => [f.file, i]));
+    fichiers.sort((a, b) => (rang.get(a.nom) ?? 99) - (rang.get(b.nom) ?? 99));
+  }
+  await lancer();
+});
+
+document.getElementById('relancer').addEventListener('click', () => fichiers.length && lancer());
+
+document.addEventListener('click', (e) => {
+  const v = e.target.dataset?.verdict;
+  if (v) {
+    const [i, j] = v.split(':').map(Number);
+    const d = resultats[i].detections[j];
+    const cur = MOTIFS.indexOf(d.rejet ? d.motif : 'validée');
+    const suiv = MOTIFS[(cur + 1) % MOTIFS.length];
+    d.rejet = suiv !== 'validée';
+    d.motif = suiv;
+    rendre();
+    return;
+  }
+  const png = e.target.dataset?.png;
+  if (png != null) {
+    const c = document.getElementById(`cv-${png}`);
+    const a = document.createElement('a');
+    a.download = `boxes__${resultats[png].nom}`;
+    a.href = c.toDataURL('image/png');
+    a.click();
+  }
+});
+
+document.addEventListener('input', (e) => {
+  const champ = e.target.dataset?.a;
+  if (!champ) return;
+  const r = resultats[Number(e.target.dataset.i)];
+  const val = e.target.value === '' ? null : Number(e.target.value);
+  r.ann[champ] = champ.startsWith('missed') ? (val ?? 0) : val;
+  majCoherence(r);
+  majBilan();
+});
+
+document.getElementById('exporter').addEventListener('click', () => {
+  const annotees = resultats.map(compter);
+  const rapport = {
+    schema: 'rx-detection/1',
+    modele: 'YOLOX-tiny ONNX (Apache 2.0)',
+    seuilConfiance: Number(document.getElementById('seuil').value),
+    iouFusion: Number(document.getElementById('iou').value),
+    classes: 'car, truck, bus — NMS commune à ces trois classes',
+    corpus: corpus ? { extract: corpus.extract, marks: corpus.marks } : null,
+    images: resultats.map((r) => ({
+      file: r.nom, zone: r.zone,
+      ...r.ann,
+      truePositives: compter(r).truePositives,
+      falsePositives: compter(r).falsePositives,
+      ...scoreImage(compter(r)),
+      detections: r.detections.map(d => ({
+        label: d.label, score: Number(d.score.toFixed(4)),
+        box: d.box.map(v => Math.round(v)),
+        alsoDetectedAs: d.alsoDetectedAs, suppressed: d.suppressed,
+        verdict: d.rejet ? d.motif : 'validée',
+      })),
+    })),
+    total: aggregate(annotees),
+    verdict: verdict(aggregate(annotees).recall),
+    createdAt: new Date().toISOString(),
+  };
+  const a = document.createElement('a');
+  a.download = 'rapport-detection.json';
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(rapport, null, 2)], { type: 'application/json' }));
+  a.click();
+  window.__rapport = rapport;
+});
+
+// Mode automatique pour le contrôle headless : ?auto=<url d'image>
+const auto = new URLSearchParams(location.search).get('auto');
+if (auto) {
+  (async () => {
+    const image = new Image();
+    image.src = auto;
+    await image.decode();
+    fichiers = [{ nom: auto.split('/').pop(), zone: null, image }];
+    const p = new URLSearchParams(location.search);
+    if (p.get('seuil')) document.getElementById('seuil').value = p.get('seuil');
+    await lancer();
+    window.__pret = true;
+  })().catch(e => { window.__erreur = e.message; window.__pret = true; });
+}
+</script>
