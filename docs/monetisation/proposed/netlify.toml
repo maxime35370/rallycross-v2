@@ -1,0 +1,33 @@
+# ═══════════════════════════════════════════════════════════
+#  FICHIER PRÉPARÉ — NON ACTIF
+#
+#  Ce fichier est volontairement rangé dans docs/monetisation/proposed/
+#  et NON à la racine : tant qu'il n'est pas déplacé, Netlify l'ignore.
+#
+#  Pour l'activer, après vérification de l'exposition réelle
+#  (voir AUDITS-ET-PLANS.md §1.1) :
+#      git mv docs/monetisation/proposed/netlify.toml netlify.toml
+#
+#  ⚠️ AVANT de l'activer : relever la valeur actuelle de
+#     « Publish directory » dans l'interface Netlify et la reporter
+#     dans `publish` ci-dessous. Un netlify.toml PREND LE PAS sur les
+#     réglages de l'interface.
+# ═══════════════════════════════════════════════════════════
+
+[build]
+  # Exécuté dans le conteneur de build jetable de Netlify.
+  # Le dépôt et la machine locale ne sont PAS touchés.
+  #
+  #   docs/              analyses internes, méthode, backtests   (~300 ko)
+  #   tests/             suites Vitest                            (436 ko)
+  #   tools/             scripts d'audit, dont fetch.mjs          (~272 ko)
+  #   overlay/demo/*.png captures d'écran de référence            (6,0 Mo)
+  #
+  # overlay/demo/*.html est CONSERVÉ : overlay/index.html y renvoie
+  # par sept liens (demo/showcase.html). Les PNG, eux, ne sont
+  # référencés par aucun fichier HTML — vérifié.
+  #
+  # `-f` garantit qu'un chemin déjà absent ne fait pas échouer le déploiement.
+  command = "rm -rf docs tests tools overlay/demo/*.png"
+
+  publish = "."
