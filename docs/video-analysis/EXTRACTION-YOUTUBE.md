@@ -695,7 +695,36 @@ yt-dlp --skip-download --print "%(duration)s %(fps)s %(is_live)s %(was_live)s" "
 **À noter** : durée totale (≈ 6 h ?), cadence annoncée (50 ?), présence d'un itag **avc1** en 1080p,
 et si la vidéo est un ancien direct (`was_live`) — c'est la seule vraie inconnue du §3.3.
 
-### Étape 2 — Extraction rapide (mesure du volume et du temps)
+### Étape 2 — Extraction réelle ✅ **faite**
+
+Commande : `node tools\extract-manche\extract.mjs --url https://youtu.be/_SqxZQl5zzQ --start 05:42:26
+--fin 05:43:10 --lieu Kerlabo --annee 2026 --categorie D3 --type MQ --num 3 --serie 4`
+
+| Critère du POC | Attendu | **Mesuré** | |
+|---|---|---|---|
+| Format choisi | avc1 + AAC | **`299+140`** | ✅ le sélecteur fait ce qu'on lui demande |
+| Plage demandée | 20543 → 20596 | **20543.0-20596.0** | ✅ |
+| Images | 53 × 60 = 3180 | **3180** | ✅ **coupe exacte, aucun pré-roll** |
+| `start_time` | 0 | **0** | ✅ |
+| Cadence | celle de la source | **60 img/s**, CFR | ✅ |
+| Codec / pixels | h264 High / yuv420p | **h264 High / yuv420p** | ✅ |
+| Durée totale | < 1 min | **33,8 s** | ✅ |
+| Poids du fichier | 📐 15–30 Mo | **79,5 Mo** | ❌ estimation fausse, voir ci-dessous |
+
+**Ce qui n'était pas prévu : la taille de sortie.** J'avais estimé 15–30 Mo en confondant deux
+choses. Le **téléchargement** est bien conforme — la piste 299 fait 5040 kbit/s, donc ~33 Mo pour
+53 s, soit **0,25 %** des 12,7 Go de la piste complète. Mais la **sortie** est réencodée en CRF 18,
+c'est-à-dire quasiment sans perte : sur du 1080p60 de rallycross, plein de poussière et de détail en
+mouvement, cela coûte ~12 Mbit/s, soit **2,4 fois le débit de la source**. Un CRF proche de 18 sur une
+source déjà compressée dépense l'essentiel de ses bits à reproduire fidèlement les artefacts de
+YouTube.
+
+Ce n'est pas un problème de fonctionnement — 80 Mo pour un fichier local de travail reste
+confortable — mais si le volume devenait gênant, `-crf 20` ou `-crf 22` diviserait la taille par
+deux environ. À ne faire qu'après avoir vérifié que YOLOX ne perd rien : c'est justement sur les
+détails compressés que se joue la détection.
+
+### Étape 2 bis — variante rapide (mesure du volume et du temps)
 
 ```powershell
 Measure-Command {
