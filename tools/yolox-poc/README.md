@@ -152,6 +152,90 @@ node tools\yolox-poc\serve.mjs --check <image.jpg> --modele s    # contrôle aut
 
 ---
 
+## Suivi temporel — `track.html`
+
+Étape ② : relier les détections instantanées en **pistes persistantes**, pour répondre à une
+question que six images isolées ne peuvent pas trancher — *peut-on tenir cinq trajectoires
+distinctes du départ à la sortie du V1 malgré les ratés de YOLOX ?*
+
+```powershell
+node tools\yolox-poc\serve.mjs      # puis ouvrir /__suivi
+```
+
+Sélectionne **l'extrait `.mp4` et son `.json`** : la cadence vient du sidecar, jamais d'une
+supposition. Règle la fenêtre (départ → sortie V1), le pas, et lance.
+
+### Méthode
+
+Logique **BoT-SORT réimplémentée en JS** — c'est-à-dire ByteTrack plus une compensation du
+mouvement de caméra — conformément à `AUTOMATION-ARCHITECTURE.md` §5. **Aucune dépendance
+ajoutée** : ce sont des algorithmes, pas des bibliothèques.
+
+| Étape | Ce qui se passe |
+|---|---|
+| Prédiction | filtre alpha-bêta à vitesse constante sur (centre, taille) |
+| Rattrapage en bloc | décalage global estimé par vote, adopté seulement s'il apparie mieux |
+| Association, 1er temps | détections **fortes** (≥ seuil), affectation **hongroise** |
+| Association, 2e temps | détections **faibles** (bande basse) contre les pistes orphelines |
+| Occlusion / fusion | boîte trop large recouvrant plusieurs pistes → toutes gardées, occluses |
+| États | `detected` · `predicted` · `occluded` · `tentative` · `lost` |
+
+**La bande basse ne change pas le seuil du banc.** 0,30 reste ce qui *crée* une piste ; la bande
+0,10–0,30 ne sert qu'à en *sauver* une déjà établie. C'est la trouvaille de ByteTrack, et c'est ce
+qui permet de traverser une occlusion sans inventer de voiture.
+
+**Une position prédite ne ressemble jamais à une mesure** : trait pointillé, état affiché, et le
+score n'est montré que sur une détection réelle.
+
+### Ce qui a été trouvé en construisant
+
+- **L'association gloutonne échange les identités.** D'où l'affectation hongroise, qui minimise le
+  coût total. Un cas de test le reproduit.
+- **Une boîte fusionnée corrompt la piste qui l'absorbe.** Elle héritait des 230 px de la boîte
+  commune et ne se raccrochait plus à sa voiture de 100 px après séparation. Les fusions sont donc
+  repérées **avant** l'association et retirées du jeu : les pistes concernées restent occluses,
+  simplement recalées sur le bloc.
+- **Corriger la prédiction par le biais du pas précédent compte deux fois le même mouvement.**
+  Mesuré : +33 px là où on attendait −90. Le biais s'applique désormais à la boîte d'association,
+  jamais à l'état du filtre.
+- **Le vrai danger d'un panoramique n'est pas l'absence d'appariement, c'est l'appariement
+  plausible et faux.** Sur un balayage de 90 px par pas avec des voitures espacées de 150, chaque
+  piste recouvre mieux sa voisine que sa propre voiture : quatre appariements sur cinq, tous
+  décalés d'un cran, sans le moindre signe d'échec. D'où l'estimation en bloc, tentée à chaque pas.
+- **Un détecteur de « saut » ne sert à rien** : la porte d'IoU interdit déjà à une piste de bondir.
+  Les signatures utiles d'un échange d'identité sont ailleurs — inversion d'ordre, relais
+  d'identifiant, changement de gabarit, sortie d'occlusion, association peu sûre.
+
+### Mesures
+
+Nombre de voitures suivies à chaque instant, durée des pistes, pertes temporaires, sauvetages par
+la bande basse, reprises après occlusion, et l'état au V1. **Aucune ne dit qu'un `trackId` désigne
+toujours la même voiture** — cela demande une vérité terrain. Le panneau « à regarder » ramène la
+relecture de 43 instants à quelques-uns, chacun cliquable.
+
+### Fréquence
+
+0,50 s (2 Hz) · 0,25 s (4 Hz) · 0,10 s (10 Hz). Comparer deux fréquences donne le seul signal
+objectif disponible sans annotation : **si la même séquence ne donne pas les mêmes trajectoires à
+4 Hz et à 10 Hz, au moins l'une des deux se trompe.** La concordance ne prouve rien, la discordance
+prouve l'erreur.
+
+Ordre de grandeur mesuré en conteneur, YOLOX-s en WebAssembly mono-thread : ~1,7 s par instant,
+soit ~75 s pour 43 instants. Sur une machine réelle avec le multi-thread actif, comptez nettement
+moins.
+
+### Contrôles
+
+```powershell
+node tools\smoke\videoSeek.mjs     # quelle image le navigateur affiche à currentTime = t
+npx vitest run tests/trackerCore.test.js
+```
+
+`videoSeek.mjs` fabrique une vidéo dont chaque image porte une couleur unique et vérifie le calage.
+La règle du navigateur est **l'inverse de celle de ffmpeg** : `<video>` affiche l'image dont
+l'intervalle contient `currentTime`, quand `ffmpeg -ss` prend la première dont le PTS lui est
+supérieur ou égal.
+
 ## Licences
 
 - **YOLOX** (code et poids `tiny` et `s`) : Apache 2.0 — Megvii.

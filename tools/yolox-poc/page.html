@@ -68,7 +68,11 @@ import {
 
 const ort = window.ort;
 ort.env.wasm.wasmPaths = '/__ort/';
-ort.env.wasm.numThreads = 1;
+// Le serveur pose les en-têtes d'isolation d'origine : quand elles prennent,
+// le WebAssembly multi-thread divise le temps d'inférence. Sinon, repli sûr.
+ort.env.wasm.numThreads = self.crossOriginIsolated
+  ? Math.max(1, Math.min(4, navigator.hardwareConcurrency || 1))
+  : 1;
 ort.env.logLevel = 'error';
 
 const COULEURS = ['#e8000d', '#0a7d28', '#0b57d0', '#b06f00', '#7a1fa2', '#00838f', '#c2185b'];
