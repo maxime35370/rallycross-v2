@@ -379,15 +379,27 @@ async function main() {
     console.log('   ⚠️ meeting FFSA introuvable');
   }
 
-  // Bascule sur le meeting Euro RX : même pilote, périmètre NON acheté.
-  const euro = options.find(o => /RX1/.test(o.t));
-  if (euro) {
-    await page2.selectOption('#prj-meeting', euro.v);
-    await page2.waitForTimeout(2500);
-    await shot(page2, '06-team-hors-perimetre');
-  } else {
-    console.log('   ⚠️ meeting Euro RX absent :', options.map(o => o.t));
-  }
+  // Le meeting Euro RX n'apparaît PLUS dans la liste : depuis que le
+  // sélecteur est filtré sur le périmètre acheté, un team ne se voit
+  // proposer que ce qui lui est ouvert. On vérifie donc son ABSENCE.
+  const euroPropose = options.some(o => /RX1/.test(o.t));
+  console.log(euroPropose
+    ? '   ⚠️ le meeting Euro RX est proposé alors qu\'il ne devrait pas'
+    : '   ✓ meeting Euro RX bien ABSENT du sélecteur (licence FFSA seulement)');
+
+  // Révocation en direct : la licence est retirée pendant que la page est
+  // ouverte. L'abonnement Firestore doit fermer l'accès SANS rechargement.
+  console.log('\n── Révocation en direct ──');
+  await put('licenses', 'lic_demo', {
+    teamId: 'team_dupont', personId: PAILLER, scope: 'season',
+    championshipId: FFSA, year: 2026, meetingId: null,
+    status: 'suspended', origin: 'admin_grant',
+    personLabel: 'Fabien Pailler', championshipLabel: 'Championnat FFSA Rallycross', meetingLabel: '',
+    validFrom: null, validUntil: null, note: 'démo Lohéac',
+    createdAt: new Date(), createdBy: 'demo',
+  });
+  await page2.waitForTimeout(3000);   // aucun rechargement : on laisse l'abonnement agir
+  await shot(page2, '06-team-licence-suspendue');
 
   console.log('\n── Visiteur SANS COMPTE ──');
   const ctx3 = await newCtx({ width: 1280, height: 900 });
