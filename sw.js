@@ -76,6 +76,10 @@ const ASSET_PATHS = [
   'js/videoPlayer.js',
   'js/providers/index.js',
   'js/providers/itsLive.js',
+  // Accès commercial — Stratégie Live. Le module de règle est PUR : il doit
+  // être en cache comme les autres, sinon l'application hors ligne perdrait
+  // le filtrage du sélecteur de pilote.
+  'js/access/licenseCalc.js',
 ];
 
 // ── Installation : pre-cache des assets statiques ──
