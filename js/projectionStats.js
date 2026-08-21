@@ -47,7 +47,7 @@ import { isAdmin, isRealUser, isVerifiedUser } from './auth.js';
 import { getAccessState, loadPersonByDriver } from './access/licenses.js';
 import {
   allowedDriverIds, canAnalyseDriver, denialMessage, accessSummary,
-  viewerState, VIEWER,
+  viewerState, VIEWER, licenseValidity, DENIAL,
 } from './access/licenseCalc.js';
 
 // ─────────────────────────────────────────────────────────
@@ -192,14 +192,44 @@ function renderLocked(gate) {
         l'adresse est bien vérifiée, mais l'application ne le sait pas encore.</div>
     </div>`;
   }
-  const reason = gate.licenses.length ? 'wrong_scope' : 'no_license';
+  const resume = accessSummary({ licenses: gate.licenses });
+
+  // Le team a bien un accès, mais aucun meeting de son périmètre n'a encore
+  // de manche courue. Lui dire « analyse non incluse » serait faux et
+  // l'inquiéterait à tort : il n'y a simplement rien à analyser pour
+  // l'instant.
+  if (resume.length) {
+    return `<div class="acc-locked">
+      <div class="acc-locked__icon">⏳</div>
+      <div class="acc-locked__title">Aucune manche courue dans votre périmètre</div>
+      <div class="acc-locked__msg">L'analyse s'ouvrira dès la première manche terminée.</div>
+      <div class="acc-locked__hint">Votre accès :
+        ${resume.map(r => `${escHtml(r.personLabel)} — ${escHtml(r.scopeLabel)}`).join(' · ')}</div>
+    </div>`;
+  }
+
+  // Le team a des licences, mais AUCUNE n'est valide. Le motif n'est alors
+  // pas le périmètre : c'est une suspension, une révocation ou une échéance.
+  // Afficher « un autre championnat ou un autre meeting » serait faux, et
+  // enverrait le client chercher un problème qui n'existe pas.
+  if (gate.licenses.length) {
+    const motifs = gate.licenses.map(l => licenseValidity(l, Date.now()).reason).filter(Boolean);
+    const motif = motifs.includes(DENIAL.expired) ? DENIAL.expired
+                : motifs.includes(DENIAL.notActive) ? DENIAL.notActive
+                : motifs.includes(DENIAL.notYetValid) ? DENIAL.notYetValid
+                : DENIAL.wrongScope;
+    return `<div class="acc-locked">
+      <div class="acc-locked__icon">🔒</div>
+      <div class="acc-locked__title">Accès fermé</div>
+      <div class="acc-locked__msg">${escHtml(denialMessage(motif, { hasAnyLicense: true }))}</div>
+      <div class="acc-locked__hint">Contactez l'organisation si vous pensez qu'il s'agit d'une erreur.</div>
+    </div>`;
+  }
+
   return `<div class="acc-locked">
     <div class="acc-locked__icon">🔒</div>
     <div class="acc-locked__title">Analyse non incluse</div>
-    <div class="acc-locked__msg">${escHtml(denialMessage(reason, { hasAnyLicense: gate.licenses.length > 0 }))}</div>
-    ${gate.licenses.length ? `<div class="acc-locked__hint">Accès en cours :
-      ${accessSummary({ licenses: gate.licenses }).map(r =>
-        `${escHtml(r.personLabel)} — ${escHtml(r.scopeLabel)}`).join(' · ') || '—'}</div>` : ''}
+    <div class="acc-locked__msg">${escHtml(denialMessage('no_license', { hasAnyLicense: false }))}</div>
   </div>`;
 }
 
@@ -215,6 +245,46 @@ function renderDriverDenial(gate, driverId) {
     <div class="acc-locked__title">Analyse non incluse</div>
     <div class="acc-locked__msg">${escHtml(denialMessage(d.reason, { hasAnyLicense: gate.licenses.length > 0 }))}</div>
   </div>`;
+}
+
+/**
+ * Inscriptions analysables dans CE contexte meeting × catégorie.
+ *
+ * Version légère de `buildGate`, qui ne reconstruit pas le classement : on
+ * se contente des pilotes présents dans le contexte. Assez pour répondre
+ * « ce team a-t-il quelque chose à voir ici ? », et assez léger pour être
+ * appelé sur chaque meeting de la saison.
+ */
+function contextAllowedIds(ctx) {
+  const access = getAccessState();
+  return allowedDriverIds({
+    licenses: access.licenses,
+    personByDriver: _personByDriver,
+    driverIds: Object.keys(ctx?.driversById || {}),
+    meeting: {
+      id: ctx?.meetingId,
+      championshipId: ctx?.meeting?.championshipId ?? null,
+      year: ctx?.meeting?.year,
+    },
+    isAdmin: isAdmin(),
+  });
+}
+
+/**
+ * Ne garder que les meetings où le team a réellement quelque chose à voir.
+ *
+ * ── Pourquoi filtrer plutôt que refuser après coup ─────────────────────
+ * Un team disposant d'une saison Euro RX voyait la liste ENTIÈRE : les sept
+ * meetings du Championnat de France, toutes catégories confondues, soit une
+ * quarantaine de lignes dont deux ou trois le concernaient. Il devait
+ * chercher les siennes, et tomber sur « analyse non incluse » à chaque
+ * essai manqué. On ne propose donc que ce qui est ouvert.
+ *
+ * L'administrateur n'est jamais filtré : il doit voir tout le calendrier.
+ */
+function allowedCandidates(candidates) {
+  if (isAdmin()) return candidates;
+  return candidates.filter(c => contextAllowedIds(c).size > 0);
 }
 
 /** Options du sélecteur, restreintes aux inscriptions autorisées. */
@@ -404,7 +474,14 @@ function situationCandidates() {
   // Une manche en cours suffit à rendre le meeting analysable, même si aucune
   // manche n'est encore terminée : c'est justement le direct.
   return contexts
-    .filter(c => c.lastCompletedRace > 0 || c.raceInProgress != null)
+    // `engagedCount > 0` : un meeting dont les ENGAGEMENTS sont saisis apparaît
+    // dès maintenant, avant le moindre chrono. Il n'y a encore rien à
+    // analyser — un classement intermédiaire suppose au moins une manche
+    // terminée — mais le team voit que son meeting est connu et attendu, au
+    // lieu de le chercher en vain dans une liste où il n'existe pas.
+    // Un meeting sans aucun engagement reste écarté : il n'encombrerait la
+    // liste pour personne.
+    .filter(c => c.lastCompletedRace > 0 || c.raceInProgress != null || c.engagedCount > 0)
     .sort((a, b) => String(b.meeting?.date).localeCompare(String(a.meeting?.date))
       || String(a.category).localeCompare(String(b.category)));
 }
@@ -425,10 +502,24 @@ function situationCandidates() {
  * devient « que doivent faire les autres ? ».
  */
 function renderStrategy(el) {
-  const candidates = situationCandidates();
-  if (!candidates.length) {
+  const tous = situationCandidates();
+  if (!tous.length) {
     el.innerHTML = `<div class="tim-placeholder"><div class="placeholder-icon">🎯</div>
       <div class="placeholder-title">Aucun meeting avec des manches courues</div></div>`;
+    return;
+  }
+
+  // Les droits doivent être connus AVANT de filtrer : sinon on afficherait
+  // une liste vide à quelqu'un qui a bien un accès, le temps du chargement.
+  const gate0 = buildGate(null, []);
+  if (!gate0.ready) {
+    el.innerHTML = `<div class="loading-state"><div class="spinner"></div> Vérification de votre accès…</div>`;
+    return;
+  }
+
+  const candidates = allowedCandidates(tous);
+  if (!candidates.length) {
+    el.innerHTML = renderAccessBanner(gate0) + renderLocked(gate0);
     return;
   }
 
@@ -756,10 +847,24 @@ function renderObjectiveDetail(ctx, o, rivals) {
 }
 
 function renderSituation(el) {
-  const candidates = situationCandidates();
-  if (!candidates.length) {
+  const tous = situationCandidates();
+  if (!tous.length) {
     el.innerHTML = `<div class="tim-placeholder"><div class="placeholder-icon">📐</div>
       <div class="placeholder-title">Aucun meeting avec des manches courues</div></div>`;
+    return;
+  }
+
+  // Même filtrage que l'écran opérationnel : les deux onglets donnent accès
+  // aux mêmes probabilités, ils ne peuvent pas proposer des périmètres
+  // différents.
+  const gate0 = buildGate(null, []);
+  if (!gate0.ready) {
+    el.innerHTML = `<div class="loading-state"><div class="spinner"></div> Vérification de votre accès…</div>`;
+    return;
+  }
+  const candidates = allowedCandidates(tous);
+  if (!candidates.length) {
+    el.innerHTML = renderAccessBanner(gate0) + renderLocked(gate0);
     return;
   }
 

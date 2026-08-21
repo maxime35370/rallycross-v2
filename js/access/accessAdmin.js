@@ -50,6 +50,7 @@ let members = [];
 let licenses = [];
 
 let personFilter = '';
+let userFilter = '';
 const form = {
   personId: '', championshipId: '', scope: 'meeting', meetingId: '',
   validFrom: '', validUntil: '', note: '',
@@ -127,6 +128,24 @@ function personLabel(p) {
   return `${p.lastName || ''} ${p.firstName || ''}`.trim() + flag;
 }
 
+/**
+ * Libellés des rôles.
+ *
+ * Les valeurs STOCKÉES restent `owner` et `member` : les règles Firestore
+ * les valident telles quelles, et les renommer imposerait une migration
+ * pour un gain nul.
+ *
+ * ⚠️ À ce stade, le rôle ne change RIEN. Ni les règles ni le contrôle
+ * d'accès ne le consultent : `isTeamMember()` vérifie seulement l'existence
+ * du rattachement. Responsable et Membre ont donc exactement les mêmes
+ * droits — voir le même pilote, le même périmètre. Le champ est là pour le
+ * jour où un responsable pourra gérer ses propres membres, ce qui suppose
+ * le backend. L'interface le dit, plutôt que de laisser croire à une
+ * hiérarchie qui n'existe pas.
+ */
+const ROLE_LABELS = { owner: 'Responsable', member: 'Membre' };
+const roleLabel = (r) => ROLE_LABELS[r] || r || 'Membre';
+
 const REVIEW_LABELS = {
   duplicate_candidate: 'Fiche marquée « doublon à vérifier »',
   test_record: 'Fiche marquée « enregistrement de test »',
@@ -198,10 +217,15 @@ function renderMembersSection() {
   const memberUids = new Set(members.map(m => m.uid));
   const candidates = users.filter(u => !memberUids.has(u.id));
 
+  const needle = userFilter.trim().toLowerCase();
+  const proposes = needle
+    ? candidates.filter(u => (u.email || '').toLowerCase().includes(needle))
+    : [];
+
   const rows = members.length ? members.map(m => `
     <tr>
       <td>${escHtml(userLabel(usersById[m.uid]))}</td>
-      <td>${escHtml(m.role || 'member')}</td>
+      <td>${escHtml(roleLabel(m.role))}</td>
       <td class="text-mono" style="font-size:.78rem">${escHtml(m.uid)}</td>
       <td style="text-align:right">
         <button class="btn btn-sm btn-danger" data-remove-member="${escHtml(m.uid)}">Retirer</button>
@@ -219,23 +243,35 @@ function renderMembersSection() {
         </table>
       </div>
       <div class="form-row" style="align-items:flex-end;gap:var(--sp-sm);flex-wrap:wrap;margin-top:var(--sp-md)">
-        <div class="form-group" style="flex:3;min-width:220px;margin:0">
-          <label class="form-label" for="acc-add-user">Rattacher un compte existant</label>
-          <select class="form-select" id="acc-add-user">
-            <option value="">— choisir un compte —</option>
-            ${candidates.map(u => `<option value="${escHtml(u.id)}">${escHtml(userLabel(u))}</option>`).join('')}
+        <div class="form-group" style="flex:2;min-width:200px;margin:0">
+          <label class="form-label" for="acc-user-filter">Rattacher un compte — chercher par adresse</label>
+          <input class="form-input" id="acc-user-filter" placeholder="adresse e-mail du membre"
+                 value="${escHtml(userFilter)}" autocomplete="off">
+        </div>
+        <div class="form-group" style="flex:2;min-width:200px;margin:0">
+          <label class="form-label" for="acc-add-user">Compte trouvé</label>
+          <select class="form-select" id="acc-add-user" ${proposes.length ? '' : 'disabled'}>
+            <option value="">${needle
+              ? (proposes.length ? '— choisir —' : '— aucun compte pour cette adresse —')
+              : '— saisissez une adresse —'}</option>
+            ${proposes.map(u => `<option value="${escHtml(u.id)}">${escHtml(userLabel(u))}</option>`).join('')}
           </select>
         </div>
         <div class="form-group" style="flex:1;min-width:130px;margin:0">
           <label class="form-label" for="acc-add-role">Rôle</label>
           <select class="form-select" id="acc-add-role">
-            <option value="member">member</option>
-            <option value="owner">owner</option>
+            <option value="member">Membre</option>
+            <option value="owner">Responsable</option>
           </select>
         </div>
         <button class="btn btn-secondary" id="acc-add-member">➕ Rattacher</button>
       </div>
-      ${candidates.length ? '' : `<div class="acc-hint">Aucun compte disponible : le team doit d'abord créer son compte depuis le menu « Connexion team ».</div>`}
+      <div class="acc-hint">
+        <strong>Responsable</strong> et <strong>Membre</strong> ont aujourd'hui
+        exactement les mêmes droits : voir le même pilote, sur le même périmètre.
+        Le rôle n'est qu'une étiquette, conservée pour un usage futur.
+        ${candidates.length ? '' : `<br>Aucun compte à rattacher : le team doit d'abord créer le sien depuis le menu « Connexion team ».`}
+      </div>
     </div>`;
 }
 
@@ -459,6 +495,7 @@ function wire() {
     await addMember({ teamId: selectedTeamId, uid, role: $('acc-add-role')?.value || 'member' });
     logAudit('create', 'teamMember', `${selectedTeamId}_${uid}`, { label: uid });
     toast('Membre rattaché ✓', 'success');
+    userFilter = '';
     await loadTeamDetail(); render();
   }));
 
@@ -488,13 +525,16 @@ function wire() {
   bind('acc-from', 'validFrom');
   bind('acc-until', 'validUntil');
   $('acc-note')?.addEventListener('input', (e) => { form.note = e.target.value; });
-  $('acc-person-filter')?.addEventListener('input', (e) => {
-    personFilter = e.target.value;
+  // Les deux champs de recherche reconstruisent la vue : on leur rend le
+  // focus et le curseur, sinon on ne peut pas taper deux caractères de suite.
+  const bindFiltre = (id, set) => $(id)?.addEventListener('input', (e) => {
+    set(e.target.value);
     render();
-    // Le champ est reconstruit : on lui rend le focus et le curseur.
-    const el = document.getElementById('acc-person-filter');
+    const el = document.getElementById(id);
     if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
   });
+  bindFiltre('acc-person-filter', v => { personFilter = v; });
+  bindFiltre('acc-user-filter',   v => { userFilter = v; });
 
   $('acc-grant')?.addEventListener('click', () => guard(async () => {
     if (!form.personId || !form.championshipId) { toast('Fiche pilote et championnat requis.', 'error'); return; }

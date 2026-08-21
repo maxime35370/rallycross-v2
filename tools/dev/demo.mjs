@@ -126,6 +126,18 @@ async function seed() {
   // Kerlabo est une autre date : sans quoi il serait indiscernable de Lohéac.
   fixtures[2].meeting.date = '2026-07-26';
 
+  // ── Meeting À VENIR : engagements saisis, AUCUN chrono ────────────────
+  // Reproduit la situation d'avant-meeting : la régie a saisi les
+  // inscriptions, aucune manche n'est courue. Le team doit-il pouvoir
+  // préparer sa stratégie ? C'est ce que cette entrée permet de vérifier.
+  const avenir = meetingFixture({
+    meetingId: 'mtg_dreux_avenir', championshipId: FFSA,
+    location: 'Dreux (à venir)', category: 'Supercar',
+  });
+  avenir.meeting.date = '2026-10-11';
+  avenir.results = [];                     // aucun chrono
+  fixtures.push({ ...avenir, champ: FFSA });
+
   for (const f of fixtures) {
     await put('meetings', f.meeting.id, f.meeting);
     for (const s of f.sessions) await put('sessions', s.id, s);
@@ -379,15 +391,45 @@ async function main() {
     console.log('   ⚠️ meeting FFSA introuvable');
   }
 
-  // Bascule sur le meeting Euro RX : même pilote, périmètre NON acheté.
-  const euro = options.find(o => /RX1/.test(o.t));
-  if (euro) {
-    await page2.selectOption('#prj-meeting', euro.v);
+  // Meeting À VENIR : engagements saisis, aucun chrono. Que montre l'écran ?
+  const avenir = options.find(o => /venir/.test(o.t));
+  if (avenir) {
+    await page2.selectOption('#prj-meeting', avenir.v);
     await page2.waitForTimeout(2500);
-    await shot(page2, '06-team-hors-perimetre');
-  } else {
-    console.log('   ⚠️ meeting Euro RX absent :', options.map(o => o.t));
+    const pil = await page2.$$eval('#prj-driver option', els => els.map(e => e.textContent.trim()));
+    console.log('   ⋯ meeting à venir — pilotes proposés :', pil.join(' | ') || '(pas de sélecteur)');
+    await shot(page2, '09-team-meeting-a-venir');
+    if (pil.length > 1) {
+      await page2.selectOption('#prj-driver', await page2.$$eval('#prj-driver option', e => e[1].value));
+      await page2.waitForTimeout(4000);
+      await shot(page2, '10-team-avant-course');
+    }
+    // On revient sur le meeting couru pour la suite du scénario.
+    const couru = options.find(o => /Lohéac/.test(o.t) && /Supercar/.test(o.t));
+    if (couru) { await page2.selectOption('#prj-meeting', couru.v); await page2.waitForTimeout(2000); }
   }
+
+  // Le meeting Euro RX n'apparaît PLUS dans la liste : depuis que le
+  // sélecteur est filtré sur le périmètre acheté, un team ne se voit
+  // proposer que ce qui lui est ouvert. On vérifie donc son ABSENCE.
+  const euroPropose = options.some(o => /RX1/.test(o.t));
+  console.log(euroPropose
+    ? '   ⚠️ le meeting Euro RX est proposé alors qu\'il ne devrait pas'
+    : '   ✓ meeting Euro RX bien ABSENT du sélecteur (licence FFSA seulement)');
+
+  // Révocation en direct : la licence est retirée pendant que la page est
+  // ouverte. L'abonnement Firestore doit fermer l'accès SANS rechargement.
+  console.log('\n── Révocation en direct ──');
+  await put('licenses', 'lic_demo', {
+    teamId: 'team_dupont', personId: PAILLER, scope: 'season',
+    championshipId: FFSA, year: 2026, meetingId: null,
+    status: 'suspended', origin: 'admin_grant',
+    personLabel: 'Fabien Pailler', championshipLabel: 'Championnat FFSA Rallycross', meetingLabel: '',
+    validFrom: null, validUntil: null, note: 'démo Lohéac',
+    createdAt: new Date(), createdBy: 'demo',
+  });
+  await page2.waitForTimeout(3000);   // aucun rechargement : on laisse l'abonnement agir
+  await shot(page2, '06-team-licence-suspendue');
 
   console.log('\n── Visiteur SANS COMPTE ──');
   const ctx3 = await newCtx({ width: 1280, height: 900 });
