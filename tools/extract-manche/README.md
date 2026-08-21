@@ -128,15 +128,54 @@ l'outil **compte les images de pré-roll et le signale**.
 
 ---
 
-## Corpus YOLOX (préparé, pas encore construit)
+## Corpus d'images — `corpus.mjs`
 
-`--v1 <timecode>` enregistre l'instant d'abord du premier virage dans le sidecar. Avec ce second
-repère, `--plan-corpus` affiche les 6 instants du profil par défaut — départ, accélération, approche
-V1, entrée V1, milieu V1, sortie V1 — chacun **calé sur un numéro d'image entier**, condition pour
-comparer plus tard YOLOX-tiny et YOLOX-s sur exactement les mêmes images.
+À partir d'un extrait et de **deux repères relevés dans le lecteur**, produit les images des zones
+du départ et leur manifeste.
 
-La découpe effective des PNG n'est **pas** implémentée : c'est le lot suivant
-([§13 du document d'analyse](../../docs/video-analysis/EXTRACTION-YOUTUBE.md#13-extension--générer-automatiquement-les-images-du-corpus-yolox)).
+```powershell
+node tools\extract-manche\corpus.mjs extraits\Kerlabo_2026_D3_Q3_S4.mp4 --depart 43.000 --v1 51.000
+```
+
+Les repères se donnent en **temps local de l'extrait**, tel que le lecteur les affiche. La cadence
+et l'ancrage absolu viennent du sidecar : rien n'est deviné.
+
+| Zone | Instant | Ce qu'on y teste |
+|---|---|---|
+| `depart` | départ | voitures alignées, nettes — cas facile de référence |
+| `acceleration` | départ + 1,5 s | écarts qui se creusent |
+| `approche_v1` | V1 − 1,5 s | voitures plus petites, qui se rapprochent |
+| `entree_v1` | V1 | **le cas qui compte** : chevauchements, occlusions |
+| `milieu_v1` | V1 + 1,0 s | poussière, angle caméra, vues de côté |
+| `sortie_v1` | V1 + 2,5 s | remise en file, éloignement |
+
+Sortie : des **PNG en résolution native** (aucun redimensionnement : le pré-traitement appartient au
+détecteur) nommés `<base>__<zone>__t<absolu>__f<image>.png`, plus un `corpus.json` (`rx-corpus/1`).
+
+**L'outil refuse de produire un corpus incomplet.** Si une zone tombe hors de l'extrait, il le dit
+et s'arrête : il faut ré-extraire une fenêtre mieux centrée, ou accepter explicitement le corpus
+partiel avec `--partiel`. Produire 5 images sur 6 sans le signaler serait exactement le trou
+silencieux qu'on cherche à éliminer.
+
+`carsVisible`, `carsDetectable` et `carsOrderCritical` sortent **vides**, à annoter à la main. Le
+troisième est délibérément séparé du deuxième : un bon rappel de détection peut masquer une erreur
+sur l'ordre au V1, qui est le seul chiffre qui compte au bout.
+
+Options : `--sortie`, `--profil <json>` (les circuits n'ont pas la même distance départ → V1),
+`--fps`, `--partiel`, `--dry-run`. `FFMPEG_PATH` impose le chemin de ffmpeg s'il n'est pas dans le
+PATH.
+
+### Exactitude des images
+
+```powershell
+node tools\smoke\corpusFrames.mjs
+```
+
+Fabrique une vidéo dont **chaque image porte une couleur unique déduite de son numéro**, génère le
+corpus, puis relit la couleur de chaque PNG pour vérifier qu'il s'agit bien de l'image demandée.
+C'est le seul contrôle possible : sur une vraie vidéo, deux images consécutives se ressemblent trop
+pour qu'un écart d'une image se voie. Ce test a d'ailleurs révélé un décalage systématique de
++1 image à la première exécution.
 
 ---
 

@@ -951,7 +951,29 @@ faute de quoi un bon rappel masquera une erreur silencieuse sur l'ordre.
    les extraits. Seuls le **manifeste sans les images** et les **résultats chiffrés** peuvent être
    versionnés : ce sont des faits mesurés, pas du contenu protégé (§7.3, §9.3).
 
-### 13.6 Ce que cette extension ne change pas
+### 13.6 Ce que la mise en œuvre a appris ✅
+
+L'outil existe : `tools/extract-manche/corpus.mjs`. Deux enseignements de sa construction.
+
+**1. Un décalage systématique d'une image, invisible à l'œil.** ffmpeg écarte les images dont le PTS
+est *strictement inférieur* à `-ss` et garde la première dont le PTS lui est supérieur ou égal.
+Viser le milieu de l'image (`(k + 0.5) / fps`), ce qui paraissait le choix prudent, produisait donc
+systématiquement l'image **k+1**. À 60 img/s cela fait 16,7 ms d'erreur sur chaque image du corpus —
+assez pour déplacer une voiture d'un demi-mètre à l'abord du virage, et rigoureusement invisible sur
+une capture isolée. Correction : viser `(k − 0.5) / fps`.
+
+Ce défaut n'a été trouvé que parce que le contrôle ne regarde pas l'image : `tools/smoke/corpusFrames.mjs`
+fabrique une vidéo dont **chaque image porte une couleur unique déduite de son numéro**, génère le
+corpus, et relit la couleur de chaque PNG. Deux images consécutives d'une vraie course se
+ressemblent trop pour qu'un écart d'une image se remarque — il fallait une vidéo qui ne se ressemble
+pas d'une image à l'autre.
+
+**2. Un corpus incomplet doit être un échec, pas un avertissement.** Quand une zone tombe hors de
+l'extrait, l'outil s'arrête au lieu de produire ce qu'il peut. Un corpus de 5 images là où 6 étaient
+prévues fausserait la comparaison entre zones — et c'est précisément la comparaison
+départ / approche / V1 qui intéresse l'analyse.
+
+### 13.7 Ce que cette extension ne change pas
 
 Elle ne déplace pas le KPI. La chaîne reste :
 

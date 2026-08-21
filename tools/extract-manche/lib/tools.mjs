@@ -32,6 +32,11 @@ export const INSTALL_HINTS = {
  * explicitement le `.exe`.
  */
 export function resolveExe(name) {
+  // Chemin imposé explicitement : FFMPEG_PATH, FFPROBE_PATH, YT_DLP_PATH.
+  // Utile quand l'outil est installé hors du PATH — cas courant sous Windows.
+  const forced = process.env[`${name.toUpperCase().replace(/[^A-Z0-9]/g, '_')}_PATH`];
+  if (forced) return forced;
+
   const probe = IS_WIN
     ? spawnSync('where', [name], { encoding: 'utf8' })
     : spawnSync('sh', ['-c', `command -v ${name}`], { encoding: 'utf8' });
