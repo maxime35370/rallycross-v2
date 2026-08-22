@@ -137,6 +137,10 @@ const grilles = new Map(), sessions = new Map();
 const video = $('src');
 let fps = 60, sidecar = null;
 let cotes = null, annotations = {}, resultat = null, mesureMemoire = null;
+// Les boîtes écartées à la main, mémorisées d'un rapport à l'autre : sans
+// elles, un second passage repart avec les véhicules du fond et les boîtes
+// fusionnées, et la mesure n'est plus comparable à la précédente.
+let exclusions = { avant: new Set(), apres: new Set() };
 
 const grillesDe = (size) => {
   if (!grilles.has(size)) grilles.set(size, buildGrids(size));
@@ -164,6 +168,12 @@ $('pick').addEventListener('change', async (e) => {
         // la ressaisit pas.
         if (brut?.schema === 'rx-apparence/1' && Array.isArray(brut.lignes)) {
           for (const l of brut.lignes) if (l.verite) annotations[l.avant] = l.verite;
+          if (brut.exclusions) {
+            exclusions = {
+              avant: new Set(brut.exclusions.avant || []),
+              apres: new Set(brut.exclusions.apres || []),
+            };
+          }
           $('imgA').value = brut.avant?.image ?? $('imgA').value;
           $('imgB').value = brut.apres?.image ?? $('imgB').value;
         }
@@ -268,6 +278,10 @@ $('lancer').addEventListener('click', async () => {
   const B = await analyserImage(Number($('imgB').value), modele, s); $('prog').value = 2;
   $('prog').style.display = 'none'; $('lancer').disabled = false;
   cotes = { A, B };
+  // On réapplique les exclusions du rapport chargé AVANT de calculer quoi que
+  // ce soit : la sélection des candidats change tous les chiffres.
+  for (const v of A.voitures) if (exclusions.avant.has(`A${v.rang}`)) v.retenue = false;
+  for (const v of B.voitures) if (exclusions.apres.has(`B${v.rang}`)) v.retenue = false;
   purgerAnnotations();
   const reprises = Object.keys(annotations).length;
   $('etat').textContent = `${A.voitures.length} détection(s) sur l'image ${A.numero}, `
@@ -311,7 +325,11 @@ function dessinerVignettes(cote, prefixe, idDiv) {
     </label>`).join('');
   $(idDiv).querySelectorAll('input[type=checkbox]').forEach(cb => cb.addEventListener('change', () => {
     const cote2 = cb.dataset.cote === 'A' ? cotes.A : cotes.B;
-    cote2.voitures.find(v => v.rang === Number(cb.dataset.rang)).retenue = cb.checked;
+    const v = cote2.voitures.find(x => x.rang === Number(cb.dataset.rang));
+    v.retenue = cb.checked;
+    const cle = `${cb.dataset.cote}${v.rang}`;
+    const jeu = cb.dataset.cote === 'A' ? exclusions.avant : exclusions.apres;
+    if (cb.checked) jeu.delete(cle); else jeu.add(cle);
     purgerAnnotations();
     dessiner(); recalculer();
   }));
@@ -367,6 +385,7 @@ function recalculer() {
     methode: METHODE_APPARENCE,
     profil: PROFIL,
     extrait: sidecar ? { file: sidecar.file, fps: sidecar.fps, clipStart: sidecar.clipStart } : null,
+    exclusions: { avant: [...exclusions.avant], apres: [...exclusions.apres] },
     avant: { image: cotes.A.numero, t: cotes.A.t, voitures: A.map(v => ({ rang: v.rang, box: v.box, score: v.score })) },
     apres: { image: cotes.B.numero, t: cotes.B.t, voitures: B.map(v => ({ rang: v.rang, box: v.box, score: v.score })) },
     matrice: D,
@@ -384,9 +403,11 @@ function recalculer() {
     memoire: mesureMemoire ? {
       tFin: mesureMemoire.tFin, pas: mesureMemoire.pas,
       etiquettes: { avant: mesureMemoire.A, apres: mesureMemoire.B },
-      combinaisons: mesureMemoire.lignes.map(l => ({
+      candidats: { avant: mesureMemoire.A.length, apres: mesureMemoire.B.length },
+      combinaisons: [mesureMemoire.temoin, ...mesureMemoire.lignes].map(l => ({
         zones: l.zonage, agregation: l.mode, taille: l.taille,
         recence: l.recence === Infinity ? null : l.recence,
+        temoin: !!l.temoin,
         observations: l.observations,
         matrice: l.matrice.map(r => r.map(d => Number(d.toFixed(4)))),
         rangsVerite: l.rangs,
@@ -553,6 +574,22 @@ function analyserMemoires(suivis, cache, tFin, pas) {
   const recences = $('avecRecence').checked ? [Infinity, 1.0, 0.5] : [Infinity];
   const lignes = [];
 
+  // TÉMOIN recalculé ici, sur exactement les mêmes candidats.
+  //
+  // Il était figé aux chiffres d'un run à 5 candidats. Comparé à un run qui en
+  // avait 8, il donnait l'illusion que la mémoire dégradait tout — alors que
+  // c'étaient les trois boîtes parasites en plus qui volaient une bonne
+  // réponse. Un témoin doit être mesuré dans les mêmes conditions, jamais
+  // recopié d'ailleurs.
+  const matriceTemoin = A.map(a => B.map(b => distanceMemoire([{ t: 0, sig: a.sig }], b.sig, 'moyenne') ?? 1));
+  const temoin = {
+    temoin: true, zonage: 3, taille: 1, recence: Infinity, mode: 'moyenne',
+    matrice: matriceTemoin, ev: evaluerAppariement(matriceTemoin, verite),
+    observations: A.map(() => 1),
+    rangs: matriceTemoin.map((ligne, i) => (verite[i] == null ? null
+      : ligne.map((d, j) => ({ j, d })).sort((x, y) => x.d - y.d).findIndex(x => x.j === verite[i]) + 1)),
+  };
+
   for (const zonage of [3, 1]) {
     // Le descripteur du côté APRÈS doit être le même que celui de la mémoire.
     const sigB = B.map(b => (zonage === 3 ? b.sig : signature(cotes.B.image.data, cadre.width, cadre.height, b.box, { zones: 1 })));
@@ -577,54 +614,69 @@ function analyserMemoires(suivis, cache, tFin, pas) {
       }
     }
   }
-  mesureMemoire = { lignes, A: A.map(a => `A${a.rang}`), B: B.map(b => `B${b.rang}`), verite, tFin, pas };
+  mesureMemoire = {
+    lignes, temoin, A: A.map(a => `A${a.rang}`), B: B.map(b => `B${b.rang}`), verite, tFin, pas,
+  };
   afficherMemoire();
 }
 
-const TEMOIN = { plusProche: 2, optimal: 3, ecart: 0.1057, marge: 0.0198 };
+/** Une ligne du tableau — le témoin et les combinaisons passent par la même. */
+function ligneTableau(l, libelle, style, k) {
+  const { A, B } = mesureMemoire;
+  const e = l.ev.ecartVeriteOptimal, rel = l.ev.ecartRelatif;
+  const idxA3 = A.indexOf('A3');
+  const rangs = l.rangs.filter(r => r != null);
+  return `<tr${k >= 0 ? ` class="ligneM" data-k="${k}" style="cursor:pointer;${style}"` : ` style="${style}"`}>
+    <td>${k >= 0 ? libelle : `<strong>${libelle}</strong>`}</td>
+    <td class="num">${l.ev.notesPlusProche.justes}/${A.length}</td>
+    <td class="num"><strong>${l.ev.notesOptimal.justes}/${A.length}</strong></td>
+    <td class="num">${l.ev.coutOptimal}</td><td class="num">${l.ev.coutVerite ?? '—'}</td>
+    <td class="num">${e == null ? '—' : (e > 0 ? '+' : '') + e}</td>
+    <td class="num"><strong>${rel == null ? '—' : (rel > 0 ? '+' : '') + (100 * rel).toFixed(1) + ' %'}</strong></td>
+    <td class="num">${l.ev.margeGlobale ?? '—'}</td>
+    <td class="num">${l.ev.contradictions}</td>
+    <td class="num">${idxA3 >= 0 ? `${l.rangs[idxA3]}/${B.length}` : '—'}</td>
+    <td class="num">${rangs.length ? Math.max(...rangs) : '—'}</td></tr>`;
+}
 
 function afficherMemoire() {
-  const { lignes, A, B, verite } = mesureMemoire;
+  const { lignes, A, B } = mesureMemoire;
   if (!lignes.length) { $('memoire').innerHTML = '<p class="sub">Aucune piste n\'a de mémoire exploitable — vérifie le début du plan.</p>'; return; }
-  const tri = [...lignes].sort((x, y) => (x.ev.ecartVeriteOptimal ?? 9) - (y.ev.ecartVeriteOptimal ?? 9));
+  // Tri par NOMBRE DE BONNES RÉPONSES d'abord, écart relatif ensuite.
+  //
+  // Trier par l'écart seul mettait en tête une ligne à 1 bonne réponse sur 4 :
+  // l'écart mesure à quel point la vérité coûte cher, pas combien d'identités
+  // sont justes. C'est le second qui est l'objectif.
+  const tri = [...lignes].sort((x, y) => (y.ev.notesOptimal.justes - x.ev.notesOptimal.justes)
+    || ((x.ev.ecartRelatif ?? 9) - (y.ev.ecartRelatif ?? 9)));
   const nA = A.length;
   const nom = (l) => `${l.zonage === 3 ? '3 bandes' : 'global'} · ${l.mode} · ${l.taille} obs`
     + (l.recence === Infinity ? '' : ` · ${l.recence}s`);
-  const idxA3 = A.indexOf('A3');
-
   $('memoire').innerHTML = `<table>
     <tr><th>descripteur · agrégation · mémoire</th>
         <th class="num">ligne à ligne</th><th class="num">optimal ◆</th>
         <th class="num">coût optimal</th><th class="num">coût vérité</th>
-        <th class="num">vérité − optimal</th><th class="num">marge globale</th>
+        <th class="num">vérité − optimal</th><th class="num">écart relatif</th>
+        <th class="num">marge globale</th>
         <th class="num">contradictions</th><th class="num">rang vérité A3</th><th class="num">pire rang</th></tr>
-    <tr style="background:#eee">
-      <td><strong>témoin — un seul crop (image ${cotes.A.numero})</strong></td>
-      <td class="num">${TEMOIN.plusProche}/${nA}</td><td class="num">${TEMOIN.optimal}/${nA}</td>
-      <td class="num">2.2137</td><td class="num">2.3194</td>
-      <td class="num"><strong>+${TEMOIN.ecart}</strong></td><td class="num">${TEMOIN.marge}</td>
-      <td class="num">1</td><td class="num">5/5</td><td class="num">5</td></tr>
-    ${tri.map((l, k) => {
-      const e = l.ev.ecartVeriteOptimal;
-      const gagne = e != null && e <= 0;
-      const pire = Math.max(...l.rangs.filter(r => r != null));
-      return `<tr class="ligneM" data-k="${lignes.indexOf(l)}" style="cursor:pointer${gagne ? ';background:#e8f5e9' : (k === 0 ? ';background:#fffde7' : '')}">
-        <td>${nom(l)}</td>
-        <td class="num">${l.ev.notesPlusProche.justes}/${nA}</td>
-        <td class="num"><strong>${l.ev.notesOptimal.justes}/${nA}</strong></td>
-        <td class="num">${l.ev.coutOptimal}</td><td class="num">${l.ev.coutVerite ?? '—'}</td>
-        <td class="num"><strong>${e == null ? '—' : (e > 0 ? '+' : '') + e}</strong></td>
-        <td class="num">${l.ev.margeGlobale ?? '—'}</td>
-        <td class="num">${l.ev.contradictions}</td>
-        <td class="num">${idxA3 >= 0 ? `${l.rangs[idxA3]}/${B.length}` : '—'}</td>
-        <td class="num">${pire}</td></tr>`;
-    }).join('')}
+    ${ligneTableau(mesureMemoire.temoin, `témoin — un seul crop (image ${cotes.A.numero})`, 'background:#eee', -1)}
+    ${tri.map((l, k) => ligneTableau(l, nom(l),
+      (l.ev.ecartRelatif != null && l.ev.ecartRelatif <= 0) ? 'background:#e8f5e9'
+        : (k === 0 ? 'background:#fffde7' : ''), lignes.indexOf(l))).join('')}
   </table>
   <p class="sub" style="margin-top:6px">
-    Trié par <strong>vérité − optimal</strong>, le critère de succès : à ≤ 0 la vérité EST l'appariement
-    optimal, et la ligne passe en vert. Clique une ligne pour voir sa matrice complète.
-    Le « rang vérité A3 » suit le cas le plus mauvais du témoin, où la bonne réponse était la
-    <em>pire</em> de sa ligne.
+    Mesuré sur <strong>${nA} voiture(s) avant</strong> et <strong>${B.length} candidate(s) après</strong>
+    — le témoin de la première ligne est recalculé sur ces mêmes candidats, pas recopié d'un autre run.
+    ${B.length > nA + 1 ? '<strong style="color:#b30021">Attention : plus de candidats après que de voitures en course.'
+      + ' Décoche les véhicules du fond et les boîtes fusionnées en haut de page, puis relance — chaque'
+      + ' candidat parasite peut voler une bonne réponse.</strong>' : ''}
+  </p>
+  <p class="sub" style="margin-top:6px">
+    Trié par <strong>nombre de bonnes réponses</strong>, puis par <strong>écart relatif</strong>.
+    L'écart brut ne se compare pas d'un descripteur à l'autre — des distances globalement plus petites
+    donnent un écart plus petit sans rien améliorer ; c'est le pourcentage qui compte.
+    À ≤ 0 la vérité EST l'appariement optimal et la ligne passe en vert.
+    Clique une ligne pour voir sa matrice complète.
   </p>
   <div id="detailM"></div>`;
 

@@ -603,6 +603,15 @@ export function evaluerAppariement(matrice, verite = []) {
     coutVerite: coutVerite == null ? null : Number(coutVerite.toFixed(4)),
     // ≤ 0 : la vérité EST l'appariement optimal. C'est le critère de succès.
     ecartVeriteOptimal: coutVerite == null ? null : Number((coutVerite - coutOptimal).toFixed(4)),
+    // Le même écart RAPPORTÉ à l'échelle des distances.
+    //
+    // L'écart brut ne se compare pas d'un descripteur à l'autre : un
+    // descripteur dont les distances sont globalement plus petites rend un
+    // écart plus petit sans rien améliorer. Mesuré sur la coupure Kerlabo,
+    // « 3 bandes · min · 8 obs » rendait +0,088 contre +0,1057 pour le témoin
+    // — soit 4,8 % dans les deux cas une fois normalisé, donc aucun gain.
+    ecartRelatif: coutVerite == null || !(coutOptimal > 0) ? null
+      : Number(((coutVerite - coutOptimal) / coutOptimal).toFixed(4)),
     margeGlobale: Number.isFinite(second) ? Number((second - coutOptimal).toFixed(4)) : null,
     reclamations,
     contradictions: Object.values(reclamations).filter(v => v > 1).length,

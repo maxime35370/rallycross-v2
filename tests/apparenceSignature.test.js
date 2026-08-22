@@ -425,3 +425,42 @@ describe('notation d\'un appariement contre la vérité', () => {
     expect(evaluerAppariement([[]], [])).toBeNull();
   });
 });
+
+describe('écart relatif, et pourquoi l\'écart brut ne suffit pas', () => {
+  it('normalise par l\'échelle des distances', () => {
+    // Deux descripteurs, le second rendant des distances deux fois plus
+    // petites : l'écart BRUT est deux fois plus petit, alors que rien n'a
+    // changé dans le classement. Mesuré sur Kerlabo, c'est ce qui faisait
+    // passer « 3 bandes · min · 8 obs » pour un progrès (+0,088 contre
+    // +0,1057) alors que les deux valent 4,8 % une fois normalisés.
+    const grande = [[0.4, 0.8], [0.8, 0.4]];
+    const petite = grande.map(l => l.map(d => d / 2));
+    const a = evaluerAppariement(grande, [1, 0]);
+    const b = evaluerAppariement(petite, [1, 0]);
+    expect(b.ecartVeriteOptimal).toBeLessThan(a.ecartVeriteOptimal);
+    expect(b.ecartRelatif).toBeCloseTo(a.ecartRelatif, 6);
+  });
+
+  it('rend un écart relatif nul quand la vérité est l\'optimum', () => {
+    const r = evaluerAppariement([[0.1, 0.9], [0.9, 0.1]], [0, 1]);
+    expect(r.ecartRelatif).toBe(0);
+  });
+
+  it('reste null sans vérité complète', () => {
+    expect(evaluerAppariement([[0.1, 0.9], [0.9, 0.1]], [0, null]).ecartRelatif).toBeNull();
+  });
+
+  it('montre qu\'un candidat parasite en plus peut voler une bonne réponse', () => {
+    // Le défaut du run réel : trois boîtes de public restées cochées. Le coût
+    // de la VÉRITÉ ne change pas — elle ne somme que les vraies paires — mais
+    // l'optimum devient moins cher, donc l'écart gonfle, et une colonne
+    // parasite peut capturer une ligne.
+    const propre = [[0.50, 0.60], [0.60, 0.50]];
+    const pollue = propre.map(l => [...l, 0.45]);       // un intrus proche de tous
+    const a = evaluerAppariement(propre, [0, 1]);
+    const b = evaluerAppariement(pollue, [0, 1]);
+    expect(b.coutVerite).toBe(a.coutVerite);
+    expect(b.coutOptimal).toBeLessThan(a.coutOptimal);
+    expect(b.notesOptimal.justes).toBeLessThan(a.notesOptimal.justes);
+  });
+});
