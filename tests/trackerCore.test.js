@@ -13,6 +13,7 @@ import { iou } from '../tools/yolox-poc/lib/detect.mjs';
 import {
   ETATS, DEFAULTS, RAISONS, REFUS, Suivi, Predicteur, hungarian, decalageCamera,
   estimerDecalageGlobal, rapportTaille, recouvrement, mesurer, signauxSuspects, concorder,
+  detecterRuptures, ventilerAutourDesRuptures, coherenceSpatiale,
 } from '../tools/yolox-poc/lib/track.mjs';
 
 /** Boîte carrée centrée, pour écrire des scénarios lisibles. */
@@ -721,5 +722,165 @@ describe('mesurer — ventilation des refus d\'association', () => {
   it('distingue une piste déjà attribuée d\'un simple manque de recouvrement', () => {
     expect(REFUS.DEJA_ATTRIBUEE).not.toBe(REFUS.IOU_INSUFFISANT);
     expect(Object.values(REFUS)).toContain(REFUS.COUT_HONGROIS);
+  });
+});
+
+// ═══════════════════════════════════════════════
+// INSTRUMENTATION : ruptures de plan, cohérence spatiale
+//
+// Ces fonctions ne changent RIEN au suivi : elles mesurent. Les tests
+// vérifient donc qu'elles mesurent la bonne chose, et surtout qu'elles ne
+// confondent pas un changement de caméra avec une occlusion collective.
+// ═══════════════════════════════════════════════
+
+describe('détection des ruptures de plan', () => {
+  /** Journal minimal, au format exporté. */
+  const inst = (t, ids, opts = {}) => ({
+    t,
+    detections: { total: ids.length, fortes: ids.length, faibles: 0, fusions: 0, doublons: 0 },
+    association: opts.association ?? null,
+    counts: { detected: opts.detected ?? ids.length, predicted: opts.predicted ?? 0, occluded: opts.occluded ?? 0, tentative: 0 },
+    tracks: ids.map((id, i) => ({ id, box: B(100 + i * 200, 400), state: 'detected', confirmee: true })),
+  });
+
+  it('signale l\'instant où toutes les pistes se perdent ET où des identités naissent', () => {
+    const journal = [
+      inst(0, [1, 2, 3, 4, 5]),
+      inst(0.25, [1, 2, 3, 4, 5], { association: { candidates: 5, appariees: 5, sansMesure: 0, creees: 0 } }),
+      // le plan change : plus rien ne s'apparie, cinq identités neuves
+      inst(0.5, [6, 7, 8, 9, 10], { association: { candidates: 5, appariees: 0, sansMesure: 5, creees: 5 } }),
+      inst(0.75, [6, 7, 8, 9, 10], { association: { candidates: 5, appariees: 5, sansMesure: 0, creees: 0 } }),
+    ];
+    const { cuts } = detecterRuptures(journal);
+    expect(cuts.map(c => c.t)).toEqual([0.5]);
+  });
+
+  it('ne prend pas une occlusion collective pour un changement de plan', () => {
+    // Toutes les pistes perdent leur détection, mais AUCUNE identité ne naît :
+    // c'est un passage derrière un panneau, pas un cut.
+    const journal = [
+      inst(0, [1, 2, 3]),
+      inst(0.25, [1, 2, 3], { association: { candidates: 3, appariees: 3, sansMesure: 0, creees: 0 } }),
+      inst(0.5, [1, 2, 3], { association: { candidates: 3, appariees: 0, sansMesure: 3, creees: 0 } }),
+    ];
+    expect(detecterRuptures(journal).cuts).toEqual([]);
+  });
+
+  it('ne prend pas une rafale de créations pour un changement de plan', () => {
+    // Des identités naissent — mais les pistes existantes s'apparient toutes :
+    // c'est du bruit de détection, pas une réinitialisation du référentiel.
+    const journal = [
+      inst(0, [1, 2, 3]),
+      inst(0.25, [1, 2, 3, 4, 5], { association: { candidates: 3, appariees: 3, sansMesure: 0, creees: 2 } }),
+    ];
+    expect(detecterRuptures(journal).cuts).toEqual([]);
+  });
+
+  it('regroupe en une seule coupure les instants consécutifs signalés', () => {
+    const rompu = { candidates: 5, appariees: 1, sansMesure: 4, creees: 3 };
+    const journal = [
+      inst(0, [1, 2, 3, 4, 5]),
+      inst(0.1, [1, 2, 3, 4, 5], { association: { candidates: 5, appariees: 5, sansMesure: 0, creees: 0 } }),
+      inst(0.2, [6, 7, 8, 4, 5], { association: rompu }),
+      inst(0.3, [9, 10, 11, 4, 5], { association: rompu }),
+      inst(0.4, [12, 13, 14, 4, 5], { association: rompu }),
+    ];
+    const { cuts } = detecterRuptures(journal);
+    expect(cuts).toHaveLength(1);
+    expect(cuts[0].debut).toBe(0.2);
+    expect(cuts[0].fin).toBe(0.4);
+  });
+
+  it('retombe sur le compte des refus quand le bilan d\'association manque', () => {
+    // Les rapports déjà exportés n'ont pas de champ `association` : sans ce
+    // repli, la fonction ne pourrait pas être validée sur les mesures réelles
+    // déjà faites — et les pistes non confirmées, qui restent `tentative`
+    // qu'elles soient appariées ou non, feraient passer la rupture inaperçue.
+    const journal = [inst(0, [1, 2, 3, 4, 5]), inst(0.25, [6, 7, 8, 9, 10])];
+    const refus = [
+      ...[1, 2, 3, 4, 5].map(id => ({ t: 0.25, cote: 'piste', id, raison: REFUS.DISTANCE })),
+      ...[0, 1, 2].map(() => ({ t: 0.25, cote: 'detection', id: null, raison: REFUS.DISTANCE })),
+    ];
+    expect(detecterRuptures(journal, { refus }).cuts.map(c => c.t)).toEqual([0.25]);
+    expect(detecterRuptures(journal).cuts).toEqual([]);   // sans les refus, invisible
+  });
+});
+
+describe('ventilation autour des ruptures', () => {
+  const inst = (t, ids, association) => ({
+    t,
+    detections: { total: ids.length, fortes: ids.length, faibles: 0, fusions: 0, doublons: 0 },
+    association,
+    counts: { detected: ids.length, predicted: 0, occluded: 0, tentative: 0 },
+    tracks: ids.map((id, i) => ({ id, box: B(100 + i * 200, 400), state: 'detected', confirmee: true })),
+  });
+
+  it('sépare les créations dues à la coupure de celles qui n\'y sont pour rien', () => {
+    const ok = (n) => ({ candidates: n, appariees: n, sansMesure: 0, creees: 0 });
+    const journal = [
+      inst(0, [1, 2, 3], ok(3)),
+      inst(1, [1, 2, 3, 4], { candidates: 3, appariees: 3, sansMesure: 0, creees: 1 }),   // loin du cut
+      inst(2, [5, 6, 7, 8], { candidates: 4, appariees: 0, sansMesure: 4, creees: 4 }),   // le cut
+      inst(3, [5, 6, 7, 8], ok(4)),
+    ];
+    const { cuts } = detecterRuptures(journal);
+    const v = ventilerAutourDesRuptures(journal, [], cuts);
+    expect(v.creations.total).toBe(5);      // la grille de départ ne compte pas
+    expect(v.creations.pres).toBe(4);
+    expect(v.creations.hors).toBe(1);
+  });
+
+  it('isole les refus de COMPÉTITION, seuls justiciables d\'un arbitrage', () => {
+    const journal = [inst(0, [1], { candidates: 1, appariees: 1, sansMesure: 0, creees: 0 })];
+    const refus = [
+      { t: 0, cote: 'detection', raison: REFUS.DEJA_ATTRIBUEE },
+      { t: 0, cote: 'piste', raison: REFUS.COUT_HONGROIS },
+      { t: 0, cote: 'piste', raison: REFUS.DISTANCE },
+      { t: 0, cote: 'piste', raison: REFUS.RATIO_TAILLE },
+    ];
+    const v = ventilerAutourDesRuptures(journal, refus, []);
+    expect(v.competition.total).toBe(2);
+    expect(v.competition.part).toBe(0.5);
+  });
+});
+
+describe('cohérence spatiale du groupe', () => {
+  const inst = (t, positions) => ({
+    t,
+    detections: { total: positions.length, fortes: positions.length, faibles: 0, fusions: 0, doublons: 0 },
+    counts: { detected: positions.length, predicted: 0, occluded: 0, tentative: 0 },
+    tracks: positions.map(([id, x]) => ({ id, box: B(x, 400), state: 'detected', confirmee: true })),
+  });
+
+  it('ne compte aucune inversion quand le peloton garde son ordre', () => {
+    const c = coherenceSpatiale([
+      inst(0, [[1, 100], [2, 300], [3, 500]]),
+      inst(0.25, [[1, 120], [2, 320], [3, 520]]),
+    ]);
+    expect(c.inversions).toBe(0);
+    expect(c.pairesSuivies).toBe(3);
+  });
+
+  it('compte l\'inversion d\'un dépassement, sans la traiter comme une faute', () => {
+    const c = coherenceSpatiale([
+      inst(0, [[1, 100], [2, 300]]),
+      inst(0.25, [[1, 340], [2, 300]]),
+    ]);
+    expect(c.inversions).toBe(1);
+    expect(c.tauxInversion).toBe(1);
+  });
+
+  it('mesure l\'écart entre voisins en largeurs de boîte', () => {
+    // deux boîtes de 160 px de large, centres distants de 160 px → écart 1,0
+    const c = coherenceSpatiale([inst(0, [[1, 100], [2, 260]])]);
+    expect(c.ecartVoisins.median).toBe(1);
+  });
+
+  it('ignore les pistes non confirmées', () => {
+    const j = inst(0, [[1, 100], [2, 300]]);
+    j.tracks[1].confirmee = false;
+    const j2 = inst(0.25, [[1, 100], [2, 300]]);
+    j2.tracks[1].confirmee = false;
+    expect(coherenceSpatiale([j, j2]).pairesSuivies).toBe(0);
   });
 });

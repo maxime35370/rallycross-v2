@@ -382,7 +382,8 @@ export class Suivi {
     this.pistes = [];
     this.derniereCamera = { dx: 0, dy: 0, n: 0 };
     this.modeleCamera = null;          // ajusté au pas précédent
-    this.comparaisonCamera = null;     // les modèles mis en concurrence
+    this.comparaisonCamera = null;     // les modèles mis en concurrence (dernier pas)
+    this.comparaisonsCamera = [];      // ... et la même mise en concurrence à CHAQUE pas
     this.residus = [];                 // { t, avant, apres, modele }
     this.dernierRattrapage = null;
     this.doublonsEcartes = 0;
@@ -474,7 +475,6 @@ export class Suivi {
       const piste = candidates[iPiste];
       const det = utilisables[iDet];
       appariees.push({ avant: piste.boitePredite, apres: det.box, brut: piste.boiteAvant });
-      piste.boiteAssociee = det.box.slice();
       this._confirmer(piste, t, det, ambigus.has(iPiste), dt);
       associeesCeTour.push(piste);
     }
@@ -511,6 +511,7 @@ export class Suivi {
     // précédente, où toute détection libre devenait une piste : sur la grille
     // de départ, 7 détections pour 5 voitures donnaient 7 identités.
     let doublonsCeTour = 0;
+    let creationsCeTour = 0, reactivationsCeTour = 0, reprisesCeTour = 0;
     const reprises = new Set();
     // Les pistes CRÉÉES pendant ce même pas entrent aussi dans la comparaison :
     // au tout premier instant rien n'est encore apparié, et sans cela les sept
@@ -524,6 +525,7 @@ export class Suivi {
         reprises.add(occluse);
         this._confirmer(occluse, t, det, true, dt);
         occluse.recovered += 1;
+        reprisesCeTour += 1;
         continue;
       }
 
@@ -535,6 +537,7 @@ export class Suivi {
         abandonnee.raisonSuppression = null;
         this._confirmer(abandonnee, t, det, true, dt);
         abandonnee.reactivated += 1;
+        reactivationsCeTour += 1;
         continue;
       }
 
@@ -565,6 +568,7 @@ export class Suivi {
         new Set(associeesCeTour),
         'detection', null, t));
       servies.push(this._creer(t, det));
+      creationsCeTour += 1;
     }
 
     // 7 · modèle de caméra pour le pas suivant, et mesure de son effet
@@ -589,13 +593,29 @@ export class Suivi {
       });
 
       this.comparaisonCamera = comparerModeles(appariees);
+      // Accumulée, et pas seulement conservée : au DERNIER pas il ne reste
+      // souvent qu'une paire appariée, et le rapport concluait alors que seul
+      // le modèle « aucune » était applicable — sur un échantillon de un.
+      this.comparaisonsCamera.push({
+        t: Number(t.toFixed(3)), n: appariees.length,
+        recommande: this.comparaisonCamera.recommande,
+        erreurs: Object.fromEntries(Object.entries(this.comparaisonCamera.resultats)
+          .map(([id, r]) => [id, r.applicable ? r.erreurLaisseeDeCote : null])),
+      });
       const choix = o.modeleCamera === 'auto' ? this.comparaisonCamera.recommande : o.modeleCamera;
       this.modeleCamera = ajusterCamera(appariees, choix);
     } else {
       this.modeleCamera = null;
     }
 
-    const instant = this._instantane(t, detections.length, fortes.length, faibles.length, fusions.size, doublonsCeTour);
+    const instant = this._instantane(t, detections.length, fortes.length, faibles.length, fusions.size, doublonsCeTour, {
+      candidates: candidates.length,
+      appariees: paires.length + r2.paires.length,
+      sansMesure: candidates.length - (paires.length + r2.paires.length),
+      creees: creationsCeTour,
+      reprises: reprisesCeTour,
+      reactivees: reactivationsCeTour,
+    });
     this.journal.push(instant);
     return instant;
   }
@@ -642,6 +662,12 @@ export class Suivi {
   _confirmer(piste, t, det, incertain, dt) {
     piste.pred.corriger(det.box, Math.max(1e-3, dt));
     piste.box = det.box.slice();
+    // Posée ici, donc par TOUTES les voies d'association — bande basse,
+    // reprise d'occlusion, réactivation. Elle ne l'était que par la voie
+    // forte, et gardait sa valeur d'un pas à l'autre : une piste prédite
+    // exportait la détection d'un instant précédent comme si elle venait
+    // d'être associée.
+    piste.boiteAssociee = det.box.slice();
     piste.score = det.score;
     piste.label = det.label || piste.label;
     piste.hits += 1;
@@ -667,6 +693,7 @@ export class Suivi {
   _sansMesure(piste, t, dt, occulteur) {
     piste.pred.avancerSansMesure(dt);
     piste.box = piste.pred.boite;
+    piste.boiteAssociee = null;
     piste.misses += 1;
     piste.sansDetection += dt;
     piste.ambiguous = true;
@@ -694,6 +721,7 @@ export class Suivi {
       pred: new Predicteur(det.box, o),
       box: det.box.slice(),
       boitePredite: det.box.slice(),
+      boiteAssociee: det.box.slice(),
       score: det.score,
       label: det.label || null,
       state: ETATS.TENTATIVE,
@@ -841,11 +869,15 @@ export class Suivi {
     return null;
   }
 
-  _instantane(t, nbTotal, nbFortes, nbFaibles, nbFusions = 0, nbDoublons = 0) {
+  _instantane(t, nbTotal, nbFortes, nbFaibles, nbFusions = 0, nbDoublons = 0, bilan = null) {
     const vivantes = this.pistes.filter(p => p.state !== ETATS.LOST);
     return {
       t: Number(t.toFixed(3)),
       detections: { total: nbTotal, fortes: nbFortes, faibles: nbFaibles, fusions: nbFusions, doublons: nbDoublons },
+      // Bilan d'association du pas — c'est lui qui rend une RUPTURE DE PLAN
+      // lisible : à un changement de caméra, presque aucune piste ne trouve de
+      // détection et plusieurs identités naissent dans le même souffle.
+      association: bilan ? { ...bilan, doublons: nbDoublons } : null,
       biais: { ...this.derniereCamera },
       tracks: vivantes.map(p => ({
         id: p.id,
@@ -854,13 +886,20 @@ export class Suivi {
         // prédiction compensée, détection finalement associée.
         boiteAvant: p.boiteAvant ? p.boiteAvant.map(v => Math.round(v)) : null,
         boiteCompensee: p.boitePredite ? p.boitePredite.map(v => Math.round(v)) : null,
-        boiteAssociee: p.state === ETATS.DETECTED && p.boiteAssociee ? p.boiteAssociee.map(v => Math.round(v)) : null,
+        boiteAssociee: p.boiteAssociee ? p.boiteAssociee.map(v => Math.round(v)) : null,
         state: p.state,
         score: p.score,
         confirmee: p.confirmee,
         ambiguous: p.ambiguous,
         occludedBy: p.occludedBy,
         misses: p.misses,
+        // Vitesses de l'état interne, y compris celles de TAILLE. Sans elles,
+        // une boîte prédite absurde ne se distingue pas d'une voiture qui
+        // grossit vraiment : c'est la mesure qui manquait au diagnostic.
+        vitesse: {
+          vx: Math.round(p.pred.s.vx), vy: Math.round(p.pred.s.vy),
+          vw: Math.round(p.pred.s.vw), vh: Math.round(p.pred.s.vh),
+        },
         trail: p.history.slice(-5).map(h => centre(h.box).map(v => Math.round(v))),
       })),
       counts: {
@@ -876,6 +915,192 @@ export class Suivi {
 // ─────────────────────────────────────────────────────────
 // MESURES
 // ─────────────────────────────────────────────────────────
+
+/**
+ * RUPTURES DE PLAN — repérées, jamais compensées.
+ *
+ * Un changement de caméra n'est pas un panoramique : le référentiel image est
+ * réellement réinitialisé, et aucune transformation géométrique estimée sur
+ * les pistes ne peut le rattraper. La seule chose honnête est de le REPÉRER,
+ * pour pouvoir dire ce qui, dans la fragmentation, lui revient.
+ *
+ * La signature d'une rupture est double, et les deux moitiés sont nécessaires :
+ *
+ *   · presque aucune piste vivante ne retrouve de détection — une occlusion
+ *     collective ou une perte de détection donnerait le même signal ;
+ *   · plusieurs identités naissent au même instant — un simple flou de
+ *     détection donnerait le même signal.
+ *
+ * Ensemble, elles ne se produisent que quand l'image entière a changé.
+ *
+ * Fonction PURE, calculée sur le journal exporté : elle s'applique aussi aux
+ * rapports déjà produits, ce qui permet de la valider sur des mesures faites
+ * avant qu'elle n'existe.
+ */
+export function detecterRuptures(journal, { refus = [], partMin = 0.6, creationsMin = 2, fenetre = 0.6 } = {}) {
+  const parInstant = [];
+  const vues = new Set();
+  if (journal.length) journal[0].tracks.forEach(t => vues.add(t.id));
+
+  // Refus côté PISTE par instant : c'est exactement le nombre de pistes
+  // vivantes restées sans détection, et il figure dans les rapports déjà
+  // exportés. Les états publiés ne suffisent pas — une piste non confirmée
+  // reste `tentative` qu'elle ait été appariée ou non, et une rupture passait
+  // alors sous le seuil alors que 69 % des pistes venaient d'être refusées.
+  const orphelines = new Map();
+  for (const r of refus) {
+    if (r.cote !== 'piste') continue;
+    orphelines.set(r.t, (orphelines.get(r.t) || 0) + 1);
+  }
+
+  for (let i = 1; i < journal.length; i++) {
+    const j = journal[i];
+    const vivantesAvant = journal[i - 1].tracks.length;
+    const neufs = j.tracks.filter(t => !vues.has(t.id));
+    neufs.forEach(t => vues.add(t.id));
+
+    // Par ordre de fiabilité : le bilan d'association du pas, puis le compte
+    // de refus, puis — faute de mieux — les états publiés.
+    const a = j.association;
+    const part = a && a.candidates ? a.sansMesure / a.candidates
+      : (vivantesAvant && orphelines.size ? Math.min(1, (orphelines.get(j.t) || 0) / vivantesAvant)
+        : (vivantesAvant ? (j.counts.predicted + j.counts.occluded) / vivantesAvant : 0));
+    const creations = a ? a.creees : neufs.length;
+
+    parInstant.push({
+      t: j.t,
+      partSansMesure: Number(part.toFixed(3)),
+      creations,
+      vivantes: vivantesAvant,
+      score: Number((0.6 * Math.min(1, part) + 0.4 * Math.min(1, creations / Math.max(1, vivantesAvant))).toFixed(3)),
+      rupture: part >= partMin && creations >= creationsMin,
+    });
+  }
+
+  // Une coupure occupe plusieurs pas à 10 Hz : on regroupe les instants
+  // signalés qui se suivent, et on retient le plus marqué. Compter cinq
+  // coupures là où il y en a une fausserait toute ventilation.
+  const cuts = [];
+  for (const x of parInstant.filter(v => v.rupture)) {
+    const dernier = cuts[cuts.length - 1];
+    if (dernier && x.t - dernier.fin <= fenetre) {
+      dernier.fin = x.t;
+      dernier.instants.push(x.t);
+      if (x.score > dernier.score) { dernier.t = x.t; dernier.score = x.score; }
+      dernier.creations += x.creations;
+    } else {
+      cuts.push({ t: x.t, debut: x.t, fin: x.t, score: x.score, creations: x.creations, instants: [x.t] });
+    }
+  }
+  return { parInstant, cuts };
+}
+
+/**
+ * Ce que la fragmentation doit aux ruptures, et ce qu'elle leur doit PAS.
+ *
+ * `rayon` : demi-largeur de la zone considérée « autour » d'une coupure. Une
+ * piste tuée par un cut ne renaît pas toujours au pas suivant — elle attend la
+ * fin de sa fenêtre d'abandon.
+ */
+export function ventilerAutourDesRuptures(journal, refus, cuts, { rayon = 0.55 } = {}) {
+  const pres = (t) => cuts.some(c => t >= c.debut - rayon && t <= c.fin + rayon);
+  const vues = new Set();
+  let creations = 0, creationsPres = 0;
+  for (const [i, j] of journal.entries()) {
+    for (const tr of j.tracks) {
+      if (vues.has(tr.id)) continue;
+      vues.add(tr.id);
+      if (i === 0) continue;              // la grille de départ n'est pas une rupture
+      creations += 1;
+      if (pres(j.t)) creationsPres += 1;
+    }
+  }
+  const compter = (liste) => liste.reduce((acc, r) => {
+    acc[r.raison] = (acc[r.raison] || 0) + 1; return acc;
+  }, {});
+  const dedans = refus.filter(r => pres(r.t)), dehors = refus.filter(r => !pres(r.t));
+  const instantsDedans = journal.filter(j => pres(j.t)).length;
+  const instantsDehors = journal.length - instantsDedans;
+  return {
+    rayon,
+    cuts: cuts.map(c => ({ t: c.t, debut: c.debut, fin: c.fin, score: c.score })),
+    creations: {
+      total: creations, pres: creationsPres, hors: creations - creationsPres,
+      partPres: creations ? Number((creationsPres / creations).toFixed(3)) : null,
+    },
+    refus: {
+      pres: { instants: instantsDedans, total: dedans.length, parRaison: compter(dedans), parInstant: instantsDedans ? Number((dedans.length / instantsDedans).toFixed(2)) : null },
+      hors: { instants: instantsDehors, total: dehors.length, parRaison: compter(dehors), parInstant: instantsDehors ? Number((dehors.length / instantsDehors).toFixed(2)) : null },
+    },
+    // Refus où DEUX pistes se disputaient la même détection : c'est le seul
+    // sous-ensemble qu'un coût de cohérence de groupe ou une signature
+    // d'apparence pourrait trancher pendant une caméra continue. Le reste
+    // relève de la géométrie ou de la détection, pas de l'arbitrage.
+    competition: {
+      total: refus.filter(r => r.raison === REFUS.DEJA_ATTRIBUEE || r.raison === REFUS.COUT_HONGROIS).length,
+      hors: dehors.filter(r => r.raison === REFUS.DEJA_ATTRIBUEE || r.raison === REFUS.COUT_HONGROIS).length,
+      part: refus.length ? Number((refus.filter(r => r.raison === REFUS.DEJA_ATTRIBUEE || r.raison === REFUS.COUT_HONGROIS).length / refus.length).toFixed(3)) : null,
+    },
+  };
+}
+
+/**
+ * COHÉRENCE SPATIALE DU GROUPE — mesurée avant d'être utilisée.
+ *
+ * L'hypothèse à tester est qu'un peloton garde son ordre : si l'ordre
+ * gauche-droite se conserve presque toujours, il porte de l'information et
+ * peut devenir un COÛT supplémentaire quand plusieurs associations se valent.
+ * S'il s'inverse souvent, en faire une contrainte interdirait les dépassements
+ * — précisément ce qu'on cherche à observer au virage 1.
+ *
+ * `ecartVoisins` dit à quel point l'ordre est franc : un écart médian d'une
+ * demi-largeur de boîte veut dire que l'ordre est souvent serré, et donc que
+ * la cohérence doit rester un coût mou, jamais un interdit.
+ */
+export function coherenceSpatiale(journal) {
+  let paires = 0, inversions = 0;
+  const parInstant = [];
+  for (let i = 1; i < journal.length; i++) {
+    const A = new Map(journal[i - 1].tracks.filter(t => t.confirmee).map(t => [t.id, t.box]));
+    const B = new Map(journal[i].tracks.filter(t => t.confirmee).map(t => [t.id, t.box]));
+    const communs = [...A.keys()].filter(id => B.has(id));
+    let inv = 0, np = 0;
+    for (let a = 0; a < communs.length; a++) {
+      for (let b = a + 1; b < communs.length; b++) {
+        const s1 = Math.sign(centre(A.get(communs[a]))[0] - centre(A.get(communs[b]))[0]);
+        const s2 = Math.sign(centre(B.get(communs[a]))[0] - centre(B.get(communs[b]))[0]);
+        np += 1;
+        if (s1 && s2 && s1 !== s2) inv += 1;
+      }
+    }
+    paires += np; inversions += inv;
+    if (inv) parInstant.push({ t: journal[i].t, inversions: inv, paires: np });
+  }
+
+  const ecarts = [];
+  for (const j of journal) {
+    const rang = j.tracks.filter(t => t.confirmee)
+      .map(t => ({ x: centre(t.box)[0], w: taille(t.box)[0] }))
+      .sort((a, b) => a.x - b.x);
+    for (let i = 1; i < rang.length; i++) {
+      const ref = (rang[i].w + rang[i - 1].w) / 2;
+      if (ref > 0) ecarts.push((rang[i].x - rang[i - 1].x) / ref);
+    }
+  }
+  const q = (arr, p) => {
+    if (!arr.length) return null;
+    const t = [...arr].sort((a, b) => a - b);
+    return Number(t[Math.min(t.length - 1, Math.floor((t.length - 1) * p))].toFixed(2));
+  };
+
+  return {
+    pairesSuivies: paires,
+    inversions,
+    tauxInversion: paires ? Number((inversions / paires).toFixed(4)) : null,
+    instantsAvecInversion: parInstant,
+    ecartVoisins: { n: ecarts.length, p10: q(ecarts, 0.1), median: q(ecarts, 0.5), p90: q(ecarts, 0.9) },
+  };
+}
 
 /**
  * Mesures tirées du journal et des pistes.
@@ -966,9 +1191,40 @@ export function mesurer(suivi, { cible = 5, tV1 = null } = {}) {
         gain: avant != null && apres != null && avant > 0
           ? Number((1 - apres / avant).toFixed(3)) : null,
         comparaison: suivi.comparaisonCamera,
+        // Le même arbitrage, agrégé sur TOUS les pas. Le champ `comparaison`
+        // ci-dessus ne décrit que le dernier, où il ne reste souvent qu'une
+        // paire : lu seul, il faisait croire qu'aucun modèle n'était applicable.
+        comparaisonAgregee: (() => {
+          const c = suivi.comparaisonsCamera || [];
+          if (!c.length) return null;
+          const ids = Object.keys(c[0].erreurs || {});
+          const retenus = {};
+          for (const x of c) retenus[x.recommande] = (retenus[x.recommande] || 0) + 1;
+          return {
+            pas: c.length,
+            pairesMedianes: mediane(c.map(x => x.n)),
+            retenusParInstant: retenus,
+            erreurLaisseeDeCoteMediane: Object.fromEntries(ids.map(id => [
+              id, mediane(c.map(x => x.erreurs[id]).filter(v => v != null)),
+            ])),
+            applicableParInstant: Object.fromEntries(ids.map(id => [
+              id, c.filter(x => x.erreurs[id] != null).length,
+            ])),
+          };
+        })(),
         parInstant: r,
       };
     })(),
+    // ── ruptures de plan, cohérence spatiale ────────────────────────────
+    ruptures: (() => {
+      const r = detecterRuptures(journal, { refus: suivi.refus });
+      return {
+        cuts: r.cuts.map(c => ({ t: c.t, debut: c.debut, fin: c.fin, score: c.score, instants: c.instants })),
+        parInstant: r.parInstant.filter(x => x.score >= 0.4),
+        ventilation: ventilerAutourDesRuptures(journal, suivi.refus, r.cuts),
+      };
+    })(),
+    coherenceSpatiale: coherenceSpatiale(journal),
     // Ventilation des associations refusées : la cause dominante se lit ici.
     refus: (() => {
       const parRaison = {}, parCote = { piste: 0, detection: 0 };

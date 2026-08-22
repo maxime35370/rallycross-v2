@@ -347,6 +347,57 @@ suppression. **Aucune ne dit qu'un `trackId` désigne
 toujours la même voiture** — cela demande une vérité terrain. Le panneau « à regarder » ramène la
 relecture de 43 instants à quelques-uns, chacun cliquable.
 
+### Diagnostic complet de la séquence Kerlabo
+
+Les réponses chiffrées — part de la fragmentation imputable aux coupures, cause
+structurelle hors coupure, ordre des corrections à tenter — sont dans
+[`docs/video-analysis/SUIVI-DIAGNOSTIC.md`](../../docs/video-analysis/SUIVI-DIAGNOSTIC.md).
+
+### Ruptures de plan — repérées, jamais compensées
+
+Un changement de caméra n'est pas un panoramique : le référentiel image est
+**réellement réinitialisé**, et il n'existe aucune transformation à estimer. Le
+rapport se contente donc de le **repérer**, pour dire ce qui, dans la
+fragmentation, lui revient.
+
+Une rupture demande **deux** signaux simultanés — presque aucune piste ne
+retrouve de détection, **et** plusieurs identités naissent au même instant.
+Pris isolément, chacun ment : le premier décrit aussi une occlusion collective,
+le second un flou de détection.
+
+`detecterRuptures()` est **pure et calculée sur le journal exporté** : elle
+s'applique donc aussi aux rapports produits avant qu'elle n'existe, ce qui
+permet de la valider sur des mesures antérieures. Sur la séquence Kerlabo elle
+trouve les **deux mêmes coupures** à 4 Hz et à 10 Hz — t ≈ 6,0 s et t ≈ 10,3–10,8 s
+— qui portent à elles seules 57 à 66 % des identités fabriquées.
+
+### Cohérence spatiale du groupe
+
+Part des paires de pistes qui gardent leur ordre gauche-droite d'un instant au
+suivant, et écart entre voisins en largeurs de boîte. Mesure destinée à décider
+si l'ordre du peloton mérite de devenir un **coût** d'association — jamais une
+contrainte : le p10 de l'écart vaut 0,11 largeur, c'est-à-dire que deux voitures
+sont parfois superposées en x, et un interdit y empêcherait un dépassement.
+
+### Sonde d'apparence — `lib/apparence.mjs`
+
+**Mesure seule.** Rien dans `track.mjs` ne l'importe, et aucune association
+n'en dépend. Elle répond à une question à laquelle les rapports ne pouvaient pas
+répondre, faute de la moindre donnée colorimétrique : *les cinq livrées sont-elles
+seulement séparables sur cette vidéo ?*
+
+Signature HSV **zonée** en trois bandes horizontales — c'est l'agencement des
+couleurs qui distingue deux livrées partageant les mêmes teintes — avec un canal
+**achromatique** séparé, sans lequel une livrée blanche et une livrée noire
+tomberaient dans le même seau. Calculée uniquement sur la boîte **réellement
+détectée** : sur une boîte prédite, on mesurerait la couleur du bitume.
+
+Trois chiffres décident : `contraste` (distance entre pistes ÷ distance d'une
+piste à elle-même), `tauxPlusProche` (reconnaissance une-contre-toutes, sans
+qu'une observation puisse se reconnaître elle-même), et `traversees[]` —
+l'appariement que l'apparence proposerait de part et d'autre de chaque coupure.
+Tant que ces chiffres ne sont pas connus, câbler l'apparence serait un pari.
+
 ### Fréquence
 
 0,50 s (2 Hz) · 0,25 s (4 Hz) · 0,10 s (10 Hz). Comparer deux fréquences donne le seul signal
@@ -362,8 +413,14 @@ moins.
 
 ```powershell
 node tools\smoke\videoSeek.mjs     # quelle image le navigateur affiche à currentTime = t
-npx vitest run tests/trackerCore.test.js
+node tools\smoke\suiviPage.mjs    # la page de suivi charge, et la sonde d'apparence sépare
+npx vitest run tests/trackerCore.test.js tests/apparenceSignature.test.js
 ```
+
+`suiviPage.mjs` ne suit rien — sans extrait, il n'y a rien à suivre. Il vérifie que les modules de
+la page se résolvent, qu'aucune erreur JavaScript ne passe au chargement, et que `signature()`
+sépare deux livrées sur des pixels **réellement produits par le navigateur** : c'est le seul point
+que les tests unitaires ne peuvent pas couvrir, puisqu'ils fabriquent le tableau de pixels à la main.
 
 `videoSeek.mjs` fabrique une vidéo dont chaque image porte une couleur unique et vérifie le calage.
 La règle du navigateur est **l'inverse de celle de ffmpeg** : `<video>` affiche l'image dont

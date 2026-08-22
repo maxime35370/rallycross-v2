@@ -51,6 +51,7 @@
     <label><input type="checkbox" id="cmc" checked> compensation caméra</label>
     <label>Modèle <select id="modeleCam"></select></label>
     <label><input type="checkbox" id="montrerCmc"> montrer la compensation</label>
+    <label><input type="checkbox" id="sondeApparence" checked> sonde d'apparence</label>
     <button id="lancer" disabled>Analyser la séquence</button>
     <progress id="prog" value="0" max="1" style="display:none"></progress>
     <span id="etat" class="sub"></span>
@@ -95,6 +96,7 @@ import {
   decodeOutput, assertAnchorCount, mergeVehicleDetections,
 } from '/tools/yolox-poc/lib/detect.mjs';
 import { Suivi, ETATS, DEFAULTS, mesurer, signauxSuspects } from '/tools/yolox-poc/lib/track.mjs';
+import { PROFIL, signature, separabilite, traverseeDeCoupure } from '/tools/yolox-poc/lib/apparence.mjs';
 import { MODELES_CAMERA, ORDRE_MODELES } from '/tools/yolox-poc/lib/camera.mjs';
 
 const ort = window.ort;
@@ -124,6 +126,7 @@ const grilles = new Map();
 const sessions = new Map();
 let video = $('src'), fps = 60, sidecar = null;
 let journal = [], suivi = null, mesure = null, signaux = [], instant = 0;
+let apparence = null, observations = [];
 
 function grillesDe(size) {
   if (!grilles.has(size)) grilles.set(size, buildGrids(size));
@@ -208,6 +211,8 @@ async function analyser() {
   $('prog').style.display = ''; $('prog').max = instants.length; $('prog').value = 0;
 
   journal = [];
+  observations = []; apparence = null;
+  const sonde = $('sondeApparence').checked;
   const debut = performance.now();
   for (const [i, t] of instants.entries()) {
     await allerA(t);
@@ -219,7 +224,18 @@ async function analyser() {
     // une piste. Le seuil du banc reste celui qui crée les pistes.
     const brutes = decodeOutput(brut, grids, ratio, { scoreThreshold: bande, classIds: VEHICLE_CLASS_IDS });
     const dets = mergeVehicleDetections(brutes, iouThr);
-    journal.push(suivi.pas(t, dets));
+    const instantane = suivi.pas(t, dets);
+    journal.push(instantane);
+    // SONDE D'APPARENCE — mesure seule, sur la boîte réellement DÉTECTÉE.
+    // Jamais sur une boîte prédite : on y mesurerait la couleur du bitume.
+    // Rien de ce qui est calculé ici ne revient dans l'association.
+    if (sonde) {
+      const px = cadreCtx.getImageData(0, 0, cadre.width, cadre.height).data;
+      for (const tr of instantane.tracks) {
+        if (!tr.boiteAssociee) continue;
+        observations.push({ t, id: tr.id, sig: signature(px, cadre.width, cadre.height, tr.boiteAssociee) });
+      }
+    }
     $('prog').value = i + 1;
     $('etat').textContent = `${i + 1}/${instants.length} · t=${t.toFixed(2)} s`;
   }
@@ -230,8 +246,15 @@ async function analyser() {
 
   mesure = mesurer(suivi, { cible: 5, tV1: t1 });
   signaux = signauxSuspects(suivi);
+  apparence = sonde && observations.length ? {
+    profil: PROFIL,
+    separabilite: separabilite(observations),
+    // Ce que l'apparence DIRAIT à chaque coupure détectée — sans que rien ne
+    // s'en serve. C'est la seule façon de savoir si elle mérite d'être câblée.
+    traversees: (mesure?.ruptures?.cuts || []).map(c => traverseeDeCoupure(observations, c.debut, { fenetre: Math.max(1, pas * 6) })),
+  } : null;
   // Exposé pour le contrôle automatique (tools/smoke/), jamais lu par la page.
-  window.__etatSuivi = { instants: journal.length, journal, mesure, signaux, secondes };
+  window.__etatSuivi = { instants: journal.length, journal, mesure, signaux, apparence, secondes };
   instant = 0;
   $('exporter').disabled = false;
   afficherMesures(); afficherSignaux(); await montrer(0);
@@ -373,6 +396,10 @@ function afficherMesures() {
       <td class="num">${v.residuAjustement ?? '—'}</td>
       <td class="num">${v.erreurLaisseeDeCote ?? '—'}</td></tr>`).join('')}
   </table>
+  ${m.camera.comparaisonAgregee ? `<p class="sub">Sur les ${m.camera.comparaisonAgregee.pas} pas :
+  ${Object.entries(m.camera.comparaisonAgregee.retenusParInstant).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}×`).join(' · ')}
+  — erreur laissée-de-côté médiane :
+  ${Object.entries(m.camera.comparaisonAgregee.erreurLaisseeDeCoteMediane).filter(([, v]) => v != null).map(([k, v]) => `${k} ${v}`).join(' · ') || '—'}</p>` : ''}
   <p class="sub">Recommandé sur le dernier pas : <strong>${m.camera.comparaison.recommande}</strong>.
   Le juge est l'erreur laissée-de-côté, pas le résidu d'ajustement : celui-ci décroît toujours quand on ajoute des paramètres.</p>` : ''}` : ''}
   <h3 style="font-size:.9rem;margin:10px 0 4px">Pourquoi les associations échouent</h3>
@@ -389,6 +416,46 @@ function afficherMesures() {
     rapport de taille ${m.refus.medianes.ratio ?? '—'} ·
     distance ${m.refus.medianes.distance ?? '—'} largeur(s) de boîte
   </p>
+  ${m.ruptures ? `<h3 style="font-size:.9rem;margin:10px 0 4px">Ruptures de plan</h3>
+  <table>
+    <tr><td>coupures détectées</td><td class="num">${m.ruptures.cuts.length ? m.ruptures.cuts.map(c => `t = ${c.debut}${c.fin !== c.debut ? '–' + c.fin : ''} s`).join(' · ') : 'aucune'}</td></tr>
+    <tr><td><strong>créations imputables à une coupure</strong></td>
+        <td class="num"><strong>${m.ruptures.ventilation.creations.pres}</strong> / ${m.ruptures.ventilation.creations.total}
+        (${m.ruptures.ventilation.creations.partPres == null ? '—' : (m.ruptures.ventilation.creations.partPres * 100).toFixed(0) + ' %'})</td></tr>
+    <tr><td>refus par instant — près / hors coupure</td>
+        <td class="num">${m.ruptures.ventilation.refus.pres.parInstant ?? '—'} / ${m.ruptures.ventilation.refus.hors.parInstant ?? '—'}</td></tr>
+    <tr><td>refus de compétition (arbitrables)</td>
+        <td class="num">${m.ruptures.ventilation.competition.total} (${m.ruptures.ventilation.competition.part == null ? '—' : (m.ruptures.ventilation.competition.part * 100).toFixed(0) + ' %'}),
+        dont ${m.ruptures.ventilation.competition.hors} hors coupure</td></tr>
+  </table>
+  <p class="sub">Une coupure n'est pas compensée : le référentiel image est réellement réinitialisé.
+  Elle est seulement REPÉRÉE, pour savoir ce qui, dans la fragmentation, lui revient.</p>` : ''}
+  ${m.coherenceSpatiale ? `<h3 style="font-size:.9rem;margin:10px 0 4px">Cohérence spatiale du groupe</h3>
+  <table>
+    <tr><td><strong>ordre gauche-droite conservé</strong></td>
+        <td class="num"><strong>${m.coherenceSpatiale.tauxInversion == null ? '—' : (100 * (1 - m.coherenceSpatiale.tauxInversion)).toFixed(1) + ' %'}</strong>
+        (${m.coherenceSpatiale.inversions} inversions / ${m.coherenceSpatiale.pairesSuivies} paires)</td></tr>
+    <tr><td>écart entre voisins — p10 / médian / p90</td>
+        <td class="num">${m.coherenceSpatiale.ecartVoisins.p10 ?? '—'} / ${m.coherenceSpatiale.ecartVoisins.median ?? '—'} / ${m.coherenceSpatiale.ecartVoisins.p90 ?? '—'} largeur(s)</td></tr>
+  </table>
+  <p class="sub">Un p10 très bas veut dire que l'ordre est souvent serré : la cohérence ne peut être
+  qu'un coût, jamais un interdit — sinon elle interdirait les dépassements au V1.</p>` : ''}
+  ${apparence ? `<h3 style="font-size:.9rem;margin:10px 0 4px">Sonde d'apparence (mesure seule)</h3>
+  <table>
+    <tr><td>observations / pistes</td><td class="num">${apparence.separabilite.observations} / ${apparence.separabilite.pistes}</td></tr>
+    <tr><td>distance médiane — même piste / pistes différentes</td>
+        <td class="num">${apparence.separabilite.intra.median ?? '—'} / ${apparence.separabilite.inter.median ?? '—'}</td></tr>
+    <tr><td><strong>contraste (inter / intra)</strong></td><td class="num"><strong>${apparence.separabilite.contraste ?? '—'}</strong></td></tr>
+    <tr><td><strong>taux de reconnaissance</strong></td>
+        <td class="num"><strong>${apparence.separabilite.tauxPlusProche == null ? '—' : (apparence.separabilite.tauxPlusProche * 100).toFixed(0) + ' %'}</strong>
+        sur ${apparence.separabilite.decisions} décisions</td></tr>
+    <tr><td>marge médiane de décision</td><td class="num">${apparence.separabilite.margeMediane ?? '—'}</td></tr>
+    ${apparence.traversees.map(tr => `<tr><td class="sub">traversée de la coupure t = ${tr.t}</td>
+      <td class="num">${tr.paires.length ? tr.paires.map(p => `#${p.avant}→#${p.apres} (${p.d}, marge ${p.marge ?? '—'})`).join('<br>') : '—'}</td></tr>`).join('')}
+  </table>
+  <p class="sub">Rien de tout cela n'entre dans l'association : la sonde mesure si les livrées sont
+  séparables sur CETTE vidéo. Tant que le contraste ne dépasse pas franchement 1, câbler l'apparence
+  remplacerait une géométrie mesurée par une couleur supposée.</p>` : ''}
   <p class="sub">Aucun de ces chiffres ne dit qu'un identifiant désigne toujours la même voiture :
   cela demande ton œil, guidé par la liste ci-dessous.</p>`;
 }
@@ -472,9 +539,18 @@ $('exporter').addEventListener('click', () => {
     mesures: mesure,
     refus: suivi ? suivi.refus : [],
     signaux,
+    apparence,
+    // Le journal exporte maintenant les trois boîtes du diagnostic et les
+    // VITESSES de l'état interne. Sans elles, une boîte prédite absurde ne se
+    // distinguait pas d'une voiture qui grossit vraiment, et le bilan
+    // d'association manquait pour situer les ruptures de plan.
     journal: journal.map(j => ({
-      t: j.t, detections: j.detections, counts: j.counts,
-      tracks: j.tracks.map(t => ({ id: t.id, box: t.box, state: t.state, score: t.score, confirmee: t.confirmee, ambiguous: t.ambiguous, occludedBy: t.occludedBy })),
+      t: j.t, detections: j.detections, counts: j.counts, association: j.association, biais: j.biais,
+      tracks: j.tracks.map(t => ({
+        id: t.id, box: t.box, boiteAvant: t.boiteAvant, boiteCompensee: t.boiteCompensee,
+        boiteAssociee: t.boiteAssociee, vitesse: t.vitesse,
+        state: t.state, score: t.score, confirmee: t.confirmee, ambiguous: t.ambiguous, occludedBy: t.occludedBy,
+      })),
     })),
     createdAt: new Date().toISOString(),
   };
