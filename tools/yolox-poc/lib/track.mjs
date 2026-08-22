@@ -60,6 +60,7 @@ export const DEFAULTS = {
   dureeAvantAbandon: 0.80,      // sans détection, avant abandon
   dureeOcclusionMax: 2.00,      // idem, pour une occlusion identifiée
   dureeReactivation: 1.50,      // fenêtre de repêchage d'une piste abandonnée
+  porteeReactivation: 1.5,      // distance de repêchage, en largeurs de boîte
   dureeConfirmation: 0.40,      // âge minimal d'une piste avant qu'elle compte
   detectionsConfirmation: 3,    // et nombre de détections exigées
 
@@ -84,12 +85,29 @@ export const DEFAULTS = {
   gainFusion: 0.5,
 };
 
+/**
+ * Pourquoi une association n'a pas eu lieu.
+ *
+ * Sans cette ventilation, corriger le suivi revient à tourner des seuils au
+ * hasard : on voit qu'il se fragmente, jamais POURQUOI.
+ */
+export const REFUS = {
+  AUCUNE_PISTE: 'aucune_piste',           // rien à quoi se raccrocher
+  IOU_INSUFFISANT: 'iou_insuffisant',     // recouvrement sous la porte
+  RATIO_TAILLE: 'ratio_taille',           // gabarits incompatibles
+  DISTANCE: 'distance',                   // aucune piste dans le voisinage
+  DEJA_ATTRIBUEE: 'piste_deja_attribuee', // la meilleure piste sert déjà
+  COUT_HONGROIS: 'cout_hongrois',         // recevable, mais l'affectation a choisi autrement
+  AUCUNE_DETECTION: 'aucune_detection',   // côté piste : rien à cet instant
+};
+
 /** Raisons de création et de suppression, tracées pour le diagnostic. */
 export const RAISONS = {
   NOUVELLE: 'nouvelle',
   REPRISE: 'reprise_occlusion',
   REACTIVATION: 'reactivation',
   DOUBLON: 'doublon_ecarte',
+  RECOUVRE: 'recouvre_piste_vivante',
   ABSENCE: 'absence_prolongee',
   OCCLUSION: 'occlusion_trop_longue',
 };
@@ -325,7 +343,13 @@ export function estimerDecalageGlobal(boitesA, boitesB) {
       dys.push(cb[1] - ca[1]);
     }
   }
-  const largeur = Math.max(10, taille(boitesA[0])[0] * 0.5);
+  // Largeur de fenêtre tirée de la MÉDIANE, jamais de la première boîte venue :
+  // si celle-ci était une voiture lointaine de 50 px, la fenêtre tombait à
+  // 25 px ; si c'était une voiture de premier plan de 300 px, elle montait à
+  // 150 px et pouvait alors fusionner le pic « aucun décalage » avec celui du
+  // voisin espacé de 150 px — le vote adoptait un décalage d'une demi-voiture.
+  const largeurs = boitesA.map(b => taille(b)[0]).sort((a, b) => a - b);
+  const largeur = Math.max(10, largeurs[Math.floor(largeurs.length / 2)] * 0.5);
   const mode = (vals) => {
     const tri = [...vals].sort((x, y) => x - y);
     let best = { n: 0, med: 0 };
@@ -355,6 +379,7 @@ export class Suivi {
     this.derniereCamera = { dx: 0, dy: 0, n: 0 };
     this.dernierRattrapage = null;
     this.doublonsEcartes = 0;
+    this.refus = [];
     this.journal = [];
     reinitialiserIds();
   }
@@ -379,6 +404,19 @@ export class Suivi {
       p.boitePredite = [b[0] + biais.dx, b[1] + biais.dy, b[2] + biais.dx, b[3] + biais.dy];
     }
 
+    // Une piste abandonnée continue d'être extrapolée pendant la fenêtre de
+    // repêchage. Sans cela sa boîte restait figée à l'endroit de sa mort : une
+    // voiture absente une seconde à 300 px/s se retrouvait 300 px plus loin,
+    // l'IoU tombait à zéro, et le repêchage ne pouvait JAMAIS aboutir — d'où
+    // les 0 et 1 réactivations observées pendant que des dizaines d'identités
+    // se créaient.
+    for (const p of this.pistes) {
+      if (p.state === ETATS.LOST && p.confirmee && t - p.lastSeen <= o.dureeReactivation) {
+        p.pred.avancerSansMesure(dt);
+        p.boitePredite = p.pred.boite;
+      }
+    }
+
     const candidates = this.pistes.filter(p => p.state !== ETATS.LOST);
 
     // 2 · boîtes fusionnées, repérées avant toute association
@@ -401,9 +439,12 @@ export class Suivi {
         };
         bouger(1);
         const bis = this._associer(candidates, utilisables, o.iouMatch);
-        const mieux = bis.paires.length > assoc.paires.length
-          || (bis.paires.length === assoc.paires.length && bis.coutTotal < assoc.coutTotal - 1e-6);
-        if (mieux) { assoc = bis; this.dernierRattrapage = d; }
+        // STRICTEMENT plus d'appariements, et rien d'autre. Accepter aussi un
+        // coût total plus faible à nombre égal laissait le décalage RÉAFFECTER
+        // les pistes entre elles pour économiser quelques centièmes d'IoU :
+        // un échange d'identité silencieux, d'autant plus probable à 10 Hz que
+        // le mouvement réel y est petit devant le bruit de détection.
+        if (bis.paires.length > assoc.paires.length) { assoc = bis; this.dernierRattrapage = d; }
         else bouger(-1);
       }
     }
@@ -433,6 +474,11 @@ export class Suivi {
     for (const piste of orphelines) {
       if (!encoreOrphelines.has(piste)) continue;
       const occulteur = piste._fusionAvec ?? this._chercherOccluseur(piste, utilisables, paires, candidates);
+      this.refus.push(this._diagnostiquer(
+        piste.boitePredite,
+        utilisables.map((d, i) => ({ boite: d.box, id: i, ref: d })),
+        new Set(paires.map(([, j]) => utilisables[j])),
+        'piste', piste.id, t));
       this._sansMesure(piste, t, dt, occulteur);
       piste._fusionAvec = null;
     }
@@ -480,6 +526,24 @@ export class Suivi {
         continue;
       }
 
+      // Piste vivante mais non servie à cet instant, que cette boîte recouvre :
+      // créer une identité par-dessus laisserait DEUX pistes vivantes pour la
+      // même voiture, l'une prédite et l'autre détectée, sans que rien ne les
+      // relie jamais.
+      const recouverte = this._doublonDe(det, candidates.filter(p => p.confirmee && !servies.includes(p)));
+      if (recouverte) {
+        recouverte.doublonsAbsorbes += 1;
+        this.doublonsEcartes += 1;
+        doublonsCeTour += 1;
+        this.refus.push({ t, cote: 'detection', id: null, cible: recouverte.id, raison: RAISONS.RECOUVRE });
+        continue;
+      }
+
+      this.refus.push(this._diagnostiquer(
+        det.box,
+        candidates.map(p => ({ boite: p.boitePredite, id: p.id, ref: p })),
+        new Set(associeesCeTour),
+        'detection', null, t));
       servies.push(this._creer(t, det));
     }
 
@@ -655,14 +719,23 @@ export class Suivi {
    * est indiscernable d'un vrai échange d'identité dans les mesures.
    */
   _reactiver(det, t, deja) {
-    let meilleure = null, meilleurIou = this.opt.iouRecover;
+    // Critère de DISTANCE, pas d'IoU. Après une seconde d'absence, la position
+    // extrapolée est forcément imprécise : exiger un recouvrement de boîtes
+    // revenait à interdire le repêchage. On demande une proximité de l'ordre
+    // d'une voiture et un gabarit compatible.
+    const o = this.opt;
+    const [dx, dy] = centre(det.box);
+    let meilleure = null, meilleurEcart = Infinity;
     for (const p of this.pistes) {
       if (deja.has(p) || p.state !== ETATS.LOST || !p.confirmee) continue;
-      if (t - p.lastSeen > this.opt.dureeReactivation) continue;
-      const r = iou(p.boitePredite, det.box);
-      if (r > meilleurIou && rapportTaille(p.boitePredite, det.box) <= this.opt.maxSizeRatio) {
-        meilleurIou = r; meilleure = p;
-      }
+      const age = t - p.lastSeen;
+      if (age > o.dureeReactivation) continue;
+      if (rapportTaille(p.boitePredite, det.box) > o.maxSizeRatio) continue;
+      const [px, py] = centre(p.boitePredite);
+      const [w, h] = taille(p.boitePredite);
+      const portee = Math.max(w, h) * o.porteeReactivation;
+      const ecart = Math.hypot(dx - px, dy - py);
+      if (ecart <= portee && ecart < meilleurEcart) { meilleurEcart = ecart; meilleure = p; }
     }
     return meilleure;
   }
@@ -674,6 +747,41 @@ export class Suivi {
    * CONTENUE dans celle d'une piste suivie — le cas typique du détecteur qui
    * pose une seconde boîte sur l'avant d'une voiture déjà détectée.
    */
+  /**
+   * Pourquoi cette boîte n'a-t-elle rejoint aucune piste ?
+   *
+   * Répond du point de vue de la DÉTECTION (`cote: 'detection'`) ou de la
+   * PISTE (`cote: 'piste'`), avec les valeurs qui ont fait pencher la balance,
+   * pour qu'une cause dominante se lise dans le rapport au lieu de se deviner.
+   */
+  _diagnostiquer(boite, autres, servies, cote, id = null, t = 0) {
+    const o = this.opt;
+    if (!autres.length) {
+      return { t, cote, id, raison: cote === 'piste' ? REFUS.AUCUNE_DETECTION : REFUS.AUCUNE_PISTE };
+    }
+    let meilleur = null, meilleurIou = -1;
+    for (const a of autres) {
+      const r = iou(boite, a.boite);
+      if (r > meilleurIou) { meilleurIou = r; meilleur = a; }
+    }
+    const ratio = rapportTaille(boite, meilleur.boite);
+    const [ax, ay] = centre(boite), [bx, by] = centre(meilleur.boite);
+    const [w, h] = taille(boite);
+    const distance = Math.hypot(ax - bx, ay - by) / Math.max(1, Math.max(w, h));
+    const base = {
+      t, cote, id, cible: meilleur.id ?? null,
+      iou: Number(meilleurIou.toFixed(3)),
+      ratio: Number.isFinite(ratio) ? Number(ratio.toFixed(2)) : null,
+      distance: Number(distance.toFixed(2)),
+    };
+    if (meilleurIou >= o.iouMatch) {
+      return { ...base, raison: servies.has(meilleur.ref) ? REFUS.DEJA_ATTRIBUEE : REFUS.COUT_HONGROIS };
+    }
+    if (meilleurIou > 0 && ratio > o.maxSizeRatio) return { ...base, raison: REFUS.RATIO_TAILLE };
+    if (meilleurIou > 0) return { ...base, raison: REFUS.IOU_INSUFFISANT };
+    return { ...base, raison: REFUS.DISTANCE };
+  }
+
   _doublonDe(det, servies) {
     for (const p of servies) {
       // Un doublon est TOUJOURS la vue la plus faible : exiger un score
@@ -793,6 +901,25 @@ export function mesurer(suivi, { cible = 5, tV1 = null } = {}) {
     reactivations: pistes.reduce((t, p) => t + p.reactivated, 0),
     doublonsEcartes: suivi.doublonsEcartes,
     raisons: { creation: compter('raisonCreation'), suppression: compter('raisonSuppression') },
+    // Ventilation des associations refusées : la cause dominante se lit ici.
+    refus: (() => {
+      const parRaison = {}, parCote = { piste: 0, detection: 0 };
+      const valeurs = { iou: [], ratio: [], distance: [] };
+      for (const r of suivi.refus) {
+        parRaison[r.raison] = (parRaison[r.raison] || 0) + 1;
+        if (parCote[r.cote] != null) parCote[r.cote] += 1;
+        for (const k of ['iou', 'ratio', 'distance']) if (r[k] != null) valeurs[k].push(r[k]);
+      }
+      const med = (a) => (a.length ? mediane(a) : null);
+      const dominante = Object.entries(parRaison).sort((a, b) => b[1] - a[1])[0];
+      return {
+        total: suivi.refus.length,
+        parRaison, parCote,
+        dominante: dominante ? { raison: dominante[0], nombre: dominante[1] } : null,
+        medianes: { iou: med(valeurs.iou), ratio: med(valeurs.ratio), distance: med(valeurs.distance) },
+        parInstant: duree > 0 ? Number((suivi.refus.length / journal.length).toFixed(2)) : null,
+      };
+    })(),
     // ── suivi ───────────────────────────────────────────────────────────
     pistesLongues: longues.length,
     cible,

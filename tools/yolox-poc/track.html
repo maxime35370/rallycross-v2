@@ -323,6 +323,20 @@ function afficherMesures() {
     créations : ${Object.entries(m.raisons.creation).map(([k, v]) => `${k} ${v}`).join(' · ') || '—'}<br>
     suppressions : ${Object.entries(m.raisons.suppression).map(([k, v]) => `${k} ${v}`).join(' · ') || '—'}
   </p>
+  <h3 style="font-size:.9rem;margin:10px 0 4px">Pourquoi les associations échouent</h3>
+  <table>
+    <tr><th>cause</th><th class="num">nombre</th></tr>
+    ${Object.entries(m.refus.parRaison).sort((a, b) => b[1] - a[1])
+      .map(([k, v]) => `<tr${k === m.refus.dominante?.raison ? ' style="font-weight:600"' : ''}>
+        <td>${k}</td><td class="num">${v}</td></tr>`).join('') || '<tr><td colspan="2">—</td></tr>'}
+    <tr><td class="sub">côté piste / côté détection</td><td class="num">${m.refus.parCote.piste} / ${m.refus.parCote.detection}</td></tr>
+    <tr><td class="sub">refus par instant</td><td class="num">${m.refus.parInstant ?? '—'}</td></tr>
+  </table>
+  <p class="sub" style="margin-top:4px">
+    médianes au moment du refus — IoU ${m.refus.medianes.iou ?? '—'} ·
+    rapport de taille ${m.refus.medianes.ratio ?? '—'} ·
+    distance ${m.refus.medianes.distance ?? '—'} largeur(s) de boîte
+  </p>
   <p class="sub">Aucun de ces chiffres ne dit qu'un identifiant désigne toujours la même voiture :
   cela demande ton œil, guidé par la liste ci-dessous.</p>`;
 }
@@ -403,6 +417,7 @@ $('exporter').addEventListener('click', () => {
     extrait: sidecar ? { file: sidecar.file, fps: sidecar.fps, clipStart: sidecar.clipStart, youtubeId: sidecar.youtubeId } : null,
     fenetre: { debut: Number($('tDebut').value), fin: Number($('tFin').value) },
     mesures: mesure,
+    refus: suivi ? suivi.refus : [],
     signaux,
     journal: journal.map(j => ({
       t: j.t, detections: j.detections, counts: j.counts,

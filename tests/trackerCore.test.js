@@ -9,8 +9,9 @@
 
 import { describe, it, expect } from 'vitest';
 import { centre } from '../tools/yolox-poc/lib/track.mjs';
+import { iou } from '../tools/yolox-poc/lib/detect.mjs';
 import {
-  ETATS, DEFAULTS, RAISONS, Suivi, Predicteur, hungarian, decalageCamera,
+  ETATS, DEFAULTS, RAISONS, REFUS, Suivi, Predicteur, hungarian, decalageCamera,
   estimerDecalageGlobal, rapportTaille, recouvrement, mesurer, signauxSuspects, concorder,
 } from '../tools/yolox-poc/lib/track.mjs';
 
@@ -532,5 +533,183 @@ describe('rapportTaille', () => {
     expect(rapportTaille(B(0, 0, 100, 50), B(9, 9, 100, 50))).toBeCloseTo(1, 6);
     expect(rapportTaille(B(0, 0, 200, 50), B(0, 0, 100, 50))).toBeCloseTo(2, 6);
     expect(rapportTaille(B(0, 0, 100, 50), B(0, 0, 200, 50))).toBeCloseTo(2, 6);
+  });
+});
+
+// ─────────────────────────────────────────────────────────
+// INVARIANCE DE CADENCE — trajectoire réaliste et bruitée
+// ─────────────────────────────────────────────────────────
+
+describe('Suivi — même vidéo, cadences différentes, mêmes identités', () => {
+  // Le point de ce bloc : compter les pistes ne suffit pas. Deux exécutions
+  // peuvent en trouver cinq chacune tout en attribuant les identifiants à des
+  // voitures différentes. On vérifie donc la CORRESPONDANCE voiture → trackId,
+  // à chaque instant commun aux deux cadences.
+  //
+  // Le bruit est indexé sur le NUMÉRO D'IMAGE de la vidéo source (60 img/s),
+  // pas sur l'indice d'échantillon : 4 Hz et 10 Hz voient ainsi le même film,
+  // simplement à des instants différents. Un bruit tiré par pas rendrait la
+  // comparaison vide de sens.
+  const FPS = 60, NB = 5, DUREE = 10;
+  const bruit = (n, i, sel = 0) => {
+    const x = Math.sin(n * 127.1 + i * 311.7 + sel * 74.7) * 43758.5453;
+    return x - Math.floor(x);
+  };
+
+  /** Voitures qui accélèrent, se resserrent et s'éloignent, caméra qui suit. */
+  const verite = (t, i) => {
+    const cx = 300 + i * 165 + 300 * t - 9 * t * t - 55 * t;
+    const cy = 420 + i * 10 + 26 * t;
+    const w = Math.max(70, 175 - 7 * t), h = w * 0.58;
+    return [cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2];
+  };
+
+  /** Détections bruitées : gigue de position et de taille, 15 % de ratés,
+   *  10 % de doublons décalés — l'ordinaire d'un détecteur sur de la course. */
+  function detections(t) {
+    const n = Math.round(t * FPS);
+    const out = [];
+    for (let i = 0; i < NB; i++) {
+      if (bruit(n, i, 1) < 0.15) continue;
+      const b = verite(t, i);
+      const dx = (bruit(n, i, 2) - 0.5) * 14, dy = (bruit(n, i, 3) - 0.5) * 12;
+      const dw = (bruit(n, i, 4) - 0.5) * 20;
+      out.push({
+        box: [b[0] + dx - dw / 2, b[1] + dy - dw / 4, b[2] + dx + dw / 2, b[3] + dy + dw / 4],
+        score: 0.45 + bruit(n, i, 5) * 0.5, label: 'car',
+      });
+      if (bruit(n, i, 6) < 0.10) {
+        const [cx, cy] = centre(b);
+        const [w, h] = [(b[2] - b[0]) * 0.5, (b[3] - b[1]) * 0.55];
+        out.push({ box: [cx - w / 2 + 18, cy - h / 2, cx + w / 2 + 18, cy + h / 2], score: 0.33, label: 'car' });
+      }
+    }
+    return out.sort((a, b) => b.score - a.score);
+  }
+
+  const jouer = (dt) => {
+    const s = new Suivi({ dt });
+    for (let k = 0; k * dt <= DUREE + 1e-9; k++) {
+      const t = Number((k * dt).toFixed(3));
+      s.pas(t, detections(t));
+    }
+    return s;
+  };
+
+  /** Quelle piste suit la voiture `i` à l'instant `t` ? */
+  const carte = (s, t) => {
+    const inst = s.journal.find(j => Math.abs(j.t - t) < 1e-6);
+    const m = {};
+    if (!inst) return m;
+    for (let i = 0; i < NB; i++) {
+      const vb = verite(t, i);
+      let best = null, bi = 0.3;
+      for (const tr of inst.tracks) {
+        if (!tr.confirmee) continue;
+        const r = iou(vb, tr.box);
+        if (r > bi) { bi = r; best = tr.id; }
+      }
+      m[i] = best;
+    }
+    return m;
+  };
+
+  const a = jouer(0.25), b = jouer(0.10);
+  const instantsCommuns = Array.from({ length: 19 }, (_, k) => Number((1 + k * 0.5).toFixed(3)));
+
+  it('trouve cinq pistes confirmées aux deux cadences', () => {
+    expect(mesurer(a).pistesConfirmeesCreees).toBe(5);
+    expect(mesurer(b).pistesConfirmeesCreees).toBe(5);
+  });
+
+  it('attribue le MÊME identifiant à la même voiture aux deux cadences', () => {
+    const desaccords = [];
+    for (const t of instantsCommuns) {
+      const ca = carte(a, t), cb = carte(b, t);
+      for (let i = 0; i < NB; i++) {
+        if (ca[i] && cb[i] && ca[i] !== cb[i]) desaccords.push({ t, voiture: i, a: ca[i], b: cb[i] });
+      }
+    }
+    expect(desaccords).toEqual([]);
+  });
+
+  it('garde le même identifiant d\'un bout à l\'autre de la séquence', () => {
+    for (const s of [a, b]) {
+      const vu = {};
+      const changements = [];
+      for (const t of instantsCommuns) {
+        const c = carte(s, t);
+        for (let i = 0; i < NB; i++) {
+          if (!c[i]) continue;
+          if (vu[i] && vu[i] !== c[i]) changements.push({ t, voiture: i, avant: vu[i], apres: c[i] });
+          vu[i] = c[i];
+        }
+      }
+      expect(changements).toEqual([]);
+    }
+  });
+
+  it('suit chaque voiture à tous les instants communs, malgré les ratés', () => {
+    // Un raté de détection ne doit pas faire disparaître la voiture du suivi :
+    // c'est toute la raison d'être des états prédit et occlus.
+    for (const s of [a, b]) {
+      for (const t of instantsCommuns) {
+        expect(Object.values(carte(s, t)).filter(Boolean)).toHaveLength(NB);
+      }
+    }
+  });
+});
+
+describe('Suivi — un objet intermittent ne doit pas multiplier les identités', () => {
+  // Cas soupçonné sur la vidéo réelle : une voiture détectée par intermittence,
+  // avec des trous plus longs que la tolérance d'abandon. Sans repêchage, elle
+  // renaît sous un nouvel identifiant à chaque retour — et d'autant plus
+  // souvent qu'on échantillonne vite.
+  const clignotant = (dt) => {
+    const s = new Suivi({ dt });
+    for (let k = 0; k * dt <= 12 + 1e-9; k++) {
+      const t = Number((k * dt).toFixed(3));
+      const visible = Math.floor(t / 1.2) % 2 === 0;          // 1,2 s visible, 1,2 s absente
+      s.pas(t, visible ? [{ box: B(400 + t * 30, 400, 160, 90), score: 0.8, label: 'car' }] : []);
+    }
+    return s;
+  };
+
+  it('repêche la piste au lieu d\'en créer une nouvelle à chaque retour', () => {
+    for (const dt of [0.25, 0.1]) {
+      const s = clignotant(dt);
+      const m = mesurer(s, { cible: 1 });
+      expect(m.reactivations).toBeGreaterThan(0);
+      expect(m.pistesConfirmeesCreees).toBe(1);
+    }
+  });
+
+  it('ne dépend pas de la cadence pour y parvenir', () => {
+    expect(mesurer(clignotant(0.25)).pistesConfirmeesCreees)
+      .toBe(mesurer(clignotant(0.1)).pistesConfirmeesCreees);
+  });
+});
+
+describe('mesurer — ventilation des refus d\'association', () => {
+  it('classe chaque refus et désigne la cause dominante', () => {
+    const s = new Suivi({ dt: 0.25 });
+    for (let k = 0; k < 10; k++) {
+      const d = [0, 1, 2].map(i => det(B(300 + i * 260 + k * 20, 400, 160, 90)));
+      if (k === 4) d.splice(1, 1);                    // un raté
+      if (k === 6) d.push(det(B(1500, 900, 120, 70), 0.4));   // un parasite isolé
+      s.pas(k * 0.25, d);
+    }
+    const r = mesurer(s, { cible: 3 }).refus;
+    expect(r.total).toBeGreaterThan(0);
+    expect(r.dominante).toHaveProperty('raison');
+    expect(Object.keys(r.parRaison).every(k => Object.values(REFUS).includes(k))).toBe(true);
+    expect(r.parCote).toHaveProperty('piste');
+    expect(r.parCote).toHaveProperty('detection');
+    expect(r.medianes).toHaveProperty('iou');
+  });
+
+  it('distingue une piste déjà attribuée d\'un simple manque de recouvrement', () => {
+    expect(REFUS.DEJA_ATTRIBUEE).not.toBe(REFUS.IOU_INSUFFISANT);
+    expect(Object.values(REFUS)).toContain(REFUS.COUT_HONGROIS);
   });
 });

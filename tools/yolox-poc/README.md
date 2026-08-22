@@ -245,6 +245,53 @@ d'existence. Exiger seulement des détections rendait la barre deux fois et demi
 10 Hz. Avant confirmation, la boîte est dessinée en fil, sans étiquette, et n'entre dans aucune
 mesure.
 
+### Deuxième passe : pourquoi la fragmentation persistait
+
+Après les correctifs ci-dessus, la mesure réelle donnait encore 39 pistes à 4 Hz et 70 à 10 Hz, et
+surtout **0 puis 1 réactivation** alors que des dizaines d'identités se créaient. Cinq défauts de
+plus, tous structurels :
+
+**1. Le repêchage était géométriquement impossible.** Une piste abandonnée gardait sa boîte figée à
+l'endroit de sa mort, et le repêchage exigeait un recouvrement d'IoU. Une voiture absente une
+seconde à 300 px/s se retrouve 300 px plus loin : l'IoU vaut zéro, le repêchage ne pouvait
+**jamais** aboutir. Les pistes abandonnées sont désormais extrapolées pendant la fenêtre, et le
+repêchage se juge à la **distance** et au gabarit, pas à l'IoU.
+
+**2. La fenêtre de vote du décalage global venait de la première boîte venue.** Si c'était une
+voiture lointaine de 50 px, la fenêtre tombait à 25 px ; une voiture de premier plan de 300 px la
+portait à 150 px — assez pour fusionner le pic « aucun décalage » avec celui du voisin espacé de
+150 px, et adopter un décalage d'une demi-voiture. Elle vient maintenant de la **médiane**.
+
+**3. Le décalage global pouvait réaffecter les pistes entre elles.** Je l'adoptais aussi lorsqu'il
+laissait le même nombre d'appariements pour un coût total plus faible : de quoi échanger deux
+identités pour économiser quelques centièmes d'IoU. D'autant plus probable à 10 Hz, où le mouvement
+réel est petit devant le bruit de détection. Il n'est plus adopté que s'il apparie **strictement
+davantage**.
+
+**4. Une détection pouvait créer une piste par-dessus une piste vivante** simplement non servie à
+cet instant : deux pistes pour une voiture, l'une prédite, l'autre détectée, que rien ne reliait
+jamais. La création est maintenant refusée dans ce cas (`recouvre_piste_vivante`).
+
+**5. On ne savait pas POURQUOI une association échouait.** Chaque refus est désormais classé.
+
+### Ventilation des refus
+
+Pour chaque association manquée, du côté de la piste comme de la détection :
+
+| Cause | Ce qu'elle dit |
+|---|---|
+| `iou_insuffisant` | il y avait bien une piste en face, le recouvrement n'a pas suffi |
+| `ratio_taille` | gabarits jugés incompatibles — porte peut-être trop serrée |
+| `distance` | aucune piste dans le voisinage : vraie disparition, ou parasite isolé |
+| `piste_deja_attribuee` | la meilleure piste servait déjà une autre détection |
+| `cout_hongrois` | l'appariement était recevable, l'affectation a choisi autrement |
+| `aucune_piste` / `aucune_detection` | rien en face à cet instant |
+| `recouvre_piste_vivante` | création refusée : une piste vivante occupait déjà la place |
+
+Le rapport donne la cause **dominante**, la répartition, les médianes d'IoU, de rapport de taille et
+de distance au moment du refus, et le détail instant par instant. C'est ce qui permet de corriger
+une porte précise au lieu de tourner des seuils au hasard.
+
 ### Mesures
 
 Nombre de voitures suivies à chaque instant, durée des pistes, pertes temporaires, sauvetages par
