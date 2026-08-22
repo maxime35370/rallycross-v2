@@ -426,8 +426,35 @@ local** des distances, jamais absolu. Un panoramique fait monter tout le
 voisinage ; seul un pic isolé est une coupure. Les tests le vérifient sur un
 panoramique et sur une scène fixe qui frémit.
 
-Le rapport affiche les deux détecteurs côte à côte. Quand ils divergent, c'est
-l'image qui a raison. Analyse complète et suite du plan :
+#### Page dédiée : `/__plans`
+
+Le scan de plans **ne charge aucun modèle** — l'y mêler coûterait 1,7 s
+d'inférence YOLOX par instant pour rien. `plans.html` fait le scan seul, et
+affiche ce qu'il faut pour juger :
+
+* les **timestamps** des coupures retenues ;
+* la **courbe** distance image à image, avec le **seuil superposé** — il vaut
+  `facteur × médiane locale` et change à chaque instant : il n'y en a pas
+  d'autre ;
+* le **score instant par instant** : distance, médiane locale, seuil, rapport,
+  pic isolé ou non, verdict ;
+* pour chaque coupure, la **dernière image avant** et la **première image
+  après**, datées à l'image près par un second passage à la cadence du fichier.
+
+```powershell
+node tools\yolox-poc\serve.mjs
+# puis http://127.0.0.1:8798/__plans
+node tools\smoke\plansPage.mjs      # contrôle de bout en bout, vidéo témoin comprise
+```
+
+`plansPage.mjs` fabrique dans le navigateur une vidéo dont la vérité est connue
+— un panoramique, une coupure à 2,0 s, puis un plan qui s'élargit en découvrant
+des objets immobiles — et vérifie que le scan trouve la coupure et **rien
+d'autre**. Mesuré : coupure à 1,98 s pour 2,00 s attendues, rapport ×9,35 contre
+un facteur 3, et le panoramique plafonne à ×2,37 sans jamais déclencher.
+
+Le rapport de suivi affiche les deux détecteurs côte à côte. Quand ils
+divergent, c'est l'image qui a raison. Analyse complète et suite du plan :
 [`docs/video-analysis/CUT-REATTRIBUTION.md`](../../docs/video-analysis/CUT-REATTRIBUTION.md).
 
 ### Cohérence spatiale du groupe

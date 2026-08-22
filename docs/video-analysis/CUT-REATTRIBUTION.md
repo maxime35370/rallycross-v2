@@ -87,10 +87,34 @@ sans regarder ni les pistes, ni les détections, ni un seul seuil du suivi :
 Ce que la méthode ne prétend pas faire : reconnaître un fondu enchaîné, ni dater
 la coupure plus finement que le pas d'échantillonnage.
 
-**À faire tourner en premier.** Le rapport affiche côte à côte les coupures vues
-dans l'image et les ruptures déduites du suivi. Si elles divergent comme les
-journaux le laissent attendre, c'est l'image qui a raison, et le nombre de cuts
-réels est fixé une fois pour toutes.
+**À faire tourner en premier**, sur la page dédiée `/__plans` — qui ne charge
+aucun modèle, le scan n'en ayant aucun besoin :
+
+```powershell
+node tools\yolox-poc\serve.mjs
+# → http://127.0.0.1:8798/__plans
+#   1. charger l'extrait ET son .json (la cadence vient du sidecar)
+#   2. début 3,000 · fin 13,500 · pas 0,10 s
+#   3. « Scanner les plans », puis « Exporter le JSON »
+```
+
+La page donne les timestamps retenus, la courbe des distances avec le seuil
+superposé, le score instant par instant (distance, médiane locale, seuil,
+rapport, pic isolé, verdict), et pour chaque coupure la dernière image avant et
+la première image après, datées à l'image près par un second passage à la
+cadence du fichier.
+
+Contrôle de bout en bout disponible : `node tools\smoke\plansPage.mjs`
+fabrique une vidéo dont la vérité est connue (panoramique, coupure à 2,0 s, puis
+plan qui s'élargit sur des objets immobiles) et vérifie que le scan trouve la
+coupure et rien d'autre — mesuré : 1,98 s pour 2,00 s attendues, rapport ×9,35
+contre un facteur 3, panoramique plafonnant à ×2,37.
+
+> Cette marge — ×2,37 pour un panoramique contre un facteur 3 — est réelle mais
+> pas immense. Sur une retransmission, un panoramique plus vif peut s'en
+> approcher. C'est précisément pourquoi le tableau publie le seuil de chaque
+> instant : si une coupure est manquée, on voit à quel rapport elle est passée,
+> et on abaisse le facteur en connaissance de cause plutôt qu'au jugé.
 
 ---
 

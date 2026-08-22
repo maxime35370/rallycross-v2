@@ -423,12 +423,27 @@ export function detecterCoupures(serie, { facteur = 3.0, fenetre = 9, minAbsolu 
     const pic = (i === 0 || distances[i].d > distances[i - 1].d)
       && (i === distances.length - 1 || distances[i].d >= distances[i + 1].d);
     distances[i].rapport = Number(rapport.toFixed(2));
+    // Le seuil est publié PAR INSTANT : il n'y en a pas d'autre, et le lire
+    // est le seul moyen de vérifier qu'aucune constante magique ne traîne.
+    distances[i].reference = Number(reference.toFixed(4));
+    distances[i].seuil = Number((facteur * reference).toFixed(4));
+    distances[i].pic = pic;
     if (rapport >= facteur && pic) {
-      coupures.push({ t: distances[i].t, d: Number(distances[i].d.toFixed(4)), rapport: Number(rapport.toFixed(2)) });
+      coupures.push({
+        t: distances[i].t,
+        d: Number(distances[i].d.toFixed(4)),
+        seuil: distances[i].seuil,
+        rapport: Number(rapport.toFixed(2)),
+      });
     }
   }
   return {
-    distances: distances.map(x => ({ t: x.t, d: Number(x.d.toFixed(4)), rapport: x.rapport ?? null })),
+    reglages: { facteur, fenetre, minAbsolu },
+    distances: distances.map(x => ({
+      t: x.t, d: Number(x.d.toFixed(4)),
+      reference: x.reference ?? null, seuil: x.seuil ?? null,
+      rapport: x.rapport ?? null, pic: x.pic ?? null,
+    })),
     coupures,
   };
 }

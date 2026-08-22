@@ -1,0 +1,286 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Changements de plan — scan de l'extrait</title>
+<style>
+  :root { --bd:#d8d8d8; --bg:#fafafa; }
+  body { font:14px/1.5 system-ui,sans-serif; margin:0; padding:18px; background:var(--bg); color:#1b1b1b; }
+  h1 { font-size:1.15rem; margin:0 0 4px; } .sub { color:#666; margin:0 0 14px; }
+  h2 { font-size:.95rem; margin:0 0 8px; }
+  .panneau { background:#fff; border:1px solid var(--bd); border-radius:8px; padding:12px 14px; margin-bottom:12px; }
+  .rangee { display:flex; gap:14px; align-items:center; flex-wrap:wrap; }
+  label { font-size:13px; } input[type=number]{ width:76px; }
+  canvas { max-width:100%; border:1px solid var(--bd); border-radius:4px; display:block; }
+  table { border-collapse:collapse; width:100%; font-size:12.5px; }
+  th,td { border:1px solid var(--bd); padding:3px 6px; } th { background:#f0f0f0; position:sticky; top:0; }
+  td.num,th.num { text-align:right; font-variant-numeric:tabular-nums; }
+  button { font:inherit; padding:4px 10px; border:1px solid var(--bd); background:#fff; border-radius:4px; cursor:pointer; }
+  button:disabled { opacity:.4; cursor:default; }
+  progress { width:220px; }
+  video { display:none; }
+  .coupure { background:#ffe9e6; font-weight:600; }
+  .paire { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:8px; }
+  .paire figcaption { font-size:12px; color:#555; margin-bottom:3px; }
+  .defile { max-height:340px; overflow:auto; }
+</style>
+
+<h1>Changements de plan — mesurés sur les pixels</h1>
+<p class="sub">
+  Ce scan ne charge <strong>aucun modèle</strong> et ne regarde ni les pistes, ni les détections, ni
+  un seul seuil du suivi. Il compare l'histogramme en grille de deux images successives, et cherche
+  un <strong>pic isolé</strong> au-dessus du niveau local. Un panoramique fait monter tout le
+  voisinage : c'est ce qui le distingue d'une coupure.
+</p>
+
+<div class="panneau">
+  <div class="rangee">
+    <label>Extrait + son <code>.json</code> :
+      <input type="file" id="pick" accept="video/*,application/json,.json" multiple></label>
+    <label>Début <input type="number" id="tDebut" step="0.001" value="3.000"></label>
+    <label>Fin <input type="number" id="tFin" step="0.001" value="13.500"></label>
+    <label>Pas <select id="pas">
+      <option value="0.25">0,25 s · 4 Hz</option>
+      <option value="0.10" selected>0,10 s · 10 Hz</option>
+      <option value="0.05">0,05 s · 20 Hz</option>
+    </select></label>
+  </div>
+  <div class="rangee" style="margin-top:8px">
+    <label>Facteur <input type="number" id="facteur" step="0.1" min="1.2" value="3.0"></label>
+    <label>Fenêtre <input type="number" id="fenetre" step="2" min="3" value="9"></label>
+    <label>Plancher <input type="number" id="minAbsolu" step="0.01" min="0" value="0.06"></label>
+    <label><input type="checkbox" id="affiner" checked> dater à l'image près autour de chaque coupure</label>
+    <button id="lancer" disabled>Scanner les plans</button>
+    <button id="exporter" disabled>Exporter le JSON</button>
+    <progress id="prog" value="0" max="1" style="display:none"></progress>
+    <span id="etat" class="sub" style="margin:0"></span>
+  </div>
+</div>
+
+<div class="panneau">
+  <h2>Distance entre images successives, et seuil retenu</h2>
+  <canvas id="courbe" width="1180" height="240"></canvas>
+  <p class="sub" style="margin:6px 0 0">
+    Trait plein : distance d'une image à la suivante. Trait pointillé : le seuil, qui vaut
+    <code>facteur × médiane locale</code> — il n'y a pas d'autre seuil, et il change à chaque
+    instant. Barre rouge : coupure retenue.
+  </p>
+</div>
+
+<div class="panneau" id="panneauPaires" style="display:none">
+  <h2>De part et d'autre de chaque coupure proposée</h2>
+  <div id="paires"></div>
+</div>
+
+<div class="panneau">
+  <h2>Score instant par instant</h2>
+  <div class="defile"><table id="tableau"><tr><td class="sub">Charge l'extrait et lance le scan.</td></tr></table></div>
+</div>
+
+<video id="src" preload="auto" muted playsinline></video>
+
+<script type="module">
+import { signatureImage, detecterCoupures, distance } from '/tools/yolox-poc/lib/apparence.mjs';
+
+const $ = (id) => document.getElementById(id);
+const video = $('src');
+let fps = 60, sidecar = null, resultat = null;
+
+// ── Chargement ──────────────────────────────────────────
+$('pick').addEventListener('change', async (e) => {
+  for (const f of e.target.files) {
+    if (/\.json$/i.test(f.name)) {
+      try {
+        const brut = JSON.parse(await f.text());
+        // Le sidecar « rx-extract/1 », ou un rapport qui le contient.
+        if (brut?.schema === 'rx-extract/1') { sidecar = brut; fps = brut.fps || 60; }
+        else if (brut?.extrait?.fps) { sidecar = brut.extrait; fps = brut.extrait.fps; }
+      } catch { /* fichier illisible : on garde la cadence supposée */ }
+    } else {
+      video.src = URL.createObjectURL(f);
+      if (video.readyState < 1) await new Promise(ok => video.addEventListener('loadedmetadata', ok, { once: true }));
+    }
+  }
+  $('lancer').disabled = !video.src;
+  $('etat').textContent = `${fps} img/s${sidecar ? ' · cadence lue dans le sidecar' : ' · cadence SUPPOSÉE, fournis le .json'}`
+    + (video.videoWidth ? ` · ${video.videoWidth}×${video.videoHeight}` : '');
+});
+
+// ── Échantillonnage ─────────────────────────────────────
+const cadre = document.createElement('canvas');
+const ctxCadre = cadre.getContext('2d', { willReadFrequently: true });
+
+/** Vise le MILIEU de l'image : `<video>` affiche celle dont l'intervalle
+ *  contient `currentTime`, donc ce point ne dépend d'aucun arrondi. */
+function allerA(t) {
+  return new Promise((ok, ko) => {
+    const fini = () => { video.removeEventListener('seeked', fini); ok(); };
+    video.addEventListener('seeked', fini);
+    video.currentTime = t + 0.5 / fps;
+    setTimeout(() => { video.removeEventListener('seeked', fini); ko(new Error(`seek ${t}`)); }, 8000);
+  });
+}
+
+async function pixels(t) {
+  await allerA(t);
+  cadre.width = video.videoWidth; cadre.height = video.videoHeight;
+  ctxCadre.drawImage(video, 0, 0);
+  return ctxCadre.getImageData(0, 0, cadre.width, cadre.height).data;
+}
+
+const vignette = async (t) => {
+  await allerA(t);
+  const c = document.createElement('canvas');
+  const k = Math.min(1, 560 / video.videoWidth);
+  c.width = Math.round(video.videoWidth * k); c.height = Math.round(video.videoHeight * k);
+  c.getContext('2d').drawImage(video, 0, 0, c.width, c.height);
+  return c.toDataURL('image/jpeg', 0.85);
+};
+
+// ── Scan ────────────────────────────────────────────────
+$('lancer').addEventListener('click', async () => {
+  const pas = Number($('pas').value);
+  const t0 = Number($('tDebut').value), t1 = Number($('tFin').value);
+  if (!(t1 > t0)) { $('etat').textContent = 'la fin doit être après le début'; return; }
+  const reglages = {
+    facteur: Number($('facteur').value),
+    fenetre: Number($('fenetre').value),
+    minAbsolu: Number($('minAbsolu').value),
+  };
+
+  const instants = [];
+  for (let t = t0; t <= t1 + 1e-6; t += pas) instants.push(Number(t.toFixed(3)));
+  $('prog').style.display = ''; $('prog').max = instants.length; $('prog').value = 0;
+  $('lancer').disabled = true; $('exporter').disabled = true;
+
+  const debut = performance.now();
+  const serie = [];
+  for (const [i, t] of instants.entries()) {
+    serie.push({ t, sig: signatureImage(await pixels(t), cadre.width, cadre.height) });
+    $('prog').value = i + 1;
+    $('etat').textContent = `${i + 1}/${instants.length} · t=${t.toFixed(2)} s`;
+  }
+  const brut = detecterCoupures(serie, reglages);
+
+  // Datation à l'image près : on rejoue le voisinage de chaque coupure à la
+  // cadence réelle du fichier. Au pas de 0,10 s on ne sait que « quelque part
+  // dans ces six images » ; ici on sait laquelle.
+  const coupures = [];
+  for (const c of brut.coupures) {
+    let fin = { t: c.t, avant: Number((c.t - pas).toFixed(3)), d: c.d, precision: `± ${pas} s` };
+    if ($('affiner').checked) {
+      const dt = 1 / fps;
+      const bornes = [];
+      for (let t = c.t - pas - dt; t <= c.t + dt + 1e-9; t += dt) bornes.push(Number(t.toFixed(4)));
+      const sigs = [];
+      for (const t of bornes) sigs.push({ t, sig: signatureImage(await pixels(t), cadre.width, cadre.height) });
+      let meilleur = null;
+      for (let i = 1; i < sigs.length; i++) {
+        const d = distance(sigs[i - 1].sig, sigs[i].sig) ?? 0;
+        if (!meilleur || d > meilleur.d) meilleur = { d, avant: sigs[i - 1].t, t: sigs[i].t };
+      }
+      if (meilleur) fin = { ...meilleur, d: Number(meilleur.d.toFixed(4)), precision: `1 image (${(1000 / fps).toFixed(1)} ms)` };
+    }
+    coupures.push({
+      ...c, ...fin,
+      // L'instant de la GRILLE reste conservé : c'est lui qui situe la coupure
+      // dans la courbe et dans le tableau, la datation fine tombant entre deux
+      // points de la grille.
+      tGrille: c.t,
+      image: Math.round(fin.t * fps),
+      vignetteAvant: await vignette(fin.avant),
+      vignetteApres: await vignette(fin.t),
+    });
+  }
+
+  const secondes = (performance.now() - debut) / 1000;
+  $('prog').style.display = 'none';
+  $('lancer').disabled = false; $('exporter').disabled = false;
+  $('etat').textContent = `${instants.length} instants en ${secondes.toFixed(1)} s · `
+    + (coupures.length ? `${coupures.length} coupure(s)` : 'aucune coupure');
+
+  resultat = {
+    schema: 'rx-plans/1',
+    extrait: sidecar ? { file: sidecar.file, fps: sidecar.fps, clipStart: sidecar.clipStart } : null,
+    fenetre: { debut: t0, fin: t1, pas },
+    reglages: brut.reglages,
+    // Les vignettes ne partent pas dans le JSON : elles pèsent, et elles ne
+    // sont pas une mesure.
+    coupures: coupures.map(({ vignetteAvant, vignetteApres, ...reste }) => reste),
+    distances: brut.distances,
+    createdAt: new Date().toISOString(),
+  };
+  window.__plans = resultat;
+
+  dessiner(brut, coupures);
+  remplirTableau(brut, coupures);
+  montrerPaires(coupures);
+});
+
+$('exporter').addEventListener('click', () => {
+  const a = document.createElement('a');
+  a.download = `rapport-plans-${String(1 / Number($('pas').value)).replace('.', 'p')}hz.json`;
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(resultat, null, 2)], { type: 'application/json' }));
+  a.click();
+});
+
+// ── Affichage ───────────────────────────────────────────
+function dessiner({ distances }, coupures) {
+  const c = $('courbe'), ctx = c.getContext('2d');
+  ctx.clearRect(0, 0, c.width, c.height);
+  if (!distances.length) return;
+  const marge = { g: 46, d: 12, h: 12, b: 26 };
+  const L = c.width - marge.g - marge.d, H = c.height - marge.h - marge.b;
+  const tMin = distances[0].t, tMax = distances[distances.length - 1].t;
+  const yMax = Math.max(...distances.map(x => Math.max(x.d, x.seuil ?? 0))) * 1.08 || 1;
+  const X = (t) => marge.g + (tMax > tMin ? (t - tMin) / (tMax - tMin) : 0.5) * L;
+  const Y = (v) => marge.h + H - (v / yMax) * H;
+
+  ctx.strokeStyle = '#ccc'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(marge.g, marge.h); ctx.lineTo(marge.g, marge.h + H); ctx.lineTo(marge.g + L, marge.h + H); ctx.stroke();
+  ctx.fillStyle = '#666'; ctx.font = '11px system-ui,sans-serif';
+  for (let k = 0; k <= 4; k++) {
+    const v = yMax * k / 4;
+    ctx.fillText(v.toFixed(2), 6, Y(v) + 4);
+    ctx.strokeStyle = '#f0f0f0'; ctx.beginPath(); ctx.moveTo(marge.g, Y(v)); ctx.lineTo(marge.g + L, Y(v)); ctx.stroke();
+  }
+  for (let t = Math.ceil(tMin); t <= tMax; t++) ctx.fillText(`${t}s`, X(t) - 7, c.height - 8);
+
+  for (const cp of coupures) {
+    ctx.strokeStyle = '#e8000d'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(X(cp.tGrille ?? cp.t), marge.h); ctx.lineTo(X(cp.tGrille ?? cp.t), marge.h + H); ctx.stroke();
+  }
+  ctx.strokeStyle = '#b06f00'; ctx.lineWidth = 1.5; ctx.setLineDash([5, 4]);
+  ctx.beginPath();
+  distances.forEach((x, i) => (i ? ctx.lineTo(X(x.t), Y(x.seuil ?? 0)) : ctx.moveTo(X(x.t), Y(x.seuil ?? 0))));
+  ctx.stroke(); ctx.setLineDash([]);
+  ctx.strokeStyle = '#0b57d0'; ctx.lineWidth = 2;
+  ctx.beginPath();
+  distances.forEach((x, i) => (i ? ctx.lineTo(X(x.t), Y(x.d)) : ctx.moveTo(X(x.t), Y(x.d))));
+  ctx.stroke();
+}
+
+function remplirTableau({ distances, reglages }, coupures) {
+  const retenus = new Set(coupures.map(c => c.tGrille ?? c.t));
+  $('tableau').innerHTML = `<tr><th class="num">t</th><th class="num">distance</th>
+      <th class="num">médiane locale</th><th class="num">seuil</th><th class="num">rapport</th>
+      <th>pic isolé</th><th>verdict</th></tr>`
+    + distances.map(x => `<tr${retenus.has(x.t) ? ' class="coupure"' : ''}>
+        <td class="num">${x.t.toFixed(2)}</td><td class="num">${x.d.toFixed(4)}</td>
+        <td class="num">${x.reference?.toFixed(4) ?? '—'}</td><td class="num">${x.seuil?.toFixed(4) ?? '—'}</td>
+        <td class="num">${x.rapport?.toFixed(2) ?? '—'}</td><td>${x.pic ? 'oui' : 'non'}</td>
+        <td>${retenus.has(x.t) ? 'COUPURE' : (x.rapport >= reglages.facteur ? 'au-dessus du seuil, mais pas un pic isolé' : '')}</td>
+      </tr>`).join('');
+}
+
+function montrerPaires(coupures) {
+  $('panneauPaires').style.display = coupures.length ? '' : 'none';
+  $('paires').innerHTML = coupures.map(c => `
+    <h3 style="font-size:.9rem;margin:12px 0 2px">Coupure à t = ${c.t} s
+      <span class="sub" style="display:inline">— image ${c.image} · distance ${c.d} · seuil ${c.seuil} · rapport ×${c.rapport} · précision ${c.precision}</span></h3>
+    <div class="paire">
+      <figure style="margin:0"><figcaption>dernière image AVANT — t = ${c.avant} s</figcaption>
+        <img src="${c.vignetteAvant}" style="width:100%;border:1px solid var(--bd);border-radius:4px"></figure>
+      <figure style="margin:0"><figcaption>première image APRÈS — t = ${c.t} s</figcaption>
+        <img src="${c.vignetteApres}" style="width:100%;border:1px solid var(--bd);border-radius:4px"></figure>
+    </div>`).join('');
+}
+</script>
