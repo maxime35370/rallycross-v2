@@ -1044,3 +1044,110 @@ describe('vitesse de taille bornée', () => {
     expect(DEFAULTS.ratioTailleMax).toBe(1.5);
   });
 });
+
+// ═══════════════════════════════════════════════
+// MÉMOIRE D'APPARENCE
+//
+// Le suivi ne calcule aucune signature : le banc en injecte une dans la
+// détection, la piste la range si l'observation est propre, et RIEN ne la lit.
+// Le dernier test de ce bloc est le plus important — il vérifie que le suivi
+// se comporte exactement pareil avec et sans signatures.
+// ═══════════════════════════════════════════════
+
+describe('mémoire d\'apparence des pistes', () => {
+  const SIG = [0.5, 0.25, 0.25];
+  const detSig = (box, score = 0.8, sig = SIG) => ({ box, score, label: 'car', sig });
+  const roulage = (s, n, opts = {}) => {
+    for (let k = 0; k < n; k++) {
+      const t = k * 0.25;
+      const dets = opts.dets ? opts.dets(k, t) : [detSig(B(300 + k * 40, 500))];
+      s.pas(t, dets);
+    }
+    return s.pistes[0];
+  };
+
+  it('range les observations fortes et propres', () => {
+    const p = roulage(new Suivi({ dt: 0.25 }), 5);
+    expect(p.apparences).toHaveLength(5);
+    expect(p.apparences[0].sig).toEqual(SIG);
+    expect(p.apparences[0].box).toEqual(B(300, 500).map(Math.round));
+  });
+
+  it('ne range RIEN quand la détection ne porte pas de signature', () => {
+    const s = new Suivi({ dt: 0.25 });
+    for (let k = 0; k < 5; k++) s.pas(k * 0.25, [det(B(300 + k * 40, 500))]);
+    expect(s.pistes[0].apparences).toHaveLength(0);
+  });
+
+  it('ne range pas une boîte prédite', () => {
+    // Un trou de détection : l'instant sans mesure ne doit rien mémoriser.
+    const p = roulage(new Suivi({ dt: 0.25 }), 6, {
+      dets: (k) => (k === 3 ? [] : [detSig(B(300 + k * 40, 500))]),
+    });
+    expect(p.apparences).toHaveLength(5);
+    expect(p.apparences.every(a => Math.abs(a.t - 0.75) > 1e-9)).toBe(true);
+  });
+
+  it('ne range pas un sauvetage par la bande basse', () => {
+    // Une détection sous le seuil raccroche la piste, mais elle est trop
+    // incertaine pour définir une livrée.
+    const p = roulage(new Suivi({ dt: 0.25 }), 6, {
+      dets: (k) => [detSig(B(300 + k * 40, 500), k === 3 ? 0.15 : 0.8)],
+    });
+    expect(p.apparences.every(a => a.score >= 0.3)).toBe(true);
+    expect(p.apparences).toHaveLength(5);
+  });
+
+  it('ne range pas une boîte qui touche le bord de l\'image', () => {
+    // La livrée y est tronquée par le cadre — le défaut qui avait fait
+    // s'effondrer les largeurs prédites au point ①.
+    const s = new Suivi({ dt: 0.25, largeurImage: 1920, hauteurImage: 1080 });
+    for (let k = 0; k < 5; k++) s.pas(k * 0.25, [detSig(B(1830 + k * 20, 500, 200, 120))]);
+    expect(s.pistes[0].apparences.length).toBeLessThan(5);
+    expect(s.pistes[0].apparences.every(a => a.box[2] < 1918)).toBe(true);
+  });
+
+  it('borne l\'anneau, et garde les plus RÉCENTES', () => {
+    const s = new Suivi({ dt: 0.25, memoireApparence: 3 });
+    const p = roulage(s, 8);
+    expect(p.apparences).toHaveLength(3);
+    expect(p.apparences[2].t).toBeCloseTo(1.75, 3);
+  });
+
+  it('se désactive proprement à zéro', () => {
+    expect(roulage(new Suivi({ dt: 0.25, memoireApparence: 0 }), 5).apparences).toHaveLength(0);
+  });
+
+  it('trace la qualité de chaque pas dans l\'historique', () => {
+    const p = roulage(new Suivi({ dt: 0.25 }), 6, {
+      dets: (k) => (k === 3 ? [] : [detSig(B(300 + k * 40, 500))]),
+    });
+    const sansMesure = p.history.find(h => Math.abs(h.t - 0.75) < 1e-9);
+    expect(sansMesure.source).toBe('prediction');
+    expect(sansMesure.ambigu).toBe(true);
+    expect(p.history[0].source).toBe('creation');
+  });
+
+  it('ne change RIEN au comportement du suivi', () => {
+    // La garantie qui compte : la mémoire est remplie, jamais lue. Deux
+    // séquences identiques, l'une avec signatures et l'autre sans, doivent
+    // produire exactement le même journal.
+    const scenario = (avecSig) => {
+      const s = new Suivi({ dt: 0.25, largeurImage: 1920, hauteurImage: 1080 });
+      for (let k = 0; k < 14; k++) {
+        const t = k * 0.25;
+        const dets = [
+          B(300 + k * 60, 500, 220, 130),
+          B(1000 - k * 60, 520, 120, 70),
+          ...(k % 4 === 0 ? [B(700, 300, 90, 60)] : []),
+        ].map(b => (avecSig ? detSig(b, 0.8) : det(b)));
+        s.pas(t, dets);
+      }
+      return JSON.stringify(s.journal.map(j => ({
+        t: j.t, counts: j.counts, association: j.association,
+        tracks: j.tracks.map(x => ({ id: x.id, box: x.box, state: x.state, confirmee: x.confirmee })),
+      })));
+    };
+    expect(scenario(true)).toBe(scenario(false));
+  });
+});

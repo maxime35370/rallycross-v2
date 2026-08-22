@@ -495,3 +495,116 @@ export function comparerGroupes(avant, apres) {
   for (const l of lignes) reclamations[l.meilleur] = (reclamations[l.meilleur] || 0) + 1;
   return { lignes, matrice, reclamations, optimal, idsApres: B.map(b => b.id) };
 }
+
+
+// ═══════════════════════════════════════════════
+// MÉMOIRE D'APPARENCE — comparer une détection à PLUSIEURS observations
+//
+// Une identité représentée par un seul crop dépend d'une observation
+// malchanceuse. Mesuré sur la coupure Kerlabo : la voiture dont la bonne
+// réponse est la PIRE de sa ligne est celle dont la détection est la plus
+// faible. D'où une mémoire — et trois façons de s'en servir, qu'il faut
+// comparer plutôt que choisir.
+// ═══════════════════════════════════════════════
+
+export const AGREGATIONS = {
+  // Moyenne des VECTEURS, puis une distance. Lisse le bruit, mais mélange les
+  // points de vue : une voiture vue de profil puis de trois quarts donne une
+  // signature qui n'est ni l'un ni l'autre.
+  moyenne: 'moyenne pondérée des signatures',
+  // Minimum des DISTANCES. Retient le point de vue le plus ressemblant, au
+  // risque qu'une seule observation aberrante attire tout.
+  min: 'distance minimale sur la mémoire',
+  // Quantile bas des DISTANCES. Compromis : il faut deux observations proches
+  // pour convaincre, une seule ne suffit pas.
+  q25: 'quantile 25 % des distances',
+};
+
+/**
+ * Distance entre une signature et la mémoire d'une piste.
+ *
+ * `moyenne` agrège les VECTEURS, les deux autres agrègent les DISTANCES — ce
+ * n'est pas la même opération et elles ne donnent pas le même résultat.
+ */
+export function distanceMemoire(memoire, sig, mode = 'moyenne', { oubli = 0.85 } = {}) {
+  const sigs = (memoire || []).map(m => m.sig ?? m).filter(Boolean);
+  if (!sigs.length || !sig) return null;
+  if (mode === 'moyenne') return distance(moyenner(sigs, { oubli }), sig);
+  const ds = sigs.map(s => distance(s, sig)).filter(d => d != null);
+  if (!ds.length) return null;
+  ds.sort((a, b) => a - b);
+  if (mode === 'min') return ds[0];
+  if (mode === 'q25') return ds[Math.min(ds.length - 1, Math.floor((ds.length - 1) * 0.25))];
+  throw new Error(`agrégation inconnue : ${mode}`);
+}
+
+/** Les `taille` observations les plus récentes, dans une fenêtre de `recence`. */
+export function tailler(memoire, { taille = Infinity, recence = Infinity, tFin = null } = {}) {
+  let m = (memoire || []).filter(x => x && x.sig);
+  if (recence !== Infinity && tFin != null) m = m.filter(x => tFin - x.t <= recence + 1e-9);
+  return m.slice(-taille);
+}
+
+/**
+ * Note un appariement contre la vérité terrain.
+ *
+ * Rend les deux lectures côte à côte — le plus proche ligne par ligne et
+ * l'appariement optimal global — parce qu'elles ne disent pas la même chose :
+ * mesuré sur la coupure Kerlabo, la contrainte d'unicité à elle seule fait
+ * passer de 2 bonnes réponses sur 4 à 3 sur 4.
+ *
+ * `verite` : indice de colonne attendu par ligne, ou `null` si non tranché.
+ * `ecart` est le juge : tant que la vérité coûte PLUS cher que l'optimum,
+ * l'apparence préfère activement une mauvaise réponse.
+ */
+export function evaluerAppariement(matrice, verite = []) {
+  if (!matrice.length || !matrice[0]?.length) return null;
+  const n = matrice.length;
+  const optimal = hungarian(matrice);
+  const plusProche = matrice.map(ligne => ligne.indexOf(Math.min(...ligne)));
+
+  const cout = (choix) => choix.reduce((t, j, i) => t + (j >= 0 && j < matrice[i].length ? matrice[i][j] : 0), 0);
+  const notes = (choix) => {
+    let justes = 0, faux = 0, sansVerite = 0;
+    for (let i = 0; i < n; i++) {
+      const attendu = verite[i];
+      if (attendu == null || attendu < 0) { sansVerite += 1; continue; }
+      if (choix[i] === attendu) justes += 1; else faux += 1;
+    }
+    return { justes, faux, sansVerite };
+  };
+
+  // Deuxième meilleur appariement global : on interdit tour à tour une paire de
+  // l'optimum et on réoptimise. L'écart est la confiance de la DÉCISION
+  // globale — bien plus parlante que la marge d'une ligne isolée.
+  let second = Infinity;
+  for (let i = 0; i < n; i++) {
+    if (optimal[i] < 0) continue;
+    const bis = matrice.map(l => l.slice());
+    bis[i][optimal[i]] = 1e6;
+    const c = cout(hungarian(bis));
+    if (c < second) second = c;
+  }
+
+  const coutOptimal = cout(optimal);
+  const veritePleine = verite.length === n && verite.every(v => v != null && v >= 0);
+  const coutVerite = veritePleine ? cout(verite) : null;
+
+  // Une colonne désignée par plusieurs lignes : l'apparence se contredit.
+  const reclamations = {};
+  for (const j of plusProche) reclamations[j] = (reclamations[j] || 0) + 1;
+
+  return {
+    plusProche, optimal,
+    notesPlusProche: notes(plusProche),
+    notesOptimal: notes(optimal),
+    coutOptimal: Number(coutOptimal.toFixed(4)),
+    coutPlusProche: Number(cout(plusProche).toFixed(4)),
+    coutVerite: coutVerite == null ? null : Number(coutVerite.toFixed(4)),
+    // ≤ 0 : la vérité EST l'appariement optimal. C'est le critère de succès.
+    ecartVeriteOptimal: coutVerite == null ? null : Number((coutVerite - coutOptimal).toFixed(4)),
+    margeGlobale: Number.isFinite(second) ? Number((second - coutOptimal).toFixed(4)) : null,
+    reclamations,
+    contradictions: Object.values(reclamations).filter(v => v > 1).length,
+  };
+}

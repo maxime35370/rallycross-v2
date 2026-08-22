@@ -81,6 +81,29 @@
   <div id="lignes"></div>
 </div>
 
+<div class="panneau" id="panneauMemoire" style="display:none">
+  <h2>Mémoire multi-observations — une identité n'est pas un crop</h2>
+  <p class="sub" style="margin:0 0 8px">
+    Le suivi est rejoué sur le plan qui précède la coupure ; chaque piste range ses observations
+    <strong>propres</strong> (détection forte, non fusionnée, non ambiguë, hors bord de cadre).
+    On compare ensuite les détections d'après la coupure à ces mémoires, pour toutes les combinaisons
+    d'agrégation, de taille et de descripteur. <strong>Rien n'est branché dans le suivi</strong> — la
+    mémoire est remplie et lue, jamais utilisée pour associer.
+  </p>
+  <div class="rangee">
+    <label>Début du plan <input type="number" id="tDebutPlan" step="0.1" value="3.0"> s</label>
+    <label>Pas <select id="pasPlan">
+      <option value="0.10" selected>0,10 s · 10 Hz</option>
+      <option value="0.25">0,25 s · 4 Hz</option>
+    </select></label>
+    <label><input type="checkbox" id="avecRecence"> essayer aussi des fenêtres de récence</label>
+    <button id="mesurerMemoire" disabled>Mesurer la mémoire</button>
+    <progress id="progM" value="0" max="1" style="display:none"></progress>
+    <span id="etatM" class="sub" style="margin:0"></span>
+  </div>
+  <div id="memoire" style="margin-top:10px"></div>
+</div>
+
 <video id="src" preload="auto" muted playsinline></video>
 
 <script src="/__ort/ort.min.js"></script>
@@ -91,7 +114,10 @@ import {
 } from '/tools/yolox-poc/lib/detect.mjs';
 import {
   PROFIL, signature, comparerGroupes, METHODE_APPARENCE,
+  distanceMemoire, tailler, evaluerAppariement, AGREGATIONS,
 } from '/tools/yolox-poc/lib/apparence.mjs';
+import { Suivi, DEFAULTS, ETATS } from '/tools/yolox-poc/lib/track.mjs';
+import { iou } from '/tools/yolox-poc/lib/detect.mjs';
 
 const ort = window.ort;
 ort.env.wasm.wasmPaths = '/__ort/';
@@ -110,7 +136,7 @@ selModele.value = 's';
 const grilles = new Map(), sessions = new Map();
 const video = $('src');
 let fps = 60, sidecar = null;
-let cotes = null, annotations = {}, resultat = null;
+let cotes = null, annotations = {}, resultat = null, mesureMemoire = null;
 
 const grillesDe = (size) => {
   if (!grilles.has(size)) grilles.set(size, buildGrids(size));
@@ -134,6 +160,13 @@ $('pick').addEventListener('change', async (e) => {
         if (brut?.schema === 'rx-extract/1') { sidecar = brut; fps = brut.fps || 60; }
         else if (brut?.extrait?.fps) { sidecar = brut.extrait; fps = brut.extrait.fps; }
         // Un rapport de plans donne directement les deux images propres.
+        // Un rapport d'apparence précédent rapporte la vérité terrain : on ne
+        // la ressaisit pas.
+        if (brut?.schema === 'rx-apparence/1' && Array.isArray(brut.lignes)) {
+          for (const l of brut.lignes) if (l.verite) annotations[l.avant] = l.verite;
+          $('imgA').value = brut.avant?.image ?? $('imgA').value;
+          $('imgB').value = brut.apres?.image ?? $('imgB').value;
+        }
         const bornes = brut?.bornesPropres?.[0];
         if (bornes) {
           $('imgA').value = Math.round(bornes.avant * fps);
@@ -328,10 +361,24 @@ function recalculer() {
       reclamePlusieursFois: reclamations.get(l.meilleur) > 1,
       verite: annotations[`A${l.a.rang}`] ?? null,
     })),
+    memoire: mesureMemoire ? {
+      tFin: mesureMemoire.tFin, pas: mesureMemoire.pas,
+      etiquettes: { avant: mesureMemoire.A, apres: mesureMemoire.B },
+      combinaisons: mesureMemoire.lignes.map(l => ({
+        zones: l.zonage, agregation: l.mode, taille: l.taille,
+        recence: l.recence === Infinity ? null : l.recence,
+        observations: l.observations,
+        matrice: l.matrice.map(r => r.map(d => Number(d.toFixed(4)))),
+        rangsVerite: l.rangs,
+        ...l.ev,
+      })),
+    } : null,
     createdAt: new Date().toISOString(),
   };
   window.__apparence = resultat;
   $('exporter').disabled = false;
+  $('mesurerMemoire').disabled = false;
+  $('panneauMemoire').style.display = '';
 }
 
 const teinte = (d) => {
@@ -402,6 +449,190 @@ function afficherLignes(A, B, lignes, reclamations) {
     annotations[sel.dataset.avant] = sel.value;
     recalculer();
   }));
+}
+
+// ── Mémoire multi-observations ──────────────────────────
+/** Détecte sur un instant et calcule les DEUX descripteurs d'un coup. */
+async function detecterInstant(numero, modele, s) {
+  const img = await lireImage(numero);
+  const { tensor, ratio } = preparer(cadre, modele.inputSize);
+  const sortie = await s.run({ images: tensor });
+  const brut = sortie[s.outputNames[0]].data;
+  assertAnchorCount(brut.length, modele.inputSize);
+  // Décodé jusqu'à la BANDE BASSE, comme le banc de suivi : le tracker en a
+  // besoin pour raccrocher une piste, et la mémoire n'en retiendra rien.
+  const brutes = decodeOutput(brut, grillesDe(modele.inputSize), ratio,
+    { scoreThreshold: DEFAULTS.lowScore, classIds: VEHICLE_CLASS_IDS });
+  const dets = mergeVehicleDetections(brutes, Number($('iou').value));
+  return dets.map(d => ({
+    box: d.box, score: d.score, label: d.label ?? 'car',
+    sig3: signature(img.data, cadre.width, cadre.height, d.box, { zones: 3 }),
+    sig1: signature(img.data, cadre.width, cadre.height, d.box, { zones: 1 }),
+  }));
+}
+
+$('mesurerMemoire').addEventListener('click', async () => {
+  const modele = MODELS[selModele.value];
+  const s = await session(modele);
+  const pas = Number($('pasPlan').value);
+  const t0 = Number($('tDebutPlan').value), tFin = cotes.A.numero / fps;
+  const instants = [];
+  for (let t = t0; t <= tFin + 1e-9; t += pas) instants.push(Number(t.toFixed(3)));
+  // Le dernier instant doit être EXACTEMENT l'image propre d'avant la coupure.
+  if (Math.abs(instants[instants.length - 1] - tFin) > 1e-6) instants.push(Number(tFin.toFixed(3)));
+
+  $('progM').style.display = ''; $('progM').max = instants.length; $('progM').value = 0;
+  $('mesurerMemoire').disabled = true;
+  const cache = [];
+  for (const [i, t] of instants.entries()) {
+    cache.push({ t, dets: await detecterInstant(Math.round(t * fps), modele, s) });
+    $('progM').value = i + 1;
+    $('etatM').textContent = `${i + 1}/${instants.length} · t=${t.toFixed(2)} s`;
+  }
+  $('progM').style.display = 'none'; $('mesurerMemoire').disabled = false;
+
+  // Un seul passage YOLOX, DEUX passages de suivi : les détections ne dépendent
+  // pas du descripteur, seule la signature injectée change.
+  const suivis = {};
+  for (const zonage of [3, 1]) {
+    const suivi = new Suivi({
+      dt: pas, highScore: Number($('seuil').value), lowScore: DEFAULTS.lowScore,
+      largeurImage: cadre.width, hauteurImage: cadre.height, memoireApparence: 8,
+    });
+    for (const inst of cache) {
+      suivi.pas(inst.t, inst.dets.map(d => ({ ...d, sig: zonage === 3 ? d.sig3 : d.sig1 })));
+    }
+    suivis[zonage] = suivi;
+  }
+  analyserMemoires(suivis, cache, tFin, pas);
+});
+
+/** Relie les pistes vivantes au dernier instant aux étiquettes A1…An. */
+function relierPistes(suivi, A) {
+  const vivantes = suivi.pistes.filter(p => p.state !== ETATS.LOST && p.apparences.length);
+  return A.map(a => {
+    let meilleure = null, meilleurIou = 0.3;
+    for (const p of vivantes) {
+      const r = iou(p.box, a.box);
+      if (r > meilleurIou) { meilleurIou = r; meilleure = p; }
+    }
+    return { etiquette: `A${a.rang}`, a, piste: meilleure, recouvrement: Number(meilleurIou.toFixed(3)) };
+  });
+}
+
+function analyserMemoires(suivis, cache, tFin, pas) {
+  const A = cotes.A.voitures.filter(v => v.retenue && v.sig);
+  const B = cotes.B.voitures.filter(v => v.retenue && v.sig);
+  const verite = A.map(a => {
+    const v = annotations[`A${a.rang}`];
+    const j = B.findIndex(b => `B${b.rang}` === v);
+    return j >= 0 ? j : null;
+  });
+
+  const liens = { 3: relierPistes(suivis[3], A), 1: relierPistes(suivis[1], A) };
+  const recences = $('avecRecence').checked ? [Infinity, 1.0, 0.5] : [Infinity];
+  const lignes = [];
+
+  for (const zonage of [3, 1]) {
+    // Le descripteur du côté APRÈS doit être le même que celui de la mémoire.
+    const sigB = B.map(b => (zonage === 3 ? b.sig : signature(cotes.B.image.data, cadre.width, cadre.height, b.box, { zones: 1 })));
+    for (const taille of [1, 2, 4, 8]) {
+      for (const recence of recences) {
+        for (const mode of Object.keys(AGREGATIONS)) {
+          const memoires = liens[zonage].map(l => (l.piste ? tailler(l.piste.apparences, { taille, recence, tFin }) : []));
+          if (memoires.some(m => !m.length)) continue;      // une piste sans mémoire : rien à comparer
+          const matrice = memoires.map(m => sigB.map(sb => distanceMemoire(m, sb, mode) ?? 1));
+          const ev = evaluerAppariement(matrice, verite);
+          // Le cas le plus mauvais du témoin : où tombe la vraie réponse ?
+          const rangs = matrice.map((ligne, i) => {
+            if (verite[i] == null) return null;
+            return ligne.map((d, j) => ({ j, d })).sort((x, y) => x.d - y.d)
+              .findIndex(x => x.j === verite[i]) + 1;
+          });
+          lignes.push({
+            zonage, taille, recence, mode, matrice, ev, rangs,
+            observations: memoires.map(m => m.length),
+          });
+        }
+      }
+    }
+  }
+  mesureMemoire = { lignes, A: A.map(a => `A${a.rang}`), B: B.map(b => `B${b.rang}`), verite, tFin, pas };
+  afficherMemoire();
+}
+
+const TEMOIN = { plusProche: 2, optimal: 3, ecart: 0.1057, marge: 0.0198 };
+
+function afficherMemoire() {
+  const { lignes, A, B, verite } = mesureMemoire;
+  if (!lignes.length) { $('memoire').innerHTML = '<p class="sub">Aucune piste n\'a de mémoire exploitable — vérifie le début du plan.</p>'; return; }
+  const tri = [...lignes].sort((x, y) => (x.ev.ecartVeriteOptimal ?? 9) - (y.ev.ecartVeriteOptimal ?? 9));
+  const nA = A.length;
+  const nom = (l) => `${l.zonage === 3 ? '3 bandes' : 'global'} · ${l.mode} · ${l.taille} obs`
+    + (l.recence === Infinity ? '' : ` · ${l.recence}s`);
+  const idxA3 = A.indexOf('A3');
+
+  $('memoire').innerHTML = `<table>
+    <tr><th>descripteur · agrégation · mémoire</th>
+        <th class="num">ligne à ligne</th><th class="num">optimal ◆</th>
+        <th class="num">coût optimal</th><th class="num">coût vérité</th>
+        <th class="num">vérité − optimal</th><th class="num">marge globale</th>
+        <th class="num">contradictions</th><th class="num">rang vérité A3</th><th class="num">pire rang</th></tr>
+    <tr style="background:#eee">
+      <td><strong>témoin — un seul crop (image ${cotes.A.numero})</strong></td>
+      <td class="num">${TEMOIN.plusProche}/${nA}</td><td class="num">${TEMOIN.optimal}/${nA}</td>
+      <td class="num">2.2137</td><td class="num">2.3194</td>
+      <td class="num"><strong>+${TEMOIN.ecart}</strong></td><td class="num">${TEMOIN.marge}</td>
+      <td class="num">1</td><td class="num">5/5</td><td class="num">5</td></tr>
+    ${tri.map((l, k) => {
+      const e = l.ev.ecartVeriteOptimal;
+      const gagne = e != null && e <= 0;
+      const pire = Math.max(...l.rangs.filter(r => r != null));
+      return `<tr class="ligneM" data-k="${lignes.indexOf(l)}" style="cursor:pointer${gagne ? ';background:#e8f5e9' : (k === 0 ? ';background:#fffde7' : '')}">
+        <td>${nom(l)}</td>
+        <td class="num">${l.ev.notesPlusProche.justes}/${nA}</td>
+        <td class="num"><strong>${l.ev.notesOptimal.justes}/${nA}</strong></td>
+        <td class="num">${l.ev.coutOptimal}</td><td class="num">${l.ev.coutVerite ?? '—'}</td>
+        <td class="num"><strong>${e == null ? '—' : (e > 0 ? '+' : '') + e}</strong></td>
+        <td class="num">${l.ev.margeGlobale ?? '—'}</td>
+        <td class="num">${l.ev.contradictions}</td>
+        <td class="num">${idxA3 >= 0 ? `${l.rangs[idxA3]}/${B.length}` : '—'}</td>
+        <td class="num">${pire}</td></tr>`;
+    }).join('')}
+  </table>
+  <p class="sub" style="margin-top:6px">
+    Trié par <strong>vérité − optimal</strong>, le critère de succès : à ≤ 0 la vérité EST l'appariement
+    optimal, et la ligne passe en vert. Clique une ligne pour voir sa matrice complète.
+    Le « rang vérité A3 » suit le cas le plus mauvais du témoin, où la bonne réponse était la
+    <em>pire</em> de sa ligne.
+  </p>
+  <div id="detailM"></div>`;
+
+  $('memoire').querySelectorAll('.ligneM').forEach(tr => tr.addEventListener('click', () => {
+    detailMemoire(lignes[Number(tr.dataset.k)]);
+  }));
+  detailMemoire(tri[0]);
+}
+
+function detailMemoire(l) {
+  const { A, B, verite } = mesureMemoire;
+  $('detailM').innerHTML = `<h3 style="font-size:.9rem;margin:12px 0 4px">${
+    l.zonage === 3 ? 'trois bandes' : 'histogramme global'} · ${AGREGATIONS[l.mode]} · ${l.taille} observation(s)${
+    l.recence === Infinity ? '' : ` · fenêtre ${l.recence} s`}</h3>
+  <table>
+    <tr><th></th>${B.map(b => `<th class="num">${b}</th>`).join('')}<th class="num">optimal ◆</th><th>vérité</th></tr>
+    ${l.matrice.map((ligne, i) => `<tr>
+      <th>${A[i]} <span class="sub">(${l.observations[i]} obs)</span></th>
+      ${ligne.map((d, j) => {
+        const estOptimal = l.ev.optimal[i] === j, estVrai = verite[i] === j;
+        const fond = estVrai && estOptimal ? '#c8e6c9' : estVrai ? '#ffe0b2' : estOptimal ? '#ffe0e0' : teinte(d);
+        return `<td class="num" style="background:${fond}">${d.toFixed(3)}</td>`;
+      }).join('')}
+      <td class="num">${l.ev.optimal[i] >= 0 ? B[l.ev.optimal[i]] : '—'}</td>
+      <td>${verite[i] == null ? '—' : B[verite[i]]}${verite[i] === l.ev.optimal[i] ? ' ✓' : ' ✗'}</td></tr>`).join('')}
+  </table>
+  <p class="sub">Vert : l'optimal et la vérité coïncident. Orange : la vérité, que l'optimal a manquée.
+  Rouge : ce que l'optimal a choisi à tort.</p>`;
 }
 
 $('exporter').addEventListener('click', () => {

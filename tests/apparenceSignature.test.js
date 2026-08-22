@@ -11,7 +11,7 @@ import { describe, it, expect } from 'vitest';
 import {
   PROFIL, TAILLE_SIGNATURE, rgbVersHsv, signature, distance, moyenner,
   separabilite, traverseeDeCoupure, signatureImage, detecterCoupures,
-  comparerGroupes, METHODE_APPARENCE,
+  comparerGroupes, METHODE_APPARENCE, distanceMemoire, tailler, evaluerAppariement,
 } from '../tools/yolox-poc/lib/apparence.mjs';
 
 /** Image RGBA unie, dans laquelle on peint des rectangles. */
@@ -335,5 +335,93 @@ describe('comparaison de deux groupes de part et d\'autre d\'une coupure', () =>
 
   it('porte un identifiant de méthode que le rapport citera', () => {
     expect(METHODE_APPARENCE).toMatch(/^hsv-zonee\/\d+$/);
+  });
+});
+
+describe('mémoire d\'apparence', () => {
+  const s = (...v) => v;
+  const obs = (t, sig) => ({ t, sig });
+
+  it('agrège les VECTEURS pour la moyenne, les DISTANCES pour les autres', () => {
+    // Mémoire : une observation identique à la cible, une très éloignée.
+    const memoire = [obs(0, s(1, 0)), obs(1, s(0, 1))];
+    const cible = s(1, 0);
+    // le minimum retient la vue qui ressemble
+    expect(distanceMemoire(memoire, cible, 'min')).toBe(0);
+    // la moyenne mélange les deux points de vue et s'éloigne des deux
+    expect(distanceMemoire(memoire, cible, 'moyenne')).toBeGreaterThan(0.2);
+    // le quantile bas se range du côté du minimum sans y être collé
+    const q = distanceMemoire(memoire, cible, 'q25');
+    expect(q).toBeGreaterThanOrEqual(0);
+    expect(q).toBeLessThanOrEqual(distanceMemoire(memoire, cible, 'moyenne'));
+  });
+
+  it('refuse une agrégation inconnue au lieu de choisir à ma place', () => {
+    expect(() => distanceMemoire([obs(0, s(1, 0))], s(1, 0), 'mediane')).toThrow(/inconnue/);
+  });
+
+  it('rend null quand la mémoire est vide', () => {
+    expect(distanceMemoire([], s(1, 0), 'min')).toBeNull();
+    expect(distanceMemoire([obs(0, s(1, 0))], null, 'min')).toBeNull();
+  });
+
+  it('taille par nombre et par récence', () => {
+    const m = [obs(1, s(1, 0)), obs(2, s(1, 0)), obs(3, s(1, 0)), obs(4, s(1, 0))];
+    expect(tailler(m, { taille: 2 })).toHaveLength(2);
+    expect(tailler(m, { taille: 2 })[0].t).toBe(3);          // les plus RÉCENTES
+    expect(tailler(m, { recence: 1.5, tFin: 4 })).toHaveLength(2);
+    expect(tailler(m, {})).toHaveLength(4);
+  });
+});
+
+describe('notation d\'un appariement contre la vérité', () => {
+  // La matrice réellement mesurée sur la coupure Kerlabo, image 348 → 354.
+  const KERLABO = [
+    [0.4967, 0.6100, 0.6540, 0.6241, 0.4810],
+    [0.6049, 0.6372, 0.7105, 0.5365, 0.6135],
+    [0.5273, 0.5749, 0.6330, 0.5365, 0.5314],
+    [0.6613, 0.6689, 0.7495, 0.6849, 0.6365],
+  ];
+  const VERITE = [4, 3, 2, 1];      // A1→B8, A2→B7, A3→B6, A4→B4
+
+  it('reproduit le témoin mesuré sur la vraie coupure', () => {
+    const r = evaluerAppariement(KERLABO, VERITE);
+    expect(r.notesPlusProche.justes).toBe(2);
+    expect(r.notesOptimal.justes).toBe(3);
+    expect(r.coutOptimal).toBe(2.2137);
+    expect(r.coutVerite).toBe(2.3194);
+    expect(r.ecartVeriteOptimal).toBe(0.1057);
+    expect(r.margeGlobale).toBe(0.0198);
+    expect(r.contradictions).toBe(1);
+  });
+
+  it('montre que l\'unicité seule vaut une bonne réponse de plus', () => {
+    const r = evaluerAppariement(KERLABO, VERITE);
+    // A4 : le plus proche désigne B8, déjà prise par A1 ; l'appariement global
+    // lui rend B4, qui est la bonne.
+    expect(r.plusProche[3]).toBe(4);
+    expect(r.optimal[3]).toBe(1);
+    expect(r.notesOptimal.justes).toBeGreaterThan(r.notesPlusProche.justes);
+  });
+
+  it('rend un écart NÉGATIF quand la vérité est l\'appariement optimal', () => {
+    const parfait = [[0.1, 0.9], [0.9, 0.1]];
+    const r = evaluerAppariement(parfait, [0, 1]);
+    expect(r.ecartVeriteOptimal).toBe(0);
+    expect(r.notesOptimal.justes).toBe(2);
+  });
+
+  it('compte à part les lignes sans vérité au lieu de les compter fausses', () => {
+    const r = evaluerAppariement([[0.1, 0.9], [0.9, 0.1]], [0, null]);
+    expect(r.notesOptimal.justes).toBe(1);
+    expect(r.notesOptimal.faux).toBe(0);
+    expect(r.notesOptimal.sansVerite).toBe(1);
+    expect(r.coutVerite).toBeNull();
+    expect(r.ecartVeriteOptimal).toBeNull();
+  });
+
+  it('ne rend rien plutôt que d\'inventer sur une matrice vide', () => {
+    expect(evaluerAppariement([], [])).toBeNull();
+    expect(evaluerAppariement([[]], [])).toBeNull();
   });
 });

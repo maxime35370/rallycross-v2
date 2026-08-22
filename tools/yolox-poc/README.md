@@ -415,6 +415,40 @@ Les cinq correspondances réelles s'annotent dans un menu par ligne, avec
 **Aucune marge n'est transformée en seuil.** Le chiffre est affiché et exporté ;
 c'est un corpus qui décidera, pas une transition.
 
+#### Mémoire d'apparence par piste
+
+Le suivi **ne calcule aucune signature** : il ne voit jamais d'image. Le banc en
+injecte une dans la détection, et la piste la range **si l'observation est
+propre** — détection forte, non fusionnée, non ambiguë, jamais une boîte
+prédite, jamais un sauvetage par la bande basse, et jamais une boîte qui touche
+le bord du cadre (la livrée y est tronquée). Anneau borné à 8.
+
+**Rien ne lit cette mémoire.** Un test vérifie que deux séquences identiques,
+l'une avec signatures et l'autre sans, produisent exactement le même journal.
+
+Pourquoi plusieurs observations plutôt qu'une : sur la coupure Kerlabo, le seul
+crop de la dernière image donne 2 bonnes réponses sur 4, et la voiture dont la
+bonne réponse est la **pire** de sa ligne est justement celle dont la détection
+est la plus faible (score 0,499, boîte 143×89). Une identité ne doit pas
+dépendre d'une observation malchanceuse.
+
+La page `/__apparence` mesure la grille complète : descripteur (3 bandes /
+histogramme global) × agrégation (moyenne des vecteurs, minimum des distances,
+quantile 25 %) × taille de mémoire (1 · 2 · 4 · 8) × fenêtre de récence. Un seul
+passage YOLOX, deux passages de suivi — les détections ne dépendent pas du
+descripteur. Chaque ligne donne les deux lectures, les coûts, l'écart
+**vérité − optimal** et la marge globale, triées par cet écart.
+
+Le témoin, mesuré sur la vraie coupure et rejoué par les tests :
+
+| | ligne à ligne | optimal ◆ | vérité − optimal | marge globale |
+|---|---|---|---|---|
+| un seul crop, image 348 | 2/4 | **3/4** | **+0,1057** | 0,0198 |
+
+La contrainte d'unicité seule fait gagner une bonne réponse. Le critère de
+succès est `vérité − optimal ≤ 0` : tant qu'il est positif, l'apparence préfère
+activement une mauvaise réponse.
+
 ### Diagnostic complet de la séquence Kerlabo
 
 Les réponses chiffrées — part de la fragmentation imputable aux coupures, cause

@@ -116,6 +116,19 @@ try {
   }, PORT);
   dire(cmp[0][1] === 1 && cmp[1][1] === 0, `la comparaison de groupes tourne dans le navigateur (${JSON.stringify(cmp)})`);
 
+  // Le témoin mesuré sur la vraie coupure, rejoué dans le navigateur : c'est la
+  // référence contre laquelle la mémoire multi-observations sera jugée.
+  const temoin = await pageApp.evaluate(async (port) => {
+    const { evaluerAppariement } = await import(`http://127.0.0.1:${port}/tools/yolox-poc/lib/apparence.mjs`);
+    const D = [[0.4967, 0.6100, 0.6540, 0.6241, 0.4810], [0.6049, 0.6372, 0.7105, 0.5365, 0.6135],
+      [0.5273, 0.5749, 0.6330, 0.5365, 0.5314], [0.6613, 0.6689, 0.7495, 0.6849, 0.6365]];
+    const r = evaluerAppariement(D, [4, 3, 2, 1]);
+    return [r.notesPlusProche.justes, r.notesOptimal.justes, r.ecartVeriteOptimal, r.margeGlobale];
+  }, PORT);
+  dire(JSON.stringify(temoin) === JSON.stringify([2, 3, 0.1057, 0.0198]),
+    `le témoin Kerlabo se rejoue à l'identique (${JSON.stringify(temoin)})`);
+  dire(await pageApp.locator('#mesurerMemoire').count() === 1, 'la mesure de mémoire est disponible');
+
   await navigateur.close();
 } catch (e) {
   code = 1;

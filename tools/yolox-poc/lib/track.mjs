@@ -102,6 +102,21 @@ export const DEFAULTS = {
   vitesseTailleMax: 1.0,        // |vw| ≤ 1,0 × largeur par seconde
   ratioTailleMax: 1.5,          // au-delà, le résidu ne devient pas une vitesse
 
+  // ── Mémoire d'apparence ──────────────────────────────────────────────
+  // Le suivi ne calcule AUCUNE signature : il ne voit jamais d'image. Le banc
+  // en injecte une dans la détection, et la piste la range si l'observation
+  // est propre. Rien ne lit cette mémoire — elle ne change aucun comportement.
+  //
+  // Pourquoi plusieurs observations plutôt qu'une : mesuré sur la coupure
+  // Kerlabo, le seul crop de la dernière image donne 2 bonnes réponses sur 4,
+  // et la voiture dont la réponse est la PIRE de sa ligne est justement celle
+  // dont la détection est la plus faible (score 0,499, boîte 143×89). Une
+  // identité ne doit pas dépendre d'une observation malchanceuse.
+  memoireApparence: 8,          // 0 désactive
+  largeurImage: null,           // pour écarter les boîtes tronquées par le bord
+  hauteurImage: null,
+  margeBord: 2,                 // px : au-delà, la boîte touche le cadre
+
   // ── Doublons ─────────────────────────────────────────────────────────
   // Une détection libre qui recouvre franchement une piste DÉJÀ associée à cet
   // instant n'est pas une nouvelle voiture : c'est la même, vue deux fois.
@@ -561,7 +576,7 @@ export class Suivi {
     const encoreOrphelines = new Set(r2.lignesLibres.map(i => orphelines[i]));
     for (const [iPiste, iDet] of r2.paires) {
       const piste = orphelines[iPiste];
-      this._confirmer(piste, t, faibles[iDet], true, dt);   // sauvetage = jamais certain
+      this._confirmer(piste, t, faibles[iDet], true, dt, 'faible');   // sauvetage = jamais certain
       piste.rescued += 1;
       associeesCeTour.push(piste);
     }
@@ -599,7 +614,7 @@ export class Suivi {
       const occluse = this._reprendreOccluse(det, reprises);
       if (occluse) {
         reprises.add(occluse);
-        this._confirmer(occluse, t, det, true, dt);
+        this._confirmer(occluse, t, det, true, dt, 'reprise');
         occluse.recovered += 1;
         reprisesCeTour += 1;
         continue;
@@ -611,7 +626,7 @@ export class Suivi {
         abandonnee.state = ETATS.TENTATIVE;
         abandonnee.sansDetection = 0;
         abandonnee.raisonSuppression = null;
-        this._confirmer(abandonnee, t, det, true, dt);
+        this._confirmer(abandonnee, t, det, true, dt, 'reactivation');
         abandonnee.reactivated += 1;
         reactivationsCeTour += 1;
         continue;
@@ -734,8 +749,43 @@ export class Suivi {
     };
   }
 
+  // ── mémoire d'apparence ────────────────────────────────
+  /**
+   * Range une signature si l'observation est PROPRE.
+   *
+   * Une seule mauvaise observation suffit à empoisonner une identité, et les
+   * mauvaises sont reconnaissables sans rien deviner :
+   *
+   *   · une boîte PRÉDITE ne montre pas la voiture — d'où l'appel seulement
+   *     depuis les voies où une détection existe vraiment ;
+   *   · une boîte FUSIONNÉE montre deux voitures — elles sont déjà écartées de
+   *     l'association forte, donc jamais mémorisées ;
+   *   · une détection de la BANDE BASSE est en dessous du seuil du banc ;
+   *   · une association jugée INCERTAINE l'a été parce que le deuxième choix
+   *     valait presque le premier ;
+   *   · une boîte qui touche le BORD de l'image est tronquée — c'est le défaut
+   *     qui avait fait s'effondrer les largeurs au point ①, et une livrée
+   *     coupée en deux n'est pas la livrée.
+   */
+  _memoriser(piste, t, det, source, incertain) {
+    const o = this.opt;
+    if (!o.memoireApparence || !det.sig) return;
+    if (source !== 'forte' && source !== 'creation') return;
+    if (incertain) return;
+    if (o.largeurImage && o.hauteurImage) {
+      const m = o.margeBord;
+      const [x1, y1, x2, y2] = det.box;
+      if (x1 <= m || y1 <= m || x2 >= o.largeurImage - m || y2 >= o.hauteurImage - m) return;
+    }
+    piste.apparences.push({
+      t: Number(t.toFixed(3)), sig: det.sig, score: det.score, box: det.box.map(v => Math.round(v)),
+    });
+    // Anneau borné : la mémoire suit la voiture, elle ne l'archive pas.
+    while (piste.apparences.length > o.memoireApparence) piste.apparences.shift();
+  }
+
   // ── transitions ────────────────────────────────────────
-  _confirmer(piste, t, det, incertain, dt) {
+  _confirmer(piste, t, det, incertain, dt, source = 'forte') {
     piste.pred.corriger(det.box, Math.max(1e-3, dt));
     piste.box = det.box.slice();
     // Posée ici, donc par TOUTES les voies d'association — bande basse,
@@ -763,7 +813,13 @@ export class Suivi {
       piste.confirmee = true;
     }
     piste.state = piste.confirmee ? ETATS.DETECTED : ETATS.TENTATIVE;
-    piste.history.push({ t, box: piste.box.slice(), state: piste.state, score: det.score });
+    this._memoriser(piste, t, det, source, incertain);
+    // `ambigu` et `source` rendent la QUALITÉ de chaque pas relisible après
+    // coup : sans eux, impossible de savoir pourquoi une mémoire est vide.
+    piste.history.push({
+      t, box: piste.box.slice(), state: piste.state, score: det.score,
+      ambigu: !!incertain, source,
+    });
   }
 
   _sansMesure(piste, t, dt, occulteur) {
@@ -787,7 +843,10 @@ export class Suivi {
       piste.raisonSuppression = piste.occludedBy != null ? RAISONS.OCCLUSION : RAISONS.ABSENCE;
     }
     if (piste.misses === 1) piste.losses += 1;
-    piste.history.push({ t, box: piste.box.slice(), state: piste.state, score: null });
+    piste.history.push({
+      t, box: piste.box.slice(), state: piste.state, score: null,
+      ambigu: true, source: 'prediction',
+    });
   }
 
   _creer(t, det) {
@@ -808,8 +867,16 @@ export class Suivi {
       firstSeen: t, lastSeen: t,
       occludedBy: null, ambiguous: false,
       raisonCreation: RAISONS.NOUVELLE, raisonSuppression: null,
-      history: [{ t, box: det.box.slice(), state: ETATS.TENTATIVE, score: det.score }],
+      apparences: [],
+      history: [{
+        t, box: det.box.slice(), state: ETATS.TENTATIVE, score: det.score,
+        ambigu: false, source: 'creation',
+      }],
     };
+    // Une création vient toujours d'une détection FORTE non fusionnée : c'est
+    // une observation propre, et l'écarter priverait de mémoire les premiers
+    // instants, ceux d'avant la confirmation.
+    this._memoriser(piste, t, det, 'creation', false);
     this.pistes.push(piste);
     return piste;
   }
@@ -969,6 +1036,9 @@ export class Suivi {
         ambiguous: p.ambiguous,
         occludedBy: p.occludedBy,
         misses: p.misses,
+        // Le COMPTE seulement : huit signatures de 120 réels par piste
+        // pèseraient plus que tout le reste du rapport.
+        apparences: p.apparences.length,
         // Vitesses de l'état interne, y compris celles de TAILLE. Sans elles,
         // une boîte prédite absurde ne se distingue pas d'une voiture qui
         // grossit vraiment : c'est la mesure qui manquait au diagnostic.
