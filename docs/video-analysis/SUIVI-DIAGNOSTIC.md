@@ -349,6 +349,8 @@ la vie d'une piste, plus le nombre de fois où chacune des deux gardes a servi.
 ```powershell
 node tools\yolox-poc\serve.mjs
 # track.html → charger l'extrait + le sidecar → 3,000 / 13,500 → 4 Hz puis 10 Hz
+# puis, pour aligner les chiffres avec les baselines :
+node tools\yolox-poc\comparer.mjs avant-4hz.json avant-10hz.json apres-4hz.json apres-10hz.json
 npx vitest run tests/trackerCore.test.js tests/apparenceSignature.test.js
 ```
 

@@ -373,6 +373,18 @@ largeurs réelles de deux pistes du rapport 10 Hz et vérifient d'abord que le
 prédicteur **sans** bornes reproduit l'effondrement observé — sans quoi rien ne
 prouverait que la correction s'attaque à la vraie cause.
 
+### Comparer deux campagnes
+
+```powershell
+node tools\yolox-poc\comparer.mjs avant-4hz.json avant-10hz.json apres-4hz.json apres-10hz.json
+```
+
+Aligne les rapports par fréquence et marque le sens de variation. Il surveille
+aussi ce qu'une correction ne doit **pas** faire payer : les échanges d'ordre et
+les identifiants relayés doivent rester stables — une amélioration qui les
+augmente n'en est pas une. Et il rappelle l'écart 4 Hz / 10 Hz, seul signal
+d'erreur disponible sans annotation.
+
 ### Diagnostic complet de la séquence Kerlabo
 
 Les réponses chiffrées — part de la fragmentation imputable aux coupures, cause
