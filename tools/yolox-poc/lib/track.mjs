@@ -73,6 +73,35 @@ export const DEFAULTS = {
   tauVitesse: 0.40,
   tauAmortissement: 0.50,
 
+  // ── Bornes de la vitesse de TAILLE ───────────────────────────────────
+  // `vw` et `vh` n'étaient bornées par rien. Comme `v += kv·r/dt`, un résidu
+  // de 200 px — ce que produit exactement un changement de plan — injectait
+  // des milliers de pixels par seconde dans la vitesse de taille, et la boîte
+  // prédite du pas suivant devenait absurde : rapport de taille jusqu'à 497
+  // au moment du refus, largeur variant d'un facteur 271 sur la vie d'une
+  // piste. Une piste ainsi divergée ne peut plus s'apparier (porte à 2,0) ni
+  // être repêchée (`_reactiver` exige le même rapport) — d'où les zéro
+  // réactivations à 10 Hz.
+  //
+  // Les deux constantes sont MESURÉES sur la séquence Kerlabo, pas devinées,
+  // et les deux fréquences donnent la même valeur — ce qui est attendu d'une
+  // grandeur physique :
+  //
+  //   · taux vrai de changement de taille, mesuré sur une base d'UNE seconde
+  //     (assez longue pour moyenner le bruit de boîte) : p99 = 0,92 s⁻¹ à
+  //     4 Hz et 0,94 s⁻¹ à 10 Hz. Le plafond à 1,0 ne refuse donc rien de ce
+  //     qui arrive réellement ;
+  //   · rapport de taille entre deux mesures consécutives : p99 = 1,50 à 4 Hz
+  //     et 1,54 à 10 Hz, avec 1,2 % au-dessus de 1,5 aux DEUX fréquences.
+  //
+  // Pourquoi ces bornes suffisent à empêcher la dérive : le plafond est
+  // relatif à la taille COURANTE et se réapplique à chaque pas. Une boîte qui
+  // rétrécit voit son plafond rétrécir avec elle — la décroissance devient
+  // géométrique et converge, au lieu de filer linéairement vers zéro puis de
+  // repartir.
+  vitesseTailleMax: 1.0,        // |vw| ≤ 1,0 × largeur par seconde
+  ratioTailleMax: 1.5,          // au-delà, le résidu ne devient pas une vitesse
+
   // ── Doublons ─────────────────────────────────────────────────────────
   // Une détection libre qui recouvre franchement une piste DÉJÀ associée à cet
   // instant n'est pas une nouvelle voiture : c'est la même, vue deux fois.
@@ -223,6 +252,24 @@ export class Predicteur {
     this.tauP = opts.tauPosition ?? DEFAULTS.tauPosition;
     this.tauV = opts.tauVitesse ?? DEFAULTS.tauVitesse;
     this.tauA = opts.tauAmortissement ?? DEFAULTS.tauAmortissement;
+    this.vTailleMax = opts.vitesseTailleMax ?? DEFAULTS.vitesseTailleMax;
+    this.ratioTailleMax = opts.ratioTailleMax ?? DEFAULTS.ratioTailleMax;
+    // Compteurs — sans eux on ne saurait pas si les bornes servent, ni à quel prix.
+    this.vitesseBornee = 0;
+    this.residusEcretes = 0;
+  }
+
+  /**
+   * Ramène la vitesse de taille dans ce que la vidéo montre réellement.
+   *
+   * Le plafond est RELATIF à la taille courante et réappliqué à chaque pas :
+   * c'est ce qui rend la dérive impossible plutôt que seulement plus lente.
+   */
+  _bornerTaille() {
+    const s = this.s;
+    const bw = this.vTailleMax * s.w, bh = this.vTailleMax * s.h;
+    if (Math.abs(s.vw) > bw) { s.vw = Math.sign(s.vw) * bw; this.vitesseBornee += 1; }
+    if (Math.abs(s.vh) > bh) { s.vh = Math.sign(s.vh) * bh; this.vitesseBornee += 1; }
   }
 
   /** Position attendue après `dt`, sans consommer de mesure. */
@@ -240,6 +287,10 @@ export class Predicteur {
     s.w = Math.max(1, s.w + s.vw * dt); s.h = Math.max(1, s.h + s.vh * dt);
     const k = Math.exp(-dt / this.tauA);
     s.vx *= k; s.vy *= k; s.vw *= k; s.vh *= k;
+    // La taille vient de changer : le plafond, qui lui est proportionnel, a
+    // changé aussi. Sans ce rappel, une boîte qui rétrécit garderait le droit
+    // de rétrécir à la vitesse de la boîte d'avant.
+    this._bornerTaille();
   }
 
   /**
@@ -266,8 +317,33 @@ export class Predicteur {
     s.w = Math.max(1, pw + a * rw); s.h = Math.max(1, ph + a * rh);
     if (dt > 0) {
       s.vx += kv * (rx / dt); s.vy += kv * (ry / dt);
-      s.vw += kv * (rw / dt); s.vh += kv * (rh / dt);
+      // La TAILLE suit la mesure en entier (ligne au-dessus) : l'association
+      // l'a déjà jugée recevable. La VITESSE, elle, n'intègre du résidu que
+      // la part plausible — c'est l'intégration qui fabrique la dérive, pas
+      // la correction.
+      //
+      // Écrêter plutôt qu'ignorer. Ignorer un résidu aberrant laisse intacte
+      // une vitesse déjà fausse : mesuré, un prédicteur qui refusait
+      // simplement la mise à jour gardait une vitesse de −48 px/s et
+      // continuait de rétrécir. Écrêter garantit que la vitesse va TOUJOURS
+      // vers la mesure, sans jamais bondir.
+      // Écrêtage SYMÉTRIQUE en rapport, pas en pixels : la mesure est ramenée
+      // dans [prévu ÷ ratioTailleMax, prévu × ratioTailleMax]. Un écrêtage
+      // symétrique en pixels tolérerait une croissance de +50 % mais une
+      // décroissance de −50 % — soit un rapport de 2 d'un côté et 1,5 de
+      // l'autre — et fabriquerait un biais à la baisse.
+      const ecreter = (r, prevu) => {
+        const p = Math.max(1, prevu);
+        const haut = (this.ratioTailleMax - 1) * p;
+        const bas = (1 / this.ratioTailleMax - 1) * p;
+        if (r <= haut && r >= bas) return r;
+        this.residusEcretes += 1;
+        return Math.min(haut, Math.max(bas, r));
+      };
+      s.vw += kv * (ecreter(rw, pw) / dt);
+      s.vh += kv * (ecreter(rh, ph) / dt);
     }
+    this._bornerTaille();
   }
 
   get boite() { return boiteDepuis(this.s.cx, this.s.cy, this.s.w, this.s.h); }
@@ -1177,6 +1253,28 @@ export function mesurer(suivi, { cible = 5, tV1 = null } = {}) {
     reactivations: pistes.reduce((t, p) => t + p.reactivated, 0),
     doublonsEcartes: suivi.doublonsEcartes,
     raisons: { creation: compter('raisonCreation'), suppression: compter('raisonSuppression') },
+    // ── dérive de taille ────────────────────────────────────────────────
+    // Amplitude de la boîte PUBLIÉE sur la vie d'une piste. Une voiture qui
+    // s'approche grossit d'un facteur 1,4 en moyenne sur cette séquence ; au
+    // delà de quelques unités, ce n'est plus la voiture, c'est la prédiction.
+    // C'est la mesure qui juge le plafonnement de la vitesse de taille.
+    deriveTaille: (() => {
+      const amplitudes = confirmees.map(p => {
+        const l = p.history.map(h => h.box[2] - h.box[0]).filter(v => v > 0);
+        const h = p.history.map(x => x.box[3] - x.box[1]).filter(v => v > 0);
+        if (l.length < 2 || h.length < 2) return null;
+        return Math.max(Math.max(...l) / Math.min(...l), Math.max(...h) / Math.min(...h));
+      }).filter(v => v != null);
+      if (!amplitudes.length) return null;
+      const tri = [...amplitudes].sort((a, b) => a - b);
+      const p = (q) => Number(tri[Math.min(tri.length - 1, Math.floor((tri.length - 1) * q))].toFixed(2));
+      return {
+        pistes: amplitudes.length, median: p(0.5), p90: p(0.9), max: p(1),
+        // Combien de fois les deux gardes ont réellement servi.
+        vitesseBornee: pistes.reduce((t, x) => t + (x.pred?.vitesseBornee || 0), 0),
+        residusEcretes: pistes.reduce((t, x) => t + (x.pred?.residusEcretes || 0), 0),
+      };
+    })(),
     // Effet mesuré de la compensation de caméra.
     camera: (() => {
       const r = suivi.residus;

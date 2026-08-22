@@ -111,6 +111,10 @@ Et le rapport de taille **au moment du refus** :
 | amplitude de largeur sur la vie d'une piste (max/min), p90 | 4,4 | 5,2 |
 | … maximum | 11,1 | **271** |
 
+> Les rapports de taille des refus sont des rapports d'**aire** (`rapportTaille`
+> compare des aires) ; les amplitudes de largeur sont **linéaires**. Un facteur
+> 497 en aire vaut environ 22 en linéaire.
+
 Une voiture ne change pas de largeur d'un facteur 271 en dix secondes. Ce n'est
 pas la voiture qui diverge, c'est **la boîte prédite**.
 
@@ -119,21 +123,46 @@ pas la voiture qui diverge, c'est **la boîte prédite**.
 Le filtre alpha-bêta corrige quatre vitesses, dont deux de **taille** :
 
 ```js
-s.vw += kv * (rw / dt);   s.vh += kv * (rh / dt);
+s.vw += kv * (rw / dt);   s.vh += kv * (rh / dt);   // rien ne borne vw
 ```
 
-`rw` est le résidu de largeur, en pixels ; divisé par `dt`, il devient une
-vitesse en px/s. Trois conséquences, toutes vérifiées dans les chiffres :
+Deux pistes du rapport 10 Hz montrent le mécanisme exact — et il ne s'agit pas
+d'une explosion, mais d'un **effondrement** :
 
-1. **rien ne borne `vw`.** Un résidu de 200 px — ce que produit exactement une
-   coupure — injecte plusieurs milliers de px/s dans la vitesse de taille. Au
-   pas suivant, la boîte prédite est absurde ;
-2. **une boîte absurde ne peut plus s'apparier.** La porte de gabarit refuse
-   au-delà d'un rapport de 2,0 : d'où les 61 refus `ratio_taille` hors coupure
-   à 10 Hz, avec un rapport médian de 5,9 ;
-3. **et elle ne peut plus être repêchée.** `_reactiver()` exige
-   `rapportTaille(boitePredite, detection) ≤ 2,0`. Une piste dont la boîte a
-   divergé est définitivement hors d'atteinte du repêchage.
+```
+piste #18   largeur mesurée   271 → 257 → 183 → 120 → 110   (hauteur : 167 → 160, constante)
+            puis extrapolée    80 →  46 →  19 →   1 →   1   ← plancher de Math.max(1, …)
+piste #10   largeur mesurée   211 → 211 → 211 → 129 → 110
+            puis extrapolée   104 →  81 →  63 →  48 → 36 → 25 → 17 → 10
+```
+
+Rejouer ces largeurs dans le prédicteur reproduit le journal **au pixel près**
+(`tests/trackerCore.test.js`) : la cause est établie, pas supposée.
+
+Ce qui déclenche l'effondrement n'est pas la coupure, mais deux artefacts de
+détection :
+
+* **la boîte tronquée par le bord de l'image.** Piste #18 : la voiture sort du
+  cadre par la droite, son bord droit reste collé à x = 1919, la largeur
+  mesurée s'effondre — alors que la hauteur, elle, ne bouge pas. La voiture n'a
+  pas changé de taille, seule la boîte a été rognée ;
+* **une boîte fusionnée qui se sépare.** Piste #10 : 211 px puis 110 px.
+
+Et ce qui transforme l'artefact en dérive, c'est l'absence de borne :
+
+1. **`vw` encaisse le rétrécissement** et le transforme en vitesse ;
+2. **la porte d'association ne l'arrête pas**, parce qu'elle compare la
+   détection à la boîte **prédite**, pas à la précédente mesure. La boîte
+   prédite suivant l'effondrement, chaque pas reste sous le rapport de 2 : la
+   descente se fait par petits pas tous licites, jamais par un bond unique ;
+3. **puis la piste extrapole seule** — jusqu'à 0,8 s d'abandon, 2,0 s
+   d'occlusion, 1,5 s de fenêtre de repêchage — et la largeur atteint le
+   plancher de 1 px.
+
+D'où les deux conséquences mesurées : les 61 refus `ratio_taille` hors coupure
+à 10 Hz, et surtout l'impossibilité du repêchage — `_reactiver()` exige
+`rapportTaille(boitePredite, detection) ≤ 2,0`, et une boîte de 1 px de large
+ne peut plus jamais y satisfaire.
 
 C'est la réponse à la deuxième moitié de la question 5 : **les réactivations ne
 tombent pas à 0 par malchance, elles sont géométriquement impossibles.**
@@ -239,10 +268,11 @@ pour que deux repêchages passent la porte de gabarit ; à 10 Hz, aucun.
 ## 6. Modification minimale recommandée, et dans quel ordre
 
 **Une seule chose d'abord : borner la vitesse de taille du prédicteur.**
+*(implémenté — voir « Le point ① » plus bas)*
 
 Concrètement : plafonner `vw`/`vh` à une fraction de la dimension courante par
-seconde, et refuser d'intégrer un résidu de taille aberrant plutôt que de le
-convertir en vitesse. Rien d'autre ne change — ni seuil, ni porte, ni YOLOX.
+seconde, et écrêter le résidu de taille avant d'en faire une vitesse. Rien
+d'autre ne change — ni seuil, ni porte, ni YOLOX.
 
 Pourquoi celle-là en premier :
 
@@ -260,7 +290,7 @@ même vidéo :
 
 | Ordre | Changement | Ce qu'il doit améliorer | Ce qui l'invaliderait |
 |---|---|---|---|
-| 1 | borner `vw`/`vh` | `ratio_taille`, réactivations, écart 4/10 Hz | plus d'échanges d'identité |
+| 1 | borner `vw`/`vh` — **fait** | `ratio_taille`, réactivations, écart 4/10 Hz | plus d'échanges d'identité |
 | 2 | suspendre la géométrie sur un pas de rupture | créations près des coupures (60 % du total) | des créations en hausse hors coupure |
 | 3 | coût mou de cohérence de groupe | refus de compétition (plafond 12 %) | un dépassement au V1 manqué |
 | 4 | apparence dans l'association | rattachement après coupure | contraste mesuré < 1,5 (§4) |
@@ -278,6 +308,41 @@ L'étape 4 n'est **conditionnée** qu'aux chiffres de la sonde, pas à une intui
   est réinitialisé, pas transformé.
 
 ---
+
+## Le point ① — bornes de la vitesse de taille
+
+Deux constantes, **lues dans les données** et non devinées. Les deux fréquences
+donnent la même valeur, ce qui est attendu d'une grandeur physique :
+
+| Constante | Valeur | Justification mesurée |
+|---|---|---|
+| `vitesseTailleMax` | **1,0 s⁻¹** | taux vrai de changement de taille sur une base d'une seconde : p99 = 0,92 s⁻¹ à 4 Hz, 0,94 s⁻¹ à 10 Hz |
+| `ratioTailleMax` | **1,5** | rapport entre deux mesures consécutives : p99 = 1,50 à 4 Hz, 1,54 à 10 Hz — 1,2 % au-dessus aux deux fréquences |
+
+Le plafond est **relatif à la taille courante** et réappliqué à chaque pas :
+une boîte qui rétrécit voit son plafond rétrécir avec elle, la décroissance
+devient géométrique et n'atteint jamais le plancher. C'est ce qui rend la
+dérive *impossible* plutôt que seulement plus lente.
+
+Le résidu est **écrêté, pas ignoré**. Ignorer laisse intacte une vitesse déjà
+fausse — mesuré : un prédicteur qui refusait la mise à jour gardait une vitesse
+de −48 px/s et continuait de rétrécir. Écrêter garantit que la vitesse va
+toujours *vers* la mesure, sans jamais bondir. L'écrêtage est symétrique en
+**rapport** et non en pixels, sans quoi il tolérerait +50 % mais −50 %, soit un
+rapport de 2 d'un côté et 1,5 de l'autre.
+
+**Ce que la mesure a corrigé dans mon diagnostic :** j'avais annoncé une
+explosion de la boîte alimentée par les résidus de coupure. Le rejeu des
+largeurs réelles montre un **effondrement**, alimenté par des boîtes tronquées
+au bord de l'image et par des fusions qui se séparent. La correction est la
+même — c'est la borne qui manquait — mais la cause première est ailleurs, et
+elle désigne un candidat naturel pour plus tard : **une boîte dont un bord
+touche le bord de l'image a une taille non fiable**, et devrait être traitée
+comme telle. Hors périmètre du point ①.
+
+Ce que le rapport donne maintenant pour juger l'effet :
+`mesures.deriveTaille` — amplitude médiane / p90 / max de la boîte publiée sur
+la vie d'une piste, plus le nombre de fois où chacune des deux gardes a servi.
 
 ## Reproduire ces chiffres
 

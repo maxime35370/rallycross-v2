@@ -379,6 +379,15 @@ function afficherMesures() {
     <tr><td>réactivations</td><td class="num">${m.reactivations}</td></tr>
     <tr><td>doublons écartés</td><td class="num">${m.doublonsEcartes}</td></tr>
   </table>
+  ${m.deriveTaille ? `<table style="margin-top:6px">
+    <tr><td><strong>dérive de taille</strong> — médiane / p90 / max</td>
+        <td class="num"><strong>×${m.deriveTaille.median} / ×${m.deriveTaille.p90} / ×${m.deriveTaille.max}</strong></td></tr>
+    <tr><td class="sub">vitesse plafonnée / résidus écrêtés</td>
+        <td class="num">${m.deriveTaille.vitesseBornee} / ${m.deriveTaille.residusEcretes}</td></tr>
+  </table>
+  <p class="sub">Amplitude de la boîte publiée sur la vie d'une piste. Une voiture qui s'approche
+  grossit d'un facteur ~1,4 sur cette séquence ; au-delà de quelques unités, ce n'est plus la
+  voiture, c'est la prédiction.</p>` : ''}
   <p class="sub" style="margin-top:4px">
     créations : ${Object.entries(m.raisons.creation).map(([k, v]) => `${k} ${v}`).join(' · ') || '—'}<br>
     suppressions : ${Object.entries(m.raisons.suppression).map(([k, v]) => `${k} ${v}`).join(' · ') || '—'}

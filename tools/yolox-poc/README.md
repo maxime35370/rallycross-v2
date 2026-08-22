@@ -347,6 +347,32 @@ suppression. **Aucune ne dit qu'un `trackId` désigne
 toujours la même voiture** — cela demande une vérité terrain. Le panneau « à regarder » ramène la
 relecture de 43 instants à quelques-uns, chacun cliquable.
 
+### Bornes de la vitesse de taille
+
+Le filtre corrige quatre vitesses, dont deux de **taille** — et rien ne les
+bornait. Sur la séquence réelle, une voiture qui sort du cadre voit sa boîte
+rognée par le bord de l'image : la largeur mesurée s'effondre alors que la
+hauteur ne bouge pas, la vitesse de taille encaisse ce rétrécissement, et la
+boîte prédite descend jusqu'au plancher de 1 px. La porte d'association ne
+l'arrête pas, puisqu'elle compare la détection à la boîte **prédite** : la
+descente se fait par petits pas tous licites. Une piste ainsi effondrée ne peut
+plus être repêchée — `_reactiver()` exige le même rapport de taille — d'où les
+**zéro réactivations** à 10 Hz.
+
+Deux gardes, dont les valeurs sont **lues dans les données** et identiques aux
+deux fréquences : `vitesseTailleMax` = 1,0 s⁻¹ (p99 du taux vrai mesuré sur une
+base d'une seconde : 0,92 à 4 Hz, 0,94 à 10 Hz) et `ratioTailleMax` = 1,5 (p99
+du rapport entre deux mesures consécutives : 1,50 et 1,54). Le plafond est
+relatif à la taille **courante** et réappliqué à chaque pas, ce qui rend la
+dérive impossible plutôt que plus lente. Le résidu est **écrêté, pas ignoré** :
+ignorer laisserait intacte une vitesse déjà fausse.
+
+`mesures.deriveTaille` donne l'amplitude de la boîte publiée sur la vie d'une
+piste, et le nombre de fois où chaque garde a servi. Les tests rejouent les
+largeurs réelles de deux pistes du rapport 10 Hz et vérifient d'abord que le
+prédicteur **sans** bornes reproduit l'effondrement observé — sans quoi rien ne
+prouverait que la correction s'attaque à la vraie cause.
+
 ### Diagnostic complet de la séquence Kerlabo
 
 Les réponses chiffrées — part de la fragmentation imputable aux coupures, cause

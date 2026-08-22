@@ -884,3 +884,163 @@ describe('cohérence spatiale du groupe', () => {
     expect(coherenceSpatiale([j, j2]).pairesSuivies).toBe(0);
   });
 });
+
+// ═══════════════════════════════════════════════
+// BORNES DE LA VITESSE DE TAILLE
+//
+// Les deux premiers tests ne sont pas des scénarios inventés : ils REJOUENT
+// les largeurs mesurées de deux pistes du rapport 10 Hz réel, et vérifient
+// d'abord que le prédicteur sans bornes reproduit bien l'effondrement observé
+// dans ce rapport. Sans cette étape, rien ne prouverait que la correction
+// s'attaque à la vraie cause plutôt qu'à une cause supposée.
+// ═══════════════════════════════════════════════
+
+describe('vitesse de taille bornée', () => {
+  const SANS = { vitesseTailleMax: Infinity, ratioTailleMax: Infinity };
+
+  /** Rejoue une suite de boîtes mesurées, puis extrapole `n` pas. */
+  const rejouer = (opts, boites, dt, n) => {
+    const p = new Predicteur(boites[0], opts);
+    for (let i = 1; i < boites.length; i++) p.corriger(boites[i], dt);
+    const largeurs = [];
+    for (let i = 0; i < n; i++) { p.avancerSansMesure(dt); largeurs.push(Math.round(p.boite[2] - p.boite[0])); }
+    return largeurs;
+  };
+
+  // Piste #10 du rapport 10 Hz : la boîte passe de 211 px à 110 px en deux
+  // pas — une fusion qui se sépare — puis la détection manque.
+  const PISTE_10 = [B(656, 544, 211, 58), B(656, 544, 211, 58), B(656, 544, 211, 58),
+    B(521, 542, 129, 60), B(527, 545, 110, 63)];
+  // Piste #18 : la voiture sort du cadre par la droite. Le détecteur tronque
+  // la boîte au bord de l'image, donc la largeur MESURÉE s'effondre alors que
+  // la voiture, elle, ne change pas de taille — la hauteur reste à ~165 px.
+  const PISTE_18 = [B(1735, 450, 271, 167), B(1790, 458, 257, 170), B(1826, 473, 183, 175),
+    B(1861, 496, 120, 169), B(1865, 523, 110, 160)];
+
+  it('reproduit l\'effondrement observé dans le rapport 10 Hz réel', () => {
+    // Le journal du rapport donne, pour la piste #10 : 104 81 63 48 36 25 17 10.
+    expect(rejouer(SANS, PISTE_10, 0.1, 8)).toEqual([104, 82, 63, 48, 36, 25, 17, 10]);
+    // et pour la piste #18, la largeur atteint le plancher de 1 px.
+    expect(rejouer(SANS, PISTE_18, 0.1, 8).slice(-3)).toEqual([1, 1, 1]);
+  });
+
+  it('empêche cet effondrement, sur les mêmes mesures réelles', () => {
+    for (const piste of [PISTE_10, PISTE_18]) {
+      const largeurs = rejouer({}, piste, 0.1, 8);
+      const derniereMesure = piste[piste.length - 1][2] - piste[piste.length - 1][0];
+      // La boîte prédite reste du gabarit de la voiture, à moins d'un tiers près.
+      for (const l of largeurs) expect(l).toBeGreaterThan(derniereMesure * 0.6);
+      expect(largeurs[largeurs.length - 1]).toBeLessThan(derniereMesure * 1.5);
+    }
+  });
+
+  it('rend le repêchage à nouveau possible sur ces mêmes pistes', () => {
+    // Le cas concret des ZÉRO réactivations à 10 Hz : `_reactiver()` exige un
+    // rapport de taille (en AIRE) ≤ 2,0 contre la boîte prédite. Une boîte
+    // effondrée à 1 px de large ne peut plus jamais y satisfaire.
+    const apres = (opts, piste, n) => {
+      const p = new Predicteur(piste[0], opts);
+      for (let i = 1; i < piste.length; i++) p.corriger(piste[i], 0.1);
+      for (let i = 0; i < n; i++) p.avancerSansMesure(0.1);
+      return p.boite;
+    };
+    const voiture = B(540, 545, 112, 62);       // la voiture, telle qu'elle réapparaîtrait
+    expect(rapportTaille(apres({}, PISTE_10, 10), voiture)).toBeLessThan(DEFAULTS.maxSizeRatio);
+    expect(rapportTaille(apres(SANS, PISTE_10, 10), voiture)).toBeGreaterThan(DEFAULTS.maxSizeRatio);
+  });
+
+  it('borne la vitesse relativement à la taille COURANTE, ce qui la fait converger', () => {
+    // C'est la propriété qui rend la dérive impossible plutôt que plus lente :
+    // une boîte qui rétrécit voit son plafond rétrécir avec elle, donc la
+    // décroissance devient géométrique et n'atteint jamais le plancher.
+    const p = new Predicteur(B(500, 500, 400, 240), {});
+    p.corriger(B(500, 500, 120, 72), 0.1);
+    const suite = [];
+    for (let i = 0; i < 40; i++) { p.avancerSansMesure(0.1); suite.push(p.boite[2] - p.boite[0]); }
+    expect(suite[suite.length - 1]).toBeGreaterThan(1);
+    // strictement décroissante, jamais un bond
+    for (let i = 1; i < suite.length; i++) expect(suite[i]).toBeLessThanOrEqual(suite[i - 1] + 1e-9);
+  });
+
+  it('laisse passer une croissance réelle, jusqu\'au p99 mesuré sur la vidéo', () => {
+    // 0,9 s⁻¹ : 99ᵉ centile du taux vrai mesuré sur Kerlabo, base d'une
+    // seconde, identique à 4 Hz et à 10 Hz. Le plafond à 1,0 ne doit rien
+    // refuser en dessous, sinon il ferait décrocher une voiture qui approche.
+    let w = 200;
+    const p = new Predicteur(B(500, 500, w, w * 0.6), {});
+    for (let i = 0; i < 10; i++) { w *= 1 + 0.9 * 0.1; p.corriger(B(500, 500, w, w * 0.6), 0.1); }
+    const suivie = p.boite[2] - p.boite[0];
+    expect(suivie).toBeGreaterThan(w * 0.85);
+    expect(suivie).toBeLessThan(w * 1.15);
+    expect(p.vitesseBornee).toBe(0);
+  });
+
+  it('écrête le résidu de taille au lieu de l\'ignorer', () => {
+    // Ignorer un résidu aberrant laisse intacte une vitesse déjà fausse : la
+    // piste continue de dériver sans que rien ne la rappelle. Écrêter garantit
+    // que la vitesse va toujours VERS la mesure, sans jamais bondir.
+    const vitesse = (mesure) => {
+      const p = new Predicteur(B(500, 500, 200, 120), {});
+      p.corriger(B(500, 500, mesure, mesure * 0.6), 0.25);
+      return p.s.vw;
+    };
+    // Une mesure au double est traitée exactement comme une mesure à ×1,5 :
+    // c'est là que l'écrêtage se voit.
+    expect(vitesse(400)).toBeCloseTo(vitesse(300), 6);
+    expect(vitesse(400)).toBeGreaterThan(0);          // et pas figée à zéro
+    // En dessous de la porte, rien n'est touché.
+    expect(vitesse(260)).toBeLessThan(vitesse(300));
+  });
+
+  it('écrête symétriquement en RAPPORT, pas en pixels', () => {
+    // Un écrêtage symétrique en pixels tolérerait +50 % mais −50 %, soit un
+    // rapport de 2 d'un côté et 1,5 de l'autre : un biais à la baisse.
+    const p = new Predicteur(B(500, 500, 200, 120), {});
+    p.corriger(B(500, 500, 20, 12), 0.25);            // mesure dix fois trop petite
+    // la largeur corrigée ne descend pas en dessous de 200 ÷ 1,5 par l'effet
+    // de la vitesse : seul le terme de position, non borné ici, la fait bouger
+    expect(p.s.vw).toBeGreaterThan(-((1 - 1 / DEFAULTS.ratioTailleMax) * 200) / 0.25);
+    expect(p.residusEcretes).toBeGreaterThan(0);
+  });
+
+  it('ne change pas les identités quand deux voitures de gabarits différents se croisent', () => {
+    // Contrôle de non-régression : la borne rend les prédictions plus justes,
+    // jamais plus permissives — elle ne peut donc pas créer d'échange.
+    const s = new Suivi({ dt: 0.25 });
+    for (let k = 0; k < 12; k++) {
+      s.pas(k * 0.25, [
+        det(B(300 + k * 60, 500, 220, 130)),          // grosse, vers la droite
+        det(B(1000 - k * 60, 520, 120, 70)),          // petite, vers la gauche
+      ]);
+    }
+    const fin = s.journal[s.journal.length - 1].tracks
+      .filter(x => x.confirmee).sort((a, b) => a.box[0] - b.box[0]);
+    expect(fin).toHaveLength(2);
+    expect(fin[0].box[2] - fin[0].box[0]).toBeLessThan(fin[1].box[2] - fin[1].box[0]);
+    expect(Math.max(...fin.map(x => x.id))).toBeLessThanOrEqual(2);   // aucune identité neuve
+  });
+
+  it('mesure la dérive de taille et l\'usage des deux gardes', () => {
+    // À noter : au fil d'une séquence normale, l'écrêtage sert PEU. La porte
+    // d'association refuse déjà un rapport d'aire supérieur à 2, donc les
+    // résidus qu'elle laisse passer sont rarement au-delà de 1,5 en linéaire.
+    // C'est le plafond de vitesse qui fait le travail — l'effondrement observé
+    // se construit par petits pas tous licites, jamais par un bond unique.
+    const s = new Suivi({ dt: 0.25 });
+    let w = 240;
+    for (let k = 0; k < 10; k++) {
+      w *= 0.8;                                       // sortie de cadre : la boîte est rognée
+      s.pas(k * 0.25, [det(B(500 + k * 30, 500, w, 140))]);
+    }
+    const m = mesurer(s, { cible: 1 });
+    expect(m.deriveTaille).not.toBeNull();
+    expect(Number.isFinite(m.deriveTaille.max)).toBe(true);
+    expect(m.deriveTaille.vitesseBornee).toBeGreaterThan(0);
+    expect(m.deriveTaille.residusEcretes).toBeGreaterThanOrEqual(0);
+  });
+
+  it('expose les deux bornes dans les réglages, pour qu\'elles figurent au rapport', () => {
+    expect(DEFAULTS.vitesseTailleMax).toBe(1.0);
+    expect(DEFAULTS.ratioTailleMax).toBe(1.5);
+  });
+});
