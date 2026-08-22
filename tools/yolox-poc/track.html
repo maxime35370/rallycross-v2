@@ -52,6 +52,7 @@
     <label>Modèle <select id="modeleCam"></select></label>
     <label><input type="checkbox" id="montrerCmc"> montrer la compensation</label>
     <label><input type="checkbox" id="sondeApparence" checked> sonde d'apparence</label>
+    <span id="etatCoupures" class="sub" style="margin:0"></span>
     <button id="lancer" disabled>Analyser la séquence</button>
     <progress id="prog" value="0" max="1" style="display:none"></progress>
     <span id="etat" class="sub"></span>
@@ -130,6 +131,8 @@ let video = $('src'), fps = 60, sidecar = null;
 let journal = [], suivi = null, mesure = null, signaux = [], instant = 0;
 let apparence = null, observations = [];
 let plans = null;
+// Bornes propres de chaque coupure, lues dans un rapport `rx-plans/1`.
+let bornesCoupures = [];
 
 function grillesDe(size) {
   if (!grilles.has(size)) grilles.set(size, buildGrids(size));
@@ -218,7 +221,27 @@ async function analyser() {
   const sonde = $('sondeApparence').checked;
   const imagesSig = [];
   const debut = performance.now();
+  // Coupures à traiter, dans l'ordre. `faite` empêche de couper deux fois.
+  const coupures = bornesCoupures
+    .filter(b => b.avant >= t0 - 1e-9 && b.apres <= t1 + 1e-9)
+    .map(b => ({ ...b, faite: false }))
+    .sort((a, b) => a.avant - b.avant);
+
   for (const [i, t] of instants.entries()) {
+    // 1 · un instant TOMBÉ DANS la transition n'appartient à aucun plan : ses
+    //     détections mélangent les deux images, on ne les passe pas au suivi.
+    const dedans = coupures.find(c => t > c.avant + 1e-9 && t < c.apres - 1e-9);
+    if (dedans) {
+      $('etat').textContent = `${i + 1}/${instants.length} · t=${t.toFixed(2)} s — écarté (transition)`;
+      continue;
+    }
+    // 2 · au premier instant du nouveau plan, on suspend tout : rien ne
+    //     traverse une coupure, ni position, ni vitesse, ni modèle de caméra.
+    const franchie = coupures.find(c => !c.faite && t >= c.apres - 1e-9);
+    if (franchie) {
+      franchie.faite = true;
+      franchie.suspendues = suivi.couper(t);
+    }
     await allerA(t);
     const { tensor, ratio } = preparer(dessinerCadre(), modele.inputSize);
     const sortie = await s.run({ images: tensor });
@@ -382,6 +405,23 @@ function afficherMesures() {
         <td class="num"><strong>${m.auV1?.suivies ?? '—'}</strong> suivies, ${m.auV1?.detectees ?? '—'} détectées</td></tr>
   </table>
   <p class="sub" style="margin-top:6px">Pistes au V1 : ${m.auV1 ? m.auV1.ids.map(i => `#${i}`).join(', ') : '—'}</p>
+  ${m.identites ? `<h3 style="font-size:.9rem;margin:10px 0 4px">Identités logiques — l'objectif</h3>
+  <table>
+    <tr><td>coupures traversées</td>
+        <td class="num">${m.identites.coupures.length
+          ? m.identites.coupures.map(c => `t = ${c.t} s (${c.suspendues} piste(s) suspendue(s))`).join(' · ')
+          : 'aucune'}</td></tr>
+    <tr><td>identités nées à l'instant de départ</td><td class="num">${m.identites.auDepart}</td></tr>
+    <tr><td>identités logiques présentes au V1</td><td class="num">${m.identites.auV1}</td></tr>
+    <tr><td><strong>identités du DÉPART présentes au V1</strong></td>
+        <td class="num"><strong>${m.identites.survivantesDepart} / ${m.identites.auDepart}</strong>
+        ${m.identites.idsSurvivantes.length ? `<span class="sub">— ${m.identites.idsSurvivantes.map(i => `#${i}`).join(', ')}</span>` : ''}</td></tr>
+    <tr><td class="sub">pistes réattribuées après coupure</td><td class="num">${m.identites.reattribuees}</td></tr>
+    <tr><td class="sub">instants où deux pistes partagent une identité</td><td class="num">${m.identites.instantsBifurques}</td></tr>
+  </table>
+  <p class="sub">« Cinq pistes actives au V1 » ne dit rien : ce sont peut-être cinq identités nées après la
+  coupure. La ligne qui compte est celle des identités du <strong>départ</strong> qui y arrivent par une
+  chaîne ininterrompue. Sans réattribution, la coupure les casse toutes — c'est le témoin.</p>` : ''}
   <h3 style="font-size:.9rem;margin:10px 0 4px">Fragmentation</h3>
   <table>
     <tr><td>pistes créées / <strong>confirmées</strong></td><td class="num">${m.pistesCreees} / <strong>${m.pistesConfirmeesCreees}</strong></td></tr>
@@ -519,7 +559,13 @@ $('pick').addEventListener('change', async (e) => {
   if (json) {
     try {
       const brut = JSON.parse(await json.text());
-      if (brut?.schema === 'rx-extract/1') { sidecar = brut; fps = brut.fps || 60; }
+      if (brut?.schema === 'rx-plans/1') {
+        // Les bornes du scan de plans : entre `avant` et `apres`, les images
+        // contiennent les deux plans en transparence et n'appartiennent à
+        // aucun des deux.
+        bornesCoupures = (brut.bornesPropres || []).map(b => ({ avant: b.avant, apres: b.apres }));
+      }
+      else if (brut?.schema === 'rx-extract/1') { sidecar = brut; fps = brut.fps || 60; }
       else if (brut?.schema === 'rx-corpus/1') {
         sidecar = brut.extract; fps = brut.extract?.fps || 60;
         if (brut.marks) { $('tDebut').value = brut.marks.departLocal; }
@@ -537,6 +583,9 @@ $('pick').addEventListener('change', async (e) => {
     });
   }
   $('lancer').disabled = false;
+  $('etatCoupures').textContent = bornesCoupures.length
+    ? `${bornesCoupures.length} coupure(s) : ` + bornesCoupures.map(b => `${b.avant} → ${b.apres} s`).join(' · ')
+    : 'aucun rapport de plans chargé — le suivi traversera les coupures';
   $('etat').textContent = `${film.name} · ${video.videoWidth}×${video.videoHeight} · ${video.duration.toFixed(3)} s · ${fps} img/s`
     + (sidecar ? ' · cadence lue dans le sidecar' : ' · cadence supposée, fournis le .json');
 });
@@ -558,6 +607,7 @@ $('exporter').addEventListener('click', () => {
   const rapport = {
     schema: 'rx-tracking/1',
     modele: { id: modele.id, label: modele.label, file: modele.file, inputSize: modele.inputSize, licence: 'Apache 2.0' },
+    coupures: bornesCoupures,
     reglages: {
       pas, frequenceHz: Number((1 / pas).toFixed(2)),
       seuilConfiance: Number($('seuil').value),

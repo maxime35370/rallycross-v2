@@ -1151,3 +1151,100 @@ describe('mémoire d\'apparence des pistes', () => {
     expect(scenario(true)).toBe(scenario(false));
   });
 });
+
+// ═══════════════════════════════════════════════
+// COUPURE DE PLAN, FILIATION, IDENTITÉS LOGIQUES
+//
+// Le témoin ① : au cut, tout est suspendu, rien ne traverse, et les identités
+// repartent de zéro. C'est volontairement le PIRE cas — il donne la valeur
+// contre laquelle une réattribution devra prouver son gain.
+// ═══════════════════════════════════════════════
+
+describe('coupure de plan', () => {
+  const roulerAvecCoupure = (opts = {}) => {
+    const s = new Suivi({ dt: 0.25, ...opts });
+    // trois voitures, plan A : elles vont vers la droite
+    for (let k = 0; k < 8; k++) {
+      s.pas(k * 0.25, [0, 1, 2].map(i => det(B(300 + i * 200 + k * 40, 500))));
+    }
+    s.couper(2.0);
+    // plan B : mêmes voitures, ailleurs dans l'image et dans l'autre sens
+    for (let k = 8; k < 16; k++) {
+      s.pas(k * 0.25, [0, 1, 2].map(i => det(B(1500 - i * 200 - (k - 8) * 40, 700))));
+    }
+    return s;
+  };
+
+  it('suspend toutes les pistes vivantes, et le dit', () => {
+    const s = new Suivi({ dt: 0.25 });
+    for (let k = 0; k < 6; k++) s.pas(k * 0.25, [det(B(300 + k * 40, 500)), det(B(800 + k * 40, 500))]);
+    const suspendues = s.couper(1.5);
+    expect(suspendues).toHaveLength(2);
+    expect(s.suspendues.map(p => p.id)).toEqual(suspendues);
+    expect(s.suspendues.every(p => p.raisonSuppression === RAISONS.COUPURE)).toBe(true);
+    expect(s.actives).toHaveLength(0);
+  });
+
+  it('oublie le modèle de caméra du plan précédent', () => {
+    const s = new Suivi({ dt: 0.25, cameraCompensation: true });
+    for (let k = 0; k < 8; k++) s.pas(k * 0.25, [0, 1, 2, 3].map(i => det(B(300 + i * 200 + k * 60, 500))));
+    s.couper(2.0);
+    expect(s.modeleCamera).toBeNull();
+    expect(s.derniereCamera).toEqual({ dx: 0, dy: 0, n: 0 });
+  });
+
+  it('ne réactive ni ne reprend AUCUNE piste à travers la coupure', () => {
+    const s = roulerAvecCoupure();
+    const avant = s.pistes.filter(p => p.suspendue);
+    expect(avant).toHaveLength(3);
+    // aucune suspendue n'a été ressuscitée
+    expect(avant.every(p => p.reactivated === 0 && p.lastSeen <= 1.75 + 1e-9)).toBe(true);
+    // et le plan B a bien créé des identités NEUVES
+    const apres = s.pistes.filter(p => !p.suspendue);
+    expect(apres.length).toBeGreaterThanOrEqual(3);
+    expect(Math.min(...apres.map(p => p.id))).toBeGreaterThan(Math.max(...avant.map(p => p.id)));
+  });
+
+  it('n\'extrapole plus une piste suspendue', () => {
+    const s = roulerAvecCoupure();
+    for (const p of s.pistes.filter(x => x.suspendue)) {
+      const apresCoupure = p.history.filter(h => h.t >= 2.0);
+      expect(apresCoupure).toHaveLength(0);
+    }
+  });
+
+  it('compte les identités du départ qui atteignent le V1 — zéro sans réattribution', () => {
+    const s = roulerAvecCoupure();
+    const m = mesurer(s, { cible: 3, tV1: 3.75 });
+    expect(m.identites.auDepart).toBe(3);
+    expect(m.identites.auV1).toBeGreaterThan(0);
+    // Le témoin : la coupure casse toutes les chaînes.
+    expect(m.identites.survivantesDepart).toBe(0);
+    expect(m.identites.suspenduesTotal).toBe(3);
+    expect(m.identites.reattribuees).toBe(0);
+    expect(m.identites.coupures).toEqual([{ t: 2, suspendues: 3 }]);
+  });
+
+  it('sans coupure, les identités du départ survivent', () => {
+    // Contrôle : la mesure ne rend pas zéro par construction.
+    const s = new Suivi({ dt: 0.25 });
+    for (let k = 0; k < 16; k++) {
+      s.pas(k * 0.25, [0, 1, 2].map(i => det(B(300 + i * 200 + k * 40, 500))));
+    }
+    const m = mesurer(s, { cible: 3, tV1: 3.75 });
+    expect(m.identites.auDepart).toBe(3);
+    expect(m.identites.survivantesDepart).toBe(3);
+    expect(m.identites.coupures).toEqual([]);
+  });
+
+  it('ne signale aucune bifurcation tant que rien n\'est réattribué', () => {
+    const m = mesurer(roulerAvecCoupure(), { cible: 3, tV1: 3.75 });
+    expect(m.identites.instantsBifurques).toBe(0);
+  });
+
+  it('publie l\'identité logique de chaque piste dans le journal', () => {
+    const s = roulerAvecCoupure();
+    const inst = s.journal[s.journal.length - 1];
+    expect(inst.tracks.every(t => t.identiteLogique === t.id)).toBe(true);
+  });
+});

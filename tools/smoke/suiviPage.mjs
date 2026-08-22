@@ -44,6 +44,22 @@ try {
 
   dire(await page.locator('#sondeApparence').count() === 1, 'la case « sonde d\'apparence » est présente');
   dire(await page.locator('#lancer').count() === 1, 'le bouton d\'analyse est présent');
+  dire(await page.locator('#etatCoupures').count() === 1, 'le bandeau des coupures est présent');
+
+  // Le témoin ① dans le navigateur : au cut, tout est suspendu et rien ne
+  // traverse — ni extrapolation, ni repêchage, ni modèle de caméra.
+  const temoinCut = await page.evaluate(async (port) => {
+    const { Suivi, mesurer } = await import(`http://127.0.0.1:${port}/tools/yolox-poc/lib/track.mjs`);
+    const B = (cx, cy, w = 160, h = 90) => [cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2];
+    const s = new Suivi({ dt: 0.25 });
+    for (let k = 0; k < 8; k++) s.pas(k * 0.25, [0, 1, 2].map(i => ({ box: B(300 + i * 200 + k * 40, 500), score: 0.8, label: 'car' })));
+    const suspendues = s.couper(2.0);
+    for (let k = 8; k < 16; k++) s.pas(k * 0.25, [0, 1, 2].map(i => ({ box: B(1500 - i * 200 - (k - 8) * 40, 700), score: 0.8, label: 'car' })));
+    const m = mesurer(s, { cible: 3, tV1: 3.75 });
+    return [suspendues.length, m.identites.auDepart, m.identites.survivantesDepart, m.identites.reattribuees, m.identites.instantsBifurques];
+  }, PORT);
+  dire(JSON.stringify(temoinCut) === JSON.stringify([3, 3, 0, 0, 0]),
+    `le témoin ① : 3 suspendues, 0 identité de départ au V1, 0 réattribution (${JSON.stringify(temoinCut)})`);
 
   // Les erreurs de RÉSEAU sur le modèle ONNX ne concernent pas ce contrôle :
   // le modèle n'est chargé qu'au moment d'analyser.

@@ -415,6 +415,30 @@ Les cinq correspondances réelles s'annotent dans un menu par ligne, avec
 **Aucune marge n'est transformée en seuil.** Le chiffre est affiché et exporté ;
 c'est un corpus qui décidera, pas une transition.
 
+#### Coupure de plan, filiation, identités logiques
+
+`Suivi.couper(t)` — à appeler avant le premier pas du nouveau plan. Les pistes
+ne sont pas tuées mais **suspendues** : elles gardent leur dernière boîte
+observée, leur mémoire d'apparence et leur identité logique, de quoi tenter plus
+tard une réattribution qui ne soit pas géométrique. Le modèle de caméra du plan
+précédent est oublié.
+
+Trois voies ressuscitaient une piste morte par la géométrie ; les trois ignorent
+désormais une piste suspendue : l'extrapolation des pistes repêchables,
+`_reactiver()` et `_reprendreOccluse()`. Rien ne traverse une coupure — c'est le
+témoin ①, volontairement le pire cas.
+
+Le banc lit les `bornesPropres` d'un rapport `rx-plans/1`, **écarte les instants
+tombés dans la transition** (leurs détections mélangent les deux plans) et
+appelle `couper()` au premier instant du plan suivant.
+
+**`identiteLogique`** est la racine de la chaîne de filiation. Sans
+réattribution, chaque piste est sa propre racine — et `identites.survivantesDepart`
+mesure alors exactement ce que coûte la coupure. « Cinq pistes actives au V1 » ne
+dit rien : ce sont peut-être cinq identités nées après. `instantsBifurques`
+compte les instants où deux pistes vivantes partagent une racine : impossible
+sans réattribution, faute grave avec.
+
 #### Mémoire d'apparence par piste
 
 Le suivi **ne calcule aucune signature** : il ne voit jamais d'image. Le banc en

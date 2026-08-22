@@ -158,6 +158,7 @@ export const RAISONS = {
   RECOUVRE: 'recouvre_piste_vivante',
   ABSENCE: 'absence_prolongee',
   OCCLUSION: 'occlusion_trop_longue',
+  COUPURE: 'coupure_de_plan',
 };
 
 // ─────────────────────────────────────────────────────────
@@ -480,6 +481,7 @@ export class Suivi {
     this.doublonsEcartes = 0;
     this.refus = [];
     this.journal = [];
+    this.coupures = [];                // { t, suspendues: [id…] }
     reinitialiserIds();
   }
 
@@ -521,7 +523,9 @@ export class Suivi {
     // les 0 et 1 réactivations observées pendant que des dizaines d'identités
     // se créaient.
     for (const p of this.pistes) {
-      if (p.state === ETATS.LOST && p.confirmee && t - p.lastSeen <= o.dureeReactivation) {
+      // Une piste SUSPENDUE n'est plus extrapolée : sa vitesse appartenait à un
+      // référentiel qui n'existe plus.
+      if (!p.suspendue && p.state === ETATS.LOST && p.confirmee && t - p.lastSeen <= o.dureeReactivation) {
         p.pred.avancerSansMesure(dt);
         p.boitePredite = p.pred.boite;
       }
@@ -749,6 +753,42 @@ export class Suivi {
     };
   }
 
+  /**
+   * COUPURE DE PLAN — le référentiel image est réinitialisé.
+   *
+   * À appeler AVANT le premier `pas()` du nouveau plan. Rien ne doit traverser :
+   * une position, une vitesse ou une boîte du plan précédent ne décrit plus
+   * rien. Les pistes ne sont pas tuées mais SUSPENDUES — elles gardent leur
+   * dernière boîte observée, leur mémoire d'apparence et leur identité logique,
+   * de quoi tenter plus tard une réattribution qui n'est pas géométrique.
+   *
+   * Ce qu'on évitait sans elle, mesuré : à t = 6,3 s le suivi portait 13 pistes
+   * pour cinq voitures — cinq fantômes du plan précédent, extrapolés pendant
+   * jusqu'à deux secondes, à côté de huit identités neuves.
+   */
+  couper(t, raison = RAISONS.COUPURE) {
+    const suspendues = [];
+    for (const p of this.pistes) {
+      if (p.state === ETATS.LOST) continue;
+      p.suspendue = true;
+      p.state = ETATS.LOST;
+      p.raisonSuppression = raison;
+      p.suspendueA = Number(t.toFixed(3));
+      suspendues.push(p.id);
+    }
+    // Un modèle de caméra ajusté sur le plan précédent ne décrit pas le
+    // nouveau : le garder ferait dériver toutes les prédictions du plan neuf.
+    this.modeleCamera = null;
+    this.comparaisonCamera = null;
+    this.derniereCamera = { dx: 0, dy: 0, n: 0 };
+    this.dernierRattrapage = null;
+    this.coupures.push({ t: Number(t.toFixed(3)), suspendues });
+    return suspendues;
+  }
+
+  /** Piste suspendue qu'une réattribution pourra reprendre — pas encore utilisée. */
+  get suspendues() { return this.pistes.filter(p => p.suspendue); }
+
   // ── mémoire d'apparence ────────────────────────────────
   /**
    * Range une signature si l'observation est PROPRE.
@@ -867,6 +907,13 @@ export class Suivi {
       firstSeen: t, lastSeen: t,
       occludedBy: null, ambiguous: false,
       raisonCreation: RAISONS.NOUVELLE, raisonSuppression: null,
+      // FILIATION. `identiteLogique` est la racine de la chaîne : tant qu'aucune
+      // réattribution n'a lieu, chaque piste est sa propre racine. C'est ce
+      // champ, et lui seul, qui permettra de dire combien des identités du
+      // départ atteignent le V1 — « cinq pistes actives » ne le dit pas.
+      identiteLogique: _prochainId - 1,
+      ancetre: null,
+      suspendue: false,
       apparences: [],
       history: [{
         t, box: det.box.slice(), state: ETATS.TENTATIVE, score: det.score,
@@ -918,7 +965,7 @@ export class Suivi {
   _reprendreOccluse(det, deja) {
     let meilleure = null, meilleurIou = this.opt.iouRecover;
     for (const p of this.pistes) {
-      if (deja.has(p)) continue;
+      if (p.suspendue || deja.has(p)) continue;
       if (p.state !== ETATS.OCCLUDED && p.state !== ETATS.PREDICTED) continue;
       const r = iou(p.boitePredite, det.box);
       if (r > meilleurIou && rapportTaille(p.boitePredite, det.box) <= this.opt.maxSizeRatio) {
@@ -944,7 +991,9 @@ export class Suivi {
     const [dx, dy] = centre(det.box);
     let meilleure = null, meilleurEcart = Infinity;
     for (const p of this.pistes) {
-      if (deja.has(p) || p.state !== ETATS.LOST || !p.confirmee) continue;
+      // Repêcher à travers une coupure serait fabriquer une continuité que
+      // rien n'atteste : la position d'avant ne dit rien de celle d'après.
+      if (p.suspendue || deja.has(p) || p.state !== ETATS.LOST || !p.confirmee) continue;
       const age = t - p.lastSeen;
       if (age > o.dureeReactivation) continue;
       if (rapportTaille(p.boitePredite, det.box) > o.maxSizeRatio) continue;
@@ -1024,6 +1073,7 @@ export class Suivi {
       biais: { ...this.derniereCamera },
       tracks: vivantes.map(p => ({
         id: p.id,
+        identiteLogique: p.identiteLogique,
         box: p.box.map(v => Math.round(v)),
         // Les trois boîtes du diagnostic de compensation : prédiction brute,
         // prédiction compensée, détection finalement associée.
@@ -1381,6 +1431,53 @@ export function mesurer(suivi, { cible = 5, tV1 = null } = {}) {
           };
         })(),
         parInstant: r,
+      };
+    })(),
+    // ── identités logiques ──────────────────────────────────────────────
+    //
+    // « Cinq pistes actives au V1 » ne dit rien : ce sont peut-être cinq
+    // identités nées après la coupure. La question posée est combien des
+    // identités du DÉPART y arrivent, par une chaîne ininterrompue et non
+    // bifurquée. Sans réattribution, chaque piste est sa propre racine, et ce
+    // chiffre mesure exactement ce que coûte la coupure.
+    identites: (() => {
+      const t0 = journal[0].t;
+      const racine = (p) => p.identiteLogique;
+      const depart = [...new Set(pistes.filter(p => p.firstSeen === t0).map(racine))];
+      const auV1Instant = instantV1;
+      const presentesV1 = auV1Instant
+        ? [...new Set(auV1Instant.tracks.filter(x => x.confirmee).map(x => x.identiteLogique ?? x.id))]
+        : [];
+      const survivantes = depart.filter(r => presentesV1.includes(r));
+
+      // Bifurcation : deux pistes VIVANTES au même instant sous la même racine.
+      // Sans réattribution c'est impossible ; avec, ce serait une erreur grave,
+      // et le compteur existe pour qu'elle ne passe pas inaperçue.
+      let bifurquees = 0;
+      for (const inst of journal) {
+        const vues = new Map();
+        for (const x of inst.tracks) {
+          const r = x.identiteLogique ?? x.id;
+          vues.set(r, (vues.get(r) || 0) + 1);
+        }
+        bifurquees += [...vues.values()].filter(n => n > 1).length;
+      }
+
+      return {
+        total: new Set(pistes.map(racine)).size,
+        auDepart: depart.length,
+        idsDepart: depart,
+        auV1: presentesV1.length,
+        idsV1: presentesV1,
+        // LE chiffre de l'objectif.
+        survivantesDepart: survivantes.length,
+        idsSurvivantes: survivantes,
+        instantsBifurques: bifurquees,
+        coupures: suivi.coupures.map(c => ({ t: c.t, suspendues: c.suspendues.length })),
+        // Ce que la coupure a coûté : les identités vivantes juste avant, dont
+        // aucune ne traverse tant qu'il n'y a pas de réattribution.
+        suspenduesTotal: suivi.coupures.reduce((t, c) => t + c.suspendues.length, 0),
+        reattribuees: pistes.filter(p => p.ancetre != null).length,
       };
     })(),
     // ── ruptures de plan, cohérence spatiale ────────────────────────────
