@@ -409,6 +409,27 @@ permet de la valider sur des mesures antérieures. Sur la séquence Kerlabo elle
 trouve les **deux mêmes coupures** à 4 Hz et à 10 Hz — t ≈ 6,0 s et t ≈ 10,3–10,8 s
 — qui portent à elles seules 57 à 66 % des identités fabriquées.
 
+### Changements de plan — mesurés dans l'image
+
+Le premier détecteur déduisait la coupure du **comportement du suivi**.
+Confronté aux journaux, il se trompe une fois sur deux : un plan large qui
+découvre des véhicules immobiles au fond produit exactement la même signature.
+Le test qui tranche ne demande aucune annotation — un vrai changement de plan
+ne peut pas laisser des pistes détectées **en continu** avec des trajectoires
+lisses.
+
+`signatureImage()` + `detecterCoupures()` mesurent donc le plan sur les pixels,
+sans regarder ni les pistes, ni les détections, ni un seuil du suivi : grille
+4 × 4 d'histogrammes (deux plans d'une même course partagent bitume, herbe et
+ciel — c'est leur *répartition* qui change), et un seuil **relatif au niveau
+local** des distances, jamais absolu. Un panoramique fait monter tout le
+voisinage ; seul un pic isolé est une coupure. Les tests le vérifient sur un
+panoramique et sur une scène fixe qui frémit.
+
+Le rapport affiche les deux détecteurs côte à côte. Quand ils divergent, c'est
+l'image qui a raison. Analyse complète et suite du plan :
+[`docs/video-analysis/CUT-REATTRIBUTION.md`](../../docs/video-analysis/CUT-REATTRIBUTION.md).
+
 ### Cohérence spatiale du groupe
 
 Part des paires de pistes qui gardent leur ordre gauche-droite d'un instant au

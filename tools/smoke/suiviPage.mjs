@@ -74,6 +74,26 @@ try {
   dire(resultat.autre > 0.6, `deux livrées différentes sont séparées (${resultat.autre})`);
   dire(resultat.autre > resultat.meme * 2, 'la séparation domine franchement la variation de cadrage');
 
+  // Détection de plan, sur des images réellement peintes par le navigateur.
+  const plans = await page.evaluate(async (port) => {
+    const { signatureImage, detecterCoupures } = await import(`http://127.0.0.1:${port}/tools/yolox-poc/lib/apparence.mjs`);
+    const c = document.createElement('canvas');
+    c.width = 320; c.height = 180;
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+    const peindre = (fond, barre, x) => {
+      ctx.fillStyle = fond; ctx.fillRect(0, 0, 320, 180);
+      ctx.fillStyle = barre; ctx.fillRect(x, 0, 70, 180);
+      return signatureImage(ctx.getImageData(0, 0, 320, 180).data, 320, 180);
+    };
+    const serie = [];
+    // six images d'un panoramique, puis six d'un autre plan
+    for (let i = 0; i < 6; i++) serie.push({ t: i, sig: peindre('#2f7a2f', '#c8402a', i * 40) });
+    for (let i = 6; i < 12; i++) serie.push({ t: i, sig: peindre('#2a3f9e', '#e8d84a', (i - 6) * 40) });
+    return detecterCoupures(serie).coupures.map(x => x.t);
+  }, PORT);
+  dire(plans.length === 1 && plans[0] === 6,
+    `la coupure est vue à t = 6 et le panoramique ne déclenche rien (trouvé : ${plans.join(', ') || 'rien'})`);
+
   await navigateur.close();
 } catch (e) {
   code = 1;

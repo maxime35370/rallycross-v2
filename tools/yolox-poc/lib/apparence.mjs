@@ -1,5 +1,12 @@
 /* ═══════════════════════════════════════════════
-   APPARENCE.MJS — Signature couleur d'une boîte, et MESURE de sa valeur
+   APPARENCE.MJS — Signatures couleur, et MESURE de ce qu'elles valent
+
+   Deux usages du même histogramme, et deux seulement :
+     · la signature d'une BOÎTE, pour savoir si les livrées sont séparables ;
+     · la signature d'une IMAGE ENTIÈRE, pour repérer les changements de plan.
+
+   Le second usage ne dépend d'aucune piste, d'aucune détection et d'aucun
+   réglage du suivi — c'est précisément ce qu'on lui demande.
 
    ── Ce que ce module fait, et ne fait pas ──────────────────────────────
    Il CALCULE une signature d'apparence et MESURE sa pouvoir séparateur sur
@@ -311,5 +318,117 @@ export function traverseeDeCoupure(observations, tCoupure, { fenetre = 1.0 } = {
     // Part des pistes d'avant dont la plus proche d'après est bien celle que
     // l'appariement optimal retient : mesure la cohérence de la décision.
     coherence: paires.length ? Number((paires.filter(p => p.meilleur).length / paires.length).toFixed(3)) : null,
+  };
+}
+
+
+// ═══════════════════════════════════════════════
+// CHANGEMENTS DE PLAN — mesurés sur les pixels, pas sur les pistes
+//
+// Le premier détecteur de rupture déduisait la coupure du COMPORTEMENT DU
+// SUIVI : beaucoup de pistes sans détection, plusieurs identités neuves.
+// Vérifié sur la séquence réelle, il se trompe une fois sur deux — un plan
+// large qui découvre des véhicules immobiles au fond produit exactement la
+// même signature, sans qu'aucun plan n'ait changé.
+//
+// Un changement de plan est un fait d'IMAGE. On le mesure donc sur l'image :
+// distance entre les histogrammes de deux images successives, comparée au
+// niveau LOCAL de cette distance. Le seuil est relatif, jamais absolu — un
+// panoramique rapide fait monter tout le voisinage, et seul un pic isolé
+// au-dessus de son propre voisinage est une coupure.
+//
+// Ce que la méthode ne prétend pas faire : reconnaître un fondu enchaîné, ni
+// dater la coupure plus finement que le pas d'échantillonnage.
+// ═══════════════════════════════════════════════
+
+/**
+ * Signature d'une image entière, en grille.
+ *
+ * La grille est indispensable : deux plans d'une même course partagent le
+ * bitume, l'herbe et le ciel, donc l'histogramme GLOBAL bouge peu d'un plan à
+ * l'autre. C'est leur RÉPARTITION dans le cadre qui change brutalement.
+ *
+ * `pas` sous-échantillonne : pour un histogramme, lire un pixel sur deux dans
+ * chaque direction ne change pas la distribution et divise le coût par quatre.
+ */
+export function signatureImage(rgba, largeur, hauteur, { grille = 4, pas = 2, profil = PROFIL } = {}) {
+  const p = { ...PROFIL, ...profil };
+  if (!(largeur > 0 && hauteur > 0)) return null;
+  const tailleZone = p.binsTeinte * p.binsSaturation + p.binsValeur;
+  const zones = grille * grille;
+  const sig = new Float64Array(tailleZone * zones);
+  const comptes = new Array(zones).fill(0);
+
+  for (let y = 0; y < hauteur; y += pas) {
+    const zy = Math.min(grille - 1, Math.floor(y * grille / hauteur));
+    for (let x = 0; x < largeur; x += pas) {
+      const zx = Math.min(grille - 1, Math.floor(x * grille / largeur));
+      const base = (zy * grille + zx) * tailleZone;
+      const i = (y * largeur + x) * 4;
+      const [teinte, sat, val] = rgbVersHsv(rgba[i], rgba[i + 1], rgba[i + 2]);
+      if (sat >= p.satMin && val >= p.valMin) {
+        const bt = Math.min(p.binsTeinte - 1, Math.floor(teinte * p.binsTeinte));
+        const bs = Math.min(p.binsSaturation - 1, Math.floor(sat * p.binsSaturation));
+        sig[base + bs * p.binsTeinte + bt] += 1;
+      } else {
+        sig[base + p.binsTeinte * p.binsSaturation + Math.min(p.binsValeur - 1, Math.floor(val * p.binsValeur))] += 1;
+      }
+      comptes[zy * grille + zx] += 1;
+    }
+  }
+  for (let z = 0; z < zones; z++) {
+    if (!comptes[z]) continue;
+    const base = z * tailleZone;
+    for (let k = 0; k < tailleZone; k++) sig[base + k] /= comptes[z] * zones;
+  }
+  return Array.from(sig);
+}
+
+/**
+ * Coupures dans une suite de signatures d'image.
+ *
+ * `serie` : [{ t, sig }] dans l'ordre du temps.
+ *
+ * Le juge est le rapport entre la distance d'un pas et la MÉDIANE des
+ * distances de son voisinage, celle-ci exclue. Un seuil absolu ne peut pas
+ * marcher : la distance de référence dépend du mouvement de caméra, de la
+ * cadence d'échantillonnage et de la scène. Le rapport, lui, ne dépend que du
+ * caractère isolé du pic.
+ *
+ * `minAbsolu` n'est pas un second seuil de décision mais un plancher de bruit :
+ * sur un plan parfaitement fixe la médiane locale tend vers zéro, et tout
+ * frémissement deviendrait un rapport infini.
+ */
+export function detecterCoupures(serie, { facteur = 3.0, fenetre = 9, minAbsolu = 0.06 } = {}) {
+  const distances = [];
+  for (let i = 1; i < serie.length; i++) {
+    distances.push({ t: serie[i].t, d: distance(serie[i - 1].sig, serie[i].sig) ?? 0 });
+  }
+  if (distances.length < 3) return { distances, coupures: [] };
+
+  const demi = Math.max(1, Math.floor(fenetre / 2));
+  const coupures = [];
+  for (let i = 0; i < distances.length; i++) {
+    const voisins = [];
+    for (let j = Math.max(0, i - demi); j <= Math.min(distances.length - 1, i + demi); j++) {
+      if (j !== i) voisins.push(distances[j].d);
+    }
+    if (!voisins.length) continue;
+    const tri = voisins.sort((a, b) => a - b);
+    const med = tri[Math.floor(tri.length / 2)];
+    const reference = Math.max(med, minAbsolu);
+    const rapport = distances[i].d / reference;
+    // Pic ISOLÉ : strictement au-dessus de ses deux voisins immédiats. Un
+    // panoramique produit un plateau de distances élevées, pas un pic.
+    const pic = (i === 0 || distances[i].d > distances[i - 1].d)
+      && (i === distances.length - 1 || distances[i].d >= distances[i + 1].d);
+    distances[i].rapport = Number(rapport.toFixed(2));
+    if (rapport >= facteur && pic) {
+      coupures.push({ t: distances[i].t, d: Number(distances[i].d.toFixed(4)), rapport: Number(rapport.toFixed(2)) });
+    }
+  }
+  return {
+    distances: distances.map(x => ({ t: x.t, d: Number(x.d.toFixed(4)), rapport: x.rapport ?? null })),
+    coupures,
   };
 }

@@ -10,7 +10,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   PROFIL, TAILLE_SIGNATURE, rgbVersHsv, signature, distance, moyenner,
-  separabilite, traverseeDeCoupure,
+  separabilite, traverseeDeCoupure, signatureImage, detecterCoupures,
 } from '../tools/yolox-poc/lib/apparence.mjs';
 
 /** Image RGBA unie, dans laquelle on peint des rectangles. */
@@ -206,5 +206,82 @@ describe('profil', () => {
   it('garde un canal achromatique, sans quoi blanc et noir se confondraient', () => {
     expect(PROFIL.binsValeur).toBeGreaterThanOrEqual(2);
     expect(PROFIL.zones).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe('changements de plan mesurés sur l\'image', () => {
+  const W = 160, H = 120;
+  /** Image « scène » : bandes horizontales de teintes données. */
+  const scene = (teintes) => {
+    const px = image(W, H);
+    const bande = Math.ceil(H / teintes.length);
+    teintes.forEach((c, i) => peindre(px, W, [0, i * bande, W, Math.min(H, (i + 1) * bande)], c));
+    return px;
+  };
+  const sig = (px) => signatureImage(px, W, H, { pas: 1 });
+
+  it('distingue deux scènes différentes, et reconnaît la même', () => {
+    const a = sig(scene([[200, 40, 40], [40, 160, 40], [60, 60, 200]]));
+    const b = sig(scene([[200, 40, 40], [40, 160, 40], [60, 60, 200]]));
+    const c = sig(scene([[60, 60, 200], [200, 200, 40], [30, 30, 30]]));
+    expect(distance(a, b)).toBe(0);
+    expect(distance(a, c)).toBeGreaterThan(0.5);
+  });
+
+  it('voit la RÉPARTITION, pas seulement les couleurs présentes', () => {
+    // Mêmes couleurs, ordre inversé : un histogramme global ne verrait rien.
+    // Deux plans d'une même course partagent bitume, herbe et ciel — c'est
+    // leur place dans le cadre qui change.
+    const a = sig(scene([[200, 40, 40], [40, 160, 40]]));
+    const b = sig(scene([[40, 160, 40], [200, 40, 40]]));
+    expect(distance(a, b)).toBeGreaterThan(0.5);
+  });
+
+  it('signale une coupure isolée', () => {
+    const A = sig(scene([[200, 40, 40], [40, 160, 40]]));
+    const Bq = sig(scene([[40, 40, 200], [220, 220, 40]]));
+    const serie = [0, 1, 2, 3].map(t => ({ t, sig: A }))
+      .concat([4, 5, 6, 7].map(t => ({ t, sig: Bq })));
+    const { coupures } = detecterCoupures(serie);
+    expect(coupures.map(c => c.t)).toEqual([4]);
+  });
+
+  it('ne signale rien sur un panoramique, si rapide soit-il', () => {
+    // Un panoramique fait monter TOUT le voisinage : la distance est grande à
+    // chaque pas, donc aucun pas n'est un pic isolé. C'est le faux positif
+    // que le détecteur fondé sur le comportement du suivi ne savait pas éviter.
+    const serie = [];
+    for (let t = 0; t < 12; t++) {
+      const px = image(W, H);
+      // le décor défile : la bande colorée traverse le cadre
+      const x = (t * 22) % W;
+      peindre(px, W, [0, 0, W, H], [30, 120, 30]);
+      peindre(px, W, [x, 0, Math.min(W, x + 40), H], [210, 60, 40]);
+      serie.push({ t, sig: sig(px) });
+    }
+    expect(detecterCoupures(serie).coupures).toEqual([]);
+  });
+
+  it('ne signale rien sur une scène fixe qui frémit', () => {
+    const serie = [];
+    for (let t = 0; t < 12; t++) {
+      const px = scene([[200, 40, 40], [40, 160, 40]]);
+      peindre(px, W, [t % 3, 0, (t % 3) + 2, 4], [255, 255, 255]);   // bruit minuscule
+      serie.push({ t, sig: sig(px) });
+    }
+    expect(detecterCoupures(serie).coupures).toEqual([]);
+  });
+
+  it('rend la série de distances, pour que le seuil soit relisible', () => {
+    const A = sig(scene([[200, 40, 40]]));
+    const { distances } = detecterCoupures([{ t: 0, sig: A }, { t: 1, sig: A }, { t: 2, sig: A }]);
+    expect(distances).toHaveLength(2);
+    expect(distances[0]).toHaveProperty('t');
+    expect(distances[0]).toHaveProperty('d');
+  });
+
+  it('supporte une série trop courte pour conclure', () => {
+    expect(detecterCoupures([]).coupures).toEqual([]);
+    expect(detecterCoupures([{ t: 0, sig: [1, 0] }]).coupures).toEqual([]);
   });
 });

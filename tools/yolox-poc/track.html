@@ -96,7 +96,9 @@ import {
   decodeOutput, assertAnchorCount, mergeVehicleDetections,
 } from '/tools/yolox-poc/lib/detect.mjs';
 import { Suivi, ETATS, DEFAULTS, mesurer, signauxSuspects } from '/tools/yolox-poc/lib/track.mjs';
-import { PROFIL, signature, separabilite, traverseeDeCoupure } from '/tools/yolox-poc/lib/apparence.mjs';
+import {
+  PROFIL, signature, separabilite, traverseeDeCoupure, signatureImage, detecterCoupures,
+} from '/tools/yolox-poc/lib/apparence.mjs';
 import { MODELES_CAMERA, ORDRE_MODELES } from '/tools/yolox-poc/lib/camera.mjs';
 
 const ort = window.ort;
@@ -127,6 +129,7 @@ const sessions = new Map();
 let video = $('src'), fps = 60, sidecar = null;
 let journal = [], suivi = null, mesure = null, signaux = [], instant = 0;
 let apparence = null, observations = [];
+let plans = null;
 
 function grillesDe(size) {
   if (!grilles.has(size)) grilles.set(size, buildGrids(size));
@@ -211,8 +214,9 @@ async function analyser() {
   $('prog').style.display = ''; $('prog').max = instants.length; $('prog').value = 0;
 
   journal = [];
-  observations = []; apparence = null;
+  observations = []; apparence = null; plans = null;
   const sonde = $('sondeApparence').checked;
+  const imagesSig = [];
   const debut = performance.now();
   for (const [i, t] of instants.entries()) {
     await allerA(t);
@@ -235,6 +239,10 @@ async function analyser() {
         if (!tr.boiteAssociee) continue;
         observations.push({ t, id: tr.id, sig: signature(px, cadre.width, cadre.height, tr.boiteAssociee) });
       }
+      // Signature de l'IMAGE ENTIÈRE — un changement de plan est un fait
+      // d'image, pas un comportement du suivi. Ce calcul ne regarde ni les
+      // pistes, ni les détections, ni les seuils.
+      imagesSig.push({ t, sig: signatureImage(px, cadre.width, cadre.height) });
     }
     $('prog').value = i + 1;
     $('etat').textContent = `${i + 1}/${instants.length} · t=${t.toFixed(2)} s`;
@@ -246,15 +254,20 @@ async function analyser() {
 
   mesure = mesurer(suivi, { cible: 5, tV1: t1 });
   signaux = signauxSuspects(suivi);
+  plans = imagesSig.length > 2 ? detecterCoupures(imagesSig) : null;
   apparence = sonde && observations.length ? {
     profil: PROFIL,
     separabilite: separabilite(observations),
     // Ce que l'apparence DIRAIT à chaque coupure détectée — sans que rien ne
     // s'en serve. C'est la seule façon de savoir si elle mérite d'être câblée.
-    traversees: (mesure?.ruptures?.cuts || []).map(c => traverseeDeCoupure(observations, c.debut, { fenetre: Math.max(1, pas * 6) })),
+    // Les traversées se calent sur les coupures vues dans l'IMAGE lorsqu'on
+    // les a — pas sur celles déduites du comportement du suivi, qui se
+    // trompent quand un plan large découvre des véhicules immobiles au fond.
+    traversees: (plans?.coupures.length ? plans.coupures.map(c => c.t) : (mesure?.ruptures?.cuts || []).map(c => c.debut))
+      .map(t => traverseeDeCoupure(observations, t, { fenetre: Math.max(1, pas * 6) })),
   } : null;
   // Exposé pour le contrôle automatique (tools/smoke/), jamais lu par la page.
-  window.__etatSuivi = { instants: journal.length, journal, mesure, signaux, apparence, secondes };
+  window.__etatSuivi = { instants: journal.length, journal, mesure, signaux, apparence, plans, secondes };
   instant = 0;
   $('exporter').disabled = false;
   afficherMesures(); afficherSignaux(); await montrer(0);
@@ -425,9 +438,19 @@ function afficherMesures() {
     rapport de taille ${m.refus.medianes.ratio ?? '—'} ·
     distance ${m.refus.medianes.distance ?? '—'} largeur(s) de boîte
   </p>
-  ${m.ruptures ? `<h3 style="font-size:.9rem;margin:10px 0 4px">Ruptures de plan</h3>
+  ${plans ? `<h3 style="font-size:.9rem;margin:10px 0 4px">Changements de plan — vus dans l'image</h3>
   <table>
-    <tr><td>coupures détectées</td><td class="num">${m.ruptures.cuts.length ? m.ruptures.cuts.map(c => `t = ${c.debut}${c.fin !== c.debut ? '–' + c.fin : ''} s`).join(' · ') : 'aucune'}</td></tr>
+    <tr><td><strong>coupures (histogramme d'image)</strong></td>
+        <td class="num"><strong>${plans.coupures.length ? plans.coupures.map(c => `t = ${c.t} s (×${c.rapport})`).join(' · ') : 'aucune'}</strong></td></tr>
+    <tr><td class="sub">plus fortes distances image à image</td>
+        <td class="num">${[...plans.distances].sort((a, b) => b.d - a.d).slice(0, 4).map(x => `${x.t}s : ${x.d} (×${x.rapport ?? '—'})`).join('<br>')}</td></tr>
+  </table>
+  <p class="sub">Mesure faite sur les pixels : elle ne regarde ni les pistes, ni les détections, ni les
+  seuils. Le juge est le rapport au niveau LOCAL des distances — un panoramique fait monter tout le
+  voisinage, seul un pic isolé est une coupure.</p>` : ''}
+  ${m.ruptures ? `<h3 style="font-size:.9rem;margin:10px 0 4px">Ruptures déduites du comportement du suivi</h3>
+  <table>
+    <tr><td>ruptures supposées</td><td class="num">${m.ruptures.cuts.length ? m.ruptures.cuts.map(c => `t = ${c.debut}${c.fin !== c.debut ? '–' + c.fin : ''} s`).join(' · ') : 'aucune'}</td></tr>
     <tr><td><strong>créations imputables à une coupure</strong></td>
         <td class="num"><strong>${m.ruptures.ventilation.creations.pres}</strong> / ${m.ruptures.ventilation.creations.total}
         (${m.ruptures.ventilation.creations.partPres == null ? '—' : (m.ruptures.ventilation.creations.partPres * 100).toFixed(0) + ' %'})</td></tr>
@@ -437,8 +460,9 @@ function afficherMesures() {
         <td class="num">${m.ruptures.ventilation.competition.total} (${m.ruptures.ventilation.competition.part == null ? '—' : (m.ruptures.ventilation.competition.part * 100).toFixed(0) + ' %'}),
         dont ${m.ruptures.ventilation.competition.hors} hors coupure</td></tr>
   </table>
-  <p class="sub">Une coupure n'est pas compensée : le référentiel image est réellement réinitialisé.
-  Elle est seulement REPÉRÉE, pour savoir ce qui, dans la fragmentation, lui revient.</p>` : ''}
+  <p class="sub">À confronter à la ligne du dessus : ce détecteur-ci déduit la coupure du comportement
+  du suivi, et un plan large qui découvre des véhicules immobiles au fond lui donne exactement la même
+  signature. Quand les deux divergent, c'est l'image qui a raison.</p>` : ''}
   ${m.coherenceSpatiale ? `<h3 style="font-size:.9rem;margin:10px 0 4px">Cohérence spatiale du groupe</h3>
   <table>
     <tr><td><strong>ordre gauche-droite conservé</strong></td>
@@ -549,6 +573,7 @@ $('exporter').addEventListener('click', () => {
     refus: suivi ? suivi.refus : [],
     signaux,
     apparence,
+    plans,
     // Le journal exporte maintenant les trois boîtes du diagnostic et les
     // VITESSES de l'état interne. Sans elles, une boîte prédite absurde ne se
     // distinguait pas d'une voiture qui grossit vraiment, et le bilan
