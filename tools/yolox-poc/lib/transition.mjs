@@ -129,151 +129,192 @@ export function contraste(px) {
 }
 
 /**
+ * Ajustement à DEUX RÉGIMES : une dérive, plus une rampe.
+ *
+ *     α(t) = a + b·t + s·rampe(t ; début, fin)
+ *
+ * `b` est la dérive que le mouvement de caméra impose à α — présente avant,
+ * pendant et après la transition. `s·rampe` est le fondu. Les trois paramètres
+ * linéaires s'ajustent par moindres carrés pour un couple (début, fin) donné ;
+ * on essaie tous les couples et on garde celui qui minimise l'erreur.
+ *
+ * Aucune pénalité, donc aucun seuil : élargir la rampe force une montée lente
+ * là où les données en montrent une rapide, ce qui AUGMENTE l'erreur. La
+ * largeur se choisit toute seule — vérifié sur un fondu de 5 images, où les
+ * bornes rendues sont identiques à ±0,20, ±0,30, ±0,40 et ±0,60 s.
+ *
+ * `reduction` est la part de variance que la rampe explique EN PLUS de la
+ * dérive seule. C'est elle qui dit s'il y a un fondu du tout : mesuré, 88 à
+ * 99,9 % sur un fondu, 4,5 à 8 % sur un panoramique sans fondu.
+ */
+export function ajusterDeuxRegimes(ts, alphas, { largeurMax = Infinity } = {}) {
+  const n = ts.length;
+  if (n < 5 || alphas.length !== n) return null;
+  const t0 = ts[0];
+
+  // Modèle de référence : la dérive seule, sans rampe.
+  let S11 = 0, S1t = 0, Stt = 0, Y1 = 0, Yt = 0;
+  for (let k = 0; k < n; k++) {
+    const t = ts[k] - t0;
+    S11 += 1; S1t += t; Stt += t * t; Y1 += alphas[k]; Yt += alphas[k] * t;
+  }
+  const D0 = S11 * Stt - S1t * S1t;
+  if (!(Math.abs(D0) > 1e-12)) return null;
+  const a0 = (Y1 * Stt - Yt * S1t) / D0, b0 = (S11 * Yt - S1t * Y1) / D0;
+  let sse0 = 0;
+  for (let k = 0; k < n; k++) {
+    const e = alphas[k] - (a0 + b0 * (ts[k] - t0));
+    sse0 += e * e;
+  }
+
+  let best = null;
+  for (let i = 0; i < n - 1; i++) {
+    for (let j = i + 1; j < n; j++) {
+      if (ts[j] - ts[i] > largeurMax) break;
+      const largeur = ts[j] - ts[i];
+      let s11 = 0, s1t = 0, s1r = 0, stt = 0, str = 0, srr = 0, y1 = 0, yt = 0, yr = 0;
+      for (let k = 0; k < n; k++) {
+        const t = ts[k] - t0;
+        const r = ts[k] <= ts[i] ? 0 : ts[k] >= ts[j] ? 1 : (ts[k] - ts[i]) / largeur;
+        const y = alphas[k];
+        s11 += 1; s1t += t; s1r += r; stt += t * t; str += t * r; srr += r * r;
+        y1 += y; yt += y * t; yr += y * r;
+      }
+      const M = [[s11, s1t, s1r], [s1t, stt, str], [s1r, str, srr]];
+      const Y = [y1, yt, yr];
+      const det = (m) => m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
+        - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+        + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+      const Dt = det(M);
+      if (!(Math.abs(Dt) > 1e-12)) continue;
+      const avec = (c) => M.map((ligne, li) => ligne.map((v, ci) => (ci === c ? Y[li] : v)));
+      const a = det(avec(0)) / Dt, b = det(avec(1)) / Dt, sAmp = det(avec(2)) / Dt;
+      let sse = 0;
+      for (let k = 0; k < n; k++) {
+        const t = ts[k] - t0;
+        const r = ts[k] <= ts[i] ? 0 : ts[k] >= ts[j] ? 1 : (ts[k] - ts[i]) / largeur;
+        const e = alphas[k] - (a + b * t + sAmp * r);
+        sse += e * e;
+      }
+      if (!best || sse < best.sse) best = { i, j, a, b, s: sAmp, sse };
+    }
+  }
+  if (!best) return null;
+  return {
+    ...best,
+    sse0,
+    derive: Number(best.b.toFixed(4)),
+    amplitude: Number(best.s.toFixed(4)),
+    pente: Number((best.s / Math.max(1e-9, ts[best.j] - ts[best.i])).toFixed(3)),
+    reduction: sse0 > 0 ? Number((1 - best.sse / sse0).toFixed(4)) : null,
+  };
+}
+
+/**
  * Étendue d'une transition, dans une fenêtre d'images consécutives.
  *
  * `cadres` : [{ t, image, px }] à la cadence du fichier, du plus ancien au
  * plus récent, encadrant largement le candidat.
  *
- * ── Ce qui ne marche pas, et pourquoi ──────────────────────────────────
- * La première version cherchait les images où α touchait 0 ou 1 à `epsilon`
- * près. Mesuré sur un fondu de 6 images accompagné d'un panoramique, elle
- * rendait 25 images à ±0,20 s, 38 à ±0,30, 50 à ±0,40, 74 à ±0,60 — c'est-à-
- * dire à peu près la largeur de la fenêtre, donc rien.
+ * ── Deux méthodes écartées, et pourquoi ────────────────────────────────
  *
- * La cause : la caméra bouge À L'INTÉRIEUR de chaque plan. Une image encore
- * parfaitement pure diffère déjà de l'image de référence par le seul effet du
- * mouvement, donc son α n'est pas 0. Sur le cas mesuré, α oscille de ±0,12
- * dans le plan pur — deux fois et demie l'`epsilon` le plus généreux. Aucun
- * seuil ABSOLU sur α ne peut donc marquer la frontière.
+ * 1. SEUIL SUR α — chercher les images où α touche 0 ou 1 à `epsilon` près.
+ *    La caméra bouge à l'intérieur de chaque plan : une image encore pure
+ *    diffère déjà de la référence par le seul effet du mouvement, donc son α
+ *    n'est pas 0. Mesuré sur un fondu de 6 images avec panoramique, l'étendue
+ *    rendue valait à peu près la largeur de la fenêtre — 25 · 38 · 50 · 74
+ *    images pour ±0,20 · 0,30 · 0,40 · 0,60 s.
  *
- * Rapprocher les références par contractions successives ne sauve rien : la
- * contamination par le mouvement décide seule du point fixe, qui se trouve où
- * elle passe sous le seuil — sans rapport avec le fondu. Mesuré : 71 images à
- * ±0,60 s au lieu de 74. Cette piste est abandonnée.
+ * 2. FRACTION DE LA MONTÉE TOTALE — le plus court intervalle captant 98 % de
+ *    la montée. Meilleur sur synthétique, mais faux sur la vidéo réelle :
+ *    7 · 22 · 30 · 34 images, parce que la « montée totale » inclut la DÉRIVE.
+ *    Sur la coupure Kerlabo, α passe de 0,013 à 5,333 s à 0,31 à 5,80 s sans
+ *    qu'aucun fondu ait commencé — la dérive à elle seule vaut 0,64 par
+ *    seconde, et la méthode en absorbait l'essentiel dans la montée.
  *
- * ── Ce qui marche ──────────────────────────────────────────────────────
- * Le fondu n'est pas un NIVEAU de α, c'est une MONTÉE de α. Le mouvement, lui,
- * fait osciller α autour de son palier sans le déplacer. On cherche donc le
- * PLUS COURT intervalle qui capte l'essentiel de la montée totale, les deux
- * paliers étant estimés sur un quart de fenêtre de chaque côté — assez large
- * pour que l'oscillation s'y annule.
- *
- * Rien de tout cela ne dépend du choix des références, et c'est vérifiable.
- * Sur trois fondus de durées différentes, avec panoramique, demi-fenêtres de
- * 0,30 / 0,40 / 0,60 s :
- *
- *     vérité 3 images  →  2 · 2 · 2      (bornes exactes)
- *     vérité 6 images  →  5 · 4 · 5
- *     vérité 18 images → 15 · 10 · 13
- *
- * là où la version à seuil rendait 38 · 50 · 74 pour le cas à 6 images. La
- * mesure est redevenue une propriété locale de la coupure.
- *
- * `partMontee` à 0,98 plutôt que 0,90 : viser 90 % de la montée rogne les
- * queues d'un fondu long, et rogner va dans le MAUVAIS sens — on garderait des
- * images encore contaminées. Mesuré, 0,98 ne coûte aucune stabilité.
- *
- * Une demi-fenêtre de 0,20 s reste trop courte pour que les paliers soient
- * estimés proprement, et c'est le seul essai qui s'écarte des autres à chaque
- * durée testée. `verifierStabilite()` est là pour le voir plutôt que le
- * supposer.
+ * ── La méthode retenue ─────────────────────────────────────────────────
+ * On MODÉLISE la dérive au lieu d'essayer de la franchir : `α = a + b·t + s·rampe`.
+ * Le fondu est ce que la rampe explique en plus de la dérive, et sa largeur se
+ * choisit sans aucune pénalité ni seuil (voir `ajusterDeuxRegimes`).
  */
-export function analyserTransition(cadres, { partMontee = 0.98, amplitudeMin = 0.5, fractionMin = 0.5 } = {}) {
-  if (!cadres || cadres.length < 5) return null;
+export function analyserTransition(cadres, { fractionMin = 0.5, largeurMaxRelative = 0.5 } = {}) {
+  if (!cadres || cadres.length < 7) return null;
 
   const iA = 0, iB = cadres.length - 1;
-  const mesures = cadres.map(c => ({
+  const images = cadres.map(c => ({
     t: c.t, image: c.image,
     ...(estimerMelange(cadres[iA].px, cadres[iB].px, c.px, { fractionMin }) || {}),
     contraste: contraste(c.px),
   }));
-  if (mesures.some(m => m.alpha == null)) return null;
+  if (images.some(m => m.alpha == null)) return null;
 
+  const ts = images.map(m => m.t);
+  const alphas = images.map(m => m.alpha);
+  const span = ts[ts.length - 1] - ts[0];
+  const fit = ajusterDeuxRegimes(ts, alphas, { largeurMax: span * largeurMaxRelative });
+  if (!fit) return null;
+
+  const av = fit.i, ap = fit.j;
+  const entre = images.slice(av + 1, ap);
+  for (let k = 0; k < images.length; k++) {
+    images[k].classe = k <= av ? 'avant' : k >= ap ? 'apres' : 'transition';
+  }
   const med = (arr) => {
     if (!arr.length) return null;
     const t = [...arr].sort((x, y) => x - y);
-    return t[Math.floor(t.length / 2)];
+    return Number(t[Math.floor(t.length / 2)].toFixed(4));
   };
-  const n = mesures.length;
-  const quart = Math.max(3, Math.floor(n / 4));
-  const alphas = mesures.map(m => m.alpha);
-  const palierAvant = med(alphas.slice(0, quart));
-  const palierApres = med(alphas.slice(n - quart));
-  const amplitude = palierApres - palierAvant;
-
-  // Le plus court intervalle qui capte `partMontee` de la montée. Prendre le
-  // PLUS COURT est ce qui rend la mesure insensible à l'oscillation : un
-  // intervalle plus large capterait la même montée, mais en incluant des
-  // images parfaitement propres.
-  const cible = Math.abs(amplitude) * partMontee;
-  const signe = amplitude >= 0 ? 1 : -1;
-  let av = -1, ap = -1;
-  if (Math.abs(amplitude) >= amplitudeMin) {
-    for (let i = 0; i < n; i++) {
-      for (let j = i + 1; j < n; j++) {
-        if (signe * (alphas[j] - alphas[i]) >= cible) {
-          if (av < 0 || j - i < ap - av) { av = i; ap = j; }
-          break;
-        }
-      }
-    }
-  }
-
-  const classer = (i) => (av < 0 ? 'indetermine' : i <= av ? 'avant' : i >= ap ? 'apres' : 'transition');
-  const images = mesures.map((m, i) => ({ ...m, classe: classer(i) }));
-  const entre = av >= 0 && ap > av ? images.slice(av + 1, ap) : [];
-  const medArr = (arr) => (arr.length ? Number(med(arr).toFixed(4)) : null);
-
-  // Un vrai fondu progresse : α ne redescend pas. Mesuré, pas supposé.
-  let croissants = 0;
-  for (let i = av + 1; av >= 0 && i <= ap; i++) {
-    if (signe * (alphas[i] - alphas[i - 1]) >= -0.02) croissants += 1;
-  }
 
   return {
-    reglages: { partMontee, amplitudeMin, fractionMin },
-    references: { avant: cadres[iA].image, apres: cadres[iB].image, amplitude: mesures[iA]?.amplitude ?? null },
-    // Les deux paliers et l'écart entre eux : si l'écart est faible, la fenêtre
-    // n'enjambe pas deux plans et rien de ce qui suit n'a de sens.
-    paliers: {
-      avant: Number(palierAvant.toFixed(4)),
-      apres: Number(palierApres.toFixed(4)),
-      montee: Number(amplitude.toFixed(4)),
-    },
+    reglages: { fractionMin, largeurMaxRelative },
+    references: { avant: cadres[iA].image, apres: cadres[iB].image, amplitude: images[iA].amplitude },
     images,
-    contrasteMin: images.length ? Math.min(...images.map(x => x.contraste ?? Infinity)) : null,
-    contrastePlans: [mesures[iA].contraste, mesures[iB].contraste],
-    // Les deux images que la réattribution doit utiliser.
-    derniereImagePropreAvant: av >= 0 ? images[av] : null,
-    premiereImagePropreApres: ap >= 0 ? images[ap] : null,
+    // Ce que le modèle a séparé : la dérive due au mouvement, et le fondu.
+    modele: {
+      derive: fit.derive,               // en α par seconde
+      amplitude: fit.amplitude,         // hauteur de la rampe
+      pente: fit.pente,                 // en α par seconde, pendant le fondu
+      // Part de variance que la RAMPE explique en plus de la dérive seule.
+      // C'est le seul chiffre qui dit s'il y a un fondu — mesuré : 88 à 99,9 %
+      // sur un fondu, 4,5 à 8 % sur un panoramique sans fondu. Aucun seuil
+      // n'est figé ici : le chiffre est publié, la décision se prend sur un
+      // corpus de vraies coupures.
+      reduction: fit.reduction,
+      // Combien de fois la pente du fondu dépasse la dérive du plan.
+      rapportPente: fit.derive !== 0 ? Number(Math.abs(fit.pente / fit.derive).toFixed(2)) : null,
+    },
+    contrasteMin: Math.min(...images.map(x => x.contraste ?? Infinity)),
+    contrastePlans: [images[iA].contraste, images[iB].contraste],
+    derniereImagePropreAvant: images[av],
+    premiereImagePropreApres: images[ap],
     imagesDeTransition: entre.length,
-    // Verdict sans seuil réglable : une coupure franche se traverse d'une image
-    // à la suivante, un fondu s'étale.
-    nature: av < 0 ? 'indéterminée'
-      : entre.length === 0 ? 'coupure franche' : `transition étalée sur ${entre.length} image(s)`,
-    duree: av >= 0 && ap > av ? Number((images[ap].t - images[av].t).toFixed(4)) : null,
-    residuMedianEntre: medArr(entre.map(x => x.residu)),
-    dispersionMedianeEntre: medArr(entre.map(x => x.dispersion)),
-    monotone: av >= 0 && ap > av ? Number((croissants / (ap - av)).toFixed(2)) : null,
-    // La fenêtre doit enjamber deux paliers ET laisser de la marge des deux
-    // côtés : sinon elle commence ou finit à l'intérieur de la transition.
-    fenetreSuffisante: Math.abs(amplitude) >= amplitudeMin && av > 0 && ap < n - 1,
-    pas: n > 1 ? Number((mesures[1].t - mesures[0].t).toFixed(5)) : null,
+    nature: entre.length === 0 ? 'coupure franche' : `transition étalée sur ${entre.length} image(s)`,
+    duree: Number((ts[ap] - ts[av]).toFixed(4)),
+    residuMedianEntre: med(entre.map(x => x.residu)),
+    dispersionMedianeEntre: med(entre.map(x => x.dispersion)),
+    // La transition doit tenir DANS la fenêtre, avec de quoi estimer la dérive
+    // de part et d'autre. Deux images de marge au minimum : sans elles, la
+    // pente du plan n'est pas mesurable et la rampe absorbe tout.
+    fenetreSuffisante: av >= 2 && ap <= images.length - 3
+      && (ts[ap] - ts[av]) < span * largeurMaxRelative - 1e-9,
+    pas: Number((ts[1] - ts[0]).toFixed(5)),
   };
 }
 
 /**
- * Même mesure à plusieurs largeurs de fenêtre, pour vérifier qu'elle ne dépend
- * pas de la fenêtre.
+ * Même mesure à plusieurs largeurs de fenêtre — et REFUS de conclure quand
+ * elles ne s'accordent pas.
  *
- * `parDemiFenetre` : { 0.2: [cadres…], 0.3: […] } — les cadres déjà lus, une
- * série par demi-fenêtre. La fonction ne lit rien elle-même.
+ * Une durée de transition est une propriété locale de la coupure. Si les
+ * fenêtres divergent, la mesure ne décrit pas la coupure mais l'analyse, et
+ * aucune borne ne doit en sortir : c'est le sens de `fiable`.
  *
- * L'écart-type des bornes entre largeurs est le chiffre à regarder : c'est lui
- * qui dit si l'étendue mesurée est une propriété de la coupure ou un artefact
- * de l'analyse.
+ * `toleranceImages` n'est pas une constante physique mais une EXIGENCE : pour
+ * découper le suivi à l'image près, les fenêtres doivent s'accorder à ce
+ * nombre d'images près. À défaut, la mesure est publiée mais déclarée non
+ * fiable, et `bornes` vaut `null`.
  */
-export function verifierStabilite(parDemiFenetre, options = {}) {
+export function verifierStabilite(parDemiFenetre, { toleranceImages = 2, ...options } = {}) {
   const essais = [];
   for (const [demi, cadres] of Object.entries(parDemiFenetre)) {
     const r = analyserTransition(cadres, options);
@@ -283,33 +324,46 @@ export function verifierStabilite(parDemiFenetre, options = {}) {
       duree: r?.duree ?? null,
       avant: r?.derniereImagePropreAvant?.t ?? null,
       apres: r?.premiereImagePropreApres?.t ?? null,
-      montee: r?.paliers?.montee ?? null,
+      reduction: r?.modele?.reduction ?? null,
+      derive: r?.modele?.derive ?? null,
+      pente: r?.modele?.pente ?? null,
       suffisante: r?.fenetreSuffisante ?? false,
+      pas: r?.pas ?? null,
     });
   }
+  essais.sort((a, b) => a.demiFenetre - b.demiFenetre);
   const retenus = essais.filter(e => e.suffisante && e.avant != null);
-  const ecartType = (vals) => {
-    if (vals.length < 2) return null;
-    const m = vals.reduce((t, v) => t + v, 0) / vals.length;
-    return Number(Math.sqrt(vals.reduce((t, v) => t + (v - m) ** 2, 0) / vals.length).toFixed(4));
-  };
   const etendue = (vals) => (vals.length ? Number((Math.max(...vals) - Math.min(...vals)).toFixed(4)) : null);
+  const dispersionAvant = etendue(retenus.map(e => e.avant));
+  const dispersionApres = etendue(retenus.map(e => e.apres));
+  const pas = retenus.find(e => e.pas)?.pas ?? null;
+  const tolerance = pas ? toleranceImages * pas : null;
+
+  const raisons = [];
+  if (retenus.length < 2) raisons.push('moins de deux fenêtres exploitables');
+  if (tolerance != null && dispersionAvant != null && dispersionAvant > tolerance + 1e-9) {
+    raisons.push(`bornes AVANT dispersées de ${Math.round(dispersionAvant * 1000)} ms`);
+  }
+  if (tolerance != null && dispersionApres != null && dispersionApres > tolerance + 1e-9) {
+    raisons.push(`bornes APRÈS dispersées de ${Math.round(dispersionApres * 1000)} ms`);
+  }
+  const fiable = raisons.length === 0;
+  const median = (vals) => {
+    const t = [...vals].sort((a, b) => a - b);
+    return t[Math.floor(t.length / 2)];
+  };
+
   return {
     essais,
     retenus: retenus.length,
-    ecartTypeAvant: ecartType(retenus.map(e => e.avant)),
-    ecartTypeApres: ecartType(retenus.map(e => e.apres)),
-    dispersionAvant: etendue(retenus.map(e => e.avant)),
-    dispersionApres: etendue(retenus.map(e => e.apres)),
-    dispersionDuree: etendue(retenus.map(e => e.duree)),
-    // Bornes conseillées : la MÉDIANE des essais retenus, plus robuste qu'un
-    // essai unique, et bornée par les images réellement lues.
-    avantRetenu: retenus.length ? med2(retenus.map(e => e.avant)) : null,
-    apresRetenu: retenus.length ? med2(retenus.map(e => e.apres)) : null,
+    dispersionAvant,
+    dispersionApres,
+    toleranceImages,
+    tolerance,
+    fiable,
+    raisons,
+    // Rien ne sort tant que les fenêtres ne s'accordent pas : une borne fausse
+    // découperait le suivi au mauvais endroit, ce qui est pire que pas de borne.
+    bornes: fiable ? { avant: median(retenus.map(e => e.avant)), apres: median(retenus.map(e => e.apres)) } : null,
   };
-}
-
-function med2(arr) {
-  const t = [...arr].sort((a, b) => a - b);
-  return t[Math.floor(t.length / 2)];
 }

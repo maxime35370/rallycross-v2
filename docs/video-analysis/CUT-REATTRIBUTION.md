@@ -146,27 +146,54 @@ Rapprocher les références de la transition par contractions successives, essay
 également, ne sauve rien : c'est la contamination par le mouvement qui décide
 seule du point fixe, sans rapport avec le fondu (71 images au lieu de 74).
 
-**La correction.** Le fondu n'est pas un *niveau* de α, c'est une *montée* de α ;
-le mouvement, lui, fait osciller α autour de son palier sans le déplacer. On
-retient donc le plus court intervalle qui capte 98 % de la montée totale, les
-paliers étant estimés sur un quart de fenêtre de chaque côté.
+**Deuxième tentative, elle aussi fausse.** « Le plus court intervalle captant
+98 % de la montée totale » : correct sur synthétique, faux sur la vidéo réelle
+— **7 · 22 · 30 · 34 images**. La « montée totale » inclut la dérive. Sur la
+coupure Kerlabo, α passe de 0,013 à 5,333 s à 0,31 à 5,80 s **sans qu'aucun
+fondu ait commencé** : 0,64 par seconde de dérive pure, que la méthode absorbait.
 
-| | seuil sur α | forme de la montée |
-|---|---|---|
-| vérité 3 images | — | **2 · 2 · 2** |
-| vérité 6 images | 38 · 50 · 74 | **5 · 4 · 5** |
-| vérité 18 images | — | **15 · 10 · 13** |
+**La correction : modéliser la dérive au lieu d'essayer de la franchir.**
 
-*(demi-fenêtres 0,30 / 0,40 / 0,60 s)*
+```
+α(t) = a + b·t + s · rampe(t ; début, fin)
+```
 
-`verifierStabilite()` refait la mesure aux quatre largeurs et publie la
-**dispersion des bornes**. Les bornes retenues sont la **médiane** des fenêtres
-exploitables, jamais un essai unique. Sur la vidéo témoin encodée, la borne
-avant est identique aux quatre largeurs.
+`b` est la dérive imposée par le mouvement de caméra — avant, pendant et après.
+`s·rampe` est le fondu. On essaie tous les couples (début, fin) et on garde
+celui qui minimise l'erreur : **aucune pénalité, donc aucun seuil**, car élargir
+la rampe force une montée lente là où les données en montrent une rapide, ce qui
+augmente l'erreur.
 
-> Une demi-fenêtre de **0,20 s est trop courte** pour estimer les paliers, et
-> c'est l'essai qui s'écarte le plus souvent. Ce n'est pas elle qu'il faut
-> croire — c'est la concordance des fenêtres larges.
+Mesuré sur une série α calquée sur la coupure réelle — dérive 0,64/s, fondu de
+0,08 s :
+
+| demi-fenêtre | ± 0,20 | ± 0,30 | ± 0,40 | ± 0,60 |
+|---|---|---|---|---|
+| bornes trouvées | 5,8167 → 5,9000 | idem | idem | idem |
+| dérive `b` reconstituée | 0,637 /s | 0,652 | 0,634 | 0,641 |
+
+**Identiques aux quatre fenêtres**, et la dérive est retrouvée pour ce qu'elle
+est. Sur la vidéo témoin encodée : 9 images aux quatre fenêtres, **dispersion
+0 ms sur les deux bornes**.
+
+**Le chiffre qui dit s'il y a un fondu** est la part de variance que la rampe
+explique en plus de la dérive seule : **88 à 99,9 %** sur un fondu, **4,5 à 8 %**
+sur un panoramique sans fondu, **98 %** sur une coupure franche (avec 0 image
+intermédiaire). Aucun seuil n'est figé dessus tant que plusieurs vraies coupures
+n'ont pas été mesurées.
+
+> **La fenêtre doit être plusieurs fois plus large que la transition** — au
+> moins trois fois. Sinon il ne reste pas assez de plan de part et d'autre pour
+> estimer la dérive, et la fenêtre est déclarée non exploitable au lieu d'être
+> devinée.
+
+### Refus de conclure
+
+Quand les fenêtres ne s'accordent pas, **aucune borne n'est produite** :
+`fiable: false`, `bornes: null`, raisons écrites, et `bornesPropres` ne contient
+que les ruptures concordantes. Le cas signalé — quatre fenêtres marquées
+exploitables, bornes dispersées de 450 ms, et des bornes produites quand même —
+ne peut plus se reproduire.
 
 `lib/transition.mjs` mesure cette étendue. Un fondu étant une opération exacte,
 `I = (1−α)·A + α·B`, chaque canal de chaque pixel donne son propre α et il

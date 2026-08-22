@@ -49,6 +49,7 @@
     <label>Plancher <input type="number" id="minAbsolu" step="0.01" min="0" value="0.06"></label>
     <label><input type="checkbox" id="affiner" checked> dater à l'image près autour de chaque coupure</label>
     <label>Fenêtres de transition ± <input type="text" id="fenTrans" style="width:130px" value="0.20,0.30,0.40,0.60"> s</label>
+    <label>Concordance exigée <input type="number" id="tolImages" step="1" min="0" max="20" value="2"> image(s)</label>
     <button id="lancer" disabled>Scanner les plans</button>
     <button id="exporter" disabled>Exporter le JSON</button>
     <progress id="prog" value="0" max="1" style="display:none"></progress>
@@ -75,6 +76,11 @@
     sont donc les images <strong>propres</strong> de part et d'autre — celles montrées ci-dessous.
   </p>
   <div id="paires"></div>
+</div>
+
+<div class="panneau" id="panneauCorpus" style="display:none">
+  <h2>Corpus des ruptures — de quoi choisir les critères sur des mesures, pas sur un exemple</h2>
+  <div id="corpus"></div>
 </div>
 
 <div class="panneau">
@@ -225,22 +231,20 @@ $('lancer').addEventListener('click', async () => {
       // ne mesure rien, et c'est le tableau de stabilité qui le dit.
       const series = {};
       for (const demi of demis) series[demi] = cadres.filter(x => Math.abs(x.t - c.t) <= demi + 1e-9);
-      stabilite = verifierStabilite(series);
+      stabilite = verifierStabilite(series, { toleranceImages: Number($('tolImages').value) });
       transition = analyserTransition(series[demiMax]);
       // Une transition étalée ne se traverse pas d'une image à l'autre : les
       // images à montrer, et à donner plus tard à la réattribution, sont les
       // deux images PROPRES, pas les deux images voisines du pic.
-      // Les bornes retenues sont la MÉDIANE des fenêtres exploitables, pas
-      // celles d'un essai unique.
-      if (stabilite?.avantRetenu != null && stabilite?.apresRetenu != null) {
-        fin.avant = stabilite.avantRetenu;
-        fin.t = stabilite.apresRetenu;
-        fin.precision = `${Math.round((fin.t - fin.avant) * fps) - 1} image(s) de transition écartée(s)`
-          + ` · médiane de ${stabilite.retenus} fenêtre(s)`;
-      } else if (transition?.derniereImagePropreAvant && transition?.premiereImagePropreApres) {
-        fin.avant = transition.derniereImagePropreAvant.t;
-        fin.t = transition.premiereImagePropreApres.t;
-        fin.precision = `${transition.imagesDeTransition} image(s) — une seule fenêtre exploitable`;
+      // Rien ne sort si les fenêtres ne s'accordent pas. Une borne fausse
+      // découpe le suivi au mauvais endroit — pire que pas de borne.
+      if (stabilite?.fiable) {
+        fin.avant = stabilite.bornes.avant;
+        fin.t = stabilite.bornes.apres;
+        fin.precision = `${Math.round((fin.t - fin.avant) * fps) - 1} image(s) écartée(s)`
+          + ` · médiane de ${stabilite.retenus} fenêtres concordantes`;
+      } else {
+        fin.precision = `MESURE NON FIABLE — ${stabilite?.raisons.join(' ; ') || 'aucune fenêtre exploitable'}`;
       }
     }
     coupures.push({
@@ -272,13 +276,21 @@ $('lancer').addEventListener('click', async () => {
     coupures: coupures.map(({ vignetteAvant, vignetteApres, ...reste }) => reste),
     // Deux lignes prêtes à l'emploi pour la suite : les instants propres de
     // part et d'autre de chaque rupture, fondu écarté.
-    bornesPropres: coupures.map(c => ({
+    // Uniquement les ruptures dont les fenêtres s'accordent. Les autres
+    // figurent dans `coupures`, avec la raison du refus — elles ne doivent pas
+    // servir à découper le suivi.
+    bornesPropres: coupures.filter(c => c.stabilite?.fiable).map(c => ({
       rupture: c.tGrille,
       avant: c.avant, apres: c.t,
       imagesDeTransition: Math.max(0, Math.round((c.t - c.avant) * fps) - 1),
       dureeTransition: Number((c.t - c.avant).toFixed(4)),
-      fenetresConcordantes: c.stabilite?.retenus ?? null,
-      dispersionBornes: c.stabilite ? [c.stabilite.dispersionAvant, c.stabilite.dispersionApres] : null,
+      fenetresConcordantes: c.stabilite.retenus,
+      dispersionBornes: [c.stabilite.dispersionAvant, c.stabilite.dispersionApres],
+    })),
+    nonFiables: coupures.filter(c => !c.stabilite?.fiable).map(c => ({
+      rupture: c.tGrille,
+      raisons: c.stabilite?.raisons ?? ['aucune fenêtre exploitable'],
+      essais: c.stabilite?.essais ?? [],
     })),
     distances: brut.distances,
     createdAt: new Date().toISOString(),
@@ -288,6 +300,7 @@ $('lancer').addEventListener('click', async () => {
   dessiner(brut, coupures);
   remplirTableau(brut, coupures);
   montrerPaires(coupures);
+  montrerCorpus(coupures);
 });
 
 $('exporter').addEventListener('click', () => {
@@ -346,6 +359,35 @@ function remplirTableau({ distances, reglages }, coupures) {
       </tr>`).join('');
 }
 
+/** Une ligne par rupture : le tableau qui servira à décider des critères. */
+function montrerCorpus(coupures) {
+  $('panneauCorpus').style.display = coupures.length ? '' : 'none';
+  if (!coupures.length) return;
+  $('corpus').innerHTML = `<table>
+    <tr><th class="num">t</th><th class="num">rapport</th><th>nature</th><th class="num">images</th>
+        <th class="num">durée</th><th class="num">dispersion av/ap</th>
+        <th class="num">variance expliquée</th><th class="num">dérive</th><th class="num">pente</th><th>fiable</th></tr>
+    ${coupures.map(c => {
+      const st = c.stabilite, tr = c.transition;
+      const ret = st?.essais.filter(e => e.suffisante) ?? [];
+      const moy = (f) => (ret.length ? (ret.reduce((t, e) => t + (f(e) ?? 0), 0) / ret.length) : null);
+      return `<tr${st?.fiable ? '' : ' style="background:#ffe9e6"'}>
+        <td class="num">${c.tGrille}</td><td class="num">×${c.rapport}</td>
+        <td>${tr?.nature ?? '—'}</td>
+        <td class="num">${st?.fiable ? Math.round((c.t - c.avant) * fps) - 1 : (tr?.imagesDeTransition ?? '—')}</td>
+        <td class="num">${st?.fiable ? `${((c.t - c.avant) * 1000).toFixed(0)} ms` : '—'}</td>
+        <td class="num">${st ? `${(st.dispersionAvant * 1000).toFixed(0)} / ${(st.dispersionApres * 1000).toFixed(0)} ms` : '—'}</td>
+        <td class="num">${moy(e => e.reduction) == null ? '—' : `${(100 * moy(e => e.reduction)).toFixed(0)} %`}</td>
+        <td class="num">${moy(e => e.derive) == null ? '—' : moy(e => e.derive).toFixed(2)}</td>
+        <td class="num">${moy(e => e.pente) == null ? '—' : moy(e => e.pente).toFixed(2)}</td>
+        <td>${st?.fiable ? 'oui' : 'non'}</td></tr>`;
+    }).join('')}
+  </table>
+  <p class="sub" style="margin-top:6px">Balaye tout l'extrait (fin = durée de l'extrait) pour remplir ce
+  tableau : c'est sur plusieurs vraies coupures, pas sur une seule, qu'on pourra décider quelle variance
+  expliquée sépare un fondu d'un panoramique, et quelle concordance exiger.</p>`;
+}
+
 function montrerPaires(coupures) {
   $('panneauPaires').style.display = coupures.length ? '' : 'none';
   $('paires').innerHTML = coupures.map(c => {
@@ -358,8 +400,11 @@ function montrerPaires(coupures) {
       <tr><td><strong>nature</strong></td><td class="num"><strong>${tr.nature}</strong></td></tr>
       <tr><td>durée de la zone de transition</td>
           <td class="num">${tr.duree == null ? '—' : `${(tr.duree * 1000).toFixed(0)} ms · ${tr.imagesDeTransition} image(s)`}</td></tr>
-      <tr><td>paliers de α — avant → après</td>
-          <td class="num">${tr.paliers.avant} → ${tr.paliers.apres} <span class="sub">(montée ${tr.paliers.montee})</span></td></tr>
+      <tr><td>dérive de α (mouvement de caméra)</td>
+          <td class="num">${tr.modele.derive} /s <span class="sub">— pente du fondu ${tr.modele.pente} /s, soit ×${tr.modele.rapportPente}</span></td></tr>
+      <tr><td>variance expliquée par la rampe</td>
+          <td class="num">${tr.modele.reduction == null ? '—' : `${(100 * tr.modele.reduction).toFixed(1)} %`}
+          <span class="sub">au-delà de la dérive seule</span></td></tr>
       <tr><td><strong>dernière image propre AVANT</strong></td>
           <td class="num"><strong>${tr.derniereImagePropreAvant ? `image ${tr.derniereImagePropreAvant.image} · t = ${tr.derniereImagePropreAvant.t} s` : '—'}</strong></td></tr>
       <tr><td><strong>première image propre APRÈS</strong></td>
@@ -374,24 +419,35 @@ function montrerPaires(coupures) {
         La fenêtre ne contient pas d'image pure des deux côtés : élargis-la avant de conclure.</td></tr>`}
     </table>
     ${st ? `<h4 style="font-size:.85rem;margin:10px 0 3px">Stabilité selon la fenêtre d'analyse</h4>
-    <table style="max-width:720px">
+    <table style="max-width:820px">
       <tr><th class="num">demi-fenêtre</th><th class="num">images</th><th class="num">durée</th>
-          <th class="num">borne avant</th><th class="num">borne après</th><th class="num">montée de α</th><th>retenue</th></tr>
+          <th class="num">borne avant</th><th class="num">borne après</th>
+          <th class="num">dérive α/s</th><th class="num">pente fondu</th><th class="num">variance expliquée</th><th>exploitable</th></tr>
       ${st.essais.map(e => `<tr${e.suffisante ? '' : ' class="sub"'}>
         <td class="num">± ${e.demiFenetre} s</td><td class="num">${e.images ?? '—'}</td>
         <td class="num">${e.duree == null ? '—' : `${(e.duree * 1000).toFixed(0)} ms`}</td>
         <td class="num">${e.avant ?? '—'}</td><td class="num">${e.apres ?? '—'}</td>
-        <td class="num">${e.montee ?? '—'}</td>
-        <td>${e.suffisante ? 'oui' : 'non — la fenêtre n\'enjambe pas deux paliers'}</td></tr>`).join('')}
-      <tr><td colspan="3"><strong>dispersion des bornes entre fenêtres</strong></td>
+        <td class="num">${e.derive ?? '—'}</td><td class="num">${e.pente ?? '—'}</td>
+        <td class="num">${e.reduction == null ? '—' : `${(100 * e.reduction).toFixed(0)} %`}</td>
+        <td>${e.suffisante ? 'oui' : 'non — fenêtre trop étroite pour cette transition'}</td></tr>`).join('')}
+      <tr><td colspan="3"><strong>dispersion des bornes</strong></td>
           <td class="num"><strong>${st.dispersionAvant == null ? '—' : `${(st.dispersionAvant * 1000).toFixed(0)} ms`}</strong></td>
           <td class="num"><strong>${st.dispersionApres == null ? '—' : `${(st.dispersionApres * 1000).toFixed(0)} ms`}</strong></td>
-          <td colspan="2" class="sub">une durée de transition est une propriété locale de la coupure :
-            si ces deux chiffres sont grands, la mesure ne veut rien dire</td></tr>
+          <td colspan="4" class="sub">concordance exigée : ${st.toleranceImages} image(s)
+            ${st.tolerance == null ? '' : `(${(st.tolerance * 1000).toFixed(0)} ms)`}</td></tr>
     </table>
-    <p class="sub">Bornes retenues : la <strong>médiane</strong> des ${st.retenus} fenêtre(s) exploitable(s),
-    pas le résultat d'un essai unique. Une demi-fenêtre de 0,20 s est en général trop courte pour que les
-    paliers soient estimés proprement — c'est l'essai qui s'écarte le plus souvent des autres.</p>` : ''}
+    <p class="${st.fiable ? 'sub' : ''}" style="margin:6px 0 0${st.fiable ? '' : ';background:#ffe9e6;padding:6px;border-radius:4px'}">
+      ${st.fiable
+        ? `<strong>Mesure fiable</strong> — bornes retenues : médiane de ${st.retenus} fenêtres concordantes.`
+        : `<strong>MESURE NON FIABLE — aucune borne produite.</strong> ${st.raisons.join(' ; ')}.
+           Une durée de transition est une propriété locale de la coupure : si elle suit la fenêtre
+           d'analyse, elle décrit l'analyse et non la coupure, et découperait le suivi au mauvais endroit.`}
+    </p>
+    <p class="sub">La <strong>dérive</strong> est la pente que le mouvement de caméra impose à α, hors de
+    tout fondu ; la <strong>pente du fondu</strong> est celle de la rampe ajustée en plus. La
+    <strong>variance expliquée</strong> est ce que la rampe apporte au-delà de la dérive seule — c'est
+    elle qui dit s'il y a un fondu, et aucun seuil n'est figé dessus tant qu'on n'a pas mesuré
+    plusieurs vraies coupures.</p>` : ''}
     <details style="margin:6px 0"><summary class="sub">α et résidu, image par image</summary>
       <div class="defile"><table>
         <tr><th class="num">image</th><th class="num">t</th><th class="num">α</th><th class="num">dispersion</th><th class="num">résidu</th><th class="num">contraste</th><th>classe</th></tr>

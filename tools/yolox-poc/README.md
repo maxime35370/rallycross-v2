@@ -473,37 +473,55 @@ estimateurs plus savants ont été essayés et mesurés avant celui-là :
 | médiane des projections par zones | juste tant que le mouvement occupe peu de zones, **instable** dès qu'il en occupe la moitié |
 | **médiane par canal** | la rampe **exacte** (0 · 0,1 · 0,2 … 1), identique quelle que soit la fenêtre |
 
-#### Les bornes viennent de la FORME de α, pas de son niveau
+#### Les bornes viennent d'un modèle à DEUX RÉGIMES
 
-Chercher les images où α touche 0 ou 1 à `epsilon` près **ne marche pas**, et
-l'erreur est grossière. La caméra bouge à l'intérieur de chaque plan : une image
-encore parfaitement pure diffère déjà de la référence par le seul effet du
-mouvement, donc son α n'est pas 0. Mesuré sur un fondu de 6 images avec
-panoramique, α oscille de **±0,12** dans le plan pur, et l'étendue rendue vaut à
-peu près la largeur de la fenêtre :
+Deux méthodes ont été écrites, mesurées, et abandonnées :
 
-| demi-fenêtre | seuil sur α | **forme de la montée** |
-|---|---|---|
-| ± 0,20 s | 25 images | 10 |
-| ± 0,30 s | 38 images | **5** |
-| ± 0,40 s | 50 images | **3** |
-| ± 0,60 s | 74 images | **4** |
+| Méthode | Étendue rendue pour la même coupure |
+|---|---|
+| seuil sur α (`α ≈ 0` ou `α ≈ 1` à ε près) | 25 · 38 · 50 · 74 images *(synthétique, vérité 6)* |
+| plus court intervalle captant 98 % de la montée totale | 7 · 22 · 30 · 34 images *(vidéo réelle)* |
+| **modèle dérive + rampe** | **identiques à toutes les fenêtres** |
 
-*(vérité : 6 images)*
+La seconde échoue parce que la « montée totale » inclut la **dérive** que le
+mouvement de caméra impose à α. Sur la coupure Kerlabo, α passe de 0,013 à
+5,333 s à 0,31 à 5,80 s **sans qu'aucun fondu ait commencé** : la dérive vaut à
+elle seule 0,64 par seconde, et la méthode en absorbait l'essentiel.
 
-Le fondu n'est pas un **niveau** de α, c'est une **montée** de α. On retient donc
-le plus court intervalle qui capte 98 % de la montée totale, les deux paliers
-étant estimés sur un quart de fenêtre de chaque côté — assez large pour que
-l'oscillation s'y annule. Rapprocher les références par contractions
-successives, essayé aussi, ne sauve rien : c'est la contamination par le
-mouvement qui décide seule du point fixe.
+On modélise donc la dérive au lieu d'essayer de la franchir :
+
+```
+α(t) = a + b·t + s · rampe(t ; début, fin)
+```
+
+`b` est la dérive — présente avant, pendant et après. `s·rampe` est le fondu. On
+essaie tous les couples (début, fin) et on garde celui qui minimise l'erreur.
+**Aucune pénalité, donc aucun seuil** : élargir la rampe force une montée lente
+là où les données en montrent une rapide, ce qui *augmente* l'erreur — la
+largeur se choisit toute seule.
+
+`reduction` est la part de variance que la rampe explique **en plus de la dérive
+seule**. C'est elle qui dit s'il y a un fondu du tout : mesuré **88 à 99,9 %**
+sur un fondu, **4,5 à 8 %** sur un panoramique sans fondu. Aucun seuil n'est figé
+dessus — le chiffre est publié, et la décision attend un corpus de vraies
+coupures.
+
+> **La fenêtre d'analyse doit être plusieurs fois plus large que la
+> transition** — au moins trois fois. Sinon il ne reste pas assez de plan de
+> part et d'autre pour estimer la dérive, et la fenêtre est déclarée
+> non exploitable plutôt que devinée.
+
+#### Refus de conclure
+
+Quand les fenêtres ne s'accordent pas, **aucune borne n'est produite** :
+`fiable: false`, `bornes: null`, et les raisons sont écrites. Une borne fausse
+découpe le suivi au mauvais endroit — pire que pas de borne. La concordance
+exigée est un paramètre affiché (2 images par défaut), présenté comme une
+exigence du produit et non comme une constante physique.
 
 `verifierStabilite()` refait la mesure à plusieurs largeurs et publie la
 **dispersion des bornes** — le chiffre qui dit si l'étendue est une propriété de
-la coupure ou un artefact de l'analyse. Les bornes retenues sont la médiane des
-fenêtres exploitables, jamais le résultat d'un essai unique. Une demi-fenêtre de
-0,20 s est en général trop courte pour estimer les paliers, et c'est l'essai qui
-s'écarte le plus souvent des autres.
+la coupure ou un artefact de l'analyse.
 
 Le verdict « coupure franche ou transition étalée » ne dépend d'**aucun seuil
 réglable** : il ne regarde que le nombre d'images intermédiaires, et un

@@ -9,7 +9,7 @@
 
 import { describe, it, expect } from 'vitest';
 import {
-  estimerMelange, contraste, analyserTransition, verifierStabilite,
+  estimerMelange, contraste, analyserTransition, verifierStabilite, ajusterDeuxRegimes,
 } from '../tools/yolox-poc/lib/transition.mjs';
 
 const L = 64, H = 48;
@@ -99,7 +99,7 @@ describe('projection sur le segment entre deux plans', () => {
 
 describe('étendue de la transition', () => {
   /** Fenêtre : `avant` images de A, `fondu` images de mélange, `apres` de B. */
-  const fenetre = ({ avant = 6, fondu = 8, apres = 6, pas = 1 / 25 } = {}) => {
+  const fenetre = ({ avant = 8, fondu = 8, apres = 8, pas = 1 / 25 } = {}) => {
     const cadres = [];
     let k = 0;
     const pousser = (px) => cadres.push({ t: Number((k * pas).toFixed(4)), image: k++, px });
@@ -110,9 +110,9 @@ describe('étendue de la transition', () => {
   };
 
   it('donne la dernière image propre avant et la première après', () => {
-    const r = analyserTransition(fenetre({ avant: 6, fondu: 8, apres: 6 }));
-    expect(r.derniereImagePropreAvant.image).toBe(5);
-    expect(r.premiereImagePropreApres.image).toBe(14);
+    const r = analyserTransition(fenetre({ avant: 8, fondu: 8, apres: 8 }));
+    expect(r.derniereImagePropreAvant.image).toBe(7);
+    expect(r.premiereImagePropreApres.image).toBe(16);
     expect(r.imagesDeTransition).toBe(8);
     expect(r.duree).toBeCloseTo(9 / 25, 4);
   });
@@ -127,7 +127,6 @@ describe('étendue de la transition', () => {
     const r = analyserTransition(fenetre());
     expect(r.residuMedianEntre).toBeLessThan(0.1);
     expect(r.images.every(x => x.dispersion != null)).toBe(true);
-    expect(r.monotone).toBe(1);
     expect(r.images.filter(x => x.classe === 'transition')).toHaveLength(8);
   });
 
@@ -142,12 +141,15 @@ describe('étendue de la transition', () => {
     expect(r.imagesDeTransition).toBeLessThanOrEqual(2);
   });
 
-  it('signale une fenêtre trop courte au lieu de deviner', () => {
-    // La fenêtre commence à l'intérieur du fondu : rien n'est concluant.
-    const cadres = [];
-    for (let i = 1; i <= 10; i++) cadres.push({ t: i / 25, image: i, px: melanger(PLAN_A, PLAN_B, i / 11) });
-    const r = analyserTransition(cadres);
-    expect(r.fenetreSuffisante).toBe(false);
+  it('n\'explique rien de plus qu\'une dérive quand la fenêtre est entièrement dans le fondu', () => {
+    // Une fenêtre prise à l'intérieur d'un fondu est une DROITE : le modèle
+    // « dérive seule » la décrit déjà, et la rampe n'apporte rien. C'est le
+    // chiffre qui le dit, pas une supposition.
+    const dedans = [];
+    for (let i = 1; i <= 12; i++) dedans.push({ t: i / 25, image: i, px: melanger(PLAN_A, PLAN_B, i / 13) });
+    const dehors = analyserTransition(fenetre());
+    expect(analyserTransition(dedans).modele.reduction)
+      .toBeLessThan(dehors.modele.reduction / 2);
   });
 
   it('garde les bords de la fenêtre comme références', () => {
@@ -156,17 +158,14 @@ describe('étendue de la transition', () => {
     const cadres = [];
     let k = 0;
     const pousser = (px) => cadres.push({ t: k / 25, image: k++, px });
-    for (let i = 0; i < 4; i++) pousser(PLAN_A);
+    for (let i = 0; i < 6; i++) pousser(PLAN_A);
     for (let i = 1; i <= 6; i++) pousser(melanger(PLAN_A, PLAN_B, i / 7));
-    for (let i = 0; i < 4; i++) pousser(PLAN_B);
+    for (let i = 0; i < 6; i++) pousser(PLAN_B);
     const r = analyserTransition(cadres);
-    // Les références sont les BORDS de la fenêtre : la médiane par canal rend
-    // le même α quel que soit leur choix, un raffinement itératif ne ferait
-    // qu'introduire une occasion de s'accrocher à de mauvaises images.
     expect(r.references.avant).toBe(0);
-    expect(r.references.apres).toBe(13);
-    expect(r.derniereImagePropreAvant.image).toBe(3);
-    expect(r.premiereImagePropreApres.image).toBe(10);
+    expect(r.references.apres).toBe(17);
+    expect(r.derniereImagePropreAvant.image).toBe(5);
+    expect(r.premiereImagePropreApres.image).toBe(12);
   });
 
   it('rend null sur une fenêtre trop petite pour signifier quoi que ce soit', () => {
@@ -243,7 +242,7 @@ describe('verdict sur la nature de la rupture', () => {
     for (let k = 0; k < 10; k++) cadres.push({ t: k / 25, image: k, px: k < 5 ? rouge : bleu });
     const r = analyserTransition(cadres);
     expect(r.nature).toBe('coupure franche');
-    expect(Object.keys(r.reglages)).toEqual(['partMontee', 'amplitudeMin', 'fractionMin']);
+    expect(Object.keys(r.reglages)).toEqual(['fractionMin', 'largeurMaxRelative']);
   });
 });
 
@@ -321,19 +320,31 @@ describe('indépendance à la largeur de la fenêtre', () => {
   });
 
   it('mesure la stabilité au lieu de la supposer', () => {
-    const st = verifierStabilite({ 0.3: serie(0.3), 0.4: serie(0.4), 0.6: serie(0.6) });
+    const st = verifierStabilite({ 0.3: serie(0.3), 0.4: serie(0.4), 0.6: serie(0.6) }, { toleranceImages: 3 });
     expect(st.retenus).toBe(3);
     expect(st.dispersionAvant).toBeLessThanOrEqual(3 / FPS + 1e-6);
-    expect(st.avantRetenu).not.toBeNull();
-    expect(st.apresRetenu).toBeGreaterThan(st.avantRetenu);
+    expect(st.fiable).toBe(true);
+    expect(st.bornes.apres).toBeGreaterThan(st.bornes.avant);
   });
 
-  it('écarte des retenus une fenêtre qui n\'enjambe pas deux paliers', () => {
-    // Fenêtre entièrement dans le plan A : aucune montée, rien à conclure.
+  it('REFUSE de produire des bornes quand les fenêtres ne s\'accordent pas', () => {
+    // Le cas signalé sur la vidéo réelle : quatre fenêtres marquées
+    // exploitables, des bornes dispersées de 450 ms, et l'outil sortait quand
+    // même des bornes. Une borne fausse découpe le suivi au mauvais endroit,
+    // ce qui est pire que pas de borne du tout.
+    const st = verifierStabilite({ 0.3: serie(0.3), 0.4: serie(0.4), 0.6: serie(0.6) },
+      { toleranceImages: 0 });
+    expect(st.fiable).toBe(false);
+    expect(st.bornes).toBeNull();
+    expect(st.raisons.length).toBeGreaterThan(0);
+  });
+
+  it('refuse aussi quand une seule fenêtre est exploitable', () => {
     const cadres = [];
     for (let k = 0; k < 40; k++) cadres.push({ t: k / FPS, image: k, px: texture(210 * k / FPS, [120, 90, 60]) });
     const st = verifierStabilite({ 0.3: cadres });
-    expect(st.retenus).toBe(0);
-    expect(st.avantRetenu).toBeNull();
+    expect(st.fiable).toBe(false);
+    expect(st.bornes).toBeNull();
+    expect(st.raisons.join(' ')).toContain('deux fenêtres');
   });
 });

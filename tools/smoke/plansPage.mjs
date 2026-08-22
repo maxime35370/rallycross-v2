@@ -115,6 +115,10 @@ try {
 
   await page.fill('#tDebut', '0.100');
   await page.fill('#tFin', '5.800');
+  // La fenêtre d'analyse doit être plusieurs fois plus large que la transition :
+  // le fondu témoin dure 0,40 s, des demi-fenêtres de 0,20 s ne peuvent pas le
+  // contenir avec la marge nécessaire pour estimer la dérive de part et d'autre.
+  await page.fill('#fenTrans', '0.50,0.70,0.90,1.20');
   await page.click('#lancer');
   await page.waitForFunction(() => window.__plans, { timeout: 180000 });
   const r = await page.evaluate(() => window.__plans);
@@ -144,13 +148,17 @@ try {
           `borne AVANT stable d'une fenêtre à l'autre (${(st.dispersionAvant * 1000).toFixed(0)} ms)`);
         dire(st.dispersionApres <= 5 / FPS,
           `borne APRÈS stable d'une fenêtre à l'autre (${(st.dispersionApres * 1000).toFixed(0)} ms)`);
-        console.log('  \x1b[90m→ ' + st.essais.map(e => `±${e.demiFenetre}s:${e.suffisante ? `${e.images}img` : 'écartée'}`).join('  ') + '\x1b[0m');
+        console.log('  \x1b[90m→ ' + st.essais.map(e => `±${e.demiFenetre}s:${e.suffisante ? `${e.images}img/${Math.round(100 * e.reduction)}%` : 'écartée'}`).join('  ') + '\x1b[0m');
       }
-      dire(tr.monotone >= 0.9, `α progresse sans redescendre (${(tr.monotone * 100).toFixed(0)} %)`);
+      // La rampe doit expliquer nettement plus que la dérive seule.
+      const expliquees = (st?.essais ?? []).filter(e => e.suffisante).map(e => e.reduction);
+      dire(expliquees.length > 0 && Math.min(...expliquees) > 0.3,
+        `la rampe explique bien plus que la dérive (min ${Math.round(100 * Math.min(...expliquees))} %)`);
       dire(tr.derniereImagePropreAvant.t <= T_COUPURE + 2 / FPS,
         `la dernière image propre précède le fondu (t = ${tr.derniereImagePropreAvant.t})`);
       dire(tr.premiereImagePropreApres.t >= T_COUPURE + DUREE_FONDU - 2 / FPS,
         `la première image propre suit le fondu (t = ${tr.premiereImagePropreApres.t})`);
+      dire(st?.fiable === true, `mesure déclarée fiable${st?.fiable ? '' : ` — ${st?.raisons.join(' ; ')}`}`);
     }
     const ecart = Math.abs(c.t - (T_COUPURE + DUREE_FONDU));
     // Tolérance large à dessein : `MediaRecorder` n'horodate pas à l'image
@@ -169,6 +177,14 @@ try {
   dire(pano.every(x => x.rapport < r.reglages.facteur),
     `le panoramique ne dépasse jamais son seuil local (rapport max ×${Math.max(...pano.map(x => x.rapport ?? 0)).toFixed(2)})`);
   dire(r.distances.every(x => x.seuil != null && x.reference != null), 'le seuil est publié pour chaque instant');
+
+  // Aucune borne ne doit sortir d'une rupture dont les fenêtres divergent.
+  const incoherentes = r.coupures.filter(c => !c.stabilite?.fiable).map(c => c.tGrille);
+  const publiees = (r.bornesPropres ?? []).map(b => b.rupture);
+  dire(incoherentes.every(t => !publiees.includes(t)),
+    `aucune borne produite pour une rupture non fiable (${incoherentes.length} écartée(s))`);
+  dire(r.bornesPropres.every(b => b.dispersionBornes.every(d => d <= 3 / FPS + 1e-9)),
+    'les bornes publiées viennent de fenêtres concordantes');
 
   await navigateur.close();
 } catch (e) {
