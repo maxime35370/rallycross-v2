@@ -385,6 +385,36 @@ les identifiants relayés doivent rester stables — une amélioration qui les
 augmente n'en est pas une. Et il rappelle l'écart 4 Hz / 10 Hz, seul signal
 d'erreur disponible sans annotation.
 
+### Apparence de part et d'autre d'une coupure — `/__apparence`
+
+Une **mesure**, pas une décision. On détecte les voitures sur la dernière image
+propre avant et la première image propre après, on calcule leurs signatures, et
+on affiche **toutes** les distances entre les deux groupes.
+
+```powershell
+node tools\yolox-poc\serve.mjs
+# → http://127.0.0.1:8798/__apparence
+```
+
+Charger l'extrait, son sidecar, et le **rapport de plans** : les deux numéros
+d'image sont alors préremplis depuis `bornesPropres`. La page donne, pour chaque
+voiture d'avant : les distances vers toutes celles d'après, le meilleur
+candidat, le deuxième, la **marge** entre les deux, et les deux vignettes côte à
+côte pour que l'œil vérifie ce que la distance affirme.
+
+Deux lectures qui ne se déduisent pas l'une de l'autre sont affichées :
+
+* le **plus proche ligne par ligne** — qui peut désigner deux fois la même
+  voiture ; quand c'est le cas, la case est jaune et l'apparence se contredit ;
+* l'**appariement optimal global** (◆), qui ne le peut pas.
+
+Les cinq correspondances réelles s'annotent dans un menu par ligne, avec
+*absente du plan* et *je ne peux pas trancher*. Elles servent uniquement à
+**noter** ce que l'apparence propose — jamais de mécanisme.
+
+**Aucune marge n'est transformée en seuil.** Le chiffre est affiché et exporté ;
+c'est un corpus qui décidera, pas une transition.
+
 ### Diagnostic complet de la séquence Kerlabo
 
 Les réponses chiffrées — part de la fragmentation imputable aux coupures, cause

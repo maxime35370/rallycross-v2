@@ -11,6 +11,7 @@ import { describe, it, expect } from 'vitest';
 import {
   PROFIL, TAILLE_SIGNATURE, rgbVersHsv, signature, distance, moyenner,
   separabilite, traverseeDeCoupure, signatureImage, detecterCoupures,
+  comparerGroupes, METHODE_APPARENCE,
 } from '../tools/yolox-poc/lib/apparence.mjs';
 
 /** Image RGBA unie, dans laquelle on peint des rectangles. */
@@ -283,5 +284,56 @@ describe('changements de plan mesurés sur l\'image', () => {
   it('supporte une série trop courte pour conclure', () => {
     expect(detecterCoupures([]).coupures).toEqual([]);
     expect(detecterCoupures([{ t: 0, sig: [1, 0] }]).coupures).toEqual([]);
+  });
+});
+
+describe('comparaison de deux groupes de part et d\'autre d\'une coupure', () => {
+  const g = (id, ...v) => ({ id, sig: v });
+
+  it('rend la matrice complète, le meilleur, le second et la marge', () => {
+    const r = comparerGroupes(
+      [g('A1', 1, 0, 0), g('A2', 0, 1, 0)],
+      [g('B1', 0, 0.95, 0.05), g('B2', 0.95, 0.05, 0), g('B3', 0, 0.05, 0.95)],
+    );
+    expect(r.matrice).toHaveLength(2);
+    expect(r.matrice[0]).toHaveLength(3);
+    expect(r.lignes[0].meilleur).toBe(1);        // A1 → B2
+    expect(r.lignes[1].meilleur).toBe(0);        // A2 → B1
+    expect(r.lignes[0].marge).toBeGreaterThan(0);
+    expect(r.lignes[0].distanceSecond).toBeGreaterThan(r.lignes[0].distanceMeilleur);
+  });
+
+  it('signale quand deux voitures d\'avant réclament la même d\'après', () => {
+    // Deux livrées identiques avant, une seule qui leur ressemble après :
+    // l'apparence se CONTREDIT, et c'est un fait à lire avant toute décision.
+    const r = comparerGroupes(
+      [g('A1', 1, 0), g('A2', 1, 0)],
+      [g('B1', 0.98, 0.02), g('B2', 0, 1)],
+    );
+    expect(r.reclamations[0]).toBe(2);
+    // L'appariement optimal, lui, ne peut pas donner deux fois la même.
+    expect(new Set(r.optimal).size).toBe(2);
+    expect(r.lignes.some(l => !l.concordant)).toBe(true);
+  });
+
+  it('distingue le plus proche ligne à ligne de l\'appariement global', () => {
+    const r = comparerGroupes([g('A1', 1, 0), g('A2', 1, 0)], [g('B1', 1, 0), g('B2', 0.9, 0.1)]);
+    expect(r.lignes.every(l => l.meilleur === 0)).toBe(true);
+    expect(new Set(r.optimal)).toEqual(new Set([0, 1]));
+  });
+
+  it('ignore les voitures sans signature au lieu de les compter', () => {
+    const r = comparerGroupes([g('A1', 1, 0), { id: 'A2', sig: null }], [g('B1', 1, 0)]);
+    expect(r.lignes).toHaveLength(1);
+    expect(r.lignes[0].idAvant).toBe('A1');
+  });
+
+  it('ne rend rien plutôt que d\'inventer quand un côté est vide', () => {
+    expect(comparerGroupes([], [g('B1', 1, 0)]).lignes).toEqual([]);
+    expect(comparerGroupes([g('A1', 1, 0)], []).matrice).toEqual([]);
+  });
+
+  it('porte un identifiant de méthode que le rapport citera', () => {
+    expect(METHODE_APPARENCE).toMatch(/^hsv-zonee\/\d+$/);
   });
 });

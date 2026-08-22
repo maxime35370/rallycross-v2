@@ -101,6 +101,7 @@ const server = createServer(async (req, res) => {
     if (path === '/' || path === '/__page') file = join(ROOT, 'tools', 'yolox-poc', 'page.html');
     else if (path === '/__suivi') file = join(ROOT, 'tools', 'yolox-poc', 'track.html');
     else if (path === '/__plans') file = join(ROOT, 'tools', 'yolox-poc', 'plans.html');
+    else if (path === '/__apparence') file = join(ROOT, 'tools', 'yolox-poc', 'appariement.html');
     else if (path.startsWith('/__ort/')) file = join(ORT_DIR, basename(path));
     else if (path.startsWith('/__modele/')) {
       file = await assurerModele(basename(path));
@@ -136,6 +137,7 @@ if (!CHECK) {
   console.log(`  Modèles : ${Object.values(MODELS).map(m => `${m.label} (${m.inputSize} px)`).join(' · ')}`);
   console.log(`  Suivi temporel   : http://127.0.0.1:${PORT}/__suivi`);
   console.log(`  Plans (sans modèle) : http://127.0.0.1:${PORT}/__plans`);
+  console.log(`  Apparence au cut    : http://127.0.0.1:${PORT}/__apparence`);
   console.log('  Banc : les images du corpus ET son corpus.json. Suivi : l\'extrait .mp4 ET son .json.');
   console.log('  Tout reste local : aucune image n\'est envoyée nulle part.');
   console.log('  Ctrl+C pour arrêter.\n');

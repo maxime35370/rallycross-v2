@@ -40,6 +40,9 @@
 
 import { hungarian } from './track.mjs';
 
+/** Identifiant de la méthode d'apparence, inscrit dans les rapports. */
+export const METHODE_APPARENCE = 'hsv-zonee/1';
+
 export const PROFIL = {
   zones: 3,            // bandes horizontales : toit / flancs / bas de caisse
   binsTeinte: 12,      // 30° par seau — plus fin serait du bruit sur 30 px
@@ -446,4 +449,49 @@ export function detecterCoupures(serie, { facteur = 3.0, fenetre = 9, minAbsolu 
     })),
     coupures,
   };
+}
+
+
+/**
+ * Compare DEUX GROUPES de voitures — celui d'avant la coupure, celui d'après.
+ *
+ * Ne décide rien. Rend, pour chaque voiture d'avant : toutes les distances, le
+ * meilleur candidat, le deuxième, et la marge entre les deux. Plus deux
+ * lectures qui ne se déduisent pas l'une de l'autre :
+ *
+ *   · `optimal` — l'appariement global au coût minimal. Le plus proche ligne
+ *     par ligne peut désigner deux fois la même voiture ; l'appariement global,
+ *     non ;
+ *   · `reclamations` — combien de voitures d'avant désignent la même voiture
+ *     d'après comme leur plus proche. Au-delà de une, l'apparence se contredit,
+ *     et c'est un fait à lire avant toute décision.
+ *
+ * Aucune marge n'est transformée en seuil ici : c'est au corpus de le faire,
+ * pas à un exemple.
+ */
+export function comparerGroupes(avant, apres) {
+  const A = avant.filter(v => v.sig), B = apres.filter(v => v.sig);
+  if (!A.length || !B.length) return { lignes: [], matrice: [], reclamations: {}, optimal: [] };
+
+  const matrice = A.map(a => B.map(b => distance(a.sig, b.sig) ?? 1));
+  const optimal = hungarian(matrice);
+  const lignes = A.map((a, i) => {
+    const tri = matrice[i].map((d, j) => ({ j, d })).sort((x, y) => x.d - y.d);
+    return {
+      indexAvant: i,
+      idAvant: a.id,
+      distances: matrice[i],
+      meilleur: tri[0].j,
+      distanceMeilleur: tri[0].d,
+      second: tri[1] ? tri[1].j : null,
+      distanceSecond: tri[1] ? tri[1].d : null,
+      marge: tri[1] ? Number((tri[1].d - tri[0].d).toFixed(4)) : null,
+      optimal: optimal[i] >= 0 ? optimal[i] : null,
+      // Le plus proche et l'appariement global tombent-ils d'accord ?
+      concordant: optimal[i] === tri[0].j,
+    };
+  });
+  const reclamations = {};
+  for (const l of lignes) reclamations[l.meilleur] = (reclamations[l.meilleur] || 0) + 1;
+  return { lignes, matrice, reclamations, optimal, idsApres: B.map(b => b.id) };
 }

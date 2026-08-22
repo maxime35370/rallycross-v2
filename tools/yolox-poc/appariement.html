@@ -1,0 +1,413 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Apparence — matrice 5×5 de part et d'autre d'une coupure</title>
+<style>
+  :root { --bd:#d8d8d8; --bg:#fafafa; }
+  body { font:14px/1.5 system-ui,sans-serif; margin:0; padding:18px; background:var(--bg); color:#1b1b1b; }
+  h1 { font-size:1.15rem; margin:0 0 4px; } .sub { color:#666; margin:0 0 14px; }
+  h2 { font-size:.95rem; margin:0 0 8px; }
+  .panneau { background:#fff; border:1px solid var(--bd); border-radius:8px; padding:12px 14px; margin-bottom:12px; }
+  .rangee { display:flex; gap:14px; align-items:center; flex-wrap:wrap; }
+  label { font-size:13px; } input[type=number]{ width:80px; }
+  canvas { max-width:100%; border:1px solid var(--bd); border-radius:4px; display:block; }
+  table { border-collapse:collapse; font-size:12.5px; }
+  th,td { border:1px solid var(--bd); padding:3px 6px; } th { background:#f0f0f0; }
+  td.num,th.num { text-align:right; font-variant-numeric:tabular-nums; }
+  button { font:inherit; padding:4px 10px; border:1px solid var(--bd); background:#fff; border-radius:4px; cursor:pointer; }
+  button:disabled { opacity:.4; cursor:default; }
+  progress { width:220px; } video { display:none; }
+  .deux { display:grid; grid-template-columns:1fr 1fr; gap:12px; align-items:start; }
+  .vignettes { display:flex; gap:8px; flex-wrap:wrap; }
+  .vignette { border:2px solid var(--bd); border-radius:4px; padding:3px; text-align:center; font-size:11.5px; }
+  .vignette img { display:block; height:74px; width:auto; border-radius:2px; }
+  .paire { display:flex; gap:6px; align-items:center; }
+  .meilleur { background:#e8f5e9; font-weight:600; }
+  .conflit { background:#fff3cd; }
+  .faux { background:#ffe0e0; }
+</style>
+
+<h1>Apparence de part et d'autre d'une coupure — matrice complète</h1>
+<p class="sub">
+  Une mesure, pas une décision. On calcule la signature de chaque voiture sur la <strong>dernière image
+  propre avant</strong> et sur la <strong>première image propre après</strong>, puis toutes les distances
+  entre les deux groupes. Rien ici ne devient un seuil : la marge est affichée pour être lue.
+</p>
+
+<div class="panneau">
+  <div class="rangee">
+    <label>Extrait + son <code>.json</code> :
+      <input type="file" id="pick" accept="video/*,application/json,.json" multiple></label>
+    <label>Modèle <select id="modele"></select></label>
+    <label>Image AVANT <input type="number" id="imgA" step="1" value="348"></label>
+    <label>Image APRÈS <input type="number" id="imgB" step="1" value="354"></label>
+  </div>
+  <div class="rangee" style="margin-top:8px">
+    <label>Seuil <input type="number" id="seuil" step="0.05" min="0.05" max="0.9" value="0.30"></label>
+    <label>IoU fusion <input type="number" id="iou" step="0.05" min="0.1" max="0.9" value="0.45"></label>
+    <button id="lancer" disabled>Détecter et comparer</button>
+    <button id="exporter" disabled>Exporter le JSON</button>
+    <progress id="prog" value="0" max="1" style="display:none"></progress>
+    <span id="etat" class="sub" style="margin:0"></span>
+  </div>
+</div>
+
+<div class="panneau" id="panneauImages" style="display:none">
+  <h2>Les deux images propres, et les voitures retenues</h2>
+  <p class="sub" style="margin:0 0 8px">
+    Décoche ce qui n'est pas une des voitures de la course — un véhicule de service au fond, une boîte
+    fusionnée. La matrice est recalculée aussitôt, sans relancer la détection.
+  </p>
+  <div class="deux">
+    <div>
+      <h3 style="font-size:.9rem;margin:0 0 4px">AVANT — image <span id="titreA"></span></h3>
+      <canvas id="vueA"></canvas>
+      <div class="vignettes" id="vignA" style="margin-top:8px"></div>
+    </div>
+    <div>
+      <h3 style="font-size:.9rem;margin:0 0 4px">APRÈS — image <span id="titreB"></span></h3>
+      <canvas id="vueB"></canvas>
+      <div class="vignettes" id="vignB" style="margin-top:8px"></div>
+    </div>
+  </div>
+</div>
+
+<div class="panneau" id="panneauMatrice" style="display:none">
+  <h2>Matrice des distances</h2>
+  <div id="matrice"></div>
+</div>
+
+<div class="panneau" id="panneauLignes" style="display:none">
+  <h2>Pour chaque voiture d'avant</h2>
+  <div id="lignes"></div>
+</div>
+
+<video id="src" preload="auto" muted playsinline></video>
+
+<script src="/__ort/ort.min.js"></script>
+<script type="module">
+import {
+  MODELS, VEHICLE_CLASS_IDS, letterbox, buildGrids,
+  decodeOutput, assertAnchorCount, mergeVehicleDetections,
+} from '/tools/yolox-poc/lib/detect.mjs';
+import {
+  PROFIL, signature, comparerGroupes, METHODE_APPARENCE,
+} from '/tools/yolox-poc/lib/apparence.mjs';
+
+const ort = window.ort;
+ort.env.wasm.wasmPaths = '/__ort/';
+ort.env.wasm.numThreads = self.crossOriginIsolated
+  ? Math.max(1, Math.min(4, navigator.hardwareConcurrency || 1)) : 1;
+ort.env.logLevel = 'error';
+
+const $ = (id) => document.getElementById(id);
+const COULEURS = ['#e8000d','#0a7d28','#0b57d0','#b06f00','#7a1fa2','#00838f','#c2185b','#5d4037','#1a237e','#00695c'];
+const couleurDe = (i) => COULEURS[i % COULEURS.length];
+
+const selModele = $('modele');
+selModele.innerHTML = Object.values(MODELS).map(m => `<option value="${m.id}">${m.label} · ${m.inputSize} px</option>`).join('');
+selModele.value = 's';
+
+const grilles = new Map(), sessions = new Map();
+const video = $('src');
+let fps = 60, sidecar = null;
+let cotes = null, annotations = {}, resultat = null;
+
+const grillesDe = (size) => {
+  if (!grilles.has(size)) grilles.set(size, buildGrids(size));
+  return grilles.get(size);
+};
+async function session(modele) {
+  if (sessions.has(modele.id)) return sessions.get(modele.id);
+  $('etat').textContent = `chargement de ${modele.label}…`;
+  const s = await ort.InferenceSession.create(`/__modele/${modele.file}`, {
+    executionProviders: ['wasm'], graphOptimizationLevel: 'all',
+  });
+  sessions.set(modele.id, s);
+  return s;
+}
+
+$('pick').addEventListener('change', async (e) => {
+  for (const f of e.target.files) {
+    if (/\.json$/i.test(f.name)) {
+      try {
+        const brut = JSON.parse(await f.text());
+        if (brut?.schema === 'rx-extract/1') { sidecar = brut; fps = brut.fps || 60; }
+        else if (brut?.extrait?.fps) { sidecar = brut.extrait; fps = brut.extrait.fps; }
+        // Un rapport de plans donne directement les deux images propres.
+        const bornes = brut?.bornesPropres?.[0];
+        if (bornes) {
+          $('imgA').value = Math.round(bornes.avant * fps);
+          $('imgB').value = Math.round(bornes.apres * fps);
+        }
+      } catch { /* fichier illisible : réglages inchangés */ }
+    } else {
+      video.src = URL.createObjectURL(f);
+      if (video.readyState < 1) await new Promise(ok => video.addEventListener('loadedmetadata', ok, { once: true }));
+    }
+  }
+  $('lancer').disabled = !video.src;
+  $('etat').textContent = `${fps} img/s${sidecar ? ' · cadence lue dans le sidecar' : ' · cadence SUPPOSÉE'}`
+    + (video.videoWidth ? ` · ${video.videoWidth}×${video.videoHeight}` : '');
+});
+
+// ── Lecture d'une image ─────────────────────────────────
+const cadre = document.createElement('canvas');
+const ctxCadre = cadre.getContext('2d', { willReadFrequently: true });
+
+/** Vise le MILIEU de l'image : `<video>` affiche celle dont l'intervalle
+ *  contient `currentTime`, donc le point milieu ne dépend d'aucun arrondi. */
+function allerA(t) {
+  return new Promise((ok, ko) => {
+    const fini = () => { video.removeEventListener('seeked', fini); ok(); };
+    video.addEventListener('seeked', fini);
+    video.currentTime = t + 0.5 / fps;
+    setTimeout(() => { video.removeEventListener('seeked', fini); ko(new Error(`seek ${t}`)); }, 8000);
+  });
+}
+async function lireImage(numero) {
+  await allerA(numero / fps);
+  cadre.width = video.videoWidth; cadre.height = video.videoHeight;
+  ctxCadre.drawImage(video, 0, 0);
+  return ctxCadre.getImageData(0, 0, cadre.width, cadre.height);
+}
+
+function preparer(source, size) {
+  const box = letterbox(source.width, source.height, size);
+  const c = document.createElement('canvas');
+  c.width = size; c.height = size;
+  const ctx = c.getContext('2d', { willReadFrequently: true });
+  ctx.fillStyle = 'rgb(114,114,114)'; ctx.fillRect(0, 0, size, size);
+  ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(source, 0, 0, box.width, box.height);
+  const px = ctx.getImageData(0, 0, size, size).data;
+  const n = size * size;
+  const data = new Float32Array(3 * n);
+  for (let i = 0; i < n; i++) {
+    data[i] = px[i * 4 + 2]; data[n + i] = px[i * 4 + 1]; data[2 * n + i] = px[i * 4];
+  }
+  return { tensor: new ort.Tensor('float32', data, [1, 3, size, size]), ratio: box.ratio };
+}
+
+/** Découpe la boîte en vignette, pour que l'œil vérifie ce que la distance dit. */
+function vignette(imageData, boite) {
+  const [x1, y1, x2, y2] = boite.map(Math.round);
+  const w = Math.max(1, x2 - x1), h = Math.max(1, y2 - y1);
+  const src = document.createElement('canvas');
+  src.width = cadre.width; src.height = cadre.height;
+  src.getContext('2d').putImageData(imageData, 0, 0);
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  c.getContext('2d').drawImage(src, x1, y1, w, h, 0, 0, w, h);
+  return c.toDataURL('image/jpeg', 0.9);
+}
+
+// ── Détection sur une image ─────────────────────────────
+async function analyserImage(numero, modele, s) {
+  const img = await lireImage(numero);
+  const { tensor, ratio } = preparer(cadre, modele.inputSize);
+  const sortie = await s.run({ images: tensor });
+  const brut = sortie[s.outputNames[0]].data;
+  assertAnchorCount(brut.length, modele.inputSize);
+  const seuil = Number($('seuil').value);
+  const brutes = decodeOutput(brut, grillesDe(modele.inputSize), ratio,
+    { scoreThreshold: seuil, classIds: VEHICLE_CLASS_IDS });
+  const dets = mergeVehicleDetections(brutes, Number($('iou').value))
+    .filter(d => d.score >= seuil)
+    .sort((a, b) => (a.box[0] + a.box[2]) - (b.box[0] + b.box[2]));   // de gauche à droite
+  return {
+    numero, t: Number((numero / fps).toFixed(4)), image: img,
+    voitures: dets.map((d, i) => ({
+      rang: i + 1, box: d.box.map(v => Math.round(v)), score: Number(d.score.toFixed(3)),
+      label: d.label ?? 'car',
+      sig: signature(img.data, cadre.width, cadre.height, d.box),
+      vignette: vignette(img, d.box),
+      retenue: true,
+    })),
+  };
+}
+
+$('lancer').addEventListener('click', async () => {
+  const modele = MODELS[selModele.value];
+  const s = await session(modele);
+  $('prog').style.display = ''; $('prog').max = 2; $('prog').value = 0;
+  $('lancer').disabled = true;
+  const A = await analyserImage(Number($('imgA').value), modele, s); $('prog').value = 1;
+  const B = await analyserImage(Number($('imgB').value), modele, s); $('prog').value = 2;
+  $('prog').style.display = 'none'; $('lancer').disabled = false;
+  cotes = { A, B }; annotations = {};
+  $('etat').textContent = `${A.voitures.length} détection(s) sur l'image ${A.numero}, `
+    + `${B.voitures.length} sur l'image ${B.numero} · ${modele.label}`;
+  dessiner();
+  recalculer();
+});
+
+// ── Affichage des deux images ───────────────────────────
+function dessinerVue(cote, idCanvas) {
+  const c = $(idCanvas);
+  c.width = cadre.width; c.height = cadre.height;
+  const ctx = c.getContext('2d');
+  ctx.putImageData(cote.image, 0, 0);
+  const e = Math.max(1, c.width / 900);
+  ctx.font = `600 ${Math.round(15 * e)}px system-ui, sans-serif`;
+  ctx.textBaseline = 'bottom';
+  for (const v of cote.voitures) {
+    const [x1, y1, x2, y2] = v.box;
+    ctx.strokeStyle = couleurDe(v.rang - 1);
+    ctx.lineWidth = (v.retenue ? 3 : 1.5) * e;
+    ctx.setLineDash(v.retenue ? [] : [8 * e, 5 * e]);
+    ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+    ctx.setLineDash([]);
+    const txt = `${cote === cotes.A ? 'A' : 'B'}${v.rang}`;
+    const w = ctx.measureText(txt).width + 10 * e, h = 21 * e;
+    ctx.fillStyle = couleurDe(v.rang - 1);
+    ctx.fillRect(x1, Math.max(h, y1) - h, w, h);
+    ctx.fillStyle = '#fff';
+    ctx.fillText(txt, x1 + 5 * e, Math.max(h, y1) - 4 * e);
+  }
+}
+function dessinerVignettes(cote, prefixe, idDiv) {
+  $(idDiv).innerHTML = cote.voitures.map(v => `
+    <label class="vignette" style="border-color:${couleurDe(v.rang - 1)};opacity:${v.retenue ? 1 : 0.45}">
+      <img src="${v.vignette}" alt="${prefixe}${v.rang}">
+      <div><input type="checkbox" data-cote="${prefixe}" data-rang="${v.rang}" ${v.retenue ? 'checked' : ''}>
+        <strong>${prefixe}${v.rang}</strong> · ${v.score}</div>
+      <div class="sub" style="margin:0">${v.box[2] - v.box[0]}×${v.box[3] - v.box[1]}${v.sig ? '' : ' · trop petite'}</div>
+    </label>`).join('');
+  $(idDiv).querySelectorAll('input[type=checkbox]').forEach(cb => cb.addEventListener('change', () => {
+    const cote2 = cb.dataset.cote === 'A' ? cotes.A : cotes.B;
+    cote2.voitures.find(v => v.rang === Number(cb.dataset.rang)).retenue = cb.checked;
+    annotations = {};
+    dessiner(); recalculer();
+  }));
+}
+function dessiner() {
+  $('panneauImages').style.display = '';
+  $('titreA').textContent = `${cotes.A.numero} · t = ${cotes.A.t} s`;
+  $('titreB').textContent = `${cotes.B.numero} · t = ${cotes.B.t} s`;
+  dessinerVue(cotes.A, 'vueA'); dessinerVue(cotes.B, 'vueB');
+  dessinerVignettes(cotes.A, 'A', 'vignA'); dessinerVignettes(cotes.B, 'B', 'vignB');
+}
+
+// ── La matrice ──────────────────────────────────────────
+function recalculer() {
+  const A = cotes.A.voitures.filter(v => v.retenue && v.sig);
+  const B = cotes.B.voitures.filter(v => v.retenue && v.sig);
+  $('panneauMatrice').style.display = A.length && B.length ? '' : 'none';
+  $('panneauLignes').style.display = A.length && B.length ? '' : 'none';
+  if (!A.length || !B.length) return;
+
+  // Toute la comparaison est faite par une fonction pure et testée : la page
+  // ne fait que l'afficher.
+  const cmp = comparerGroupes(
+    A.map(v => ({ id: `A${v.rang}`, sig: v.sig })),
+    B.map(v => ({ id: `B${v.rang}`, sig: v.sig })),
+  );
+  const D = cmp.matrice;
+  const optimal = cmp.optimal;
+  const lignes = cmp.lignes.map(l => ({ ...l, a: A[l.indexAvant] }));
+  const reclamations = new Map(Object.entries(cmp.reclamations).map(([j, n]) => [Number(j), n]));
+
+  afficherMatrice(A, B, D, lignes, reclamations, optimal);
+  afficherLignes(A, B, lignes, reclamations);
+  resultat = {
+    schema: 'rx-apparence/1',
+    methode: METHODE_APPARENCE,
+    profil: PROFIL,
+    extrait: sidecar ? { file: sidecar.file, fps: sidecar.fps, clipStart: sidecar.clipStart } : null,
+    avant: { image: cotes.A.numero, t: cotes.A.t, voitures: A.map(v => ({ rang: v.rang, box: v.box, score: v.score })) },
+    apres: { image: cotes.B.numero, t: cotes.B.t, voitures: B.map(v => ({ rang: v.rang, box: v.box, score: v.score })) },
+    matrice: D,
+    lignes: lignes.map(l => ({
+      avant: `A${l.a.rang}`,
+      distances: Object.fromEntries(B.map((b, j) => [`B${b.rang}`, l.distances[j]])),
+      meilleur: `B${B[l.meilleur].rang}`, distanceMeilleur: l.distanceMeilleur,
+      second: l.second == null ? null : `B${B[l.second].rang}`, distanceSecond: l.distanceSecond,
+      marge: l.marge,
+      appariementOptimal: l.optimal == null ? null : `B${B[l.optimal].rang}`,
+      concordant: l.concordant,
+      reclamePlusieursFois: reclamations.get(l.meilleur) > 1,
+      verite: annotations[`A${l.a.rang}`] ?? null,
+    })),
+    createdAt: new Date().toISOString(),
+  };
+  window.__apparence = resultat;
+  $('exporter').disabled = false;
+}
+
+const teinte = (d) => {
+  // Du vert (proche) au rouge (loin) — lecture d'ensemble, pas un seuil.
+  const k = Math.max(0, Math.min(1, d));
+  return `hsl(${Math.round(130 - 130 * k)} 70% ${88 - 8 * (1 - k)}%)`;
+};
+
+function afficherMatrice(A, B, D, lignes, reclamations, optimal) {
+  $('matrice').innerHTML = `<table>
+    <tr><th></th>${B.map(b => `<th class="num" style="color:${couleurDe(b.rang - 1)}">B${b.rang}</th>`).join('')}
+        <th class="num">meilleur</th><th class="num">second</th><th class="num">marge</th></tr>
+    ${lignes.map((l, i) => `<tr>
+      <th style="color:${couleurDe(l.a.rang - 1)}">A${l.a.rang}</th>
+      ${D[i].map((d, j) => {
+        const est = j === l.meilleur;
+        const conflit = est && reclamations.get(j) > 1;
+        return `<td class="num${est ? (conflit ? ' conflit' : ' meilleur') : ''}"
+          style="background:${est ? '' : teinte(d)}">${d.toFixed(3)}${j === optimal[i] ? ' ◆' : ''}</td>`;
+      }).join('')}
+      <td class="num">B${B[l.meilleur].rang} · ${l.distanceMeilleur.toFixed(3)}</td>
+      <td class="num">${l.second == null ? '—' : `B${B[l.second].rang} · ${l.distanceSecond.toFixed(3)}`}</td>
+      <td class="num"><strong>${l.marge ?? '—'}</strong></td></tr>`).join('')}
+  </table>
+  <p class="sub" style="margin-top:6px">
+    Vert : le plus proche de la ligne. <span class="conflit" style="padding:0 4px">Jaune</span> : cette
+    voiture d'après est réclamée par plusieurs voitures d'avant — l'apparence se contredit.
+    <strong>◆</strong> marque l'appariement optimal global, qui peut différer du plus proche ligne par ligne.
+    La marge est affichée pour être lue, pas pour décider.
+  </p>`;
+}
+
+function afficherLignes(A, B, lignes, reclamations) {
+  const choix = (rangA) => `<select data-avant="A${rangA}">
+      <option value="">— vérité terrain —</option>
+      ${B.map(b => `<option value="B${b.rang}"${annotations[`A${rangA}`] === `B${b.rang}` ? ' selected' : ''}>B${b.rang}</option>`).join('')}
+      <option value="absente"${annotations[`A${rangA}`] === 'absente' ? ' selected' : ''}>absente du plan</option>
+      <option value="?"${annotations[`A${rangA}`] === '?' ? ' selected' : ''}>je ne peux pas trancher</option>
+    </select>`;
+
+  $('lignes').innerHTML = lignes.map((l) => {
+    const meilleurB = B[l.meilleur], secondB = l.second == null ? null : B[l.second];
+    const verite = annotations[`A${l.a.rang}`];
+    const juge = !verite || verite === '?' || verite === 'absente' ? ''
+      : verite === `B${meilleurB.rang}` ? '<strong style="color:#0a7d28">l\'apparence a vu juste</strong>'
+        : `<strong style="color:#b30021">l\'apparence se trompe — la bonne est ${verite}</strong>`;
+    return `<div style="border-top:1px solid var(--bd);padding:8px 0">
+      <div class="rangee">
+        <div class="vignette" style="border-color:${couleurDe(l.a.rang - 1)}">
+          <img src="${l.a.vignette}"><div><strong>A${l.a.rang}</strong></div></div>
+        <div style="font-size:22px;color:#888">→</div>
+        <div class="vignette" style="border-color:${couleurDe(meilleurB.rang - 1)}">
+          <img src="${meilleurB.vignette}"><div><strong>B${meilleurB.rang}</strong> · ${l.distanceMeilleur.toFixed(3)}</div></div>
+        ${secondB ? `<div class="sub" style="margin:0">second :</div>
+        <div class="vignette" style="border-color:${couleurDe(secondB.rang - 1)};opacity:.7">
+          <img src="${secondB.vignette}"><div>${'B' + secondB.rang} · ${l.distanceSecond.toFixed(3)}</div></div>` : ''}
+        <div style="margin-left:10px">
+          <div>marge <strong>${l.marge ?? '—'}</strong>${reclamations.get(l.meilleur) > 1 ? ' · <span class="conflit" style="padding:0 4px">réclamée par plusieurs</span>' : ''}</div>
+          <div class="sub" style="margin:0">${choix(l.a.rang)} ${juge}</div>
+        </div>
+      </div>
+    </div>`;
+  }).join('') + `<p class="sub" style="margin-top:8px">
+    Annote les cinq correspondances réelles : elles ne servent qu'à <em>noter</em> ce que l'apparence
+    propose. Elles ne deviendront jamais le mécanisme.</p>`;
+
+  $('lignes').querySelectorAll('select').forEach(sel => sel.addEventListener('change', () => {
+    annotations[sel.dataset.avant] = sel.value;
+    recalculer();
+  }));
+}
+
+$('exporter').addEventListener('click', () => {
+  const a = document.createElement('a');
+  a.download = `rapport-apparence-${cotes.A.numero}-${cotes.B.numero}.json`;
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(resultat, null, 2)], { type: 'application/json' }));
+  a.click();
+});
+</script>

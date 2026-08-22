@@ -94,6 +94,28 @@ try {
   dire(plans.length === 1 && plans[0] === 6,
     `la coupure est vue à t = 6 et le panoramique ne déclenche rien (trouvé : ${plans.join(', ') || 'rien'})`);
 
+  // La page d'apparence au cut : elle charge un modèle ONNX seulement au clic,
+  // donc son chargement se vérifie sans vidéo ni modèle.
+  const pageApp = await navigateur.newPage();
+  const erreursApp = [];
+  pageApp.on('pageerror', e => erreursApp.push(String(e)));
+  await pageApp.goto(`http://127.0.0.1:${PORT}/__apparence`, { waitUntil: 'load' });
+  await attendre(400);
+  dire(erreursApp.filter(e => !/onnx|wasm|modele/i.test(e)).length === 0,
+    `la page d'apparence charge sans erreur${erreursApp.length ? ` — ${erreursApp[0]}` : ''}`);
+  dire(await pageApp.locator('#imgA').inputValue() === '348' && await pageApp.locator('#imgB').inputValue() === '354',
+    'elle propose par défaut les deux images propres de la coupure Kerlabo');
+
+  const cmp = await pageApp.evaluate(async (port) => {
+    const { comparerGroupes } = await import(`http://127.0.0.1:${port}/tools/yolox-poc/lib/apparence.mjs`);
+    const r = comparerGroupes(
+      [{ id: 'A1', sig: [1, 0, 0] }, { id: 'A2', sig: [0, 1, 0] }],
+      [{ id: 'B1', sig: [0, 0.95, 0.05] }, { id: 'B2', sig: [0.95, 0.05, 0] }],
+    );
+    return r.lignes.map(l => [l.idAvant, l.meilleur, l.marge]);
+  }, PORT);
+  dire(cmp[0][1] === 1 && cmp[1][1] === 0, `la comparaison de groupes tourne dans le navigateur (${JSON.stringify(cmp)})`);
+
   await navigateur.close();
 } catch (e) {
   code = 1;
