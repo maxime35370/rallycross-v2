@@ -31,6 +31,15 @@
 ═══════════════════════════════════════════════ */
 
 /**
+ * Identifiant de la MÉTHODE, affiché par la page et inscrit dans chaque rapport.
+ *
+ * Trois méthodes se sont succédé ici, et deux ont produit des chiffres qui se
+ * ressemblaient assez pour qu'on ne sache pas, en lisant un rapport, laquelle
+ * l'avait produit. Un rapport doit dire de quel code il vient.
+ */
+export const METHODE = 'derive+rampe/1';
+
+/**
  * Où se situe une image entre deux plans : α, estimé CANAL PAR CANAL.
  *
  * Un fondu enchaîné est une opération exacte, `I = (1−α)·A + α·B`. Chaque

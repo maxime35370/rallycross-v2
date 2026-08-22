@@ -32,6 +32,12 @@
 </p>
 
 <div class="panneau">
+  <p class="sub" style="margin:0 0 8px">
+    Méthode d'analyse des transitions : <strong><code id="methode">…</code></strong> —
+    modèle <code>α(t) = a + b·t + s·rampe</code>, la dérive de caméra étant ajustée séparément du fondu.
+    Ce même identifiant figure dans le JSON exporté ; s'il ne correspond pas au code attendu,
+    le navigateur sert une version en cache — recharge avec <kbd>Ctrl</kbd>+<kbd>Maj</kbd>+<kbd>R</kbd>.
+  </p>
   <div class="rangee">
     <label>Extrait + son <code>.json</code> :
       <input type="file" id="pick" accept="video/*,application/json,.json" multiple></label>
@@ -92,9 +98,10 @@
 
 <script type="module">
 import { signatureImage, detecterCoupures, distance } from '/tools/yolox-poc/lib/apparence.mjs';
-import { analyserTransition, verifierStabilite } from '/tools/yolox-poc/lib/transition.mjs';
+import { analyserTransition, verifierStabilite, METHODE } from '/tools/yolox-poc/lib/transition.mjs';
 
 const $ = (id) => document.getElementById(id);
+$('methode').textContent = METHODE;
 const video = $('src');
 let fps = 60, sidecar = null, resultat = null;
 
@@ -268,6 +275,9 @@ $('lancer').addEventListener('click', async () => {
 
   resultat = {
     schema: 'rx-plans/1',
+    // De quel code vient ce rapport. À vérifier avant d'en tirer la moindre
+    // conclusion : un banc de mesure qui sert un module caché mesure l'ancien.
+    methode: METHODE,
     extrait: sidecar ? { file: sidecar.file, fps: sidecar.fps, clipStart: sidecar.clipStart } : null,
     fenetre: { debut: t0, fin: t1, pas },
     reglages: brut.reglages,

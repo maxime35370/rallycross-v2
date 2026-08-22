@@ -511,6 +511,16 @@ coupures.
 > part et d'autre pour estimer la dérive, et la fenêtre est déclarée
 > non exploitable plutôt que devinée.
 
+#### Savoir quel code a produit un rapport
+
+La page affiche l'identifiant de la méthode (`derive+rampe/1`), et le JSON
+exporté le porte. Le serveur envoie `Cache-Control: no-store` : sans en-tête de
+cache, le navigateur applique sa propre heuristique et peut resservir un module
+d'une session précédente — sur un banc de mesure, faire tourner l'ancien code en
+croyant mesurer le nouveau coûte un aller-retour entier. Si l'identifiant
+affiché ne correspond pas au code attendu, recharger avec
+<kbd>Ctrl</kbd>+<kbd>Maj</kbd>+<kbd>R</kbd>.
+
 #### Refus de conclure
 
 Quand les fenêtres ne s'accordent pas, **aucune borne n'est produite** :

@@ -113,6 +113,12 @@ const server = createServer(async (req, res) => {
     res.writeHead(200, {
       'Content-Type': MIME[extname(file)] || 'application/octet-stream',
       'Content-Length': String(statSync(file).size),
+      // Sans en-tête de cache, le navigateur applique sa propre heuristique et
+      // peut resservir un module d'une session précédente. Sur un banc de
+      // mesure, faire tourner l'ancien code en croyant mesurer le nouveau coûte
+      // un aller-retour entier — et il n'y a rien ici qui gagne à être caché.
+      'Cache-Control': 'no-store, must-revalidate',
+      Pragma: 'no-cache',
       // Isolation d'origine : autorise le WebAssembly multi-thread.
       'Cross-Origin-Opener-Policy': 'same-origin',
       'Cross-Origin-Embedder-Policy': 'require-corp',

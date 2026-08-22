@@ -187,6 +187,13 @@ n'ont pas été mesurées.
 > estimer la dérive, et la fenêtre est déclarée non exploitable au lieu d'être
 > devinée.
 
+### Vérifier quel code a produit le rapport
+
+La page affiche `derive+rampe/1` en tête, et le JSON exporté porte le même
+identifiant sous `methode`. Le serveur envoie désormais `Cache-Control: no-store`.
+Un rapport dont l'identifiant ne correspond pas au code attendu vient d'un module
+en cache, et ses chiffres ne décrivent pas la méthode courante.
+
 ### Refus de conclure
 
 Quand les fenêtres ne s'accordent pas, **aucune borne n'est produite** :

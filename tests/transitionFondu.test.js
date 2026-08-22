@@ -9,7 +9,7 @@
 
 import { describe, it, expect } from 'vitest';
 import {
-  estimerMelange, contraste, analyserTransition, verifierStabilite, ajusterDeuxRegimes,
+  estimerMelange, contraste, analyserTransition, verifierStabilite, ajusterDeuxRegimes, METHODE,
 } from '../tools/yolox-poc/lib/transition.mjs';
 
 const L = 64, H = 48;
@@ -346,5 +346,14 @@ describe('indépendance à la largeur de la fenêtre', () => {
     expect(st.fiable).toBe(false);
     expect(st.bornes).toBeNull();
     expect(st.raisons.join(' ')).toContain('deux fenêtres');
+  });
+});
+
+describe('traçabilité de la méthode', () => {
+  it('porte un identifiant que le rapport pourra citer', () => {
+    // Trois méthodes se sont succédé, dont deux produisaient des chiffres assez
+    // proches pour qu'on ne sache pas, en lisant un rapport, laquelle l'avait
+    // produit. Un rapport doit dire de quel code il vient.
+    expect(METHODE).toMatch(/^derive\+rampe\/\d+$/);
   });
 });

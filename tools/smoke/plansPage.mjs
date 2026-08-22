@@ -109,6 +109,17 @@ try {
   await enregistrerTemoin(page);
   await page.reload({ waitUntil: 'load' });
 
+  // Le banc doit dire de quel code il vient, et le serveur ne doit rien laisser
+  // mettre en cache : mesurer avec un module d'une session précédente en
+  // croyant mesurer le nouveau coûte un aller-retour entier.
+  const methodeAffichee = (await page.textContent('#methode')).trim();
+  dire(/^derive\+rampe\//.test(methodeAffichee), `la page annonce sa méthode (${methodeAffichee})`);
+  const entetes = await page.evaluate(async (port) => {
+    const r = await fetch(`http://127.0.0.1:${port}/tools/yolox-poc/lib/transition.mjs`, { cache: 'no-store' });
+    return r.headers.get('cache-control');
+  }, PORT);
+  dire(/no-store/.test(entetes || ''), `le serveur interdit la mise en cache (${entetes})`);
+
   await page.setInputFiles('#pick', [webm, sidecar]);
   await page.waitForFunction(() => !document.getElementById('lancer').disabled, { timeout: 15000 });
   dire((await page.textContent('#etat')).includes(`${FPS} img/s`), `la cadence vient du sidecar (${FPS} img/s)`);
@@ -177,6 +188,9 @@ try {
   dire(pano.every(x => x.rapport < r.reglages.facteur),
     `le panoramique ne dépasse jamais son seuil local (rapport max ×${Math.max(...pano.map(x => x.rapport ?? 0)).toFixed(2)})`);
   dire(r.distances.every(x => x.seuil != null && x.reference != null), 'le seuil est publié pour chaque instant');
+  dire(r.methode === methodeAffichee, `le rapport exporté porte la méthode (${r.methode})`);
+  const avecModele = r.coupures.filter(c => c.transition?.modele?.reduction != null).length;
+  dire(avecModele === r.coupures.length, 'chaque rupture publie dérive, pente et variance expliquée');
 
   // Aucune borne ne doit sortir d'une rupture dont les fenêtres divergent.
   const incoherentes = r.coupures.filter(c => !c.stabilite?.fiable).map(c => c.tGrille);
