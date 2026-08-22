@@ -267,9 +267,12 @@ $('lancer').addEventListener('click', async () => {
   const A = await analyserImage(Number($('imgA').value), modele, s); $('prog').value = 1;
   const B = await analyserImage(Number($('imgB').value), modele, s); $('prog').value = 2;
   $('prog').style.display = 'none'; $('lancer').disabled = false;
-  cotes = { A, B }; annotations = {};
+  cotes = { A, B };
+  purgerAnnotations();
+  const reprises = Object.keys(annotations).length;
   $('etat').textContent = `${A.voitures.length} détection(s) sur l'image ${A.numero}, `
-    + `${B.voitures.length} sur l'image ${B.numero} · ${modele.label}`;
+    + `${B.voitures.length} sur l'image ${B.numero} · ${modele.label}`
+    + (reprises ? ` · ${reprises} correspondance(s) reprises du rapport` : ' · aucune vérité terrain reprise');
   dessiner();
   recalculer();
 });
@@ -309,7 +312,7 @@ function dessinerVignettes(cote, prefixe, idDiv) {
   $(idDiv).querySelectorAll('input[type=checkbox]').forEach(cb => cb.addEventListener('change', () => {
     const cote2 = cb.dataset.cote === 'A' ? cotes.A : cotes.B;
     cote2.voitures.find(v => v.rang === Number(cb.dataset.rang)).retenue = cb.checked;
-    annotations = {};
+    purgerAnnotations();
     dessiner(); recalculer();
   }));
 }
@@ -319,6 +322,23 @@ function dessiner() {
   $('titreB').textContent = `${cotes.B.numero} · t = ${cotes.B.t} s`;
   dessinerVue(cotes.A, 'vueA'); dessinerVue(cotes.B, 'vueB');
   dessinerVignettes(cotes.A, 'A', 'vignA'); dessinerVignettes(cotes.B, 'B', 'vignB');
+}
+
+/**
+ * Ne garde que les annotations qui désignent encore quelque chose.
+ *
+ * Elles étaient effacées EN BLOC à chaque détection — ce qui jetait la vérité
+ * terrain reprise du rapport précédent au moment même où l'on en avait besoin.
+ * Une annotation ne devient caduque que si l'une de ses deux extrémités a
+ * disparu des voitures retenues.
+ */
+function purgerAnnotations() {
+  if (!cotes) return;
+  const vivantsA = new Set(cotes.A.voitures.filter(v => v.retenue).map(v => `A${v.rang}`));
+  const vivantsB = new Set(cotes.B.voitures.filter(v => v.retenue).map(v => `B${v.rang}`));
+  for (const [a, b] of Object.entries(annotations)) {
+    if (!vivantsA.has(a) || (b !== 'absente' && b !== '?' && !vivantsB.has(b))) delete annotations[a];
+  }
 }
 
 // ── La matrice ──────────────────────────────────────────
