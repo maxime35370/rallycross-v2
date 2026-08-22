@@ -622,18 +622,28 @@ describe('Suivi — même vidéo, cadences différentes, mêmes identités', () 
     expect(mesurer(b).pistesConfirmeesCreees).toBe(5);
   });
 
-  it('attribue le MÊME identifiant à la même voiture aux deux cadences', () => {
-    const desaccords = [];
-    for (const t of instantsCommuns) {
-      const ca = carte(a, t), cb = carte(b, t);
-      for (let i = 0; i < NB; i++) {
-        if (ca[i] && cb[i] && ca[i] !== cb[i]) desaccords.push({ t, voiture: i, a: ca[i], b: cb[i] });
+  it('induit la même STRUCTURE d\'identités aux deux cadences', () => {
+    // Comparer les numéros bruts serait faux : ils dépendent de l'ordre de
+    // création, donc des premières images échantillonnées, qui diffèrent d'une
+    // cadence à l'autre. Ce qui doit coïncider, c'est la CORRESPONDANCE —
+    // chaque voiture garde un identifiant unique, et deux voitures n'en
+    // partagent jamais un. Le premier jet de ce test comparait les numéros et
+    // passait par chance ; il échouait dès qu'on changeait la trajectoire.
+    for (const s of [a, b]) {
+      const parVoiture = {};
+      for (const t of instantsCommuns) {
+        const c = carte(s, t);
+        for (let i = 0; i < NB; i++) if (c[i]) (parVoiture[i] ||= new Set()).add(c[i]);
       }
+      // Une voiture, un identifiant, du début à la fin.
+      for (let i = 0; i < NB; i++) expect([...(parVoiture[i] || [])]).toHaveLength(1);
+      // Et jamais deux voitures sous le même.
+      const ids = Object.values(parVoiture).map(s2 => [...s2][0]);
+      expect(new Set(ids).size).toBe(NB);
     }
-    expect(desaccords).toEqual([]);
   });
 
-  it('garde le même identifiant d\'un bout à l\'autre de la séquence', () => {
+  it('ne change jamais d\'identifiant en cours de séquence', () => {
     for (const s of [a, b]) {
       const vu = {};
       const changements = [];

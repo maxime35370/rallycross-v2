@@ -274,6 +274,51 @@ jamais. La création est maintenant refusée dans ce cas (`recouvre_piste_vivant
 
 **5. On ne savait pas POURQUOI une association échouait.** Chaque refus est désormais classé.
 
+### Compensation de caméra : ce que la mesure a répondu
+
+Hypothèse à vérifier : sur une caméra qui panote, le déplacement apparent
+dépendrait de la profondeur, et une translation globale serait donc insuffisante.
+
+**La physique dit autre chose.** Un panoramique est une ROTATION : elle déplace tous les points du
+même vecteur, quelle que soit leur profondeur. Ce qui dépend de la position dans l'image, c'est le
+**zoom** — et il dépend de `x` autant que de `y`, ce qu'une affine en `y` seul ne peut pas
+représenter. Le déplacement dépendant de la profondeur vient du **travelling** (parallaxe). D'où
+l'ajout d'un modèle de **similitude** (translation + zoom + roulis), plus fidèle à une caméra sur
+trépied que l'affine en `y`.
+
+Six modèles, arbitrés par l'**erreur laissée-de-côté** — ajuster sur n−1 appariements, mesurer sur
+celui qu'on retire. C'est le seul juge honnête : le résidu d'ajustement décroît toujours quand on
+ajoute des paramètres, et huit inconnues pour cinq voitures passeraient exactement par tous les
+points sans rien avoir compris.
+
+| Mouvement simulé | Modèle désigné | Ce que ça confirme |
+|---|---|---|
+| panoramique pur | `globale` | la translation globale est déjà **exacte** |
+| zoom | `similitude` | la translation globale devient **pire que rien** |
+| travelling | `locale` | seule la taille de boîte capture la profondeur |
+
+**Mais sur une séquence complète, aucun modèle ne change quoi que ce soit.** Mesuré sur une
+trajectoire bruitée avec panoramique ET dézoom, les six modèles donnent exactement les mêmes pistes,
+les mêmes identités et le même nombre de refus `distance`. La raison est mesurable :
+
+| Mouvement de caméra | Erreur de prédiction en régime établi, 4 Hz | 10 Hz |
+|---|---|---|
+| caméra fixe | 0,1 px | 0,0 px |
+| panoramique constant | 0,0 px | 0,0 px |
+| panoramique qui démarre brutalement | 1,5 px | 0,5 px |
+| dézoom continu | 3,6 px | 1,1 px |
+
+**Le filtre par piste absorbe déjà le mouvement de caméra.** Il estime une vitesse apparente qui
+contient la caméra et la voiture sans les distinguer — et il n'a pas besoin de les distinguer. Le
+modèle de caméra ne corrige qu'un RÉSIDU de quelques pixels sur des boîtes de 100 à 200 px, soit un
+IoU de 0,96. Il ne peut pas produire un refus `distance`, qui suppose un recouvrement **exactement
+nul**. Et l'erreur est plus PETITE à 10 Hz, pas plus grande.
+
+Les modèles restent disponibles dans la page, avec le tableau d'arbitrage et une visualisation
+facultative — prédiction brute en gris, prédiction compensée en pointillé de couleur, trait reliant
+les deux — pour vérifier sur la vraie vidéo plutôt que sur une simulation. Le seul cas où ils
+peuvent servir est un changement BRUTAL de cadrage, que le filtre ne peut pas anticiper.
+
 ### Ventilation des refus
 
 Pour chaque association manquée, du côté de la piste comme de la détection :

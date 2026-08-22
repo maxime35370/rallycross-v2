@@ -49,6 +49,8 @@
     <label>Bande basse <input type="number" id="bande" step="0.05" min="0.02" max="0.3" value="0.10"></label>
     <label>IoU fusion <input type="number" id="iou" step="0.05" min="0.1" max="0.9" value="0.45"></label>
     <label><input type="checkbox" id="cmc" checked> compensation caméra</label>
+    <label>Modèle <select id="modeleCam"></select></label>
+    <label><input type="checkbox" id="montrerCmc"> montrer la compensation</label>
     <button id="lancer" disabled>Analyser la séquence</button>
     <progress id="prog" value="0" max="1" style="display:none"></progress>
     <span id="etat" class="sub"></span>
@@ -93,6 +95,7 @@ import {
   decodeOutput, assertAnchorCount, mergeVehicleDetections,
 } from '/tools/yolox-poc/lib/detect.mjs';
 import { Suivi, ETATS, DEFAULTS, mesurer, signauxSuspects } from '/tools/yolox-poc/lib/track.mjs';
+import { MODELES_CAMERA, ORDRE_MODELES } from '/tools/yolox-poc/lib/camera.mjs';
 
 const ort = window.ort;
 ort.env.wasm.wasmPaths = '/__ort/';
@@ -110,6 +113,12 @@ const couleurDe = (id) => COULEURS[(id - 1) % COULEURS.length];
 const selModele = $('modele');
 selModele.innerHTML = Object.values(MODELS).map(m => `<option value="${m.id}">${m.label} · ${m.inputSize} px</option>`).join('');
 selModele.value = 's';                      // le meilleur des deux sur ce corpus
+
+const selCam = $('modeleCam');
+selCam.innerHTML = ORDRE_MODELES
+  .map(id => `<option value="${id}">${MODELES_CAMERA[id].label} (${MODELES_CAMERA[id].params} p.)</option>`)
+  .join('') + '<option value="auto">auto — le plus simple qui gagne</option>';
+selCam.value = 'globale';
 
 const grilles = new Map();
 const sessions = new Map();
@@ -191,6 +200,7 @@ async function analyser() {
   suivi = new Suivi({
     dt: pas, highScore: seuil, lowScore: bande,
     cameraCompensation: $('cmc').checked,
+    modeleCamera: selCam.value,
   });
 
   const instants = [];
@@ -244,6 +254,33 @@ async function montrer(i) {
   ctx.lineWidth = 3 * e;
   ctx.font = `600 ${Math.round(15 * e)}px system-ui, sans-serif`;
   ctx.textBaseline = 'bottom';
+
+  // Diagnostic de compensation : prédiction brute, prédiction compensée, et
+  // la détection finalement associée. Voir dans quelle direction la correction
+  // pousse la piste vaut mieux que de lire un résidu moyen.
+  if ($('montrerCmc').checked) {
+    for (const t of inst.tracks) {
+      if (!t.confirmee) continue;
+      const c = couleurDe(t.id);
+      ctx.lineWidth = 1.5 * e;
+      if (t.boiteAvant) {
+        ctx.strokeStyle = '#888'; ctx.setLineDash([3 * e, 3 * e]);
+        ctx.strokeRect(t.boiteAvant[0], t.boiteAvant[1], t.boiteAvant[2] - t.boiteAvant[0], t.boiteAvant[3] - t.boiteAvant[1]);
+      }
+      if (t.boiteCompensee) {
+        ctx.strokeStyle = c; ctx.globalAlpha = 0.7; ctx.setLineDash([7 * e, 4 * e]);
+        ctx.strokeRect(t.boiteCompensee[0], t.boiteCompensee[1], t.boiteCompensee[2] - t.boiteCompensee[0], t.boiteCompensee[3] - t.boiteCompensee[1]);
+        ctx.globalAlpha = 1;
+      }
+      if (t.boiteAvant && t.boiteCompensee) {
+        const a = [(t.boiteAvant[0] + t.boiteAvant[2]) / 2, (t.boiteAvant[1] + t.boiteAvant[3]) / 2];
+        const b2 = [(t.boiteCompensee[0] + t.boiteCompensee[2]) / 2, (t.boiteCompensee[1] + t.boiteCompensee[3]) / 2];
+        ctx.setLineDash([]); ctx.strokeStyle = c;
+        ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b2[0], b2[1]); ctx.stroke();
+      }
+      ctx.setLineDash([]);
+    }
+  }
 
   for (const t of inst.tracks) {
     const c = couleurDe(t.id);
@@ -323,6 +360,21 @@ function afficherMesures() {
     créations : ${Object.entries(m.raisons.creation).map(([k, v]) => `${k} ${v}`).join(' · ') || '—'}<br>
     suppressions : ${Object.entries(m.raisons.suppression).map(([k, v]) => `${k} ${v}`).join(' · ') || '—'}
   </p>
+  ${m.camera ? `<h3 style="font-size:.9rem;margin:10px 0 4px">Compensation de caméra</h3>
+  <table>
+    <tr><td>modèle demandé / appliqué</td><td class="num">${m.camera.modele} / ${m.camera.modeleApplique ?? '—'}</td></tr>
+    <tr><td>résidu médian avant / après</td><td class="num">${m.camera.residuMedianAvant ?? '—'} → ${m.camera.residuMedianApres ?? '—'} px</td></tr>
+    <tr><td><strong>gain</strong></td><td class="num"><strong>${m.camera.gain == null ? '—' : (m.camera.gain * 100).toFixed(1) + ' %'}</strong></td></tr>
+  </table>
+  ${m.camera.comparaison ? `<table style="margin-top:6px">
+    <tr><th>modèle</th><th class="num">p.</th><th class="num">ajustement</th><th class="num">laissé-de-côté</th></tr>
+    ${Object.entries(m.camera.comparaison.resultats).map(([k, v]) => `<tr${k === m.camera.comparaison.recommande ? ' style="font-weight:600"' : ''}>
+      <td>${k}</td><td class="num">${v.params}</td>
+      <td class="num">${v.residuAjustement ?? '—'}</td>
+      <td class="num">${v.erreurLaisseeDeCote ?? '—'}</td></tr>`).join('')}
+  </table>
+  <p class="sub">Recommandé sur le dernier pas : <strong>${m.camera.comparaison.recommande}</strong>.
+  Le juge est l'erreur laissée-de-côté, pas le résidu d'ajustement : celui-ci décroît toujours quand on ajoute des paramètres.</p>` : ''}` : ''}
   <h3 style="font-size:.9rem;margin:10px 0 4px">Pourquoi les associations échouent</h3>
   <table>
     <tr><th>cause</th><th class="num">nombre</th></tr>
@@ -412,6 +464,7 @@ $('exporter').addEventListener('click', () => {
       bandeBasse: Number($('bande').value),
       iouFusion: Number($('iou').value),
       compensationCamera: $('cmc').checked,
+      modeleCamera: selCam.value,
       tracker: { ...DEFAULTS, dt: pas, highScore: Number($('seuil').value), lowScore: Number($('bande').value) },
     },
     extrait: sidecar ? { file: sidecar.file, fps: sidecar.fps, clipStart: sidecar.clipStart, youtubeId: sidecar.youtubeId } : null,

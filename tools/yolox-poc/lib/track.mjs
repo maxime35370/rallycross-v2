@@ -33,6 +33,7 @@
 ═══════════════════════════════════════════════ */
 
 import { iou } from './detect.mjs';
+import { ajusterCamera, appliquerCamera, comparerModeles, MODELES_CAMERA } from './camera.mjs';
 
 /** États d'une piste, du plus sûr au moins sûr. */
 export const ETATS = {
@@ -81,6 +82,9 @@ export const DEFAULTS = {
   mergeAreaRatio: 1.25,         // boîte « anormalement grande » = fusion probable
   ambiguityMargin: 0.08,        // écart de coût en dessous duquel un choix est douteux
   cameraCompensation: true,
+  // Forme du modèle de mouvement caméra : 'aucune', 'globale', 'affineY',
+  // 'locale', 'homographie', ou 'auto' (le plus simple qui gagne nettement).
+  modeleCamera: 'globale',
   gainBiais: 0.5,
   gainFusion: 0.5,
 };
@@ -377,6 +381,9 @@ export class Suivi {
     this.opt = { ...DEFAULTS, ...options };
     this.pistes = [];
     this.derniereCamera = { dx: 0, dy: 0, n: 0 };
+    this.modeleCamera = null;          // ajusté au pas précédent
+    this.comparaisonCamera = null;     // les modèles mis en concurrence
+    this.residus = [];                 // { t, avant, apres, modele }
     this.dernierRattrapage = null;
     this.doublonsEcartes = 0;
     this.refus = [];
@@ -395,13 +402,24 @@ export class Suivi {
     const fortes = detections.filter(d => d.score >= o.highScore);
     const faibles = detections.filter(d => d.score < o.highScore && d.score >= o.lowScore);
 
-    // 1 · prédiction, décalée du biais observé au pas précédent
-    const biais = (o.cameraCompensation && this.derniereCamera.n >= 3)
-      ? { dx: this.derniereCamera.dx * o.gainBiais, dy: this.derniereCamera.dy * o.gainBiais }
-      : { dx: 0, dy: 0 };
+    // 1 · prédiction, puis compensation du mouvement de caméra
+    //
+    // La boîte AVANT compensation est conservée : c'est elle qui permet de voir
+    // si la correction pousse la piste dans la bonne direction, et de mesurer
+    // le gain au lieu de le supposer.
+    const modele = o.cameraCompensation ? this.modeleCamera : null;
     for (const p of this.pistes) {
-      const b = p.pred.predire(dt);
-      p.boitePredite = [b[0] + biais.dx, b[1] + biais.dy, b[2] + biais.dx, b[3] + biais.dy];
+      p.boiteAvant = p.pred.predire(dt);
+      if (modele?.suffisant) {
+        const [dx, dy] = modele.deplacement(p.boiteAvant);
+        const g = o.gainBiais;
+        p.boitePredite = Number.isFinite(dx) && Number.isFinite(dy)
+          ? [p.boiteAvant[0] + dx * g, p.boiteAvant[1] + dy * g,
+            p.boiteAvant[2] + dx * g, p.boiteAvant[3] + dy * g]
+          : p.boiteAvant.slice();
+      } else {
+        p.boitePredite = p.boiteAvant.slice();
+      }
     }
 
     // Une piste abandonnée continue d'être extrapolée pendant la fenêtre de
@@ -454,8 +472,10 @@ export class Suivi {
     const associeesCeTour = [];
     for (const [iPiste, iDet] of paires) {
       const piste = candidates[iPiste];
-      appariees.push({ avant: piste.boitePredite, apres: utilisables[iDet].box });
-      this._confirmer(piste, t, utilisables[iDet], ambigus.has(iPiste), dt);
+      const det = utilisables[iDet];
+      appariees.push({ avant: piste.boitePredite, apres: det.box, brut: piste.boiteAvant });
+      piste.boiteAssociee = det.box.slice();
+      this._confirmer(piste, t, det, ambigus.has(iPiste), dt);
       associeesCeTour.push(piste);
     }
 
@@ -547,7 +567,33 @@ export class Suivi {
       servies.push(this._creer(t, det));
     }
 
+    // 7 · modèle de caméra pour le pas suivant, et mesure de son effet
     this.derniereCamera = o.cameraCompensation ? decalageCamera(appariees) : { dx: 0, dy: 0, n: 0 };
+    if (o.cameraCompensation && appariees.length) {
+      const ecart = (a, b) => {
+        const [ax, ay] = centre(a), [bx, by] = centre(b);
+        return Math.hypot(ax - bx, ay - by);
+      };
+      const med = (arr) => {
+        if (!arr.length) return null;
+        const tri = [...arr].sort((x, y) => x - y);
+        const i = Math.floor(tri.length / 2);
+        return Number((tri.length % 2 ? tri[i] : (tri[i - 1] + tri[i]) / 2).toFixed(2));
+      };
+      this.residus.push({
+        t: Number(t.toFixed(3)),
+        avant: med(appariees.map(a => ecart(a.brut ?? a.avant, a.apres))),
+        apres: med(appariees.map(a => ecart(a.avant, a.apres))),
+        modele: modele?.id ?? 'aucune',
+        n: appariees.length,
+      });
+
+      this.comparaisonCamera = comparerModeles(appariees);
+      const choix = o.modeleCamera === 'auto' ? this.comparaisonCamera.recommande : o.modeleCamera;
+      this.modeleCamera = ajusterCamera(appariees, choix);
+    } else {
+      this.modeleCamera = null;
+    }
 
     const instant = this._instantane(t, detections.length, fortes.length, faibles.length, fusions.size, doublonsCeTour);
     this.journal.push(instant);
@@ -804,6 +850,11 @@ export class Suivi {
       tracks: vivantes.map(p => ({
         id: p.id,
         box: p.box.map(v => Math.round(v)),
+        // Les trois boîtes du diagnostic de compensation : prédiction brute,
+        // prédiction compensée, détection finalement associée.
+        boiteAvant: p.boiteAvant ? p.boiteAvant.map(v => Math.round(v)) : null,
+        boiteCompensee: p.boitePredite ? p.boitePredite.map(v => Math.round(v)) : null,
+        boiteAssociee: p.state === ETATS.DETECTED && p.boiteAssociee ? p.boiteAssociee.map(v => Math.round(v)) : null,
         state: p.state,
         score: p.score,
         confirmee: p.confirmee,
@@ -901,6 +952,23 @@ export function mesurer(suivi, { cible = 5, tV1 = null } = {}) {
     reactivations: pistes.reduce((t, p) => t + p.reactivated, 0),
     doublonsEcartes: suivi.doublonsEcartes,
     raisons: { creation: compter('raisonCreation'), suppression: compter('raisonSuppression') },
+    // Effet mesuré de la compensation de caméra.
+    camera: (() => {
+      const r = suivi.residus;
+      if (!r.length) return null;
+      const med = (f) => mediane(r.map(f).filter(v => v != null));
+      const avant = med(x => x.avant), apres = med(x => x.apres);
+      return {
+        modele: suivi.opt.modeleCamera,
+        modeleApplique: r[r.length - 1]?.modele ?? null,
+        residuMedianAvant: avant,
+        residuMedianApres: apres,
+        gain: avant != null && apres != null && avant > 0
+          ? Number((1 - apres / avant).toFixed(3)) : null,
+        comparaison: suivi.comparaisonCamera,
+        parInstant: r,
+      };
+    })(),
     // Ventilation des associations refusées : la cause dominante se lit ici.
     refus: (() => {
       const parRaison = {}, parCote = { piste: 0, detection: 0 };
