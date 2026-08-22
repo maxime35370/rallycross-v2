@@ -10,6 +10,10 @@
    Les rapports sont appariés par fréquence, pas par ordre : deux fichiers de
    même cadence sont comparés entre eux, dans l'ordre où ils arrivent.
 
+   La première section est l'OBJECTIF : combien des identités nées au départ
+   atteignent le V1 par une chaîne ininterrompue. « Cinq pistes actives au V1 »
+   ne le dit pas — ce sont peut-être cinq identités nées après la coupure.
+
    Ce que le script surveille en plus des métriques demandées :
      · la DÉRIVE de taille, qui est la cible directe du plafonnement ;
      · les ÉCHANGES d'identité, qui sont le prix qu'une correction ne doit pas
@@ -44,7 +48,16 @@ function extraire({ r }) {
   const parRaison = m.refus?.parRaison || {};
   const ratios = (r.refus || []).map(x => x.ratio).filter(v => v != null);
   const sig = (r.signaux || []).reduce((a, s) => { a[s.type] = (a[s.type] || 0) + 1; return a; }, {});
+  const id = m.identites;
   return {
+    // ── l'objectif ──────────────────────────────────────────────────────
+    'identités nées au départ': id?.auDepart ?? null,
+    'identités logiques au V1': id?.auV1 ?? null,
+    'identités du DÉPART au V1': id?.survivantesDepart ?? null,
+    'pistes suspendues au cut': id?.suspenduesTotal ?? null,
+    'pistes réattribuées': id?.reattribuees ?? null,
+    'instants bifurqués': id?.instantsBifurques ?? null,
+    // ── fragmentation ───────────────────────────────────────────────────
     'pistes créées': m.pistesCreees,
     'pistes confirmées': m.pistesConfirmeesCreees,
     'jamais confirmées': m.pistesJamaisConfirmees,
@@ -72,6 +85,10 @@ function extraire({ r }) {
 
 // Sens souhaité : ↓ moins c'est mieux, ↑ plus c'est mieux, = doit rester stable.
 const SENS = {
+  'identités du DÉPART au V1': '↑',
+  'identités logiques au V1': '↓',
+  'pistes réattribuées': '↑',
+  'instants bifurqués': '=',
   'pistes créées': '↓', 'pistes confirmées': '↓', 'jamais confirmées': '↓',
   'pistes longues ≥ 70 %': '↑', 'durée médiane (s)': '↑', 'nouvelles pistes / s': '↓',
   suppressions: '↓', réactivations: '↑',
@@ -118,8 +135,8 @@ if (cadences.length >= 2) {
   const rangs = Math.min(...cadences.map(h => parHz.get(h).length));
   console.log(`\n${B}══ écart ${cadences.join(' Hz / ')} Hz ══${N}`);
   console.log(`${G}${'métrique'.padEnd(34)}${Array.from({ length: rangs }, (_, i) => `campagne ${i + 1}`.padStart(28)).join('')}${N}`);
-  const cles = ['pistes confirmées', 'durée médiane (s)', 'refus ratio_taille', 'réactivations',
-    'dérive de taille — max', 'suivies au V1'];
+  const cles = ['identités du DÉPART au V1', 'pistes confirmées', 'durée médiane (s)',
+    'refus ratio_taille', 'réactivations', 'dérive de taille — max', 'suivies au V1'];
   const ecartDe = (cle, rang) => {
     const vals = cadences.map(h => extraire(parHz.get(h)[rang])[cle]);
     if (vals.some(v => typeof v !== 'number')) return null;
