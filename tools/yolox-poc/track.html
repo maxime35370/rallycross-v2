@@ -249,7 +249,10 @@ async function montrer(i) {
     const c = couleurDe(t.id);
     const [x1, y1, x2, y2] = t.box;
     const observe = t.state === ETATS.DETECTED;
-    ctx.globalAlpha = observe ? 1 : 0.55;
+    // Une piste non confirmée est dessinée en fil : elle existe, mais elle ne
+    // compte pas encore comme une voiture.
+    ctx.lineWidth = (t.confirmee ? 3 : 1.5) * e;
+    ctx.globalAlpha = observe ? 1 : (t.confirmee ? 0.55 : 0.35);
     ctx.strokeStyle = c;
     // Trait plein = observé ; pointillé = extrapolé ou occlus. La distinction
     // doit sauter aux yeux : une position devinée ne doit jamais ressembler à
@@ -265,6 +268,7 @@ async function montrer(i) {
       ctx.lineWidth = 2 * e; ctx.stroke(); ctx.lineWidth = 3 * e;
     }
 
+    if (!t.confirmee) { ctx.globalAlpha = 1; continue; }   // pas d'étiquette avant confirmation
     const txt = `#${t.id} ${t.state.slice(0, 4)}${t.score != null && observe ? ' ' + t.score.toFixed(2) : ''}${t.ambiguous ? ' ?' : ''}`;
     const w = ctx.measureText(txt).width + 10 * e, h = 21 * e;
     ctx.fillStyle = c; ctx.fillRect(x1, Math.max(h, y1) - h, w, h);
@@ -274,7 +278,9 @@ async function montrer(i) {
 
   $('horodatage').textContent = `t = ${inst.t.toFixed(3)} s  ·  image ${Math.round(inst.t * fps)}  ·  ${instant + 1}/${journal.length}`;
   $('resume').textContent = `${inst.counts.detected} détectée(s) · ${inst.counts.occluded} occluse(s) · `
-    + `${inst.counts.predicted} prédite(s) · ${inst.detections.fortes} détection(s) forte(s)`
+    + `${inst.counts.predicted} prédite(s) · ${inst.counts.tentative} à confirmer · `
+    + `${inst.detections.fortes} détection(s) forte(s)`
+    + (inst.detections.doublons ? ` · ${inst.detections.doublons} doublon(s) écarté(s)` : '')
     + (inst.detections.fusions ? ` · ${inst.detections.fusions} fusion(s)` : '');
 
   $('pistesInstant').innerHTML = `<table>
@@ -284,7 +290,7 @@ async function montrer(i) {
       <td><span class="etat s-${t.state}">${t.state}</span>${t.ambiguous ? ' <span title="association peu sûre">?</span>' : ''}</td>
       <td class="num">${t.score != null ? t.score.toFixed(2) : '—'}</td>
       <td class="num">${t.misses}</td>
-      <td>${t.occludedBy ?? '—'}</td></tr>`).join('')}
+      <td>${t.confirmee ? (t.occludedBy ?? '—') : 'à confirmer'}</td></tr>`).join('')}
   </table>`;
 }
 
@@ -303,6 +309,20 @@ function afficherMesures() {
         <td class="num"><strong>${m.auV1?.suivies ?? '—'}</strong> suivies, ${m.auV1?.detectees ?? '—'} détectées</td></tr>
   </table>
   <p class="sub" style="margin-top:6px">Pistes au V1 : ${m.auV1 ? m.auV1.ids.map(i => `#${i}`).join(', ') : '—'}</p>
+  <h3 style="font-size:.9rem;margin:10px 0 4px">Fragmentation</h3>
+  <table>
+    <tr><td>pistes créées / <strong>confirmées</strong></td><td class="num">${m.pistesCreees} / <strong>${m.pistesConfirmeesCreees}</strong></td></tr>
+    <tr><td>jamais confirmées</td><td class="num">${m.pistesJamaisConfirmees}</td></tr>
+    <tr><td>durée médiane des pistes</td><td class="num">${m.dureeMedianePistes ?? '—'} s</td></tr>
+    <tr><td>nouvelles pistes par seconde</td><td class="num">${m.nouvellesPistesParSeconde ?? '—'}</td></tr>
+    <tr><td>suppressions</td><td class="num">${m.suppressions}</td></tr>
+    <tr><td>réactivations</td><td class="num">${m.reactivations}</td></tr>
+    <tr><td>doublons écartés</td><td class="num">${m.doublonsEcartes}</td></tr>
+  </table>
+  <p class="sub" style="margin-top:4px">
+    créations : ${Object.entries(m.raisons.creation).map(([k, v]) => `${k} ${v}`).join(' · ') || '—'}<br>
+    suppressions : ${Object.entries(m.raisons.suppression).map(([k, v]) => `${k} ${v}`).join(' · ') || '—'}
+  </p>
   <p class="sub">Aucun de ces chiffres ne dit qu'un identifiant désigne toujours la même voiture :
   cela demande ton œil, guidé par la liste ci-dessous.</p>`;
 }
@@ -386,7 +406,7 @@ $('exporter').addEventListener('click', () => {
     signaux,
     journal: journal.map(j => ({
       t: j.t, detections: j.detections, counts: j.counts,
-      tracks: j.tracks.map(t => ({ id: t.id, box: t.box, state: t.state, score: t.score, ambiguous: t.ambiguous, occludedBy: t.occludedBy })),
+      tracks: j.tracks.map(t => ({ id: t.id, box: t.box, state: t.state, score: t.score, confirmee: t.confirmee, ambiguous: t.ambiguous, occludedBy: t.occludedBy })),
     })),
     createdAt: new Date().toISOString(),
   };

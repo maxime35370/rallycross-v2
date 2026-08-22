@@ -8,13 +8,14 @@
 ═══════════════════════════════════════════════ */
 
 import { describe, it, expect } from 'vitest';
+import { centre } from '../tools/yolox-poc/lib/track.mjs';
 import {
-  ETATS, DEFAULTS, Suivi, Predicteur, hungarian, decalageCamera,
-  estimerDecalageGlobal, rapportTaille, mesurer, signauxSuspects, concorder,
+  ETATS, DEFAULTS, RAISONS, Suivi, Predicteur, hungarian, decalageCamera,
+  estimerDecalageGlobal, rapportTaille, recouvrement, mesurer, signauxSuspects, concorder,
 } from '../tools/yolox-poc/lib/track.mjs';
 
 /** Boîte carrée centrée, pour écrire des scénarios lisibles. */
-const B = (cx, cy, w = 100, h = 60) => [cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2];
+const B = (cx, cy, w = 160, h = 90) => [cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2];
 const det = (box, score = 0.8) => ({ box, score, label: 'car' });
 
 /** Déroule une séquence : `positions[i]` = détections de l'instant i. */
@@ -212,10 +213,12 @@ describe('Suivi — la bande basse sauve, mais ne crée jamais', () => {
 describe('Suivi — une boîte engloutit deux voitures', () => {
   // Cas observé sur `milieu_v1` : deux pistes bien établies, puis une seule
   // détection large qui les recouvre toutes les deux, puis re-séparation.
+  // Tailles explicites : la fusion se reconnaît au RAPPORT d'aire, deux voitures
+  // de 100 × 60 avalées par une boîte de 230 × 70.
   const seq = [];
-  for (let k = 0; k < 5; k++) seq.push([det(B(300 + k * 10, 400)), det(B(420 + k * 10, 400))]);
+  for (let k = 0; k < 5; k++) seq.push([det(B(300 + k * 10, 400, 100, 60)), det(B(420 + k * 10, 400, 100, 60))]);
   for (let k = 5; k < 8; k++) seq.push([det(B(400 + k * 10, 400, 230, 70), 0.62)]);
-  for (let k = 8; k < 13; k++) seq.push([det(B(300 + k * 10, 400)), det(B(420 + k * 10, 400))]);
+  for (let k = 8; k < 13; k++) seq.push([det(B(300 + k * 10, 400, 100, 60)), det(B(420 + k * 10, 400, 100, 60))]);
 
   it('ne transforme pas deux voitures en une seule', () => {
     const s = derouler(seq);
@@ -362,7 +365,165 @@ describe('réglages par défaut', () => {
   });
 
   it('tolère plus longtemps une occlusion identifiée qu\'une simple absence', () => {
-    expect(DEFAULTS.maxOccludedAge).toBeGreaterThan(DEFAULTS.maxAge);
+    expect(DEFAULTS.dureeOcclusionMax).toBeGreaterThan(DEFAULTS.dureeAvantAbandon);
+  });
+
+  it('exprime toutes les tolérances en SECONDES, jamais en pas', () => {
+    // En pas, une tolérance de 3 valait 0,75 s à 4 Hz et 0,30 s à 10 Hz :
+    // augmenter la fréquence resserrait silencieusement tous les délais.
+    for (const clef of ['dureeAvantAbandon', 'dureeOcclusionMax', 'dureeReactivation', 'dureeConfirmation']) {
+      expect(DEFAULTS[clef]).toBeGreaterThan(0);
+    }
+    expect(DEFAULTS).not.toHaveProperty('maxAge');
+    expect(DEFAULTS).not.toHaveProperty('minHits');
+  });
+});
+
+// ─────────────────────────────────────────────────────────
+// FRAGMENTATION — les cas mesurés sur Kerlabo
+// ─────────────────────────────────────────────────────────
+
+describe('Suivi — grille de départ : 7 détections pour 5 voitures', () => {
+  // Relevé réel : à t = 3,000 s, YOLOX-s rend 7 détections pour 5 voitures ;
+  // les deux parasites sont plus petits, moins sûrs, et posés SUR des voitures
+  // déjà détectées. Ils survivent à la fusion à IoU 0,45 parce qu'ils sont
+  // décalés — c'est l'inclusion, pas l'IoU, qui les trahit.
+  const grille = (k) => {
+    const d = [0, 1, 2, 3, 4].map(i => det(B(300 + i * 170 + k * 10, 400, 160, 90), 0.85));
+    d.push(det(B(300 + k * 10 + 20, 400, 80, 50), 0.45));
+    d.push(det(B(300 + 4 * 170 + k * 10 - 20, 400, 85, 52), 0.44));
+    return d;
+  };
+  const seq = Array.from({ length: 13 }, (_, k) => grille(k));
+
+  it('ne crée que cinq identités', () => {
+    const s = derouler(seq);
+    expect(s.pistes).toHaveLength(5);
+    expect(s.confirmees).toHaveLength(5);
+    expect(s.doublonsEcartes).toBeGreaterThan(0);
+  });
+
+  it('impute chaque doublon à la piste qu\'il recouvre', () => {
+    const s = derouler(seq);
+    expect(s.pistes.filter(p => p.doublonsAbsorbes > 0).length).toBe(2);
+  });
+
+  it('n\'écarte jamais une détection MEILLEURE que la piste qu\'elle recouvre', () => {
+    // Sinon, au départ où les cinq boîtes se chevauchent déjà, une vraie
+    // voiture mieux détectée que sa voisine disparaîtrait.
+    const s = new Suivi({ dt: 0.25 });
+    s.pas(0, [det(B(400, 400, 160, 90), 0.40), det(B(410, 400, 150, 88), 0.90)]);
+    expect(s.pistes).toHaveLength(2);
+  });
+});
+
+describe('Suivi — indépendance à la fréquence', () => {
+  // Baseline mesurée sur Kerlabo : passer de 4 à 10 Hz faisait bondir les
+  // pistes de 46 à 90 et les pertes de 66 à 219. Une même séquence physique
+  // doit donner le même suivi, quelle que soit la cadence d'échantillonnage.
+  const voitures = (t) => [0, 1, 2, 3, 4].map(i => det(B(300 + i * 170 + t * 60, 400, 160, 90), 0.85));
+  const rejouer = (dt) => {
+    const s = new Suivi({ dt });
+    for (let k = 0; k * dt <= 4 + 1e-9; k++) s.pas(Number((k * dt).toFixed(3)), voitures(k * dt));
+    return mesurer(s, { cible: 5, tV1: 4 });
+  };
+
+  it('donne le même nombre de pistes confirmées à 2, 4 et 10 Hz', () => {
+    const a = rejouer(0.5), b = rejouer(0.25), c = rejouer(0.1);
+    expect([a.pistesConfirmeesCreees, b.pistesConfirmeesCreees, c.pistesConfirmeesCreees]).toEqual([5, 5, 5]);
+    expect([a.auV1.suivies, b.auV1.suivies, c.auV1.suivies]).toEqual([5, 5, 5]);
+  });
+
+  it('tolère la même DURÉE d\'absence quelle que soit la fréquence', () => {
+    // Un trou de 0,5 s : la piste doit survivre aux deux cadences.
+    const avecTrou = (dt) => {
+      const s = new Suivi({ dt });
+      for (let k = 0; k * dt <= 4 + 1e-9; k++) {
+        const t = Number((k * dt).toFixed(3));
+        const toutes = voitures(t);
+        s.pas(t, (t >= 2 && t < 2.5) ? [toutes[0], toutes[2], toutes[3], toutes[4]] : toutes);
+      }
+      return s;
+    };
+    for (const dt of [0.25, 0.1]) {
+      const s = avecTrou(dt);
+      expect(s.pistes).toHaveLength(5);
+      expect(s.confirmees).toHaveLength(5);
+    }
+  });
+});
+
+describe('Suivi — réactivation d\'une piste abandonnée', () => {
+  it('reprend l\'identifiant au lieu d\'en fabriquer un nouveau', () => {
+    // Sans repêchage, toute voiture perdue plus d'une seconde revenait sous un
+    // NOUVEL identifiant — indiscernable d'un vrai échange d'identité.
+    const seq = [];
+    for (let k = 0; k < 6; k++) seq.push([det(B(300 + k * 12, 400, 160, 90))]);
+    for (let k = 0; k < 5; k++) seq.push([]);                    // 1,25 s d'absence
+    for (let k = 0; k < 6; k++) seq.push([det(B(372 + k * 12, 400, 160, 90))]);
+    const s = derouler(seq);
+    expect(s.pistes).toHaveLength(1);
+    expect(s.pistes[0].reactivated).toBe(1);
+    expect(mesurer(s).reactivations).toBe(1);
+  });
+
+  it('ne repêche plus au-delà de la fenêtre', () => {
+    const seq = [];
+    for (let k = 0; k < 6; k++) seq.push([det(B(300, 400, 160, 90))]);
+    for (let k = 0; k < 12; k++) seq.push([]);                   // 3 s : trop
+    for (let k = 0; k < 6; k++) seq.push([det(B(300, 400, 160, 90))]);
+    expect(derouler(seq).pistes).toHaveLength(2);
+  });
+});
+
+describe('Predicteur — la mesure ne doit pas faire avancer l\'état deux fois', () => {
+  it('ne dépasse pas la cible après une absence', () => {
+    // Défaut corrigé : `corriger()` recevait le temps écoulé depuis la dernière
+    // DÉTECTION, alors que l'état avait déjà été avancé à chaque pas. La
+    // position corrigée dépassait la cible, l'IoU s'effondrait au pas suivant,
+    // et la piste se fragmentait.
+    const p = new Predicteur(B(100, 400, 100, 60));
+    for (let i = 1; i <= 5; i++) p.corriger(B(100 + i * 20, 400, 100, 60), 0.25);
+    p.avancerSansMesure(0.25);
+    p.avancerSansMesure(0.25);
+    p.corriger(B(260, 400, 100, 60), 0.25);
+    const [cx] = centre(p.boite);
+    expect(cx).toBeGreaterThan(200);
+    expect(cx).toBeLessThan(320);
+  });
+});
+
+describe('recouvrement', () => {
+  it('mesure l\'inclusion, pas l\'intersection sur union', () => {
+    const grande = B(400, 400, 200, 120), petite = B(400, 400, 80, 50);
+    expect(recouvrement(petite, grande)).toBeCloseTo(1, 6);
+    expect(recouvrement(grande, petite)).toBeLessThan(0.2);
+  });
+});
+
+describe('mesurer — compteurs de fragmentation', () => {
+  const seq = Array.from({ length: 16 }, (_, k) =>
+    [0, 1, 2, 3, 4].map(i => det(B(200 + i * 170 + k * 8, 400, 160, 90))));
+
+  it('distingue les pistes créées des pistes confirmées', () => {
+    const m = mesurer(derouler(seq), { cible: 5, tV1: 3 });
+    expect(m.pistesConfirmeesCreees).toBe(5);
+    expect(m.pistesJamaisConfirmees).toBe(0);
+    expect(m.dureeMedianePistes).toBeGreaterThan(0);
+    expect(m.nouvellesPistesParSeconde).toBeCloseTo(5 / m.duree, 2);
+  });
+
+  it('trace la raison de chaque création et de chaque suppression', () => {
+    const m = mesurer(derouler(seq));
+    expect(m.raisons.creation[RAISONS.NOUVELLE]).toBe(5);
+    expect(m.raisons).toHaveProperty('suppression');
+    expect(m.suppressions).toBe(0);
+  });
+
+  it('compte séparément doublons écartés et réactivations', () => {
+    const m = mesurer(derouler(seq));
+    expect(m).toHaveProperty('doublonsEcartes');
+    expect(m).toHaveProperty('reactivations');
   });
 });
 

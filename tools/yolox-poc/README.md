@@ -206,10 +206,52 @@ score n'est montré que sur une détection réelle.
   Les signatures utiles d'un échange d'identité sont ailleurs — inversion d'ordre, relais
   d'identifiant, changement de gabarit, sortie d'occlusion, association peu sûre.
 
+### Diagnostic de fragmentation
+
+Première mesure réelle sur Kerlabo : **5 voitures, 46 pistes à 4 Hz et 90 à 10 Hz**, aucune piste
+tenant 70 % de la séquence. Augmenter la fréquence AGGRAVAIT le suivi — ce qui n'a aucun sens pour
+un tracker et désignait des défauts de conception, pas un manque de données. Trois ont été trouvés :
+
+**1. Les tolérances étaient comptées en PAS, pas en secondes.** Trois pas d'absence valent 0,75 s à
+4 Hz mais 0,30 s à 10 Hz : monter en fréquence resserrait silencieusement tous les délais. C'est
+l'explication principale des 219 pertes à 10 Hz contre 66 à 4 Hz. Tout est désormais en secondes.
+
+**2. Le gain de vitesse du filtre dépendait du pas.** `v += β·r/dt` amplifie le bruit de position
+quand `dt` diminue : à 10 Hz l'estimation de vitesse était 2,5 fois plus bruitée qu'à 4 Hz, sur la
+même vidéo. Les gains dérivent maintenant de **constantes de temps**, donc du temps réel.
+
+**3. La correction consommait le temps écoulé depuis la dernière DÉTECTION**, alors que l'état du
+filtre avait déjà été avancé à chaque pas. Après une absence, la position corrigée dépassait la
+cible, l'IoU s'effondrait au pas suivant, et la piste se fragmentait d'elle-même.
+
+Et la cause que tu avais repérée à l'œil : **toute détection libre devenait une identité**. Sur la
+grille de départ, 7 détections pour 5 voitures donnaient 7 pistes. Une détection libre est
+maintenant confrontée, dans cet ordre, à quatre questions :
+
+| Ordre | Question | Résultat |
+|---|---|---|
+| 1 | reprend-elle une piste occluse ? | `reprise_occlusion` |
+| 2 | repêche-t-elle une piste abandonnée récemment ? | `reactivation` |
+| 3 | est-ce un doublon d'une piste déjà servie ? | `doublon_ecarte` |
+| 4 | sinon | `nouvelle` |
+
+Le doublon se reconnaît à l'**inclusion** autant qu'à l'IoU : les parasites de la grille de départ
+sont des boîtes plus petites posées SUR une voiture, décalées, donc invisibles à une fusion à
+IoU 0,45. Un doublon est toujours la vue la plus faible — une détection **mieux** notée que la piste
+qu'elle recouvre n'est jamais écartée, sans quoi une vraie voiture disparaîtrait au départ.
+
+Enfin, une piste ne compte qu'après une **phase de confirmation** : trois détections **et** 0,4 s
+d'existence. Exiger seulement des détections rendait la barre deux fois et demie plus facile à
+10 Hz. Avant confirmation, la boîte est dessinée en fil, sans étiquette, et n'entre dans aucune
+mesure.
+
 ### Mesures
 
 Nombre de voitures suivies à chaque instant, durée des pistes, pertes temporaires, sauvetages par
-la bande basse, reprises après occlusion, et l'état au V1. **Aucune ne dit qu'un `trackId` désigne
+la bande basse, reprises après occlusion, et l'état au V1. Côté fragmentation : pistes créées
+contre **pistes confirmées**, jamais confirmées, durée médiane, nouvelles pistes par seconde,
+suppressions, réactivations, doublons écartés, et la **raison** de chaque création et de chaque
+suppression. **Aucune ne dit qu'un `trackId` désigne
 toujours la même voiture** — cela demande une vérité terrain. Le panneau « à regarder » ramène la
 relecture de 43 instants à quelques-uns, chacun cliquable.
 

@@ -44,21 +44,54 @@ export const ETATS = {
 };
 
 export const DEFAULTS = {
-  dt: 0.25,                 // pas d'échantillonnage, en secondes
-  highScore: 0.30,          // seuil de détection — identique au banc
-  lowScore: 0.10,           // plancher de la bande basse (sauvetage seulement)
-  iouMatch: 0.20,           // porte d'association, premier temps
-  iouMatchLow: 0.15,        // porte d'association, second temps
-  iouRecover: 0.10,         // porte élargie pour récupérer une piste occluse
-  maxSizeRatio: 2.0,        // rapport de taille au-delà duquel on refuse
-  maxAge: 3,                // pas sans détection avant abandon
-  maxOccludedAge: 8,        // idem, mais pour une piste explicitement occluse
-  minHits: 2,               // détections avant confirmation
-  mergeAreaRatio: 1.25,     // boîte « anormalement grande » = fusion probable
-  ambiguityMargin: 0.08,    // écart de coût en dessous duquel un choix est douteux
+  dt: 0.25,                     // pas d'échantillonnage, en secondes
+  highScore: 0.30,              // seuil de détection — identique au banc
+  lowScore: 0.10,               // plancher de la bande basse (sauvetage seulement)
+  iouMatch: 0.20,               // porte d'association, premier temps
+  iouMatchLow: 0.15,            // porte d'association, second temps
+  iouRecover: 0.10,             // porte élargie pour reprendre une piste occluse
+  maxSizeRatio: 2.0,            // rapport de taille au-delà duquel on refuse
+
+  // ── Durées, en SECONDES ──────────────────────────────────────────────
+  // Elles étaient exprimées en PAS. Une tolérance de 3 pas vaut 0,75 s à 4 Hz
+  // mais seulement 0,30 s à 10 Hz : augmenter la fréquence resserrait donc
+  // silencieusement toutes les tolérances, ce qui explique l'essentiel de la
+  // fragmentation observée à 10 Hz (219 pertes contre 66 à 4 Hz).
+  dureeAvantAbandon: 0.80,      // sans détection, avant abandon
+  dureeOcclusionMax: 2.00,      // idem, pour une occlusion identifiée
+  dureeReactivation: 1.50,      // fenêtre de repêchage d'une piste abandonnée
+  dureeConfirmation: 0.40,      // âge minimal d'une piste avant qu'elle compte
+  detectionsConfirmation: 3,    // et nombre de détections exigées
+
+  // ── Constantes de temps du filtre ────────────────────────────────────
+  // Elles remplacent des gains fixes. Avec un gain fixe, `v += beta·r/dt`
+  // amplifie le bruit de position quand `dt` diminue : à 10 Hz l'estimation de
+  // vitesse était 2,5 fois plus bruitée qu'à 4 Hz, pour la même vidéo.
+  tauPosition: 0.15,
+  tauVitesse: 0.40,
+  tauAmortissement: 0.50,
+
+  // ── Doublons ─────────────────────────────────────────────────────────
+  // Une détection libre qui recouvre franchement une piste DÉJÀ associée à cet
+  // instant n'est pas une nouvelle voiture : c'est la même, vue deux fois.
+  iouDoublon: 0.50,
+  recouvrementDoublon: 0.65,    // ou contenue à ce point dans une piste suivie
+
+  mergeAreaRatio: 1.25,         // boîte « anormalement grande » = fusion probable
+  ambiguityMargin: 0.08,        // écart de coût en dessous duquel un choix est douteux
   cameraCompensation: true,
-  gainBiais: 0.5,           // amortit la correction de biais, pour ne pas osciller
-  gainFusion: 0.5,          // recalage d'un groupe occlus sur le bloc qui l'avale
+  gainBiais: 0.5,
+  gainFusion: 0.5,
+};
+
+/** Raisons de création et de suppression, tracées pour le diagnostic. */
+export const RAISONS = {
+  NOUVELLE: 'nouvelle',
+  REPRISE: 'reprise_occlusion',
+  REACTIVATION: 'reactivation',
+  DOUBLON: 'doublon_ecarte',
+  ABSENCE: 'absence_prolongee',
+  OCCLUSION: 'occlusion_trop_longue',
 };
 
 // ─────────────────────────────────────────────────────────
@@ -161,12 +194,13 @@ export function hungarian(cout) {
  * la prédiction est le facteur limitant.
  */
 export class Predicteur {
-  constructor(box, { alpha = 0.7, beta = 0.35 } = {}) {
+  constructor(box, opts = {}) {
     const [cx, cy] = centre(box);
     const [w, h] = taille(box);
     this.s = { cx, cy, w, h, vx: 0, vy: 0, vw: 0, vh: 0 };
-    this.alpha = alpha;
-    this.beta = beta;
+    this.tauP = opts.tauPosition ?? DEFAULTS.tauPosition;
+    this.tauV = opts.tauVitesse ?? DEFAULTS.tauVitesse;
+    this.tauA = opts.tauAmortissement ?? DEFAULTS.tauAmortissement;
   }
 
   /** Position attendue après `dt`, sans consommer de mesure. */
@@ -176,17 +210,25 @@ export class Predicteur {
       Math.max(1, s.w + s.vw * dt), Math.max(1, s.h + s.vh * dt));
   }
 
-  /** Avance l'état d'un pas sans mesure : la vitesse s'amortit, faute de quoi
-   *  une piste perdue partirait à l'infini en ligne droite. */
-  avancerSansMesure(dt, amortissement = 0.7) {
+  /** Avance d'un pas sans mesure : la vitesse s'amortit sur `tauAmortissement`,
+   *  faute de quoi une piste perdue filerait en ligne droite à l'infini. */
+  avancerSansMesure(dt) {
     const s = this.s;
     s.cx += s.vx * dt; s.cy += s.vy * dt;
     s.w = Math.max(1, s.w + s.vw * dt); s.h = Math.max(1, s.h + s.vh * dt);
-    s.vx *= amortissement; s.vy *= amortissement;
-    s.vw *= amortissement; s.vh *= amortissement;
+    const k = Math.exp(-dt / this.tauA);
+    s.vx *= k; s.vy *= k; s.vw *= k; s.vh *= k;
   }
 
-  /** Intègre une mesure. */
+  /**
+   * Intègre une mesure.
+   *
+   * `dt` est l'intervalle depuis la DERNIÈRE AVANCE de l'état, pas depuis la
+   * dernière détection. L'état progresse à chaque pas — par correction ou par
+   * `avancerSansMesure()` — et lui repasser le temps écoulé depuis la dernière
+   * détection le faisait avancer deux fois : la position corrigée dépassait la
+   * cible, l'IoU du pas suivant s'effondrait, et la piste se fragmentait.
+   */
   corriger(box, dt) {
     const s = this.s;
     const [mx, my] = centre(box);
@@ -195,11 +237,14 @@ export class Predicteur {
     const pw = s.w + s.vw * dt, ph = s.h + s.vh * dt;
     const rx = mx - px, ry = my - py, rw = mw - pw, rh = mh - ph;
 
-    s.cx = px + this.alpha * rx; s.cy = py + this.alpha * ry;
-    s.w = Math.max(1, pw + this.alpha * rw); s.h = Math.max(1, ph + this.alpha * rh);
+    const a = 1 - Math.exp(-dt / this.tauP);
+    const kv = 1 - Math.exp(-dt / this.tauV);
+
+    s.cx = px + a * rx; s.cy = py + a * ry;
+    s.w = Math.max(1, pw + a * rw); s.h = Math.max(1, ph + a * rh);
     if (dt > 0) {
-      s.vx += (this.beta * rx) / dt; s.vy += (this.beta * ry) / dt;
-      s.vw += (this.beta * rw) / dt; s.vh += (this.beta * rh) / dt;
+      s.vx += kv * (rx / dt); s.vy += kv * (ry / dt);
+      s.vw += kv * (rw / dt); s.vh += kv * (rh / dt);
     }
   }
 
@@ -208,6 +253,15 @@ export class Predicteur {
 
   /** Applique un décalage global — la caméra a bougé, pas la voiture. */
   decaler(dx, dy) { this.s.cx += dx; this.s.cy += dy; }
+}
+
+/** Part de `petite` contenue dans `grande` — mesure d'inclusion, pas d'IoU. */
+export function recouvrement(petite, grande) {
+  const x1 = Math.max(petite[0], grande[0]), y1 = Math.max(petite[1], grande[1]);
+  const x2 = Math.min(petite[2], grande[2]), y2 = Math.min(petite[3], grande[3]);
+  const inter = Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
+  const a = aire(petite);
+  return a > 0 ? inter / a : 0;
 }
 
 // ─────────────────────────────────────────────────────────
@@ -298,26 +352,17 @@ export class Suivi {
   constructor(options = {}) {
     this.opt = { ...DEFAULTS, ...options };
     this.pistes = [];
-    this.perdues = [];
     this.derniereCamera = { dx: 0, dy: 0, n: 0 };
     this.dernierRattrapage = null;
+    this.doublonsEcartes = 0;
     this.journal = [];
     reinitialiserIds();
   }
 
-  /** Pistes vivantes, c'est-à-dire ni abandonnées ni encore à confirmer. */
-  get actives() {
-    return this.pistes.filter(p => p.state !== ETATS.LOST);
-  }
+  get actives() { return this.pistes.filter(p => p.state !== ETATS.LOST); }
+  /** Pistes qui ont franchi la phase de confirmation — les seules qui comptent. */
+  get confirmees() { return this.pistes.filter(p => p.confirmee); }
 
-  /**
-   * Un pas d'analyse.
-   *
-   * @param {number} t — instant, en secondes dans l'extrait
-   * @param {Array<{box:number[], score:number, label?:string}>} detections
-   *        TOUTES les détections au-dessus de `lowScore`, bande basse comprise.
-   * @returns {object} instantané de l'état, tel qu'il sera affiché et mesuré
-   */
   pas(t, detections) {
     const o = this.opt;
     const dt = this.journal.length ? t - this.journal[this.journal.length - 1].t : o.dt;
@@ -326,11 +371,6 @@ export class Suivi {
     const faibles = detections.filter(d => d.score < o.highScore && d.score >= o.lowScore);
 
     // 1 · prédiction, décalée du biais observé au pas précédent
-    //
-    // Le biais est appliqué à la BOÎTE utilisée pour l'association, jamais à
-    // l'état du prédicteur. Le muter reviendrait à compter deux fois le même
-    // mouvement — la vitesse apprise par le filtre l'absorbe déjà — et faisait
-    // osciller la correction (mesuré : +33 px là où on attendait −90).
     const biais = (o.cameraCompensation && this.derniereCamera.n >= 3)
       ? { dx: this.derniereCamera.dx * o.gainBiais, dy: this.derniereCamera.dy * o.gainBiais }
       : { dx: 0, dy: 0 };
@@ -341,13 +381,7 @@ export class Suivi {
 
     const candidates = this.pistes.filter(p => p.state !== ETATS.LOST);
 
-    // 2 · boîtes FUSIONNÉES — repérées AVANT toute association
-    //
-    // Une détection anormalement large qui recouvre plusieurs pistes ne décrit
-    // aucune des deux voitures : la donner à l'une corromprait sa taille (elle
-    // hériterait des 230 px de la boîte commune) et supprimerait l'autre.
-    // On l'écarte donc du jeu et on garde TOUTES les pistes concernées en
-    // occlusion, simplement recalées sur le centre du bloc.
+    // 2 · boîtes fusionnées, repérées avant toute association
     const fusions = this._reperersFusions(candidates, fortes);
     const utilisables = fortes.filter((_, i) => !fusions.has(i));
 
@@ -355,13 +389,6 @@ export class Suivi {
     let assoc = this._associer(candidates, utilisables, o.iouMatch);
 
     // 3 bis · rattrapage d'un déplacement en bloc
-    //
-    // Le piège n'est pas l'absence d'association, c'est l'association PLAUSIBLE
-    // ET FAUSSE. Mesuré : sur un balayage de 90 px par pas avec des voitures
-    // espacées de 150, chaque piste recouvre mieux la voisine que sa propre
-    // voiture — quatre appariements sur cinq, tous décalés d'un cran, et pas
-    // le moindre signe d'échec. On tente donc TOUJOURS l'estimation en bloc, et
-    // on ne l'adopte que si elle apparie davantage, ou aussi bien mais mieux.
     const possible = Math.min(candidates.length, utilisables.length);
     if (o.cameraCompensation && possible >= 3) {
       const d = estimerDecalageGlobal(candidates.map(p => p.boitePredite), utilisables.map(x => x.box));
@@ -383,25 +410,26 @@ export class Suivi {
     const { paires, lignesLibres, colonnesLibres, ambigus } = assoc;
 
     const appariees = [];
+    const associeesCeTour = [];
     for (const [iPiste, iDet] of paires) {
       const piste = candidates[iPiste];
-      const det = utilisables[iDet];
-      appariees.push({ avant: piste.boitePredite, apres: det.box });
-      this._confirmer(piste, t, det, ambigus.has(iPiste));
+      appariees.push({ avant: piste.boitePredite, apres: utilisables[iDet].box });
+      this._confirmer(piste, t, utilisables[iDet], ambigus.has(iPiste), dt);
+      associeesCeTour.push(piste);
     }
 
-    // 3 · second temps — détections faibles, contre les pistes orphelines
-    //     Elles SAUVENT une piste, elles n'en créent jamais.
+    // 4 · second temps — détections faibles contre les pistes orphelines
     const orphelines = lignesLibres.map(i => candidates[i]);
     const r2 = this._associer(orphelines, faibles, o.iouMatchLow);
     const encoreOrphelines = new Set(r2.lignesLibres.map(i => orphelines[i]));
     for (const [iPiste, iDet] of r2.paires) {
       const piste = orphelines[iPiste];
-      this._confirmer(piste, t, faibles[iDet], true);   // sauvetage = jamais certain
+      this._confirmer(piste, t, faibles[iDet], true, dt);   // sauvetage = jamais certain
       piste.rescued += 1;
+      associeesCeTour.push(piste);
     }
 
-    // 5 · pistes toujours sans détection : occluses ou simplement prédites
+    // 5 · pistes toujours sans détection
     for (const piste of orphelines) {
       if (!encoreOrphelines.has(piste)) continue;
       const occulteur = piste._fusionAvec ?? this._chercherOccluseur(piste, utilisables, paires, candidates);
@@ -409,20 +437,55 @@ export class Suivi {
       piste._fusionAvec = null;
     }
 
-    // 6 · détections fortes non utilisées : reprise d'une occluse, sinon création
+    // 6 · détections fortes non utilisées
+    //
+    // ORDRE VOULU : reprendre une piste occluse, puis repêcher une piste
+    // abandonnée récemment, puis reconnaître un doublon — et seulement en
+    // dernier recours créer une identité. C'est l'inverse de la version
+    // précédente, où toute détection libre devenait une piste : sur la grille
+    // de départ, 7 détections pour 5 voitures donnaient 7 identités.
+    let doublonsCeTour = 0;
+    const reprises = new Set();
+    // Les pistes CRÉÉES pendant ce même pas entrent aussi dans la comparaison :
+    // au tout premier instant rien n'est encore apparié, et sans cela les sept
+    // détections de la grille de départ devenaient sept identités.
+    const servies = [...associeesCeTour];
     for (const iDet of colonnesLibres) {
       const det = utilisables[iDet];
-      const reprise = this._reprendreOccluse(det);
-      if (reprise) { this._confirmer(reprise, t, det, true); reprise.recovered += 1; continue; }
-      this._creer(t, det);
+
+      const occluse = this._reprendreOccluse(det, reprises);
+      if (occluse) {
+        reprises.add(occluse);
+        this._confirmer(occluse, t, det, true, dt);
+        occluse.recovered += 1;
+        continue;
+      }
+
+      const abandonnee = this._reactiver(det, t, reprises);
+      if (abandonnee) {
+        reprises.add(abandonnee);
+        abandonnee.state = ETATS.TENTATIVE;
+        abandonnee.sansDetection = 0;
+        abandonnee.raisonSuppression = null;
+        this._confirmer(abandonnee, t, det, true, dt);
+        abandonnee.reactivated += 1;
+        continue;
+      }
+
+      const original = this._doublonDe(det, servies);
+      if (original) {
+        original.doublonsAbsorbes += 1;
+        this.doublonsEcartes += 1;
+        doublonsCeTour += 1;
+        continue;
+      }
+
+      servies.push(this._creer(t, det));
     }
 
-    // 7 · biais observé, pour le pas suivant
-    this.derniereCamera = o.cameraCompensation
-      ? decalageCamera(appariees)
-      : { dx: 0, dy: 0, n: 0 };
+    this.derniereCamera = o.cameraCompensation ? decalageCamera(appariees) : { dx: 0, dy: 0, n: 0 };
 
-    const instant = this._instantane(t, detections.length, fortes.length, faibles.length, fusions.size);
+    const instant = this._instantane(t, detections.length, fortes.length, faibles.length, fusions.size, doublonsCeTour);
     this.journal.push(instant);
     return instant;
   }
@@ -439,10 +502,10 @@ export class Suivi {
     const o = this.opt;
     const INTERDIT = 10;
     const cout = pistes.map((p) => dets.map((d) => {
-      const recouvrement = iou(p.boitePredite, d.box);
-      if (recouvrement < porte) return INTERDIT;
+      const recouvre = iou(p.boitePredite, d.box);
+      if (recouvre < porte) return INTERDIT;
       if (rapportTaille(p.boitePredite, d.box) > o.maxSizeRatio) return INTERDIT;
-      return 1 - recouvrement;
+      return 1 - recouvre;
     }));
 
     const aff = hungarian(cout);
@@ -455,8 +518,6 @@ export class Suivi {
       paires.push([i, j]);
       prises.add(j);
       coutTotal += cout[i][j];
-      // Deuxième meilleur choix presque aussi bon : le choix est fragile,
-      // c'est exactement là que naissent les échanges d'identité.
       const tries = [...cout[i]].filter(c => c < INTERDIT).sort((a, b) => a - b);
       if (tries.length > 1 && tries[1] - tries[0] < o.ambiguityMargin) ambigus.add(i);
     });
@@ -468,18 +529,28 @@ export class Suivi {
   }
 
   // ── transitions ────────────────────────────────────────
-  _confirmer(piste, t, det, incertain) {
-    const dt = piste.lastSeen == null ? this.opt.dt : t - piste.lastSeen;
+  _confirmer(piste, t, det, incertain, dt) {
     piste.pred.corriger(det.box, Math.max(1e-3, dt));
     piste.box = det.box.slice();
     piste.score = det.score;
     piste.label = det.label || piste.label;
     piste.hits += 1;
     piste.misses = 0;
+    piste.sansDetection = 0;
     piste.lastSeen = t;
     piste.occludedBy = null;
     piste.ambiguous = !!incertain;
-    piste.state = piste.hits >= this.opt.minHits ? ETATS.DETECTED : ETATS.TENTATIVE;
+
+    // Confirmation : un nombre de détections ET une durée. Exiger seulement des
+    // détections rendait la barre deux fois et demie plus facile à 10 Hz qu'à
+    // 4 Hz — un doublon persistant deux dixièmes de seconde devenait une
+    // identité à part entière.
+    if (!piste.confirmee
+      && piste.hits >= this.opt.detectionsConfirmation
+      && t - piste.firstSeen >= this.opt.dureeConfirmation - 1e-9) {
+      piste.confirmee = true;
+    }
+    piste.state = piste.confirmee ? ETATS.DETECTED : ETATS.TENTATIVE;
     piste.history.push({ t, box: piste.box.slice(), state: piste.state, score: det.score });
   }
 
@@ -487,64 +558,59 @@ export class Suivi {
     piste.pred.avancerSansMesure(dt);
     piste.box = piste.pred.boite;
     piste.misses += 1;
+    piste.sansDetection += dt;
     piste.ambiguous = true;
     if (occulteur != null) {
       piste.occludedBy = occulteur;
-      piste.state = ETATS.OCCLUDED;
+      piste.state = piste.confirmee ? ETATS.OCCLUDED : ETATS.TENTATIVE;
       piste.occludedFor = (piste.occludedFor || 0) + 1;
     } else {
       piste.occludedBy = null;
-      piste.state = ETATS.PREDICTED;
+      piste.state = piste.confirmee ? ETATS.PREDICTED : ETATS.TENTATIVE;
     }
-    const limite = piste.state === ETATS.OCCLUDED ? this.opt.maxOccludedAge : this.opt.maxAge;
-    if (piste.misses > limite) piste.state = ETATS.LOST;
+    const limite = piste.occludedBy != null ? this.opt.dureeOcclusionMax : this.opt.dureeAvantAbandon;
+    if (piste.sansDetection > limite + 1e-9) {
+      piste.state = ETATS.LOST;
+      piste.raisonSuppression = piste.occludedBy != null ? RAISONS.OCCLUSION : RAISONS.ABSENCE;
+    }
     if (piste.misses === 1) piste.losses += 1;
     piste.history.push({ t, box: piste.box.slice(), state: piste.state, score: null });
   }
 
   _creer(t, det) {
+    const o = this.opt;
     const piste = {
       id: _prochainId++,
-      pred: new Predicteur(det.box),
+      pred: new Predicteur(det.box, o),
       box: det.box.slice(),
       boitePredite: det.box.slice(),
       score: det.score,
       label: det.label || null,
       state: ETATS.TENTATIVE,
-      hits: 1, misses: 0, losses: 0, rescued: 0, recovered: 0, occludedFor: 0,
+      confirmee: false,
+      hits: 1, misses: 0, sansDetection: 0,
+      losses: 0, rescued: 0, recovered: 0, reactivated: 0,
+      doublonsAbsorbes: 0, occludedFor: 0,
       firstSeen: t, lastSeen: t,
       occludedBy: null, ambiguous: false,
+      raisonCreation: RAISONS.NOUVELLE, raisonSuppression: null,
       history: [{ t, box: det.box.slice(), state: ETATS.TENTATIVE, score: det.score }],
     };
     this.pistes.push(piste);
     return piste;
   }
 
-  /**
-   * Repère les détections qui avalent plusieurs pistes à la fois.
-   *
-   * Deux conditions cumulées, pour ne pas confondre une fusion avec une simple
-   * proximité : la détection recouvre au moins DEUX pistes prédites, et son
-   * aire dépasse nettement celle attendue pour une seule voiture.
-   *
-   * Les pistes concernées sont recalées sur le centre du bloc — sans toucher à
-   * leur taille — puis laissées en occlusion. C'est le cas `milieu_v1`.
-   *
-   * @returns {Set<number>} indices des détections écartées de l'association
-   */
   _reperersFusions(candidates, fortes) {
     const o = this.opt;
     const fusions = new Set();
     fortes.forEach((det, i) => {
-      const touchees = candidates.filter(p =>
-        p.state !== ETATS.TENTATIVE && iou(p.boitePredite, det.box) > o.iouRecover);
+      const touchees = candidates.filter(p => p.confirmee && iou(p.boitePredite, det.box) > o.iouRecover);
       if (touchees.length < 2) return;
       const aires = touchees.map(p => aire(p.boitePredite)).sort((a, b) => a - b);
       const mediane = aires[Math.floor(aires.length / 2)];
       if (!mediane || aire(det.box) / mediane < o.mergeAreaRatio) return;
 
       fusions.add(i);
-      // Recalage du groupe sur le bloc, sans prétendre savoir qui est où.
       const cBloc = centre(det.box);
       const cx = touchees.reduce((t, p) => t + centre(p.boitePredite)[0], 0) / touchees.length;
       const cy = touchees.reduce((t, p) => t + centre(p.boitePredite)[1], 0) / touchees.length;
@@ -556,15 +622,6 @@ export class Suivi {
     return fusions;
   }
 
-  /**
-   * Cherche qui masque une piste orpheline.
-   *
-   * Signature d'une boîte FUSIONNÉE : une détection déjà attribuée à une autre
-   * piste, qui recouvre aussi celle-ci, et dont l'aire dépasse nettement celle
-   * attendue pour une seule voiture. C'est le cas observé sur `milieu_v1`.
-   * On garde alors les DEUX pistes — l'une détectée, l'autre occluse — au lieu
-   * de transformer deux voitures en une.
-   */
   _chercherOccluseur(piste, fortes, paires, candidates) {
     for (const [iPiste, iDet] of paires) {
       const det = fortes[iDet];
@@ -572,16 +629,15 @@ export class Suivi {
       const autre = candidates[iPiste];
       const attendu = aire(autre.boitePredite);
       if (attendu > 0 && aire(det.box) / attendu >= this.opt.mergeAreaRatio) return autre.id;
-      // Recouvrement franc sans excès de taille : masquage simple.
       if (iou(piste.boitePredite, det.box) > 0.35) return autre.id;
     }
     return null;
   }
 
-  /** Une détection libre correspond-elle à une piste occluse qui ressort ? */
-  _reprendreOccluse(det) {
+  _reprendreOccluse(det, deja) {
     let meilleure = null, meilleurIou = this.opt.iouRecover;
     for (const p of this.pistes) {
+      if (deja.has(p)) continue;
       if (p.state !== ETATS.OCCLUDED && p.state !== ETATS.PREDICTED) continue;
       const r = iou(p.boitePredite, det.box);
       if (r > meilleurIou && rapportTaille(p.boitePredite, det.box) <= this.opt.maxSizeRatio) {
@@ -591,21 +647,61 @@ export class Suivi {
     return meilleure;
   }
 
-  _instantane(t, nbTotal, nbFortes, nbFaibles, nbFusions = 0) {
+  /**
+   * Repêche une piste abandonnée récemment.
+   *
+   * Sans ce mécanisme, toute voiture perdue plus d'une seconde revenait sous un
+   * NOUVEL identifiant : c'est la principale source de fragmentation, et elle
+   * est indiscernable d'un vrai échange d'identité dans les mesures.
+   */
+  _reactiver(det, t, deja) {
+    let meilleure = null, meilleurIou = this.opt.iouRecover;
+    for (const p of this.pistes) {
+      if (deja.has(p) || p.state !== ETATS.LOST || !p.confirmee) continue;
+      if (t - p.lastSeen > this.opt.dureeReactivation) continue;
+      const r = iou(p.boitePredite, det.box);
+      if (r > meilleurIou && rapportTaille(p.boitePredite, det.box) <= this.opt.maxSizeRatio) {
+        meilleurIou = r; meilleure = p;
+      }
+    }
+    return meilleure;
+  }
+
+  /**
+   * La détection est-elle un doublon d'une piste déjà servie à cet instant ?
+   *
+   * Deux critères : un recouvrement franc (IoU), ou une boîte largement
+   * CONTENUE dans celle d'une piste suivie — le cas typique du détecteur qui
+   * pose une seconde boîte sur l'avant d'une voiture déjà détectée.
+   */
+  _doublonDe(det, servies) {
+    for (const p of servies) {
+      // Un doublon est TOUJOURS la vue la plus faible : exiger un score
+      // inférieur évite de sacrifier une vraie voiture mieux détectée que sa
+      // voisine, au départ où les cinq boîtes se chevauchent déjà.
+      if (p.score != null && det.score > p.score) continue;
+      if (iou(p.box, det.box) >= this.opt.iouDoublon) return p;
+      if (recouvrement(det.box, p.box) >= this.opt.recouvrementDoublon) return p;
+      if (recouvrement(p.box, det.box) >= this.opt.recouvrementDoublon) return p;
+    }
+    return null;
+  }
+
+  _instantane(t, nbTotal, nbFortes, nbFaibles, nbFusions = 0, nbDoublons = 0) {
     const vivantes = this.pistes.filter(p => p.state !== ETATS.LOST);
     return {
       t: Number(t.toFixed(3)),
-      detections: { total: nbTotal, fortes: nbFortes, faibles: nbFaibles, fusions: nbFusions },
+      detections: { total: nbTotal, fortes: nbFortes, faibles: nbFaibles, fusions: nbFusions, doublons: nbDoublons },
       biais: { ...this.derniereCamera },
       tracks: vivantes.map(p => ({
         id: p.id,
         box: p.box.map(v => Math.round(v)),
         state: p.state,
         score: p.score,
+        confirmee: p.confirmee,
         ambiguous: p.ambiguous,
         occludedBy: p.occludedBy,
         misses: p.misses,
-        // Trajectoire récente : cinq derniers centres, pour l'affichage.
         trail: p.history.slice(-5).map(h => centre(h.box).map(v => Math.round(v))),
       })),
       counts: {
@@ -626,15 +722,21 @@ export class Suivi {
  * Mesures tirées du journal et des pistes.
  *
  * Aucune ne prétend dire si un `trackId` désigne toujours la MÊME voiture :
- * cela demande une vérité terrain, et c'est l'humain qui la fournit
- * (voir `signauxSuspects()` pour l'aide au repérage).
+ * cela demande une vérité terrain, et c'est l'humain qui la fournit.
+ *
+ * Les compteurs de FRAGMENTATION sont les plus utiles au diagnostic : ils
+ * disent combien d'identités ont été fabriquées pour combien de voitures, et
+ * pourquoi.
  */
 export function mesurer(suivi, { cible = 5, tV1 = null } = {}) {
   const journal = suivi.journal;
   const pistes = suivi.pistes;
   if (!journal.length) return null;
 
-  const durees = pistes.map(p => ({
+  const confirmees = pistes.filter(p => p.confirmee);
+  const duree = journal[journal.length - 1].t - journal[0].t;
+
+  const durees = confirmees.map(p => ({
     id: p.id,
     debut: p.firstSeen,
     fin: p.lastSeen,
@@ -643,29 +745,55 @@ export function mesurer(suivi, { cible = 5, tV1 = null } = {}) {
     pertes: p.losses,
     sauvetages: p.rescued,
     reprises: p.recovered,
+    reactivations: p.reactivated,
+    doublonsAbsorbes: p.doublonsAbsorbes,
     pasOcclus: p.occludedFor || 0,
+    raisonCreation: p.raisonCreation,
+    raisonSuppression: p.raisonSuppression,
     etatFinal: p.state,
   })).sort((a, b) => b.duree - a.duree);
 
+  const mediane = (arr) => {
+    if (!arr.length) return null;
+    const t = [...arr].sort((a, b) => a - b);
+    const i = Math.floor(t.length / 2);
+    return Number((t.length % 2 ? t[i] : (t[i - 1] + t[i]) / 2).toFixed(3));
+  };
+
   const parInstant = journal.map(j => ({
     t: j.t,
-    suivies: j.tracks.filter(x => x.state !== ETATS.TENTATIVE).length,
+    suivies: j.tracks.filter(x => x.confirmee).length,
     detectees: j.counts.detected,
     occluses: j.counts.occluded,
     predites: j.counts.predicted,
+    tentatives: j.counts.tentative,
   }));
 
   const instantV1 = tV1 == null ? null
     : journal.reduce((best, j) => (Math.abs(j.t - tV1) < Math.abs(best.t - tV1) ? j : best), journal[0]);
 
-  const longues = durees.filter(d => d.duree >= (journal[journal.length - 1].t - journal[0].t) * 0.7);
+  const longues = durees.filter(d => d.duree >= duree * 0.7);
+  const compter = (champ) => pistes.reduce((acc, p) => {
+    const v = p[champ];
+    if (!v) return acc;
+    acc[v] = (acc[v] || 0) + 1;
+    return acc;
+  }, {});
 
   return {
     instants: journal.length,
-    duree: Number((journal[journal.length - 1].t - journal[0].t).toFixed(3)),
+    duree: Number(duree.toFixed(3)),
+    // ── fragmentation ───────────────────────────────────────────────────
     pistesCreees: pistes.length,
-    // Une piste qui couvre au moins 70 % de la séquence : le candidat naturel
-    // pour « une voiture suivie du départ au V1 ».
+    pistesConfirmeesCreees: confirmees.length,
+    pistesJamaisConfirmees: pistes.length - confirmees.length,
+    dureeMedianePistes: mediane(durees.map(d => d.duree)),
+    nouvellesPistesParSeconde: duree > 0 ? Number((confirmees.length / duree).toFixed(2)) : null,
+    suppressions: pistes.filter(p => p.raisonSuppression).length,
+    reactivations: pistes.reduce((t, p) => t + p.reactivated, 0),
+    doublonsEcartes: suivi.doublonsEcartes,
+    raisons: { creation: compter('raisonCreation'), suppression: compter('raisonSuppression') },
+    // ── suivi ───────────────────────────────────────────────────────────
     pistesLongues: longues.length,
     cible,
     pistesLonguesAtteintCible: longues.length >= cible,
@@ -677,10 +805,10 @@ export function mesurer(suivi, { cible = 5, tV1 = null } = {}) {
     reprisesApresOcclusion: pistes.reduce((t, p) => t + p.recovered, 0),
     auV1: instantV1 ? {
       t: instantV1.t,
-      suivies: instantV1.tracks.filter(x => x.state !== ETATS.TENTATIVE).length,
+      suivies: instantV1.tracks.filter(x => x.confirmee).length,
       detectees: instantV1.counts.detected,
       occluses: instantV1.counts.occluded,
-      ids: instantV1.tracks.filter(x => x.state !== ETATS.TENTATIVE).map(x => x.id),
+      ids: instantV1.tracks.filter(x => x.confirmee).map(x => x.id),
     } : null,
     durees,
     parInstant,
