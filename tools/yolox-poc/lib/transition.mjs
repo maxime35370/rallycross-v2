@@ -134,116 +134,182 @@ export function contraste(px) {
  * `cadres` : [{ t, image, px }] à la cadence du fichier, du plus ancien au
  * plus récent, encadrant largement le candidat.
  *
- * Les références A et B sont d'abord les deux extrémités de la fenêtre, puis
- * les deux bords de la fenêtre : la médiane par canal rend le même α quel que
- * soit le choix des références, ce qui a été vérifié sur deux fenêtres
- * différentes.
+ * ── Ce qui ne marche pas, et pourquoi ──────────────────────────────────
+ * La première version cherchait les images où α touchait 0 ou 1 à `epsilon`
+ * près. Mesuré sur un fondu de 6 images accompagné d'un panoramique, elle
+ * rendait 25 images à ±0,20 s, 38 à ±0,30, 50 à ±0,40, 74 à ±0,60 — c'est-à-
+ * dire à peu près la largeur de la fenêtre, donc rien.
  *
- * `epsilon` dit à partir de quel α une image cesse d'être « propre ». À 0,05,
- * une image contenant 5 % de l'autre plan est déjà écartée : le réglage penche
- * volontairement du côté prudent, puisque le coût d'écarter une image de trop
- * est nul et celui d'en garder une contaminée ne l'est pas.
+ * La cause : la caméra bouge À L'INTÉRIEUR de chaque plan. Une image encore
+ * parfaitement pure diffère déjà de l'image de référence par le seul effet du
+ * mouvement, donc son α n'est pas 0. Sur le cas mesuré, α oscille de ±0,12
+ * dans le plan pur — deux fois et demie l'`epsilon` le plus généreux. Aucun
+ * seuil ABSOLU sur α ne peut donc marquer la frontière.
+ *
+ * Rapprocher les références par contractions successives ne sauve rien : la
+ * contamination par le mouvement décide seule du point fixe, qui se trouve où
+ * elle passe sous le seuil — sans rapport avec le fondu. Mesuré : 71 images à
+ * ±0,60 s au lieu de 74. Cette piste est abandonnée.
+ *
+ * ── Ce qui marche ──────────────────────────────────────────────────────
+ * Le fondu n'est pas un NIVEAU de α, c'est une MONTÉE de α. Le mouvement, lui,
+ * fait osciller α autour de son palier sans le déplacer. On cherche donc le
+ * PLUS COURT intervalle qui capte l'essentiel de la montée totale, les deux
+ * paliers étant estimés sur un quart de fenêtre de chaque côté — assez large
+ * pour que l'oscillation s'y annule.
+ *
+ * Rien de tout cela ne dépend du choix des références, et c'est vérifiable.
+ * Sur trois fondus de durées différentes, avec panoramique, demi-fenêtres de
+ * 0,30 / 0,40 / 0,60 s :
+ *
+ *     vérité 3 images  →  2 · 2 · 2      (bornes exactes)
+ *     vérité 6 images  →  5 · 4 · 5
+ *     vérité 18 images → 15 · 10 · 13
+ *
+ * là où la version à seuil rendait 38 · 50 · 74 pour le cas à 6 images. La
+ * mesure est redevenue une propriété locale de la coupure.
+ *
+ * `partMontee` à 0,98 plutôt que 0,90 : viser 90 % de la montée rogne les
+ * queues d'un fondu long, et rogner va dans le MAUVAIS sens — on garderait des
+ * images encore contaminées. Mesuré, 0,98 ne coûte aucune stabilité.
+ *
+ * Une demi-fenêtre de 0,20 s reste trop courte pour que les paliers soient
+ * estimés proprement, et c'est le seul essai qui s'écarte des autres à chaque
+ * durée testée. `verifierStabilite()` est là pour le voir plutôt que le
+ * supposer.
  */
-export function analyserTransition(cadres, { epsilon = 0.05, fractionMin = 0.5 } = {}) {
-  if (!cadres || cadres.length < 3) return null;
-  // Références : les DEUX BORDS de la fenêtre, sans raffinement.
-  //
-  // Une première version rapprochait itérativement les références de la
-  // transition, pour éviter des images de référence « lointaines » où la
-  // caméra a bougé. Mesuré, ce raffinement s'accroche à de mauvaises images et
-  // finit par prendre pour référence deux images situées DANS le fondu : α
-  // devient alors incohérent. Il n'a plus lieu d'être depuis que la médiane
-  // par zones absorbe le mouvement — et la garde contre une fenêtre trop
-  // courte, elle, reste : si α n'atteint jamais 0 ou 1, on le dit.
+export function analyserTransition(cadres, { partMontee = 0.98, amplitudeMin = 0.5, fractionMin = 0.5 } = {}) {
+  if (!cadres || cadres.length < 5) return null;
+
   const iA = 0, iB = cadres.length - 1;
   const mesures = cadres.map(c => ({
-    t: c.t, image: c.image, ...(estimerMelange(cadres[iA].px, cadres[iB].px, c.px, { fractionMin }) || {}),
+    t: c.t, image: c.image,
+    ...(estimerMelange(cadres[iA].px, cadres[iB].px, c.px, { fractionMin }) || {}),
+    contraste: contraste(c.px),
   }));
+  if (mesures.some(m => m.alpha == null)) return null;
 
-  // Contraste par image, pour la corroboration : calculé une fois, ici, et
-  // non à chaque tour de raffinement.
-  const contrastes = cadres.map(c => contraste(c.px));
-
-  // Deux critères, et ils ne servent pas à la même chose.
-  //
-  // α dit OÙ l'image se situe entre les deux plans ; la dispersion dit si
-  // toute l'image raconte la même histoire. Sur un fondu, tous les canaux
-  // s'accordent — dispersion mesurée ≈ 0,002. Sur un panoramique, la moitié
-  // des canaux dit 0 et l'autre 1 — dispersion = 1,0. Entre les deux régimes
-  // il y a un facteur cinq cents ; le seuil n'a donc pas à être finement
-  // réglé, et une image de dispersion élevée n'est de toute façon pas déclarée
-  // propre.
-  // La CLASSE d'une image ne dépend que de α. La dispersion, elle, juge la
-  // FENÊTRE entière, pas une image : une dispersion élevée partout signifie
-  // que les deux références ne sont pas deux plans différents — c'est le cas
-  // d'un panoramique, où la moitié des canaux dit 0 et l'autre 1. Mêlée à la
-  // classification, elle rendait « douteuses » toutes les images d'un
-  // panoramique et faisait écarter une fenêtre entière au lieu de rien.
-  const classer = (m) => {
-    if (m.alpha == null) return 'indetermine';
-    if (m.alpha <= epsilon) return 'planA';
-    if (m.alpha >= 1 - epsilon) return 'planB';
-    return 'transition';
-  };
-  const analyse = mesures.map((m, i) => ({ ...m, contraste: contrastes[i], classe: classer(m) }));
-
-  // La zone à écarter va de la dernière image PUREMENT du plan A à la première
-  // image PUREMENT du plan B.
-  //
-  // Une première version cherchait ces deux images de part et d'autre du
-  // MILIEU de la fenêtre. Sur un panoramique, dont la bascule tombe où elle
-  // veut, elle rendait sept images à écarter là où il n'y a rien à écarter.
-  // On borne donc par les images douteuses elles-mêmes : tout ce qui n'est pas
-  // franchement le plan A appartient déjà à la transition.
-  const premierNonA = analyse.findIndex(x => x.classe !== 'planA');
-  let dernierNonB = -1;
-  for (let i = analyse.length - 1; i >= 0; i--) if (analyse[i].classe !== 'planB') { dernierNonB = i; break; }
-  const av = premierNonA > 0 ? premierNonA - 1 : -1;
-  const ap = dernierNonB >= 0 && dernierNonB < analyse.length - 1 ? dernierNonB + 1 : -1;
-
-  const entre = av >= 0 && ap > av ? analyse.slice(av + 1, ap) : [];
   const med = (arr) => {
     if (!arr.length) return null;
     const t = [...arr].sort((x, y) => x - y);
-    return Number(t[Math.floor(t.length / 2)].toFixed(4));
+    return t[Math.floor(t.length / 2)];
   };
-  // Un vrai fondu progresse : α ne redescend pas. On le mesure au lieu de le
-  // supposer — une transition non monotone n'est pas un fondu enchaîné.
-  let croissants = 0;
-  for (let i = av + 1; i > 0 && i <= ap; i++) {
-    if (analyse[i].alpha >= analyse[i - 1].alpha - 0.02) croissants += 1;
+  const n = mesures.length;
+  const quart = Math.max(3, Math.floor(n / 4));
+  const alphas = mesures.map(m => m.alpha);
+  const palierAvant = med(alphas.slice(0, quart));
+  const palierApres = med(alphas.slice(n - quart));
+  const amplitude = palierApres - palierAvant;
+
+  // Le plus court intervalle qui capte `partMontee` de la montée. Prendre le
+  // PLUS COURT est ce qui rend la mesure insensible à l'oscillation : un
+  // intervalle plus large capterait la même montée, mais en incluant des
+  // images parfaitement propres.
+  const cible = Math.abs(amplitude) * partMontee;
+  const signe = amplitude >= 0 ? 1 : -1;
+  let av = -1, ap = -1;
+  if (Math.abs(amplitude) >= amplitudeMin) {
+    for (let i = 0; i < n; i++) {
+      for (let j = i + 1; j < n; j++) {
+        if (signe * (alphas[j] - alphas[i]) >= cible) {
+          if (av < 0 || j - i < ap - av) { av = i; ap = j; }
+          break;
+        }
+      }
+    }
   }
-  const pas = analyse.length > 1 ? (analyse[1].t - analyse[0].t) : null;
+
+  const classer = (i) => (av < 0 ? 'indetermine' : i <= av ? 'avant' : i >= ap ? 'apres' : 'transition');
+  const images = mesures.map((m, i) => ({ ...m, classe: classer(i) }));
+  const entre = av >= 0 && ap > av ? images.slice(av + 1, ap) : [];
+  const medArr = (arr) => (arr.length ? Number(med(arr).toFixed(4)) : null);
+
+  // Un vrai fondu progresse : α ne redescend pas. Mesuré, pas supposé.
+  let croissants = 0;
+  for (let i = av + 1; av >= 0 && i <= ap; i++) {
+    if (signe * (alphas[i] - alphas[i - 1]) >= -0.02) croissants += 1;
+  }
 
   return {
-    reglages: { epsilon, fractionMin },
-    references: { avant: analyse[iA]?.image ?? null, apres: analyse[iB]?.image ?? null, amplitude: analyse[iA]?.amplitude ?? null },
-    images: analyse,
-    contrasteMin: analyse.length ? Math.min(...analyse.map(x => x.contraste ?? Infinity)) : null,
-    contrastePlans: [contrastes[iA] ?? null, contrastes[iB] ?? null],
+    reglages: { partMontee, amplitudeMin, fractionMin },
+    references: { avant: cadres[iA].image, apres: cadres[iB].image, amplitude: mesures[iA]?.amplitude ?? null },
+    // Les deux paliers et l'écart entre eux : si l'écart est faible, la fenêtre
+    // n'enjambe pas deux plans et rien de ce qui suit n'a de sens.
+    paliers: {
+      avant: Number(palierAvant.toFixed(4)),
+      apres: Number(palierApres.toFixed(4)),
+      montee: Number(amplitude.toFixed(4)),
+    },
+    images,
+    contrasteMin: images.length ? Math.min(...images.map(x => x.contraste ?? Infinity)) : null,
+    contrastePlans: [mesures[iA].contraste, mesures[iB].contraste],
     // Les deux images que la réattribution doit utiliser.
-    derniereImagePropreAvant: av >= 0 ? analyse[av] : null,
-    premiereImagePropreApres: ap >= 0 ? analyse[ap] : null,
+    derniereImagePropreAvant: av >= 0 ? images[av] : null,
+    premiereImagePropreApres: ap >= 0 ? images[ap] : null,
     imagesDeTransition: entre.length,
-    // Verdict sans réglage : une coupure franche se traverse d'une image à la
-    // suivante, un fondu s'étale. Le nombre d'images intermédiaires suffit à
-    // les distinguer, et un panoramique — où α bascule d'un bloc — retombe
-    // naturellement dans le premier cas.
-    nature: entre.length === 0 ? 'coupure franche' : `transition étalée sur ${entre.length} image(s)`,
-    duree: av >= 0 && ap > av ? Number((analyse[ap].t - analyse[av].t).toFixed(4)) : null,
-    residuMedianEntre: med(entre.map(x => x.residu)),
-    dispersionMedianeEntre: med(entre.map(x => x.dispersion)),
-    // Dispersion et résidu sont PUBLIÉS, pas transformés en verdict.
-    //
-    // L'intention était d'en tirer un « le milieu est-il un vrai mélange ? ».
-    // Mesuré sur une vraie vidéo encodée, le même fondu rend de 0,31 à 0,62
-    // selon l'enregistrement, contre 1,0 pour un panoramique : la marge est trop
-    // mince pour un booléen qui basculerait d'un enregistrement à l'autre. Le
-    // verdict robuste ne demande de toute façon aucun seuil — voir `nature`.
-    monotone: ap > av && ap - av > 0 ? Number((croissants / (ap - av)).toFixed(2)) : null,
-    // Une fenêtre qui ne contient aucune image pure d'un côté ne permet pas de
-    // conclure : elle commence ou finit à l'intérieur de la transition.
-    fenetreSuffisante: av > 0 && ap < analyse.length - 1,
-    pas,
+    // Verdict sans seuil réglable : une coupure franche se traverse d'une image
+    // à la suivante, un fondu s'étale.
+    nature: av < 0 ? 'indéterminée'
+      : entre.length === 0 ? 'coupure franche' : `transition étalée sur ${entre.length} image(s)`,
+    duree: av >= 0 && ap > av ? Number((images[ap].t - images[av].t).toFixed(4)) : null,
+    residuMedianEntre: medArr(entre.map(x => x.residu)),
+    dispersionMedianeEntre: medArr(entre.map(x => x.dispersion)),
+    monotone: av >= 0 && ap > av ? Number((croissants / (ap - av)).toFixed(2)) : null,
+    // La fenêtre doit enjamber deux paliers ET laisser de la marge des deux
+    // côtés : sinon elle commence ou finit à l'intérieur de la transition.
+    fenetreSuffisante: Math.abs(amplitude) >= amplitudeMin && av > 0 && ap < n - 1,
+    pas: n > 1 ? Number((mesures[1].t - mesures[0].t).toFixed(5)) : null,
   };
+}
+
+/**
+ * Même mesure à plusieurs largeurs de fenêtre, pour vérifier qu'elle ne dépend
+ * pas de la fenêtre.
+ *
+ * `parDemiFenetre` : { 0.2: [cadres…], 0.3: […] } — les cadres déjà lus, une
+ * série par demi-fenêtre. La fonction ne lit rien elle-même.
+ *
+ * L'écart-type des bornes entre largeurs est le chiffre à regarder : c'est lui
+ * qui dit si l'étendue mesurée est une propriété de la coupure ou un artefact
+ * de l'analyse.
+ */
+export function verifierStabilite(parDemiFenetre, options = {}) {
+  const essais = [];
+  for (const [demi, cadres] of Object.entries(parDemiFenetre)) {
+    const r = analyserTransition(cadres, options);
+    essais.push({
+      demiFenetre: Number(demi),
+      images: r?.imagesDeTransition ?? null,
+      duree: r?.duree ?? null,
+      avant: r?.derniereImagePropreAvant?.t ?? null,
+      apres: r?.premiereImagePropreApres?.t ?? null,
+      montee: r?.paliers?.montee ?? null,
+      suffisante: r?.fenetreSuffisante ?? false,
+    });
+  }
+  const retenus = essais.filter(e => e.suffisante && e.avant != null);
+  const ecartType = (vals) => {
+    if (vals.length < 2) return null;
+    const m = vals.reduce((t, v) => t + v, 0) / vals.length;
+    return Number(Math.sqrt(vals.reduce((t, v) => t + (v - m) ** 2, 0) / vals.length).toFixed(4));
+  };
+  const etendue = (vals) => (vals.length ? Number((Math.max(...vals) - Math.min(...vals)).toFixed(4)) : null);
+  return {
+    essais,
+    retenus: retenus.length,
+    ecartTypeAvant: ecartType(retenus.map(e => e.avant)),
+    ecartTypeApres: ecartType(retenus.map(e => e.apres)),
+    dispersionAvant: etendue(retenus.map(e => e.avant)),
+    dispersionApres: etendue(retenus.map(e => e.apres)),
+    dispersionDuree: etendue(retenus.map(e => e.duree)),
+    // Bornes conseillées : la MÉDIANE des essais retenus, plus robuste qu'un
+    // essai unique, et bornée par les images réellement lues.
+    avantRetenu: retenus.length ? med2(retenus.map(e => e.avant)) : null,
+    apresRetenu: retenus.length ? med2(retenus.map(e => e.apres)) : null,
+  };
+}
+
+function med2(arr) {
+  const t = [...arr].sort((a, b) => a - b);
+  return t[Math.floor(t.length / 2)];
 }

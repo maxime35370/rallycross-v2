@@ -451,8 +451,9 @@ node tools\smoke\plansPage.mjs      # contrôle de bout en bout, vidéo témoin 
 — un panoramique, un **fondu enchaîné** de 0,40 s à 2,0 s, puis un plan qui
 s'élargit en découvrant des objets immobiles — et vérifie que le scan trouve la
 rupture, mesure son étendue, et ne déclenche sur **rien d'autre**. Mesuré :
-transition de 9 images pour 10 attendues, de t = 2,00 s à t = 2,40 s, rapport
-×4,7 contre un facteur 3, panoramique plafonnant à ×1,74.
+transition de 10 images pour 10 attendues, de t = 1,98 s à t = 2,42 s, rapport
+×4,6 contre un facteur 3, panoramique plafonnant à ×1,61 — et surtout, borne
+avant **identique** aux quatre largeurs de fenêtre (± 0,20 à ± 0,60 s).
 
 #### Fondu enchaîné : mesurer l'étendue de la transition
 
@@ -464,13 +465,45 @@ mesure donc l'étendue, pour que la réattribution utilise les deux images
 
 Un fondu est une opération exacte, `I = (1−α)·A + α·B`. Chaque canal de chaque
 pixel donne donc son propre α, et il suffit d'en prendre la **médiane**. Deux
-versions plus savantes ont été essayées et mesurées avant celle-là :
+estimateurs plus savants ont été essayés et mesurés avant celui-là :
 
-| Estimateur | Résultat mesuré |
+| Estimateur de α | Résultat mesuré |
 |---|---|
 | projection globale aux moindres carrés | α plafonne à **0,42** là où la vérité est 1,0, dès qu'il y a un panoramique pendant le fondu |
 | médiane des projections par zones | juste tant que le mouvement occupe peu de zones, **instable** dès qu'il en occupe la moitié |
 | **médiane par canal** | la rampe **exacte** (0 · 0,1 · 0,2 … 1), identique quelle que soit la fenêtre |
+
+#### Les bornes viennent de la FORME de α, pas de son niveau
+
+Chercher les images où α touche 0 ou 1 à `epsilon` près **ne marche pas**, et
+l'erreur est grossière. La caméra bouge à l'intérieur de chaque plan : une image
+encore parfaitement pure diffère déjà de la référence par le seul effet du
+mouvement, donc son α n'est pas 0. Mesuré sur un fondu de 6 images avec
+panoramique, α oscille de **±0,12** dans le plan pur, et l'étendue rendue vaut à
+peu près la largeur de la fenêtre :
+
+| demi-fenêtre | seuil sur α | **forme de la montée** |
+|---|---|---|
+| ± 0,20 s | 25 images | 10 |
+| ± 0,30 s | 38 images | **5** |
+| ± 0,40 s | 50 images | **3** |
+| ± 0,60 s | 74 images | **4** |
+
+*(vérité : 6 images)*
+
+Le fondu n'est pas un **niveau** de α, c'est une **montée** de α. On retient donc
+le plus court intervalle qui capte 98 % de la montée totale, les deux paliers
+étant estimés sur un quart de fenêtre de chaque côté — assez large pour que
+l'oscillation s'y annule. Rapprocher les références par contractions
+successives, essayé aussi, ne sauve rien : c'est la contamination par le
+mouvement qui décide seule du point fixe.
+
+`verifierStabilite()` refait la mesure à plusieurs largeurs et publie la
+**dispersion des bornes** — le chiffre qui dit si l'étendue est une propriété de
+la coupure ou un artefact de l'analyse. Les bornes retenues sont la médiane des
+fenêtres exploitables, jamais le résultat d'un essai unique. Une demi-fenêtre de
+0,20 s est en général trop courte pour estimer les paliers, et c'est l'essai qui
+s'écarte le plus souvent des autres.
 
 Le verdict « coupure franche ou transition étalée » ne dépend d'**aucun seuil
 réglable** : il ne regarde que le nombre d'images intermédiaires, et un

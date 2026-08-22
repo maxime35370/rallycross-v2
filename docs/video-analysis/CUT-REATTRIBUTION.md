@@ -95,7 +95,7 @@ node tools\yolox-poc\serve.mjs
 # → http://127.0.0.1:8798/__plans
 #   1. charger l'extrait ET son .json (la cadence vient du sidecar)
 #   2. début 3,000 · fin 13,500 · pas 0,10 s
-#   3. fenêtre de transition ± 0,60 s (élargir si la page le demande)
+#   3. fenêtres de transition : 0.20,0.30,0.40,0.60 (comparées automatiquement)
 #   4. « Scanner les plans », puis « Exporter le JSON »
 ```
 
@@ -122,6 +122,51 @@ les boîtes qu'on y détecterait n'appartiennent ni à l'un ni à l'autre, et la
 réattribution ne doit surtout pas être faite entre l'image 349 et l'image 350.
 Elle doit l'être entre la **dernière image propre** de l'ancien plan et la
 **première image propre** du nouveau, les images du fondu étant écartées.
+
+#### L'étendue doit être une propriété locale de la coupure
+
+Première mesure sur la vidéo réelle : **950 ms / 56 images** à ± 0,60 s, mais
+**100 ms / 5 images** à ± 0,20 s. Une durée de transition qui dépend à ce point
+de la fenêtre d'analyse ne mesure rien, et le défaut a été reproduit puis
+corrigé avant d'aller plus loin.
+
+**La cause.** La première version cherchait les images où α touchait 0 ou 1 à
+`epsilon` près. Or la caméra bouge à l'intérieur de chaque plan : une image
+encore parfaitement pure diffère déjà de l'image de référence par le seul effet
+du mouvement, donc son α n'est pas 0. Sur un fondu de 6 images accompagné d'un
+panoramique, α oscille de **± 0,12** dans le plan pur — deux fois et demie
+l'`epsilon` le plus généreux. Le seuil est alors franchi presque immédiatement
+après la référence, et l'étendue rendue vaut à peu près la largeur de la
+fenêtre : 25 · 38 · 50 · 74 images pour des demi-fenêtres de 0,20 · 0,30 · 0,40
+· 0,60 s. Les synthétiques précédents ne montraient rien parce qu'ils n'avaient
+qu'un objet mobile — une minorité de pixels, que la médiane absorbait. Un
+panoramique, lui, déplace **tous** les pixels.
+
+Rapprocher les références de la transition par contractions successives, essayé
+également, ne sauve rien : c'est la contamination par le mouvement qui décide
+seule du point fixe, sans rapport avec le fondu (71 images au lieu de 74).
+
+**La correction.** Le fondu n'est pas un *niveau* de α, c'est une *montée* de α ;
+le mouvement, lui, fait osciller α autour de son palier sans le déplacer. On
+retient donc le plus court intervalle qui capte 98 % de la montée totale, les
+paliers étant estimés sur un quart de fenêtre de chaque côté.
+
+| | seuil sur α | forme de la montée |
+|---|---|---|
+| vérité 3 images | — | **2 · 2 · 2** |
+| vérité 6 images | 38 · 50 · 74 | **5 · 4 · 5** |
+| vérité 18 images | — | **15 · 10 · 13** |
+
+*(demi-fenêtres 0,30 / 0,40 / 0,60 s)*
+
+`verifierStabilite()` refait la mesure aux quatre largeurs et publie la
+**dispersion des bornes**. Les bornes retenues sont la **médiane** des fenêtres
+exploitables, jamais un essai unique. Sur la vidéo témoin encodée, la borne
+avant est identique aux quatre largeurs.
+
+> Une demi-fenêtre de **0,20 s est trop courte** pour estimer les paliers, et
+> c'est l'essai qui s'écarte le plus souvent. Ce n'est pas elle qu'il faut
+> croire — c'est la concordance des fenêtres larges.
 
 `lib/transition.mjs` mesure cette étendue. Un fondu étant une opération exacte,
 `I = (1−α)·A + α·B`, chaque canal de chaque pixel donne son propre α et il

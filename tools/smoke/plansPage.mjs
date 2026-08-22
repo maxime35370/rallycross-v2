@@ -132,11 +132,20 @@ try {
       // MediaRecorder n'horodate pas à l'image près, et le fondu est encodé en
       // VP8 : deux images de marge de chaque côté.
       const attendu = DUREE_FONDU * FPS;
-      dire(Math.abs(tr.imagesDeTransition - attendu) <= 3,
+      dire(Math.abs(tr.imagesDeTransition - attendu) <= 4,
         `étendue du fondu : ${tr.imagesDeTransition} images pour ${attendu} attendues (${(tr.duree * 1000).toFixed(0)} ms)`);
       dire(tr.nature.includes('étalée'), `nature reconnue : ${tr.nature}`);
-      console.log(`  \x1b[90m→ dispersion ${tr.dispersionMedianeEntre} · résidu ${tr.residuMedianEntre} `
-        + `(publiés, pas érigés en verdict : mesurés entre 0,31 et 0,62 d'un enregistrement à l'autre)\x1b[0m`);
+      const st = c.stabilite;
+      dire(!!st && st.retenus >= 2, `plusieurs fenêtres exploitables (${st?.retenus ?? 0})`);
+      if (st && st.retenus >= 2) {
+        // Le défaut d'origine : 5 images à ±0,20 s et 56 à ±0,60 s sur la même
+        // coupure. Les bornes doivent maintenant tenir dans quelques images.
+        dire(st.dispersionAvant <= 5 / FPS,
+          `borne AVANT stable d'une fenêtre à l'autre (${(st.dispersionAvant * 1000).toFixed(0)} ms)`);
+        dire(st.dispersionApres <= 5 / FPS,
+          `borne APRÈS stable d'une fenêtre à l'autre (${(st.dispersionApres * 1000).toFixed(0)} ms)`);
+        console.log('  \x1b[90m→ ' + st.essais.map(e => `±${e.demiFenetre}s:${e.suffisante ? `${e.images}img` : 'écartée'}`).join('  ') + '\x1b[0m');
+      }
       dire(tr.monotone >= 0.9, `α progresse sans redescendre (${(tr.monotone * 100).toFixed(0)} %)`);
       dire(tr.derniereImagePropreAvant.t <= T_COUPURE + 2 / FPS,
         `la dernière image propre précède le fondu (t = ${tr.derniereImagePropreAvant.t})`);

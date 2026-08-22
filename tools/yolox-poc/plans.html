@@ -48,7 +48,7 @@
     <label>Fenêtre <input type="number" id="fenetre" step="2" min="3" value="9"></label>
     <label>Plancher <input type="number" id="minAbsolu" step="0.01" min="0" value="0.06"></label>
     <label><input type="checkbox" id="affiner" checked> dater à l'image près autour de chaque coupure</label>
-    <label>Fenêtre de transition ± <input type="number" id="fenTrans" step="0.05" min="0.1" value="0.60"> s</label>
+    <label>Fenêtres de transition ± <input type="text" id="fenTrans" style="width:130px" value="0.20,0.30,0.40,0.60"> s</label>
     <button id="lancer" disabled>Scanner les plans</button>
     <button id="exporter" disabled>Exporter le JSON</button>
     <progress id="prog" value="0" max="1" style="display:none"></progress>
@@ -86,7 +86,7 @@
 
 <script type="module">
 import { signatureImage, detecterCoupures, distance } from '/tools/yolox-poc/lib/apparence.mjs';
-import { analyserTransition } from '/tools/yolox-poc/lib/transition.mjs';
+import { analyserTransition, verifierStabilite } from '/tools/yolox-poc/lib/transition.mjs';
 
 const $ = (id) => document.getElementById(id);
 const video = $('src');
@@ -195,17 +195,17 @@ $('lancer').addEventListener('click', async () => {
   const coupures = [];
   for (const c of brut.coupures) {
     let fin = { t: c.t, avant: Number((c.t - pas).toFixed(3)), d: c.d, precision: `± ${pas} s` };
-    let transition = null;
+    let transition = null, stabilite = null;
     if ($('affiner').checked) {
       const dt = 1 / fps;
-      const demi = Number($('fenTrans').value);
-      const bornes = [];
-      for (let t = c.t - demi; t <= c.t + demi + 1e-9; t += dt) bornes.push(Number(t.toFixed(4)));
+      const demis = $('fenTrans').value.split(',').map(x => Number(x.trim())).filter(x => x > 0).sort((a, b) => a - b);
+      const demiMax = demis[demis.length - 1];
 
-      // Deux mesures sur la MÊME fenêtre, à la cadence du fichier :
-      //   · la distance d'histogramme, qui date la rupture la plus vive ;
-      //   · la projection sur le segment entre les deux plans, qui dit si la
-      //     rupture est franche ou étalée, et sur combien d'images.
+      // Une SEULE lecture des images, à la plus large des fenêtres. Les
+      // fenêtres plus étroites sont des sous-ensembles : les relire coûterait
+      // autant de seeks pour exactement les mêmes pixels.
+      const bornes = [];
+      for (let t = c.t - demiMax; t <= c.t + demiMax + 1e-9; t += dt) bornes.push(Number(t.toFixed(4)));
       const sigs = [], cadres = [];
       for (const t of bornes) {
         const px = await pixels(t);
@@ -219,16 +219,28 @@ $('lancer').addEventListener('click', async () => {
         if (!meilleur || d > meilleur.d) meilleur = { d, avant: sigs[i - 1].t, t: sigs[i].t };
       }
       if (meilleur) fin = { ...meilleur, d: Number(meilleur.d.toFixed(4)), precision: `1 image (${(1000 / fps).toFixed(1)} ms)` };
-      transition = analyserTransition(cadres);
+
+      // La même mesure à plusieurs largeurs. L'étendue d'une transition est une
+      // propriété LOCALE de la coupure : si elle change avec la fenêtre, elle
+      // ne mesure rien, et c'est le tableau de stabilité qui le dit.
+      const series = {};
+      for (const demi of demis) series[demi] = cadres.filter(x => Math.abs(x.t - c.t) <= demi + 1e-9);
+      stabilite = verifierStabilite(series);
+      transition = analyserTransition(series[demiMax]);
       // Une transition étalée ne se traverse pas d'une image à l'autre : les
       // images à montrer, et à donner plus tard à la réattribution, sont les
       // deux images PROPRES, pas les deux images voisines du pic.
-      if (transition?.derniereImagePropreAvant && transition?.premiereImagePropreApres) {
+      // Les bornes retenues sont la MÉDIANE des fenêtres exploitables, pas
+      // celles d'un essai unique.
+      if (stabilite?.avantRetenu != null && stabilite?.apresRetenu != null) {
+        fin.avant = stabilite.avantRetenu;
+        fin.t = stabilite.apresRetenu;
+        fin.precision = `${Math.round((fin.t - fin.avant) * fps) - 1} image(s) de transition écartée(s)`
+          + ` · médiane de ${stabilite.retenus} fenêtre(s)`;
+      } else if (transition?.derniereImagePropreAvant && transition?.premiereImagePropreApres) {
         fin.avant = transition.derniereImagePropreAvant.t;
         fin.t = transition.premiereImagePropreApres.t;
-        fin.precision = transition.imagesDeTransition > 0
-          ? `${transition.imagesDeTransition} image(s) de transition écartée(s)`
-          : `coupure franche (1 image)`;
+        fin.precision = `${transition.imagesDeTransition} image(s) — une seule fenêtre exploitable`;
       }
     }
     coupures.push({
@@ -238,7 +250,7 @@ $('lancer').addEventListener('click', async () => {
       // points de la grille.
       tGrille: c.t,
       image: Math.round(fin.t * fps),
-      transition,
+      transition, stabilite,
       vignetteAvant: await vignette(fin.avant),
       vignetteApres: await vignette(fin.t),
     });
@@ -263,8 +275,10 @@ $('lancer').addEventListener('click', async () => {
     bornesPropres: coupures.map(c => ({
       rupture: c.tGrille,
       avant: c.avant, apres: c.t,
-      imagesDeTransition: c.transition?.imagesDeTransition ?? null,
-      dureeTransition: c.transition?.duree ?? null,
+      imagesDeTransition: Math.max(0, Math.round((c.t - c.avant) * fps) - 1),
+      dureeTransition: Number((c.t - c.avant).toFixed(4)),
+      fenetresConcordantes: c.stabilite?.retenus ?? null,
+      dispersionBornes: c.stabilite ? [c.stabilite.dispersionAvant, c.stabilite.dispersionApres] : null,
     })),
     distances: brut.distances,
     createdAt: new Date().toISOString(),
@@ -335,7 +349,7 @@ function remplirTableau({ distances, reglages }, coupures) {
 function montrerPaires(coupures) {
   $('panneauPaires').style.display = coupures.length ? '' : 'none';
   $('paires').innerHTML = coupures.map(c => {
-    const tr = c.transition;
+    const tr = c.transition, st = c.stabilite;
     const franche = tr && tr.imagesDeTransition === 0;
     return `
     <h3 style="font-size:.9rem;margin:14px 0 2px">Rupture repérée à t = ${c.tGrille} s
@@ -343,7 +357,9 @@ function montrerPaires(coupures) {
     ${tr ? `<table style="max-width:640px">
       <tr><td><strong>nature</strong></td><td class="num"><strong>${tr.nature}</strong></td></tr>
       <tr><td>durée de la zone de transition</td>
-          <td class="num">${tr.duree == null ? '—' : `${(tr.duree * 1000).toFixed(0)} ms · ${tr.imagesDeTransition} image(s) écartée(s)`}</td></tr>
+          <td class="num">${tr.duree == null ? '—' : `${(tr.duree * 1000).toFixed(0)} ms · ${tr.imagesDeTransition} image(s)`}</td></tr>
+      <tr><td>paliers de α — avant → après</td>
+          <td class="num">${tr.paliers.avant} → ${tr.paliers.apres} <span class="sub">(montée ${tr.paliers.montee})</span></td></tr>
       <tr><td><strong>dernière image propre AVANT</strong></td>
           <td class="num"><strong>${tr.derniereImagePropreAvant ? `image ${tr.derniereImagePropreAvant.image} · t = ${tr.derniereImagePropreAvant.t} s` : '—'}</strong></td></tr>
       <tr><td><strong>première image propre APRÈS</strong></td>
@@ -357,6 +373,25 @@ function montrerPaires(coupures) {
       ${tr.fenetreSuffisante ? '' : `<tr><td colspan="2" style="background:#fff3cd">
         La fenêtre ne contient pas d'image pure des deux côtés : élargis-la avant de conclure.</td></tr>`}
     </table>
+    ${st ? `<h4 style="font-size:.85rem;margin:10px 0 3px">Stabilité selon la fenêtre d'analyse</h4>
+    <table style="max-width:720px">
+      <tr><th class="num">demi-fenêtre</th><th class="num">images</th><th class="num">durée</th>
+          <th class="num">borne avant</th><th class="num">borne après</th><th class="num">montée de α</th><th>retenue</th></tr>
+      ${st.essais.map(e => `<tr${e.suffisante ? '' : ' class="sub"'}>
+        <td class="num">± ${e.demiFenetre} s</td><td class="num">${e.images ?? '—'}</td>
+        <td class="num">${e.duree == null ? '—' : `${(e.duree * 1000).toFixed(0)} ms`}</td>
+        <td class="num">${e.avant ?? '—'}</td><td class="num">${e.apres ?? '—'}</td>
+        <td class="num">${e.montee ?? '—'}</td>
+        <td>${e.suffisante ? 'oui' : 'non — la fenêtre n\'enjambe pas deux paliers'}</td></tr>`).join('')}
+      <tr><td colspan="3"><strong>dispersion des bornes entre fenêtres</strong></td>
+          <td class="num"><strong>${st.dispersionAvant == null ? '—' : `${(st.dispersionAvant * 1000).toFixed(0)} ms`}</strong></td>
+          <td class="num"><strong>${st.dispersionApres == null ? '—' : `${(st.dispersionApres * 1000).toFixed(0)} ms`}</strong></td>
+          <td colspan="2" class="sub">une durée de transition est une propriété locale de la coupure :
+            si ces deux chiffres sont grands, la mesure ne veut rien dire</td></tr>
+    </table>
+    <p class="sub">Bornes retenues : la <strong>médiane</strong> des ${st.retenus} fenêtre(s) exploitable(s),
+    pas le résultat d'un essai unique. Une demi-fenêtre de 0,20 s est en général trop courte pour que les
+    paliers soient estimés proprement — c'est l'essai qui s'écarte le plus souvent des autres.</p>` : ''}
     <details style="margin:6px 0"><summary class="sub">α et résidu, image par image</summary>
       <div class="defile"><table>
         <tr><th class="num">image</th><th class="num">t</th><th class="num">α</th><th class="num">dispersion</th><th class="num">résidu</th><th class="num">contraste</th><th>classe</th></tr>

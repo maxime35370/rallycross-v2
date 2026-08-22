@@ -8,7 +8,9 @@
 ═══════════════════════════════════════════════ */
 
 import { describe, it, expect } from 'vitest';
-import { estimerMelange, contraste, analyserTransition } from '../tools/yolox-poc/lib/transition.mjs';
+import {
+  estimerMelange, contraste, analyserTransition, verifierStabilite,
+} from '../tools/yolox-poc/lib/transition.mjs';
 
 const L = 64, H = 48;
 const vide = () => new Uint8ClampedArray(L * H * 4);
@@ -148,9 +150,9 @@ describe('étendue de la transition', () => {
     expect(r.fenetreSuffisante).toBe(false);
   });
 
-  it('raffine ses références au lieu de garder les bords de la fenêtre', () => {
-    // Bords éloignés du fondu, et le plan A y bouge un peu : sans raffinement,
-    // le α de toutes les images serait biaisé par ces images de référence.
+  it('garde les bords de la fenêtre comme références', () => {
+    // Le choix des références n'a plus d'importance : c'est la FORME de la
+    // montée de α qui donne les bornes, pas son niveau absolu.
     const cadres = [];
     let k = 0;
     const pousser = (px) => cadres.push({ t: k / 25, image: k++, px });
@@ -231,17 +233,107 @@ describe('crédibilité du mélange, jugée sur la fenêtre', () => {
 });
 
 describe('verdict sur la nature de la rupture', () => {
-  it('ne repose sur aucun seuil réglable', () => {
+  it('ne dépend que du nombre d\'images intermédiaires', () => {
     // Une version précédente jugeait « vrai mélange ou non » sur la dispersion
     // des α. Mesuré sur une vraie vidéo encodée, le même fondu rendait 0,37 à
     // un essai et 0,62 au suivant, contre 1,0 pour un panoramique : trop mince
     // pour un booléen. Le verdict ne dépend plus que du nombre d'images.
-    const r = analyserTransition([
-      { t: 0, image: 0, px: fabriquer(() => [220, 40, 40]) },
-      { t: 1, image: 1, px: fabriquer(() => [130, 50, 130]) },
-      { t: 2, image: 2, px: fabriquer(() => [40, 60, 220]) },
-    ]);
-    expect(Object.keys(r.reglages)).toEqual(['epsilon', 'fractionMin']);
-    expect(r.nature).toMatch(/coupure franche|étalée/);
+    const rouge = fabriquer(() => [220, 40, 40]), bleu = fabriquer(() => [40, 60, 220]);
+    const cadres = [];
+    for (let k = 0; k < 10; k++) cadres.push({ t: k / 25, image: k, px: k < 5 ? rouge : bleu });
+    const r = analyserTransition(cadres);
+    expect(r.nature).toBe('coupure franche');
+    expect(Object.keys(r.reglages)).toEqual(['partMontee', 'amplitudeMin', 'fractionMin']);
+  });
+});
+
+// ═══════════════════════════════════════════════
+// INDÉPENDANCE À LA FENÊTRE D'ANALYSE
+//
+// Le défaut qui a motivé la réécriture : mesurée sur la vidéo réelle, la même
+// coupure rendait 5 images à ±0,20 s et 56 à ±0,60 s. Une durée de transition
+// est une propriété LOCALE de la coupure ; si elle dépend de la fenêtre, elle
+// ne mesure rien.
+//
+// La cause est reproduite ici : un panoramique déplace TOUS les pixels, donc
+// une image encore pure diffère déjà de sa référence, et α n'atteint jamais 0.
+// Les synthétiques précédents n'avaient qu'un objet mobile — une minorité de
+// pixels, que la médiane absorbait — et ne montraient donc rien.
+// ═══════════════════════════════════════════════
+
+describe('indépendance à la largeur de la fenêtre', () => {
+  const LP = 120, HP = 68, FPS = 60;
+  const texture = (dx, teintes) => {
+    const px = new Uint8ClampedArray(LP * HP * 4);
+    for (let y = 0; y < HP; y++) {
+      for (let x = 0; x < LP; x++) {
+        const u = x + dx, i = (y * LP + x) * 4;
+        px[i] = teintes[0] + 90 * Math.sin(u / 9);
+        px[i + 1] = teintes[1] + 80 * Math.sin(u / 13 + y / 17);
+        px[i + 2] = teintes[2] + 50 * Math.sin(u / 7 + y / 23);
+        px[i + 3] = 255;
+      }
+    }
+    return px;
+  };
+  const melangePx = (a, b, alpha) => {
+    const px = new Uint8ClampedArray(a.length);
+    for (let i = 0; i < a.length; i += 4) {
+      for (let c = 0; c < 3; c++) px[i + c] = Math.round(a[i + c] * (1 - alpha) + b[i + c] * alpha);
+      px[i + 3] = 255;
+    }
+    return px;
+  };
+  const T0 = 1.0, DUREE = 0.10;              // fondu de 6 images à 60 img/s
+  const cadreA = (t) => {
+    const alpha = Math.max(0, Math.min(1, (t - T0) / DUREE));
+    const a = texture(210 * t, [120, 90, 60]);     // les deux plans PANORAMIQUENT
+    const b = texture(150 * t, [40, 150, 200]);
+    return alpha <= 0 ? a : alpha >= 1 ? b : melangePx(a, b, alpha);
+  };
+  const serie = (demi) => {
+    const cadres = [];
+    for (let k = Math.round((T0 - demi) * FPS); k <= Math.round((T0 + DUREE + demi) * FPS); k++) {
+      cadres.push({ t: Number((k / FPS).toFixed(4)), image: k, px: cadreA(k / FPS) });
+    }
+    return cadres;
+  };
+
+  it('rend la même étendue à ±0,30, ±0,40 et ±0,60 s', () => {
+    const r = [0.3, 0.4, 0.6].map(d => analyserTransition(serie(d)));
+    for (const x of r) {
+      expect(x.fenetreSuffisante).toBe(true);
+      // vérité : 6 images. La version à seuil rendait 38, 50 et 74.
+      expect(x.imagesDeTransition).toBeLessThanOrEqual(8);
+    }
+    const avant = r.map(x => x.derniereImagePropreAvant.t);
+    const apres = r.map(x => x.premiereImagePropreApres.t);
+    // moins de trois images d'écart d'une fenêtre à l'autre
+    expect(Math.max(...avant) - Math.min(...avant)).toBeLessThanOrEqual(3 / FPS + 1e-6);
+    expect(Math.max(...apres) - Math.min(...apres)).toBeLessThanOrEqual(3 / FPS + 1e-6);
+  });
+
+  it('encadre le vrai fondu au lieu de le rogner ou de le noyer', () => {
+    const r = analyserTransition(serie(0.4));
+    expect(r.derniereImagePropreAvant.t).toBeLessThanOrEqual(T0 + 2 / FPS);
+    expect(r.premiereImagePropreApres.t).toBeGreaterThanOrEqual(T0 + DUREE - 3 / FPS);
+    expect(r.premiereImagePropreApres.t).toBeLessThanOrEqual(T0 + DUREE + 4 / FPS);
+  });
+
+  it('mesure la stabilité au lieu de la supposer', () => {
+    const st = verifierStabilite({ 0.3: serie(0.3), 0.4: serie(0.4), 0.6: serie(0.6) });
+    expect(st.retenus).toBe(3);
+    expect(st.dispersionAvant).toBeLessThanOrEqual(3 / FPS + 1e-6);
+    expect(st.avantRetenu).not.toBeNull();
+    expect(st.apresRetenu).toBeGreaterThan(st.avantRetenu);
+  });
+
+  it('écarte des retenus une fenêtre qui n\'enjambe pas deux paliers', () => {
+    // Fenêtre entièrement dans le plan A : aucune montée, rien à conclure.
+    const cadres = [];
+    for (let k = 0; k < 40; k++) cadres.push({ t: k / FPS, image: k, px: texture(210 * k / FPS, [120, 90, 60]) });
+    const st = verifierStabilite({ 0.3: cadres });
+    expect(st.retenus).toBe(0);
+    expect(st.avantRetenu).toBeNull();
   });
 });
