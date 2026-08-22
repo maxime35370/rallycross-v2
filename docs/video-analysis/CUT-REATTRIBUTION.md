@@ -95,7 +95,8 @@ node tools\yolox-poc\serve.mjs
 # → http://127.0.0.1:8798/__plans
 #   1. charger l'extrait ET son .json (la cadence vient du sidecar)
 #   2. début 3,000 · fin 13,500 · pas 0,10 s
-#   3. « Scanner les plans », puis « Exporter le JSON »
+#   3. fenêtre de transition ± 0,60 s (élargir si la page le demande)
+#   4. « Scanner les plans », puis « Exporter le JSON »
 ```
 
 La page donne les timestamps retenus, la courbe des distances avec le seuil
@@ -109,6 +110,28 @@ fabrique une vidéo dont la vérité est connue (panoramique, coupure à 2,0 s, 
 plan qui s'élargit sur des objets immobiles) et vérifie que le scan trouve la
 coupure et rien d'autre — mesuré : 1,98 s pour 2,00 s attendues, rapport ×9,35
 contre un facteur 3, panoramique plafonnant à ×2,37.
+
+### La rupture de Kerlabo est un FONDU, pas une coupure
+
+Le scan a trouvé la rupture à t = 5,8333 s (image 350, rapport ×4,63), et
+l'examen visuel a montré un **fondu enchaîné** : à cet instant, l'image contient
+encore l'ancien et le nouveau plan en transparence.
+
+Cela change la suite. Les images du fondu ne sont **d'aucun des deux plans** :
+les boîtes qu'on y détecterait n'appartiennent ni à l'un ni à l'autre, et la
+réattribution ne doit surtout pas être faite entre l'image 349 et l'image 350.
+Elle doit l'être entre la **dernière image propre** de l'ancien plan et la
+**première image propre** du nouveau, les images du fondu étant écartées.
+
+`lib/transition.mjs` mesure cette étendue. Un fondu étant une opération exacte,
+`I = (1−α)·A + α·B`, chaque canal de chaque pixel donne son propre α et il
+suffit d'en prendre la médiane — estimateur choisi après avoir mesuré l'échec
+des deux autres (projection globale : α plafonne à 0,42 au lieu de 1,0 dès
+qu'une caméra bouge pendant le fondu ; médiane par zones : instable dès que le
+mouvement occupe la moitié des zones).
+
+Le verdict « coupure franche ou transition étalée » ne repose sur aucun seuil :
+il ne regarde que le nombre d'images intermédiaires.
 
 > Cette marge — ×2,37 pour un panoramique contre un facteur 3 — est réelle mais
 > pas immense. Sur une retransmission, un panoramique plus vif peut s'en

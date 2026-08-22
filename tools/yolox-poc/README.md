@@ -448,10 +448,36 @@ node tools\smoke\plansPage.mjs      # contrôle de bout en bout, vidéo témoin 
 ```
 
 `plansPage.mjs` fabrique dans le navigateur une vidéo dont la vérité est connue
-— un panoramique, une coupure à 2,0 s, puis un plan qui s'élargit en découvrant
-des objets immobiles — et vérifie que le scan trouve la coupure et **rien
-d'autre**. Mesuré : coupure à 1,98 s pour 2,00 s attendues, rapport ×9,35 contre
-un facteur 3, et le panoramique plafonne à ×2,37 sans jamais déclencher.
+— un panoramique, un **fondu enchaîné** de 0,40 s à 2,0 s, puis un plan qui
+s'élargit en découvrant des objets immobiles — et vérifie que le scan trouve la
+rupture, mesure son étendue, et ne déclenche sur **rien d'autre**. Mesuré :
+transition de 9 images pour 10 attendues, de t = 2,00 s à t = 2,40 s, rapport
+×4,7 contre un facteur 3, panoramique plafonnant à ×1,74.
+
+#### Fondu enchaîné : mesurer l'étendue de la transition
+
+Une coupure franche se traverse d'une image à la suivante. **Un fondu, non** :
+pendant la transition, l'image contient les deux plans en transparence, et les
+boîtes qu'on y détecterait n'appartiennent ni à l'un ni à l'autre. `lib/transition.mjs`
+mesure donc l'étendue, pour que la réattribution utilise les deux images
+**propres** de part et d'autre.
+
+Un fondu est une opération exacte, `I = (1−α)·A + α·B`. Chaque canal de chaque
+pixel donne donc son propre α, et il suffit d'en prendre la **médiane**. Deux
+versions plus savantes ont été essayées et mesurées avant celle-là :
+
+| Estimateur | Résultat mesuré |
+|---|---|
+| projection globale aux moindres carrés | α plafonne à **0,42** là où la vérité est 1,0, dès qu'il y a un panoramique pendant le fondu |
+| médiane des projections par zones | juste tant que le mouvement occupe peu de zones, **instable** dès qu'il en occupe la moitié |
+| **médiane par canal** | la rampe **exacte** (0 · 0,1 · 0,2 … 1), identique quelle que soit la fenêtre |
+
+Le verdict « coupure franche ou transition étalée » ne dépend d'**aucun seuil
+réglable** : il ne regarde que le nombre d'images intermédiaires, et un
+panoramique — où α bascule d'un bloc — y retombe naturellement du bon côté. La
+dispersion des α et le résidu sont publiés, jamais érigés en verdict : sur une
+vraie vidéo encodée, le même fondu rend de 0,31 à 0,62 selon l'enregistrement
+contre 1,0 pour un panoramique, marge trop mince pour un booléen.
 
 Le rapport de suivi affiche les deux détecteurs côte à côte. Quand ils
 divergent, c'est l'image qui a raison. Analyse complète et suite du plan :

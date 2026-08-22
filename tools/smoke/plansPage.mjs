@@ -4,11 +4,14 @@
    `/__plans` la retrouve :
 
      0,0 – 2,0 s   plan A, panoramique rapide  (aucune coupure attendue)
-     2,0 s         COUPURE vers le plan B      (une coupure attendue, datée à l'image)
-     2,0 – 4,0 s   plan B, panoramique
+     2,0 – 2,4 s   FONDU ENCHAÎNÉ A → B, sur 10 images à 25 img/s
+     2,4 – 4,0 s   plan B, panoramique
      4,0 – 6,0 s   plan B, la caméra « découvre » des objets IMMOBILES
                    (aucune coupure attendue — c'est le faux positif à éviter,
                     celui qui a fait prendre 10,3 s pour une coupure sur Kerlabo)
+
+   Le fondu est le cas réel rencontré sur Kerlabo : la rupture existe, mais elle
+   s'étale, et les images du milieu contiennent les DEUX plans en transparence.
 
    Prérequis : ffmpeg (ou FFMPEG_PATH), Chromium de Playwright.
 
@@ -25,7 +28,7 @@ import { chromium } from 'playwright';
 const PORT = Number(process.env.SMOKE_PORT || 8801);
 const CHROMIUM = process.env.CHROMIUM_PATH || undefined;
 const L = 320, H = 180, FPS = 25, DUREE = 6;
-const T_COUPURE = 2.0;
+const T_COUPURE = 2.0, DUREE_FONDU = 0.4;
 
 let code = 0;
 const dire = (ok, texte) => { if (!ok) code = 1; console.log(`${ok ? '\x1b[32m✔\x1b[0m' : '\x1b[31m✘\x1b[0m'} ${texte}`); };
@@ -45,7 +48,7 @@ writeFileSync(sidecar, JSON.stringify({ schema: 'rx-extract/1', file: 'plans.web
  * exactement ce qu'on veut mesurer.
  */
 async function enregistrerTemoin(page) {
-  const b64 = await page.evaluate(({ L, H, FPS, DUREE, T_COUPURE }) => new Promise((ok, ko) => {
+  const b64 = await page.evaluate(({ L, H, FPS, DUREE, T_COUPURE, DUREE_FONDU }) => new Promise((ok, ko) => {
     const c = document.createElement('canvas');
     c.width = L; c.height = H;
     const ctx = c.getContext('2d');
@@ -65,24 +68,29 @@ async function enregistrerTemoin(page) {
     const peindre = () => {
       const t = (performance.now() - depart) / 1000;
       if (t >= DUREE) { rec.stop(); return; }
-      const apres = t >= T_COUPURE;
-      ctx.fillStyle = apres ? '#1a2896' : '#1e783c';
-      ctx.fillRect(0, 0, L, H);
-      // panoramique : une barre traverse le cadre, dans les DEUX plans
-      const x = ((t % 2) / 2) * (L + 60) - 60;
-      ctx.fillStyle = apres ? '#e6d73c' : '#c8372a';
-      ctx.fillRect(x, 0, 60, H);
-      // après 4 s, des objets IMMOBILES apparaissent un à un : le plan
-      // s'élargit, ce n'est surtout pas une coupure
-      if (t >= 4) {
-        ctx.fillStyle = '#ebebeb';
-        for (let i = 0; i < Math.min(6, Math.floor((t - 4) * 3) + 1); i++) ctx.fillRect(20 + i * 48, 12, 22, 22);
-      }
+      // α du fondu : 0 avant, 1 après, linéaire entre les deux
+      const alpha = Math.max(0, Math.min(1, (t - T_COUPURE) / DUREE_FONDU));
+      const plan = (dest, apres) => {
+        dest.fillStyle = apres ? '#1a2896' : '#1e783c';
+        dest.fillRect(0, 0, L, H);
+        // panoramique : une barre traverse le cadre, dans les DEUX plans
+        const x = ((t % 2) / 2) * (L + 60) - 60;
+        dest.fillStyle = apres ? '#e6d73c' : '#c8372a';
+        dest.fillRect(x, 0, 60, H);
+        // après 4 s, des objets IMMOBILES apparaissent un à un : le plan
+        // s'élargit, ce n'est surtout pas une coupure
+        if (apres && t >= 4) {
+          dest.fillStyle = '#ebebeb';
+          for (let i = 0; i < Math.min(6, Math.floor((t - 4) * 3) + 1); i++) dest.fillRect(20 + i * 48, 12, 22, 22);
+        }
+      };
+      ctx.globalAlpha = 1; plan(ctx, false);
+      if (alpha > 0) { ctx.globalAlpha = alpha; plan(ctx, true); ctx.globalAlpha = 1; }
       requestAnimationFrame(peindre);
     };
     rec.start();
     requestAnimationFrame(peindre);
-  }), { L, H, FPS, DUREE, T_COUPURE });
+  }), { L, H, FPS, DUREE, T_COUPURE, DUREE_FONDU });
   writeFileSync(webm, Buffer.from(b64, 'base64'));
 }
 
@@ -117,12 +125,31 @@ try {
 
   if (r.coupures.length) {
     const c = r.coupures[0];
-    const ecart = Math.abs(c.t - T_COUPURE);
+    const tr = c.transition;
+    dire(!!tr, 'la transition est analysée image par image');
+    if (tr) {
+      dire(tr.fenetreSuffisante, 'la fenêtre contient des images propres des deux côtés');
+      // MediaRecorder n'horodate pas à l'image près, et le fondu est encodé en
+      // VP8 : deux images de marge de chaque côté.
+      const attendu = DUREE_FONDU * FPS;
+      dire(Math.abs(tr.imagesDeTransition - attendu) <= 3,
+        `étendue du fondu : ${tr.imagesDeTransition} images pour ${attendu} attendues (${(tr.duree * 1000).toFixed(0)} ms)`);
+      dire(tr.nature.includes('étalée'), `nature reconnue : ${tr.nature}`);
+      console.log(`  \x1b[90m→ dispersion ${tr.dispersionMedianeEntre} · résidu ${tr.residuMedianEntre} `
+        + `(publiés, pas érigés en verdict : mesurés entre 0,31 et 0,62 d'un enregistrement à l'autre)\x1b[0m`);
+      dire(tr.monotone >= 0.9, `α progresse sans redescendre (${(tr.monotone * 100).toFixed(0)} %)`);
+      dire(tr.derniereImagePropreAvant.t <= T_COUPURE + 2 / FPS,
+        `la dernière image propre précède le fondu (t = ${tr.derniereImagePropreAvant.t})`);
+      dire(tr.premiereImagePropreApres.t >= T_COUPURE + DUREE_FONDU - 2 / FPS,
+        `la première image propre suit le fondu (t = ${tr.premiereImagePropreApres.t})`);
+    }
+    const ecart = Math.abs(c.t - (T_COUPURE + DUREE_FONDU));
     // Tolérance large à dessein : `MediaRecorder` n'horodate pas à l'image
     // près. L'exactitude du calage image ↔ `currentTime` est mesurée
     // séparément, sur une vidéo construite image par image, par videoSeek.mjs.
-    dire(ecart <= 0.2, `datée au bon endroit : t = ${c.t} s, attendu ${T_COUPURE} s (écart ${(ecart * 1000).toFixed(0)} ms)`);
-    dire(c.avant < c.t && c.t - c.avant <= 2.5 / FPS, `l'image d'avant et celle d'après se touchent (${c.avant} → ${c.t})`);
+    dire(ecart <= 0.2, `l'instant retenu APRÈS est la sortie du fondu : t = ${c.t} s, attendu ${(T_COUPURE + DUREE_FONDU).toFixed(2)} s (écart ${(ecart * 1000).toFixed(0)} ms)`);
+    dire(c.t - c.avant >= DUREE_FONDU - 3 / FPS,
+      `les deux images retenues encadrent le fondu au lieu de se toucher (${c.avant} → ${c.t})`);
     dire(c.rapport >= r.reglages.facteur, `le rapport au seuil local est franc (×${c.rapport} pour un facteur ${r.reglages.facteur})`);
   }
 

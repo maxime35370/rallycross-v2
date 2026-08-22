@@ -48,6 +48,7 @@
     <label>Fenêtre <input type="number" id="fenetre" step="2" min="3" value="9"></label>
     <label>Plancher <input type="number" id="minAbsolu" step="0.01" min="0" value="0.06"></label>
     <label><input type="checkbox" id="affiner" checked> dater à l'image près autour de chaque coupure</label>
+    <label>Fenêtre de transition ± <input type="number" id="fenTrans" step="0.05" min="0.1" value="0.60"> s</label>
     <button id="lancer" disabled>Scanner les plans</button>
     <button id="exporter" disabled>Exporter le JSON</button>
     <progress id="prog" value="0" max="1" style="display:none"></progress>
@@ -66,7 +67,13 @@
 </div>
 
 <div class="panneau" id="panneauPaires" style="display:none">
-  <h2>De part et d'autre de chaque coupure proposée</h2>
+  <h2>Nature et étendue de chaque rupture</h2>
+  <p class="sub" style="margin:0 0 6px">
+    Une coupure franche se traverse d'une image à la suivante. Un <strong>fondu enchaîné</strong>
+    ne se traverse pas : pendant la transition, l'image contient les deux plans en transparence, et
+    les boîtes qu'on y détecterait n'appartiennent ni à l'un ni à l'autre. Les deux images à retenir
+    sont donc les images <strong>propres</strong> de part et d'autre — celles montrées ci-dessous.
+  </p>
   <div id="paires"></div>
 </div>
 
@@ -79,6 +86,7 @@
 
 <script type="module">
 import { signatureImage, detecterCoupures, distance } from '/tools/yolox-poc/lib/apparence.mjs';
+import { analyserTransition } from '/tools/yolox-poc/lib/transition.mjs';
 
 const $ = (id) => document.getElementById(id);
 const video = $('src');
@@ -126,6 +134,27 @@ async function pixels(t) {
   return ctxCadre.getImageData(0, 0, cadre.width, cadre.height).data;
 }
 
+/**
+ * Réduit une image pour la projection.
+ *
+ * Le coefficient d'un fondu est une grandeur GLOBALE : l'estimer sur 240 px de
+ * large donne le même résultat que sur 1920, en soixante-quatre fois moins de
+ * calcul — et la réduction atténue au passage le bruit de mouvement, qui n'est
+ * pas ce qu'on mesure ici.
+ */
+const petit = document.createElement('canvas');
+const ctxPetit = petit.getContext('2d', { willReadFrequently: true });
+function reduire(px, w, h) {
+  const source = new ImageData(new Uint8ClampedArray(px), w, h);
+  const grand = document.createElement('canvas');
+  grand.width = w; grand.height = h;
+  grand.getContext('2d').putImageData(source, 0, 0);
+  petit.width = 240; petit.height = Math.max(1, Math.round(240 * h / w));
+  ctxPetit.imageSmoothingEnabled = true; ctxPetit.imageSmoothingQuality = 'high';
+  ctxPetit.drawImage(grand, 0, 0, petit.width, petit.height);
+  return ctxPetit.getImageData(0, 0, petit.width, petit.height).data;
+}
+
 const vignette = async (t) => {
   await allerA(t);
   const c = document.createElement('canvas');
@@ -166,18 +195,41 @@ $('lancer').addEventListener('click', async () => {
   const coupures = [];
   for (const c of brut.coupures) {
     let fin = { t: c.t, avant: Number((c.t - pas).toFixed(3)), d: c.d, precision: `± ${pas} s` };
+    let transition = null;
     if ($('affiner').checked) {
       const dt = 1 / fps;
+      const demi = Number($('fenTrans').value);
       const bornes = [];
-      for (let t = c.t - pas - dt; t <= c.t + dt + 1e-9; t += dt) bornes.push(Number(t.toFixed(4)));
-      const sigs = [];
-      for (const t of bornes) sigs.push({ t, sig: signatureImage(await pixels(t), cadre.width, cadre.height) });
+      for (let t = c.t - demi; t <= c.t + demi + 1e-9; t += dt) bornes.push(Number(t.toFixed(4)));
+
+      // Deux mesures sur la MÊME fenêtre, à la cadence du fichier :
+      //   · la distance d'histogramme, qui date la rupture la plus vive ;
+      //   · la projection sur le segment entre les deux plans, qui dit si la
+      //     rupture est franche ou étalée, et sur combien d'images.
+      const sigs = [], cadres = [];
+      for (const t of bornes) {
+        const px = await pixels(t);
+        sigs.push({ t, sig: signatureImage(px, cadre.width, cadre.height) });
+        cadres.push({ t, image: Math.round(t * fps), px: reduire(px, cadre.width, cadre.height) });
+        $('etat').textContent = `transition ${c.t.toFixed(2)} s · ${cadres.length}/${bornes.length}`;
+      }
       let meilleur = null;
       for (let i = 1; i < sigs.length; i++) {
         const d = distance(sigs[i - 1].sig, sigs[i].sig) ?? 0;
         if (!meilleur || d > meilleur.d) meilleur = { d, avant: sigs[i - 1].t, t: sigs[i].t };
       }
       if (meilleur) fin = { ...meilleur, d: Number(meilleur.d.toFixed(4)), precision: `1 image (${(1000 / fps).toFixed(1)} ms)` };
+      transition = analyserTransition(cadres);
+      // Une transition étalée ne se traverse pas d'une image à l'autre : les
+      // images à montrer, et à donner plus tard à la réattribution, sont les
+      // deux images PROPRES, pas les deux images voisines du pic.
+      if (transition?.derniereImagePropreAvant && transition?.premiereImagePropreApres) {
+        fin.avant = transition.derniereImagePropreAvant.t;
+        fin.t = transition.premiereImagePropreApres.t;
+        fin.precision = transition.imagesDeTransition > 0
+          ? `${transition.imagesDeTransition} image(s) de transition écartée(s)`
+          : `coupure franche (1 image)`;
+      }
     }
     coupures.push({
       ...c, ...fin,
@@ -186,6 +238,7 @@ $('lancer').addEventListener('click', async () => {
       // points de la grille.
       tGrille: c.t,
       image: Math.round(fin.t * fps),
+      transition,
       vignetteAvant: await vignette(fin.avant),
       vignetteApres: await vignette(fin.t),
     });
@@ -205,6 +258,14 @@ $('lancer').addEventListener('click', async () => {
     // Les vignettes ne partent pas dans le JSON : elles pèsent, et elles ne
     // sont pas une mesure.
     coupures: coupures.map(({ vignetteAvant, vignetteApres, ...reste }) => reste),
+    // Deux lignes prêtes à l'emploi pour la suite : les instants propres de
+    // part et d'autre de chaque rupture, fondu écarté.
+    bornesPropres: coupures.map(c => ({
+      rupture: c.tGrille,
+      avant: c.avant, apres: c.t,
+      imagesDeTransition: c.transition?.imagesDeTransition ?? null,
+      dureeTransition: c.transition?.duree ?? null,
+    })),
     distances: brut.distances,
     createdAt: new Date().toISOString(),
   };
@@ -273,14 +334,44 @@ function remplirTableau({ distances, reglages }, coupures) {
 
 function montrerPaires(coupures) {
   $('panneauPaires').style.display = coupures.length ? '' : 'none';
-  $('paires').innerHTML = coupures.map(c => `
-    <h3 style="font-size:.9rem;margin:12px 0 2px">Coupure à t = ${c.t} s
-      <span class="sub" style="display:inline">— image ${c.image} · distance ${c.d} · seuil ${c.seuil} · rapport ×${c.rapport} · précision ${c.precision}</span></h3>
+  $('paires').innerHTML = coupures.map(c => {
+    const tr = c.transition;
+    const franche = tr && tr.imagesDeTransition === 0;
+    return `
+    <h3 style="font-size:.9rem;margin:14px 0 2px">Rupture repérée à t = ${c.tGrille} s
+      <span class="sub" style="display:inline">— distance ${c.d} · seuil ${c.seuil} · rapport ×${c.rapport}</span></h3>
+    ${tr ? `<table style="max-width:640px">
+      <tr><td><strong>nature</strong></td><td class="num"><strong>${tr.nature}</strong></td></tr>
+      <tr><td>durée de la zone de transition</td>
+          <td class="num">${tr.duree == null ? '—' : `${(tr.duree * 1000).toFixed(0)} ms · ${tr.imagesDeTransition} image(s) écartée(s)`}</td></tr>
+      <tr><td><strong>dernière image propre AVANT</strong></td>
+          <td class="num"><strong>${tr.derniereImagePropreAvant ? `image ${tr.derniereImagePropreAvant.image} · t = ${tr.derniereImagePropreAvant.t} s` : '—'}</strong></td></tr>
+      <tr><td><strong>première image propre APRÈS</strong></td>
+          <td class="num"><strong>${tr.premiereImagePropreApres ? `image ${tr.premiereImagePropreApres.image} · t = ${tr.premiereImagePropreApres.t} s` : '—'}</strong></td></tr>
+      <tr><td>dispersion / résidu entre les deux</td>
+          <td class="num">${tr.dispersionMedianeEntre ?? '—'} / ${tr.residuMedianEntre ?? '—'}
+          <span class="sub">— publiés, pas érigés en verdict</span></td></tr>
+      <tr><td>progression de α monotone</td><td class="num">${tr.monotone == null ? '—' : `${(tr.monotone * 100).toFixed(0)} %`}</td></tr>
+      <tr><td>contraste — plans / creux</td>
+          <td class="num">${tr.contrastePlans.map(v => v ?? '—').join(' et ')} → ${tr.contrasteMin ?? '—'}</td></tr>
+      ${tr.fenetreSuffisante ? '' : `<tr><td colspan="2" style="background:#fff3cd">
+        La fenêtre ne contient pas d'image pure des deux côtés : élargis-la avant de conclure.</td></tr>`}
+    </table>
+    <details style="margin:6px 0"><summary class="sub">α et résidu, image par image</summary>
+      <div class="defile"><table>
+        <tr><th class="num">image</th><th class="num">t</th><th class="num">α</th><th class="num">dispersion</th><th class="num">résidu</th><th class="num">contraste</th><th>classe</th></tr>
+        ${tr.images.map(x => `<tr${x.classe === 'transition' ? ' class="coupure"' : ''}>
+          <td class="num">${x.image}</td><td class="num">${x.t.toFixed(4)}</td>
+          <td class="num">${x.alpha?.toFixed(3) ?? '—'}</td><td class="num">${x.dispersion?.toFixed(3) ?? '—'}</td>
+          <td class="num">${x.residu?.toFixed(3) ?? '—'}</td>
+          <td class="num">${x.contraste ?? '—'}</td><td>${x.classe}</td></tr>`).join('')}
+      </table></div></details>` : ''}
     <div class="paire">
-      <figure style="margin:0"><figcaption>dernière image AVANT — t = ${c.avant} s</figcaption>
+      <figure style="margin:0"><figcaption>dernière image propre AVANT — t = ${c.avant} s</figcaption>
         <img src="${c.vignetteAvant}" style="width:100%;border:1px solid var(--bd);border-radius:4px"></figure>
-      <figure style="margin:0"><figcaption>première image APRÈS — t = ${c.t} s</figcaption>
+      <figure style="margin:0"><figcaption>première image propre APRÈS — t = ${c.t} s</figcaption>
         <img src="${c.vignetteApres}" style="width:100%;border:1px solid var(--bd);border-radius:4px"></figure>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 }
 </script>
