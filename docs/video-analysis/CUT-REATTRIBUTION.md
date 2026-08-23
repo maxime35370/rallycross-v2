@@ -368,3 +368,55 @@ Et une question qui n'est pas dans le ② mais que les chiffres poussent en avan
 **38 à 48 % des créations sont des parasites immobiles**. Aucune des trois
 variantes ne les touche. Une fois ② mesuré, c'est probablement le meilleur
 rapport gain / risque suivant.
+
+---
+
+## 8. Témoin ① mesuré — le zéro à battre
+
+Runs du 23/08 sur `Kerlabo_2026_D3_Q3_S4_depart`, fenêtre 3,000 → 13,500 s,
+YOLOX-s, coupure `5,800 → 5,900 s` lue dans `rapport-plans-10hz.json`
+(méthode `derive+rampe/1`, 5 images de transition, dispersion 17 / 0 ms,
+4 fenêtres concordantes sur 4, aucune rupture rejetée).
+
+| métrique | sans coupure, 4 Hz | témoin ① 4 Hz | témoin ① 10 Hz |
+|---|---|---|---|
+| identités nées au départ | 6 | 6 | 6 |
+| **identités du DÉPART au V1** | **0** | **0** | **0** |
+| identités logiques au V1 | 3 | 3 | 4 |
+| pistes créées | 41 | 37 | 47 |
+| pistes confirmées | 21 | 21 | 28 |
+| durée médiane | 1,25 s | 2,00 s | 1,80 s |
+| pistes gelées au cut | — | 12 | 17 |
+| réattribuées | — | 0 | 0 |
+| dérive de taille max | ×8,86 | ×8,86 | ×4,81 |
+
+### Ce que la coupure change vraiment
+
+Le tableau le dit mal ; le journal le dit bien. **Sans coupure**, à t = 6,00 s
+le suivi porte encore les pistes 1, 4, 7, 8, 9, 10, 11 et 12 — huit identités
+du plan A recollées sur des voitures du plan B, par simple proximité
+géométrique. **Avec coupure**, à t = 5,90 s il n'y a plus que des identités
+neuves, et aucune ne franchit.
+
+La coupure ne fait donc pas gagner d'identités : elle empêche d'en gagner de
+fausses. `survivantesDepart = 0` dans les deux cas, mais pour deux raisons
+opposées — dans un cas les continuités existent et sont fausses, dans l'autre
+elles n'existent pas. C'est cette seconde situation qu'une réattribution peut
+réparer ; la première, non.
+
+### Le trou que ce témoin a révélé
+
+`couper()` épargnait les pistes déjà `LOST`, qui restaient donc réactivables
+de l'autre côté du cut. Mesuré à 4 Hz : la piste 3, perdue à 5,50 s,
+réapparaissait à 6,00 s et vivait jusqu'à 10,75 s comme continuité confirmée.
+Une coupure qu'une piste peut contourner n'est pas une coupure. Corrigé, avec
+un test qui tombe sans le correctif.
+
+### Objectif chiffré de l'étape suivante
+
+Cinq voitures sont visibles de part et d'autre du cut. La réattribution par
+cohérence spatiale doit faire passer `survivantesDepart` de **0** à un nombre
+non nul sans créer d'appariement faux — l'appariement optimal global mesuré
+sur l'apparence seule plafonnait à 3/4, avec un écart normalisé de 3,6 % et
+une marge relative de 1,25 %. C'est trop serré pour décider seul : l'apparence
+reste un départage secondaire, pas le critère.
