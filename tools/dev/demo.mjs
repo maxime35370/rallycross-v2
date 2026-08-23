@@ -328,6 +328,27 @@ async function main() {
   await page.waitForTimeout(400);
   await shot(page, '03-admin-pass-saison');
 
+  // ── ADMIN sur un meeting SANS manche terminée ────────────────────────
+  // Le cas qui a produit le bug : bandeau « accès complet » affiché, et
+  // pourtant un refus commercial en dessous.
+  await page.goto(`${URL_BASE}#projection`, { waitUntil: 'domcontentloaded' });
+  await page.waitForTimeout(3500);
+  const optsAdmin = await page.$$eval('#prj-meeting option',
+    els => els.map(e => ({ v: e.value, t: e.textContent.trim() })));
+  const aVenir = optsAdmin.find(o => /venir/.test(o.t));
+  if (aVenir) {
+    await page.selectOption('#prj-meeting', aVenir.v);
+    await page.waitForTimeout(2500);
+    const txt = await page.textContent('#view-projection');
+    const faux = /réservé aux teams|non incluse/.test(txt);
+    console.log(faux
+      ? '   ✗ ADMIN voit encore un message commercial'
+      : '   ✓ ADMIN : aucun message commercial sur un meeting sans manche');
+    await shot(page, '11-admin-meeting-sans-manche');
+  } else {
+    console.log('   ⚠️ meeting à venir absent côté admin');
+  }
+
   console.log('\n── Côté TEAM ──');
   // CONTEXTE NEUF, pas un simple clearCookies : Firebase Auth persiste la
   // session dans IndexedDB, pas dans un cookie. Réutiliser le contexte de

@@ -207,6 +207,44 @@ describe('9 · suspension, révocation, expiration', () => {
   });
 });
 
+describe('⚠️ piège : une liste vide ne veut pas dire « pas d\'accès »', () => {
+  it('même l\'administrateur obtient un ensemble VIDE si le plateau est vide', () => {
+    // La source d'un bug réel : sur un meeting dont aucune manche n'est
+    // terminée, `state.standings` est vide, donc `driverIds` aussi, donc
+    // `allowedDriverIds` rend un ensemble vide — y compris pour
+    // l'administrateur, qui a pourtant tous les droits.
+    //
+    // Le code en concluait « pas d'accès » et affichait « Stratégie Live est
+    // réservé aux teams disposant d'un accès » juste sous le bandeau
+    // « Administrateur — accès complet ». Deux lignes qui se contredisent.
+    //
+    // L'appelant DOIT donc distinguer l'absence de DONNÉES de l'absence
+    // d'ACCÈS, et ne jamais déduire la seconde de la première.
+    const vide = allowedDriverIds({
+      licenses: [], personByDriver: PLATEAU, driverIds: [],
+      meeting: M_LOHEAC_FFSA, isAdmin: true, now: NOW,
+    });
+    expect(vide.size).toBe(0);
+
+    // Le niveau du visiteur, lui, reste « admin » : c'est LUI qui fait foi
+    // pour savoir quel message afficher, jamais la taille de l'ensemble.
+    expect(viewerState({ isAdmin: true }).level).toBe(VIEWER.admin);
+    expect(viewerState({ isAdmin: true }).canSeeAnything).toBe(true);
+  });
+
+  it('un team licencié dans le même cas garde lui aussi son niveau', () => {
+    const licences = [licence({ scope: 'season', meetingId: null })];
+    const vide = allowedDriverIds({
+      licenses: licences, personByDriver: PLATEAU, driverIds: [],
+      meeting: M_LOHEAC_FFSA, now: NOW,
+    });
+    expect(vide.size).toBe(0);
+    expect(viewerState({
+      isRealUser: true, isVerified: true, accessReady: true, licenses: licences,
+    }).level).toBe(VIEWER.licensed);
+  });
+});
+
 describe('10 · administrateur', () => {
   it('voit TOUS les pilotes, sur TOUS les meetings, sans aucune licence', () => {
     for (const m of [M_LOHEAC_FFSA, M_LOHEAC_EURO, M_KERLABO]) {

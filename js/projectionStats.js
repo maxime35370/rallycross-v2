@@ -173,6 +173,16 @@ function renderAccessBanner(gate) {
  * comprendre en une phrase que ce n'est pas une panne.
  */
 function renderLocked(gate) {
+  // Garde de sûreté : l'administrateur ne doit JAMAIS lire un message
+  // commercial. S'il arrive ici, c'est que l'appelant s'est trompé d'écran —
+  // on le dit plutôt que d'afficher un refus qui contredirait son bandeau.
+  if (gate.viewer.level === VIEWER.admin) {
+    return `<div class="acc-locked">
+      <div class="acc-locked__icon">⏳</div>
+      <div class="acc-locked__title">Rien à analyser ici pour l'instant</div>
+      <div class="acc-locked__msg">Aucune manche terminée sur ce meeting.</div>
+    </div>`;
+  }
   if (gate.viewer.level === VIEWER.anonymous) {
     return `<div class="acc-locked">
       <div class="acc-locked__icon">🔒</div>
@@ -285,6 +295,62 @@ function contextAllowedIds(ctx) {
 function allowedCandidates(candidates) {
   if (isAdmin()) return candidates;
   return candidates.filter(c => contextAllowedIds(c).size > 0);
+}
+
+/**
+ * Sélecteur de meeting seul, avec son câblage.
+ *
+ * Écrit trois fois auparavant — écran opérationnel, analyse détaillée, et
+ * chacun des écrans de refus. Trois copies d'un même bloc, c'est trois
+ * occasions de n'en corriger que deux.
+ */
+function meetingSelectorHtml(candidates, ctx) {
+  return `
+    <div class="toolbar" style="flex-wrap:wrap;gap:var(--sp-sm)">
+      <select class="toolbar-select" id="prj-meeting" style="flex:1;min-width:220px">
+        ${candidates.map(c => `<option value="${escHtml(c.key)}" ${c.key === ctx.key ? 'selected' : ''}>
+          ${escHtml(c.meeting?.date || '')} · ${escHtml(c.meeting?.location || c.meetingId)} · ${escHtml(c.category)}
+        </option>`).join('')}
+      </select>
+    </div>`;
+}
+
+function wireMeetingSelector() {
+  document.getElementById('prj-meeting')?.addEventListener('change', e => {
+    situation.meetingKey = e.target.value;
+    situation.checkpoint = null;
+    situation.driverId = '';
+    objectiveState = { key: null, running: false, data: null };
+    renderContent();
+  });
+}
+
+/**
+ * Écran affiché quand le meeting existe mais n'a encore RIEN à analyser.
+ *
+ * ── Pourquoi c'est un écran à part ─────────────────────────────────────
+ * `gate.allowed` peut être vide pour deux raisons sans rapport : le compte
+ * n'a pas de licence, ou le meeting n'a aucune manche terminée — donc aucun
+ * classement, donc aucun pilote à proposer, y compris à l'administrateur.
+ *
+ * Les confondre produisait le pire résultat possible : l'administrateur,
+ * bandeau « accès complet » affiché, lisait « Stratégie Live est réservé
+ * aux teams disposant d'un accès » sur un meeting dont les engagements
+ * venaient d'être saisis. Un message faux, et contradictoire avec la ligne
+ * juste au-dessus.
+ *
+ * L'absence de DONNÉES se dit donc séparément de l'absence d'ACCÈS.
+ */
+function renderNoRaceYet(ctx) {
+  const nb = Object.keys(ctx?.driversById || {}).length;
+  return `<div class="acc-locked">
+    <div class="acc-locked__icon">⏳</div>
+    <div class="acc-locked__title">Aucune manche terminée sur ce meeting</div>
+    <div class="acc-locked__msg">L'analyse s'ouvrira dès la première manche complète.
+      ${nb ? `${nb} pilote${nb > 1 ? 's' : ''} engagé${nb > 1 ? 's' : ''} en ${escHtml(ctx.category || '')}.` : ''}</div>
+    <div class="acc-locked__hint">Une manche est complète lorsque <strong>chaque engagé</strong> porte
+      un chrono ou un statut. Un DNS non saisi la laisse « en cours » indéfiniment.</div>
+  </div>`;
 }
 
 /** Options du sélecteur, restreintes aux inscriptions autorisées. */
@@ -556,24 +622,18 @@ function renderStrategy(el) {
   // aucun moyen d'atteindre le meeting qu'il a payé. Il conclurait que le
   // produit ne marche pas. Seuls le sélecteur de PILOTE et l'analyse sont
   // verrouillés ; la navigation entre meetings ne l'est jamais.
+  // AUCUNE MANCHE TERMINÉE : il n'y a pas de classement, donc aucun pilote à
+  // proposer — à personne, administrateur compris. C'est une absence de
+  // données, pas un refus d'accès, et les deux ne se disent pas pareil.
+  if (!state.standings.length) {
+    el.innerHTML = renderAccessBanner(gate) + meetingSelectorHtml(candidates, ctx) + renderNoRaceYet(ctx);
+    wireMeetingSelector();
+    return;
+  }
+
   if (!gate.allowed.size) {
-    el.innerHTML = `
-      ${renderAccessBanner(gate)}
-      <div class="toolbar" style="flex-wrap:wrap;gap:var(--sp-sm)">
-        <select class="toolbar-select" id="prj-meeting" style="flex:1;min-width:220px">
-          ${candidates.map(c => `<option value="${escHtml(c.key)}" ${c.key === ctx.key ? 'selected' : ''}>
-            ${escHtml(c.meeting?.date || '')} · ${escHtml(c.meeting?.location || c.meetingId)} · ${escHtml(c.category)}
-          </option>`).join('')}
-        </select>
-      </div>
-      ${renderLocked(gate)}`;
-    document.getElementById('prj-meeting')?.addEventListener('change', e => {
-      situation.meetingKey = e.target.value;
-      situation.checkpoint = null;
-      situation.driverId = '';
-      objectiveState = { key: null, running: false, data: null };
-      renderContent();
-    });
+    el.innerHTML = renderAccessBanner(gate) + meetingSelectorHtml(candidates, ctx) + renderLocked(gate);
+    wireMeetingSelector();
     return;
   }
 
@@ -907,23 +967,15 @@ function renderSituation(el) {
   }
   // Même principe que l'écran opérationnel : le sélecteur de meeting reste
   // accessible pour que le team puisse rejoindre son périmètre.
+  if (!state.standings.length) {
+    el.innerHTML = renderAccessBanner(gate) + meetingSelectorHtml(candidates, ctx) + renderNoRaceYet(ctx);
+    wireMeetingSelector();
+    return;
+  }
+
   if (!gate.allowed.size) {
-    el.innerHTML = `
-      ${renderAccessBanner(gate)}
-      <div class="toolbar" style="flex-wrap:wrap;gap:var(--sp-sm)">
-        <select class="toolbar-select" id="prj-meeting" style="flex:1;min-width:220px">
-          ${candidates.map(c => `<option value="${escHtml(c.key)}" ${c.key === ctx.key ? 'selected' : ''}>
-            ${escHtml(c.meeting?.date || '')} · ${escHtml(c.meeting?.location || c.meetingId)} · ${escHtml(c.category)}
-          </option>`).join('')}
-        </select>
-      </div>
-      ${renderLocked(gate)}`;
-    document.getElementById('prj-meeting')?.addEventListener('change', e => {
-      situation.meetingKey = e.target.value;
-      situation.checkpoint = null;
-      situation.driverId = '';
-      renderContent();
-    });
+    el.innerHTML = renderAccessBanner(gate) + meetingSelectorHtml(candidates, ctx) + renderLocked(gate);
+    wireMeetingSelector();
     return;
   }
 
