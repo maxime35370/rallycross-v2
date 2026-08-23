@@ -552,11 +552,14 @@ function afficherSignaux() {
 // ── Entrées ─────────────────────────────────────────────
 $('pick').addEventListener('change', async (e) => {
   const liste = Array.from(e.target.files);
-  const json = liste.find(f => /\.json$/i.test(f.name));
+  // TOUS les .json de la sélection, pas seulement le premier : le suivi a
+  // besoin du sidecar (cadence) ET du rapport de plans (bornes de coupure),
+  // et ils arrivent ensemble.
+  const jsons = liste.filter(f => /\.json$/i.test(f.name));
   const film = liste.find(f => /\.(mp4|webm|mov|mkv|m4v)$/i.test(f.name) || f.type.startsWith('video/'));
   if (!film) { $('etat').textContent = 'aucune vidéo dans la sélection'; return; }
 
-  if (json) {
+  for (const json of jsons) {
     try {
       const brut = JSON.parse(await json.text());
       if (brut?.schema === 'rx-plans/1') {
@@ -631,9 +634,11 @@ $('exporter').addEventListener('click', () => {
     journal: journal.map(j => ({
       t: j.t, detections: j.detections, counts: j.counts, association: j.association, biais: j.biais,
       tracks: j.tracks.map(t => ({
-        id: t.id, box: t.box, boiteAvant: t.boiteAvant, boiteCompensee: t.boiteCompensee,
+        id: t.id, identiteLogique: t.identiteLogique, ancetre: t.ancetre,
+        box: t.box, boiteAvant: t.boiteAvant, boiteCompensee: t.boiteCompensee,
         boiteAssociee: t.boiteAssociee, vitesse: t.vitesse,
-        state: t.state, score: t.score, confirmee: t.confirmee, ambiguous: t.ambiguous, occludedBy: t.occludedBy,
+        state: t.state, score: t.score, confirmee: t.confirmee, ambiguous: t.ambiguous,
+        suspendue: t.suspendue, occludedBy: t.occludedBy,
       })),
     })),
     createdAt: new Date().toISOString(),

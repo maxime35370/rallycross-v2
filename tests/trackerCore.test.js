@@ -1185,6 +1185,29 @@ describe('coupure de plan', () => {
     expect(s.actives).toHaveLength(0);
   });
 
+  it('suspend aussi les pistes DÉJÀ perdues — sinon elles reviennent après la coupure', () => {
+    const s = new Suivi({ dt: 0.25 });
+    // deux voitures ; la seconde disparaît assez tôt pour être LOST au cut.
+    for (let k = 0; k < 6; k++) {
+      const dets = [det(B(300 + k * 40, 500))];
+      if (k < 2) dets.push(det(B(1200 + k * 40, 500)));
+      s.pas(k * 0.25, dets);
+    }
+    const perdue = s.pistes.find(p => p.state === ETATS.LOST);
+    expect(perdue).toBeDefined();
+
+    const suspendues = s.couper(1.5);
+    expect(suspendues).toContain(perdue.id);
+    expect(s.pistes.every(p => p.suspendue)).toBe(true);
+
+    // le plan suivant repasse là où la perdue avait été vue : sans suspension
+    // elle serait réactivée et franchirait la coupure.
+    for (let k = 6; k < 12; k++) s.pas(k * 0.25, [det(B(1240, 500))]);
+    expect(perdue.suspendue).toBe(true);
+    expect(perdue.reactivated).toBe(0);
+    expect(s.pistes.filter(p => !p.suspendue).every(p => p.id > Math.max(...suspendues))).toBe(true);
+  });
+
   it('oublie le modèle de caméra du plan précédent', () => {
     const s = new Suivi({ dt: 0.25, cameraCompensation: true });
     for (let k = 0; k < 8; k++) s.pas(k * 0.25, [0, 1, 2, 3].map(i => det(B(300 + i * 200 + k * 60, 500))));

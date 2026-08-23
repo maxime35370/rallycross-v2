@@ -769,7 +769,12 @@ export class Suivi {
   couper(t, raison = RAISONS.COUPURE) {
     const suspendues = [];
     for (const p of this.pistes) {
-      if (p.state === ETATS.LOST) continue;
+      // Les pistes DÉJÀ perdues comptent aussi. Épargner les LOST laissait un
+      // trou mesuré sur Kerlabo à 4 Hz : la piste 3, perdue à 5,5 s, était
+      // réactivée à 6,0 s — de l'autre côté du changement de caméra — et
+      // vivait ensuite jusqu'à 10,75 s comme une fausse continuité confirmée.
+      // Une coupure qu'une piste peut contourner n'est pas une coupure.
+      if (p.suspendue) continue;
       p.suspendue = true;
       p.state = ETATS.LOST;
       p.raisonSuppression = raison;
@@ -1073,7 +1078,12 @@ export class Suivi {
       biais: { ...this.derniereCamera },
       tracks: vivantes.map(p => ({
         id: p.id,
+        // FILIATION : `identiteLogique` est la racine de la chaîne, `ancetre`
+        // le maillon précédent. Sans eux dans le journal, on ne peut pas
+        // reconstituer après coup quelle voiture du départ une piste continue.
         identiteLogique: p.identiteLogique,
+        ancetre: p.ancetre,
+        suspendue: p.suspendue,
         box: p.box.map(v => Math.round(v)),
         // Les trois boîtes du diagnostic de compensation : prédiction brute,
         // prédiction compensée, détection finalement associée.
