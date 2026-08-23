@@ -52,6 +52,7 @@
     <label>Modèle <select id="modeleCam"></select></label>
     <label><input type="checkbox" id="montrerCmc"> montrer la compensation</label>
     <label><input type="checkbox" id="sondeApparence" checked> sonde d'apparence</label>
+    <label><input type="checkbox" id="reattribution" checked> réattribution après coupure</label>
     <span id="etatCoupures" class="sub" style="margin:0"></span>
     <button id="lancer" disabled>Analyser la séquence</button>
     <progress id="prog" value="0" max="1" style="display:none"></progress>
@@ -101,6 +102,7 @@ import {
   PROFIL, signature, separabilite, traverseeDeCoupure, signatureImage, detecterCoupures,
 } from '/tools/yolox-poc/lib/apparence.mjs';
 import { MODELES_CAMERA, ORDRE_MODELES } from '/tools/yolox-poc/lib/camera.mjs';
+import { analyser as reattribuer, METHODE_REATTRIBUTION } from '/tools/yolox-poc/lib/reattribution.mjs';
 
 const ort = window.ort;
 ort.env.wasm.wasmPaths = '/__ort/';
@@ -210,6 +212,14 @@ async function analyser() {
     dt: pas, highScore: seuil, lowScore: bande,
     cameraCompensation: $('cmc').checked,
     modeleCamera: selCam.value,
+    // Le moteur de réattribution est INJECTÉ : décoché, le suivi retombe
+    // exactement sur le témoin ①, sans qu'aucun autre réglage ne change.
+    moteurReattribution: $('reattribution').checked ? reattribuer : null,
+    // Le suivi ne voit pas l'image : sans ces dimensions il ne peut pas
+    // écarter les boîtes tronquées au bord, et la mémoire d'apparence se
+    // remplit de livrées coupées en deux.
+    largeurImage: video.videoWidth || null,
+    hauteurImage: video.videoHeight || null,
   });
 
   const instants = [];
@@ -251,13 +261,24 @@ async function analyser() {
     // une piste. Le seuil du banc reste celui qui crée les pistes.
     const brutes = decodeOutput(brut, grids, ratio, { scoreThreshold: bande, classIds: VEHICLE_CLASS_IDS });
     const dets = mergeVehicleDetections(brutes, iouThr);
+    // Signature de chaque détection FORTE, calculée AVANT le pas.
+    //
+    // Sans elle, `det.sig` n'existe pas, la mémoire d'apparence des pistes
+    // reste vide, et le départage par apparence ne peut jamais s'exercer :
+    // il refuserait toujours, faute de matière. Seules les détections fortes
+    // sont signées — c'est la même règle qu'à la mémorisation, et le calcul
+    // sur les faibles serait perdu.
+    const pixels = cadreCtx.getImageData(0, 0, cadre.width, cadre.height).data;
+    for (const d of dets) {
+      if (d.score >= seuil) d.sig = signature(pixels, cadre.width, cadre.height, d.box);
+    }
     const instantane = suivi.pas(t, dets);
     journal.push(instantane);
     // SONDE D'APPARENCE — mesure seule, sur la boîte réellement DÉTECTÉE.
     // Jamais sur une boîte prédite : on y mesurerait la couleur du bitume.
     // Rien de ce qui est calculé ici ne revient dans l'association.
     if (sonde) {
-      const px = cadreCtx.getImageData(0, 0, cadre.width, cadre.height).data;
+      const px = pixels;
       for (const tr of instantane.tracks) {
         if (!tr.boiteAssociee) continue;
         observations.push({ t, id: tr.id, sig: signature(px, cadre.width, cadre.height, tr.boiteAssociee) });
@@ -610,6 +631,9 @@ $('exporter').addEventListener('click', () => {
   const rapport = {
     schema: 'rx-tracking/1',
     modele: { id: modele.id, label: modele.label, file: modele.file, inputSize: modele.inputSize, licence: 'Apache 2.0' },
+    // De quel code vient ce rapport. À vérifier avant d'en tirer la moindre
+    // conclusion sur la réattribution.
+    methodeReattribution: $('reattribution').checked ? METHODE_REATTRIBUTION : null,
     coupures: bornesCoupures,
     reglages: {
       pas, frequenceHz: Number((1 / pas).toFixed(2)),
@@ -639,6 +663,10 @@ $('exporter').addEventListener('click', () => {
         boiteAssociee: t.boiteAssociee, vitesse: t.vitesse,
         state: t.state, score: t.score, confirmee: t.confirmee, ambiguous: t.ambiguous,
         suspendue: t.suspendue, occludedBy: t.occludedBy,
+        // Le COMPTE de signatures mémorisées : sans lui, un départage par
+        // apparence qui ne s'exerce pas ne se distingue pas d'un départage
+        // qui s'exerce et conclut à l'égalité.
+        apparences: t.apparences,
       })),
     })),
     createdAt: new Date().toISOString(),

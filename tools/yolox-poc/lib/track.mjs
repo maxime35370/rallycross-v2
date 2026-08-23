@@ -123,6 +123,13 @@ export const DEFAULTS = {
   iouDoublon: 0.50,
   recouvrementDoublon: 0.65,    // ou contenue à ce point dans une piste suivie
 
+  // ── Réattribution après coupure ──────────────────────────────────────
+  // Le délai laisse aux pistes du plan neuf le temps d'exister et d'acquérir
+  // une VITESSE : sans elle, pas de sens de marche, donc pas de contrôle.
+  // La configuration comparée, elle, reste celle du premier instant de chaque
+  // plan — on attend pour vérifier, pas pour observer.
+  delaiReattribution: null,     // null : `dureeConfirmation`
+
   mergeAreaRatio: 1.25,         // boîte « anormalement grande » = fusion probable
   ambiguityMargin: 0.08,        // écart de coût en dessous duquel un choix est douteux
   cameraCompensation: true,
@@ -481,7 +488,13 @@ export class Suivi {
     this.doublonsEcartes = 0;
     this.refus = [];
     this.journal = [];
-    this.coupures = [];                // { t, suspendues: [id…] }
+    this.coupures = [];                // { t, suspendues: [id…], reattribution }
+    // Moteur d'appariement INJECTÉ. Le suivi fournit ce qu'il observe — une
+    // boîte, une vitesse, une mémoire d'apparence — et reçoit un appariement.
+    // Il ne connaît ni similitude, ni signature, ni seuil de marge : c'est ce
+    // qui garde `track.mjs` indépendant de la méthode, et testable sans elle.
+    this.moteurReattribution = options.moteurReattribution || null;
+    this.optionsReattribution = options.optionsReattribution || {};
     reinitialiserIds();
   }
 
@@ -712,6 +725,10 @@ export class Suivi {
       reactivees: reactivationsCeTour,
     });
     this.journal.push(instant);
+    // La réattribution vient APRÈS le pas : elle a besoin des vitesses que ce
+    // pas vient d'actualiser. Elle ne modifie aucune géométrie, seulement la
+    // filiation — l'instantané qu'on vient de pousser reste exact.
+    if (this.moteurReattribution) this.reattribuer(t, this.moteurReattribution);
     return instant;
   }
 
@@ -779,6 +796,12 @@ export class Suivi {
       p.state = ETATS.LOST;
       p.raisonSuppression = raison;
       p.suspendueA = Number(t.toFixed(3));
+      // On fige la dernière position OBSERVÉE, pas la dernière prédite : une
+      // boîte extrapolée pendant une seconde décrit l'hypothèse du suivi, pas
+      // la voiture, et la configuration du groupe doit décrire la voiture.
+      const vue = [...p.history].reverse().find(h => h.source !== 'prediction');
+      p.boiteCoupure = (vue ? vue.box : p.box).slice();
+      p.vitesseCoupure = { vx: p.pred.s.vx, vy: p.pred.s.vy };
       suspendues.push(p.id);
     }
     // Un modèle de caméra ajusté sur le plan précédent ne décrit pas le
@@ -787,12 +810,91 @@ export class Suivi {
     this.comparaisonCamera = null;
     this.derniereCamera = { dx: 0, dy: 0, n: 0 };
     this.dernierRattrapage = null;
-    this.coupures.push({ t: Number(t.toFixed(3)), suspendues });
+    this.coupures.push({ t: Number(t.toFixed(3)), suspendues, reattribution: null });
     return suspendues;
   }
 
-  /** Piste suspendue qu'une réattribution pourra reprendre — pas encore utilisée. */
+  /** Piste suspendue qu'une réattribution peut reprendre. */
   get suspendues() { return this.pistes.filter(p => p.suspendue); }
+
+  /**
+   * RÉATTRIBUTION — recoller les identités logiques de part et d'autre du cut.
+   *
+   * Appelée automatiquement à la fin de chaque `pas()` quand un moteur est
+   * injecté. Elle attend `delaiReattribution` après la coupure, le temps que
+   * les pistes du plan neuf aient une vitesse : sans vitesse, pas de sens de
+   * marche, donc pas de contrôle — et une réattribution sans contrôle est
+   * exactement ce qu'on cherche à éviter.
+   *
+   * Ce qu'elle compare n'est PAS l'état courant des deux groupes :
+   *   · le groupe d'avant est figé à l'instant de la coupure ;
+   *   · le groupe d'après est pris à la NAISSANCE de chaque piste.
+   * Les deux configurations sont donc séparées par la seule durée de la
+   * transition, et non par le délai d'attente.
+   *
+   * Elle ne touche à aucune géométrie : elle pose `ancetre` et
+   * `identiteLogique`, rien d'autre. Une erreur d'appariement ne peut donc pas
+   * dérégler le suivi — seulement fausser le décompte des identités, ce que
+   * `instantsBifurques` et la vérité terrain rendent visible.
+   */
+  reattribuer(t, moteur = this.moteurReattribution, options = null) {
+    if (!moteur) return [];
+    const o = this.opt;
+    const delai = o.delaiReattribution ?? o.dureeConfirmation;
+    const faites = [];
+
+    for (const c of this.coupures) {
+      if (c.reattribution) continue;
+      if (t < c.t + delai - 1e-9) continue;
+
+      // Groupe AVANT : les pistes que CETTE coupure a gelées, confirmées, et
+      // vues assez récemment pour que leur dernière position décrive encore
+      // quelque chose. Une piste perdue depuis longtemps a été gelée elle
+      // aussi, mais sa boîte est périmée : la retenir déformerait le groupe.
+      const avant = this.pistes
+        .filter(p => c.suspendues.includes(p.id) && p.confirmee
+          && c.t - p.lastSeen <= o.dureeAvantAbandon + 1e-9)
+        .map(p => ({
+          id: p.id, box: p.boiteCoupure || p.box,
+          vitesse: p.vitesseCoupure || { vx: p.pred.s.vx, vy: p.pred.s.vy },
+          apparences: p.apparences,
+        }));
+
+      // Groupe APRÈS : les pistes NÉES depuis la coupure, confirmées, encore
+      // vivantes, et pas déjà rattachées. Leur boîte est celle de leur
+      // première observation.
+      const apres = this.pistes
+        .filter(p => !p.suspendue && p.confirmee && p.ancetre == null
+          && p.firstSeen >= c.t - 1e-9 && p.state !== ETATS.LOST)
+        .map(p => ({
+          id: p.id, box: (p.history[0]?.box || p.box),
+          vitesse: { vx: p.pred.s.vx, vy: p.pred.s.vy },
+          apparences: p.apparences,
+        }));
+
+      const rapport = moteur(avant, apres, { ...this.optionsReattribution, ...(options || {}) });
+      rapport.t = Number(t.toFixed(3));
+      rapport.tCoupure = c.t;
+
+      const posees = [];
+      for (const a of rapport.appariements || []) {
+        const pa = this.pistes.find(p => p.id === a.avant);
+        const pb = this.pistes.find(p => p.id === a.apres);
+        // `pb.ancetre != null` : une piste déjà rattachée ne se reprend pas.
+        // L'unicité est déjà garantie par l'affectation, ce test est le garde-
+        // fou qui la rend indépendante du moteur injecté.
+        if (!pa || !pb || pb.ancetre != null) continue;
+        pb.ancetre = pa.id;
+        pb.identiteLogique = pa.identiteLogique;
+        pa.reattribueeVers = pb.id;
+        posees.push({ avant: pa.id, apres: pb.id, identiteLogique: pa.identiteLogique });
+      }
+      rapport.posees = posees;
+      c.reattribution = rapport;
+      faites.push(rapport);
+    }
+    return faites;
+  }
 
   // ── mémoire d'apparence ────────────────────────────────
   /**
@@ -1460,6 +1562,24 @@ export function mesurer(suivi, { cible = 5, tV1 = null } = {}) {
         : [];
       const survivantes = depart.filter(r => presentesV1.includes(r));
 
+      // PORTÉE de chaque identité du départ : le dernier instant où elle est
+      // encore présente, sous n'importe quelle piste de sa chaîne.
+      //
+      // `survivantesDepart` est un tout-ou-rien à l'instant du V1 : il vaut 0
+      // aussi bien quand une identité meurt à la coupure que quand elle meurt
+      // deux dixièmes avant l'arrivée. La portée sépare les deux, et c'est
+      // elle qui montre si une réattribution a servi à quelque chose même
+      // lorsque le compte final n'a pas bougé.
+      const portee = depart.map((racine) => {
+        let dernier = null, instants = 0;
+        for (const inst of journal) {
+          if (inst.tracks.some(x => (x.identiteLogique ?? x.id) === racine)) {
+            dernier = inst.t; instants += 1;
+          }
+        }
+        return { identite: racine, jusqua: dernier, instants };
+      }).sort((a, b) => (b.jusqua ?? -1) - (a.jusqua ?? -1));
+
       // Bifurcation : deux pistes VIVANTES au même instant sous la même racine.
       // Sans réattribution c'est impossible ; avec, ce serait une erreur grave,
       // et le compteur existe pour qu'elle ne passe pas inaperçue.
@@ -1482,12 +1602,20 @@ export function mesurer(suivi, { cible = 5, tV1 = null } = {}) {
         // LE chiffre de l'objectif.
         survivantesDepart: survivantes.length,
         idsSurvivantes: survivantes,
+        // Et sa version continue, qui bouge avant que le chiffre ne bouge.
+        porteeDepart: portee,
+        porteeMax: portee.length ? portee[0].jusqua : null,
         instantsBifurques: bifurquees,
         coupures: suivi.coupures.map(c => ({ t: c.t, suspendues: c.suspendues.length })),
         // Ce que la coupure a coûté : les identités vivantes juste avant, dont
         // aucune ne traverse tant qu'il n'y a pas de réattribution.
         suspenduesTotal: suivi.coupures.reduce((t, c) => t + c.suspendues.length, 0),
         reattribuees: pistes.filter(p => p.ancetre != null).length,
+        // Le rapport de chaque réattribution, tel que le moteur l'a rendu :
+        // modèle gagnant, marge, second, balayage des seuils. Sans lui, un
+        // `survivantesDepart` en hausse ne se distingue pas d'un appariement
+        // hardi qui a eu de la chance.
+        reattributions: suivi.coupures.filter(c => c.reattribution).map(c => c.reattribution),
       };
     })(),
     // ── ruptures de plan, cohérence spatiale ────────────────────────────

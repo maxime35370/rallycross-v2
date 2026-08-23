@@ -420,3 +420,97 @@ non nul sans créer d'appariement faux — l'appariement optimal global mesuré
 sur l'apparence seule plafonnait à 3/4, avec un écart normalisé de 3,6 % et
 une marge relative de 1,25 %. C'est trop serré pour décider seul : l'apparence
 reste un départage secondaire, pas le critère.
+
+---
+
+## 9. Réattribution par cohérence spatiale — mesurée
+
+Méthode `similitude-groupe/1`. Runs du 23/08 sur `Kerlabo_2026_D3_Q3_S4_depart`,
+fenêtre 3,000 → 13,500 s, coupure `5,800 → 5,900 s`, vérité annotée à la main
+(`tools/extract-manche/extraits/verite-cut-5.9.json`, 4 correspondances).
+
+### Verdict contre la vérité
+
+| | 4 Hz | 10 Hz |
+|---|---|---|
+| décision | refus | consensus |
+| **justes** | 0 | **3** |
+| **fausses** | **0** | **0** |
+| non décidées | 4 | 1 |
+| modèle gagnant | directe (−162,5°) | directe (−173,9°) |
+| coût meilleur / second | 0,4226 / 0,4290 | 0,4063 / 0,4462 |
+| marge relative | 1,5 % | 8,9 % |
+| hypothèses écartées par le sens | 600 / 1200 | 600 / 1200 |
+| apparence | indisponible | 0,5411 vs 0,5624, écart 3,8 % — ne tranche pas |
+| identités du départ au V1 | 0 | 0 |
+| **portée max d'une identité du départ** | 5,75 s | **11,6 s** (était 5,8 s) |
+
+Le lien entre les boîtes annotées et les pistes est parfait à 10 Hz (IoU = 1
+sur les neuf voitures), donc le verdict porte bien sur la vérité et non sur un
+alignement approximatif.
+
+### Ce que la mesure a démenti
+
+**Les centres seuls ne suffisent pas.** Le nuage de voitures est presque
+aligné : une réflexion y est presque indiscernable d'une rotation d'un
+demi-tour. La bonne réponse n'arrivait qu'en **troisième** position, derrière
+deux appariements décalés d'un rang. Le désaccord de TAILLE — la similitude
+prédit son échelle, donc de combien les boîtes doivent grossir — la met au
+rang 1, pour tout poids de 0,75 à 5. C'est une information déjà contenue dans
+l'hypothèse, indépendante des centres, et elle ne coûte rien.
+
+**Le modèle gagnant n'est pas la réflexion.** L'ordre en x s'inverse bien
+entre les deux plans, mais une rotation de 174° l'explique mieux qu'un miroir.
+Les deux restent en concurrence — la réflexion est le second — et c'est
+justement pourquoi il fallait les essayer toutes plutôt que d'en supposer une.
+
+**Le consensus à deux hypothèses est trop faible.** À 4 Hz il retenait une
+paire fausse : elle était stable entre le meilleur et le second parce que ces
+deux-là partageaient un point d'appui, pas parce qu'elle était sûre. Une
+troisième hypothèse aussi bonne la contredisait. Le consensus exige désormais
+l'unanimité sur TOUTES les hypothèses que la marge ne sépare pas du meilleur ;
+à 4 Hz cela donne un refus complet, ce qui est la bonne réponse.
+
+**La mémoire d'apparence était vide.** La page calculait les signatures APRÈS
+le pas, pour la sonde, sans jamais les injecter dans les détections. Le
+départage par apparence n'aurait jamais pu s'exercer : il aurait refusé faute
+de matière, silencieusement, et on aurait conclu que l'apparence ne sert à
+rien. Corrigé — à 10 Hz elle s'exerce (3,8 % d'écart) sans trancher.
+
+### Pourquoi 4 Hz échoue là où 10 Hz réussit
+
+La coupure est à 5,900 s. Sur la grille 4 Hz, le premier instant du plan neuf
+est 6,000 s : cent millisecondes plus tard, pendant lesquelles la voiture de
+tête a parcouru une vingtaine de pixels et sort du cadre par la droite. Sa
+boîte est tronquée, donc jamais mémorisée — d'où l'apparence indisponible — et
+la configuration du groupe est mesurée sur un nuage déjà déformé. La marge
+tombe à 1,5 % et plus rien ne tranche.
+
+Ce n'est pas un défaut de la méthode : c'est le prix de l'échantillonnage. À
+4 Hz, une coupure ne tombe presque jamais sur la grille.
+
+### Le blocage s'est déplacé
+
+`survivantesDepart` reste à 0, mais plus pour la même raison. À 10 Hz, les
+identités du départ 2 et 5 sont maintenant suivies de **3,0 s à 11,6 s** au
+lieu de s'arrêter à 5,8 s : elles traversent le changement de caméra. Elles
+meurent deux secondes avant le V1, parce que YOLOX cesse de les détecter —
+l'une sort du cadre par la droite, l'autre reste extrapolée puis expire.
+
+D'où `porteeDepart` : jusqu'où chaque identité du départ est suivie.
+`survivantesDepart` est un tout-ou-rien à 13,5 s qui vaut 0 aussi bien quand
+une identité meurt au cut que deux dixièmes avant l'arrivée. La portée sépare
+les deux, et c'est elle qui montre le progrès quand le compte final ne bouge
+pas encore.
+
+### Les seuils ne sont pas figés
+
+`margeMin` et `margeApparenceMin` sont des points de bascule d'un compromis,
+pas des constantes. `balayer()` rejoue la décision sur toute la grille
+(poids de taille × marge × marge d'apparence) et le rapport la publie. Mesuré
+sur ce cut, à 10 Hz : `margeMin ≤ 0,10` donnerait 4 justes sur 4 au lieu de 3,
+sans aucune erreur. Le réglage retenu, 0,15, coûte donc une bonne réponse ici
+et n'en évite aucune de mauvaise — mais un seul cut ne suffit pas à décider de
+le descendre. La propriété qui compte est autre : **dès qu'une marge est
+exigée, aussi minime soit-elle, aucun appariement faux n'apparaît sur toute la
+plage essayée.**
