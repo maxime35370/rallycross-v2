@@ -26,7 +26,7 @@
    est affiché. Rien n'est modifié : c'est une mesure. */
 
 import { readFileSync } from 'node:fs';
-import { aire, centre, taille, rapportTaille, hungarian } from './lib/track.mjs';
+import { aire, centre, taille, rapportTaille, hungarian, boiteFusionnee } from './lib/track.mjs';
 import { iou } from './lib/detect.mjs';
 
 const C = {
@@ -92,24 +92,31 @@ for (const [t, j] of A) {
   //
   // Il passe AVANT tout le reste : une détection qu'il retire n'atteint jamais
   // la matrice, et le journal la fait alors apparaître comme inexistante.
+  // Le verdict vient de la bibliothèque elle-même : un outil qui recopierait
+  // la règle mentirait dès qu'on la corrige. La règle par MÉDIANE, celle qui
+  // était en place, est rejouée à côté pour que l'écart reste lisible.
   const retirees = new Set();
+  const confirmees = candidates.filter(p => p.confirmee);
+  const predites = confirmees.map(p => p.boiteCompensee || p.box);
   for (const [i, d] of fortes.entries()) {
-    const touchees = candidates.filter(p => p.confirmee
-      && iou(p.boiteCompensee || p.box, d.box) > o.iouRecover);
-    if (touchees.length < 2) continue;
-    const aires = touchees.map(p => aire(p.boiteCompensee || p.box)).sort((a, b) => a - b);
-    const mediane = aires[Math.floor(aires.length / 2)];
-    const ratio = mediane ? aire(d.box) / mediane : 0;
-    const fusion = mediane && ratio >= o.mergeAreaRatio;
-    if (fusion) retirees.add(i);
-    const meilleure = touchees.reduce((m, p) =>
-      iou(p.boiteCompensee || p.box, d.box) > iou(m.boiteCompensee || m.box, d.box) ? p : m, touchees[0]);
-    console.log(`   ${fusion ? C.rouge('FUSION') : C.dim('      ')} ${b2s(d.box)} aire ${String(aire(d.box)).padStart(6)}`
-      + `  touche ${touchees.length} piste(s) ${touchees.map(p => p.id).join(',')}`
-      + `  aires ${aires.join('·')}  médiane ${mediane}  rapport ${ratio.toFixed(3)}`
-      + (fusion ? C.rouge(`  ≥ ${o.mergeAreaRatio} → RETIRÉE du lot`)
+    const v = boiteFusionnee(d.box, predites, o);
+    if (v.touchees.length < 2) continue;
+    if (v.fusion) retirees.add(i);
+    const parMediane = v.aires[Math.floor(v.aires.length / 2)];
+    const rapportMediane = parMediane ? aire(d.box) / parMediane : 0;
+    const meilleure = confirmees[v.touchees.reduce((m, k) =>
+      iou(predites[k], d.box) > iou(predites[m], d.box) ? k : m, v.touchees[0])];
+    console.log(`   ${v.fusion ? C.rouge('FUSION') : C.dim('      ')} ${b2s(d.box)} aire ${String(aire(d.box)).padStart(6)}`
+      + `  touche ${v.touchees.length} piste(s) ${v.touchees.map(k => confirmees[k].id).join(',')}`
+      + `  aires ${v.aires.join('·')}`
+      + `  référence ${v.reference}  rapport ${v.rapport.toFixed(3)}`
+      + (v.fusion ? C.rouge(`  ≥ ${o.mergeAreaRatio} → RETIRÉE du lot`)
         : C.dim(`  < ${o.mergeAreaRatio} → conservée`))
-      + C.dim(`   [meilleure : piste ${meilleure.id}, IoU ${iou(meilleure.boiteCompensee || meilleure.box, d.box).toFixed(3)}]`));
+      + C.dim(`   [meilleure : piste ${meilleure.id}, IoU ${v.meilleurIou.toFixed(3)}]`)
+      + (rapportMediane >= o.mergeAreaRatio !== v.fusion
+        ? C.jaune(`   ancienne règle (médiane ${parMediane}, rapport ${rapportMediane.toFixed(3)}) : `
+          + `${rapportMediane >= o.mergeAreaRatio ? 'FUSION' : 'conservée'}`)
+        : ''));
   }
   const utilisables = fortes.filter((_, i) => !retirees.has(i));
 

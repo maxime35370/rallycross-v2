@@ -14,6 +14,7 @@ import {
   ETATS, DEFAULTS, RAISONS, REFUS, Suivi, Predicteur, hungarian, decalageCamera,
   estimerDecalageGlobal, rapportTaille, recouvrement, mesurer, signauxSuspects, concorder,
   detecterRuptures, ventilerAutourDesRuptures, coherenceSpatiale, reinitialiserIds,
+  boiteFusionnee,
 } from '../tools/yolox-poc/lib/track.mjs';
 
 /** Boîte carrée centrée, pour écrire des scénarios lisibles. */
@@ -211,6 +212,55 @@ describe('Suivi — la bande basse sauve, mais ne crée jamais', () => {
 // ─────────────────────────────────────────────────────────
 // SUIVI — FUSION DE DEUX VOITURES
 // ─────────────────────────────────────────────────────────
+
+describe('boiteFusionnee — cas réel de Kerlabo à 11,6 s', () => {
+  // Coordonnées RELEVÉES sur le run, pas inventées : les trois boîtes prédites
+  // et la détection que le suivi a jetée. La piste 17 est la voiture ; les
+  // deux autres ne font que l'effleurer.
+  const PREDITE_17 = [1113, 543, 1458, 703];      // aire 55 200 · IoU 0,779
+  const PREDITE_18 = [1190, 573, 1381, 715];      // aire 27 122 · IoU 0,434
+  const PREDITE_36 = [975, 560, 1164, 681];       // aire 22 869 · IoU 0,124
+  const DETECTION = [1101, 543, 1417, 689];       // aire 46 136
+  const reglages = { iouRecover: DEFAULTS.iouRecover, mergeAreaRatio: DEFAULTS.mergeAreaRatio };
+
+  it('reconnaît les trois pistes que la détection effleure', () => {
+    const v = boiteFusionnee(DETECTION, [PREDITE_17, PREDITE_18, PREDITE_36], reglages);
+    expect(v.touchees).toEqual([0, 1, 2]);
+    expect(v.meilleurIou).toBeCloseTo(0.779, 2);
+  });
+
+  it('ne déclare PAS une fusion une boîte qu\'une seule piste explique déjà', () => {
+    // La détection est plus PETITE que la boîte prédite de la piste 17 : elle
+    // ne peut pas être « deux voitures dans une boîte ». C'est sa voiture.
+    const v = boiteFusionnee(DETECTION, [PREDITE_17, PREDITE_18, PREDITE_36], reglages);
+    expect(v.rapport).toBeLessThan(DEFAULTS.mergeAreaRatio);
+    expect(v.fusion).toBe(false);
+  });
+
+  it('deux voisines qui effleurent ne changent pas le verdict', () => {
+    // Le même verdict doit tenir que la piste 17 soit seule ou entourée : ce
+    // qui décide, c'est la boîte que la détection recouvre le mieux.
+    const seule = boiteFusionnee(DETECTION, [PREDITE_17, PREDITE_18], reglages);
+    const entouree = boiteFusionnee(DETECTION, [PREDITE_17, PREDITE_18, PREDITE_36], reglages);
+    expect(entouree.fusion).toBe(seule.fusion);
+  });
+
+  it('reconnaît toujours une VRAIE fusion — cas réel à 5,3 s', () => {
+    // Relevé sur le même run : aucune des deux pistes n'explique la boîte
+    // (IoU 0,131 et 0,188), et elle est 1,42 fois plus grande que la plus
+    // grande des deux. Là, c'est bien une boîte pour deux voitures.
+    const v = boiteFusionnee([995, 468, 1225, 591],
+      [[996, 423, 1163, 496], [1122, 443, 1323, 542]], reglages);
+    expect(v.meilleurIou).toBeLessThan(0.2);
+    expect(v.fusion).toBe(true);
+  });
+
+  it('une seule piste touchée n\'est jamais une fusion', () => {
+    const v = boiteFusionnee(DETECTION, [PREDITE_17], reglages);
+    expect(v.touchees).toEqual([0]);
+    expect(v.fusion).toBe(false);
+  });
+});
 
 describe('Suivi — une boîte engloutit deux voitures', () => {
   // Cas observé sur `milieu_v1` : deux pistes bien établies, puis une seule

@@ -191,6 +191,50 @@ export const centre = (b) => [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2];
 export const taille = (b) => [Math.max(0, b[2] - b[0]), Math.max(0, b[3] - b[1])];
 export const aire = (b) => { const [w, h] = taille(b); return w * h; };
 
+/**
+ * UNE DÉTECTION EST-ELLE UNE BOÎTE FUSIONNÉE ?
+ *
+ * Le détecteur émet parfois une seule boîte pour deux voitures qui se
+ * chevauchent. Si on la laisse passer, elle est attribuée à l'une des deux et
+ * fait exploser sa taille ; il vaut mieux la retirer du lot et laisser les
+ * deux pistes extrapoler.
+ *
+ * Encore faut-il ne pas prendre pour une fusion une boîte qu'UNE piste
+ * explique déjà très bien. La signature d'une vraie fusion, c'est que la
+ * boîte est nettement plus grande que CHACUNE des voitures qu'elle recouvre —
+ * donc plus grande que la plus grande d'entre elles. Comparer à la MÉDIANE
+ * des pistes touchées était une erreur : une petite piste qui effleure la
+ * boîte suffisait à faire baisser la référence et à fabriquer une fusion.
+ *
+ * Mesuré sur Kerlabo à 11,6 s : la détection [1101,543,1417,689] (aire 46 136)
+ * recouvre la piste 17 à IoU 0,779 — sa boîte prédite fait 55 200. Deux
+ * voisines plus petites l'effleurent ; la médiane tombe à 27 122, le rapport
+ * passe à 1,70, et la détection est retirée. La piste 17 perd sa voiture, une
+ * piste neuve la ramasse, et l'identité est cassée pour le reste de la
+ * séquence. Comparée à la plus grande des trois, la même boîte donne 0,84 :
+ * ce n'était pas une fusion.
+ *
+ * @param {number[]} boite — la détection examinée
+ * @param {number[][]} predites — boîtes prédites des pistes CONFIRMÉES
+ * @returns {{fusion: boolean, touchees: number[], aires: number[],
+ *            reference: number, rapport: number, meilleurIou: number}}
+ */
+export function boiteFusionnee(boite, predites, { iouRecover, mergeAreaRatio }) {
+  const touchees = [];
+  let meilleurIou = 0;
+  predites.forEach((b, k) => {
+    const r = iou(b, boite);
+    if (r > iouRecover) { touchees.push(k); if (r > meilleurIou) meilleurIou = r; }
+  });
+  if (touchees.length < 2) {
+    return { fusion: false, touchees, aires: [], reference: 0, rapport: 0, meilleurIou };
+  }
+  const aires = touchees.map(k => aire(predites[k])).sort((a, b) => a - b);
+  const reference = aires[aires.length - 1];
+  const rapport = reference ? aire(boite) / reference : 0;
+  return { fusion: Boolean(reference) && rapport >= mergeAreaRatio, touchees, aires, reference, rapport, meilleurIou };
+}
+
 /** Rapport de taille toujours ≥ 1, pour comparer sans se soucier du sens. */
 export function rapportTaille(a, b) {
   const aa = aire(a), ab = aire(b);
@@ -1055,12 +1099,11 @@ export class Suivi {
   _reperersFusions(candidates, fortes) {
     const o = this.opt;
     const fusions = new Set();
+    const confirmees = candidates.filter(p => p.confirmee);
     fortes.forEach((det, i) => {
-      const touchees = candidates.filter(p => p.confirmee && iou(p.boitePredite, det.box) > o.iouRecover);
-      if (touchees.length < 2) return;
-      const aires = touchees.map(p => aire(p.boitePredite)).sort((a, b) => a - b);
-      const mediane = aires[Math.floor(aires.length / 2)];
-      if (!mediane || aire(det.box) / mediane < o.mergeAreaRatio) return;
+      const verdict = boiteFusionnee(det.box, confirmees.map(p => p.boitePredite), o);
+      if (!verdict.fusion) return;
+      const touchees = verdict.touchees.map(k => confirmees[k]);
 
       fusions.add(i);
       const cBloc = centre(det.box);
