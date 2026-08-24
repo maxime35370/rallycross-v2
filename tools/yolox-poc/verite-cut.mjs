@@ -82,7 +82,29 @@ if (!fRapport || !fVerite) {
   process.exit(1);
 }
 const rapport = JSON.parse(readFileSync(fRapport, 'utf8'));
-const verite = JSON.parse(readFileSync(fVerite, 'utf8'));
+const verite = normaliserVerite(JSON.parse(readFileSync(fVerite, 'utf8')));
+
+/**
+ * Accepte aussi un rapport `rx-apparence/1` tel que la page /__apparence
+ * l'exporte, annotations comprises.
+ *
+ * C'est là que l'annotation se fait — relever les boîtes à la main dans un
+ * second fichier serait une occasion de plus de se tromper, et deux sources
+ * de vérité qui divergent valent moins qu'une seule.
+ */
+function normaliserVerite(v) {
+  if (v.schema !== 'rx-apparence/1') return v;
+  const correspondances = {};
+  for (const l of v.lignes || []) if (l.verite) correspondances[l.avant] = l.verite;
+  return {
+    schema: 'rx-verite-cut/1',
+    source: `converti depuis rx-apparence/1 (images ${v.avant?.image} → ${v.apres?.image})`,
+    tAvant: v.avant?.t, tApres: v.apres?.t,
+    avant: (v.avant?.voitures || []).map(x => ({ nom: `A${x.rang}`, box: x.box })),
+    apres: (v.apres?.voitures || []).map(x => ({ nom: `B${x.rang}`, box: x.box })),
+    correspondances,
+  };
+}
 const journal = rapport.journal || [];
 const reattributions = rapport.mesures?.identites?.reattributions || [];
 
@@ -157,6 +179,30 @@ for (const r of reattributions) {
   console.log(`\n      justes ${C.vert(String(n.justes))} · fausses ${n.fausses ? C.rouge(String(n.fausses)) : '0'}`
     + ` · non décidées ${C.jaune(String(n.nonDecidees))} · hors vérité ${n.horsVerite}`
     + `   ${C.dim(`sur ${n.attendues} attendues`)}`);
+}
+
+// ── le balayage, NOTÉ ───────────────────────────────────
+//
+// Le balayage seul dit ce que chaque réglage déciderait ; il ne dit pas si
+// ces décisions sont justes. Croisé avec la vérité, il devient la seule base
+// honnête pour choisir un seuil — et la seule façon de voir qu'un réglage
+// plus permissif n'ajoute que des erreurs.
+for (const r of reattributions) {
+  const bal = r.balayage || [];
+  if (!bal.length) continue;
+  console.log(`\n  ${C.bold('balayage noté')}  ${C.dim(`(coupure ${r.tCoupure} s)`)}`);
+  const poids = [...new Set(bal.map(l => l.poidsTaille))].sort((a, b) => a - b);
+  for (const w of poids) {
+    console.log(`    ${C.dim(`poids de taille ${w}`)}`);
+    for (const l of bal.filter(x => x.poidsTaille === w && x.margeApparenceMin === 0.05)) {
+      const n = noter(l.appariements, attendu, [...attendu.keys()]);
+      const verdict = `${n.justes} juste${n.justes > 1 ? 's' : ''}`
+        + ` · ${n.fausses ? C.rouge(`${n.fausses} FAUSSE${n.fausses > 1 ? 'S' : ''}`) : '0 fausse'}`
+        + ` · ${C.jaune(`${n.nonDecidees} non décidée${n.nonDecidees > 1 ? 's' : ''}`)}`;
+      console.log(`      margeMin ${String(l.margeMin).padEnd(5)} → ${l.decision.padEnd(10)} ${verdict}`
+        + (l.appariements.length ? C.dim(`   [${l.appariements.map(a => `${a.avant}>${a.apres}`).join(' ')}]`) : ''));
+    }
+  }
 }
 
 const id = rapport.mesures?.identites;

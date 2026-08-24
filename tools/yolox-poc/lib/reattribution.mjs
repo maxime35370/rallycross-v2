@@ -81,6 +81,21 @@ export const REGLAGES = {
   // ce qui compte est que le résultat n'en dépende pas : mesuré sur Kerlabo,
   // la vérité est première pour tout poids de 0,5 à 2.
   poidsTaille: 1,
+  // Coût au-delà duquel une hypothèse n'explique RIEN, et n'a pas à concourir.
+  //
+  // Le coût est un résidu moyen exprimé en rayons de dispersion du groupe
+  // d'arrivée. À 1, la prédiction tombe en moyenne aussi loin de sa candidate
+  // que le groupe n'est large : elle ne vaut pas mieux que « quelque part
+  // dans le peloton ». Ce n'est pas un compromis à régler comme `margeMin`,
+  // c'est une échelle intrinsèque.
+  //
+  // Sans ce plafond, mesuré sur la coupure Kerlabo à 14,3 s en 4 Hz : deux
+  // pistes d'un côté, deux de l'autre, une seule affectation compatible avec
+  // le sens de marche — donc aucune concurrente, donc aucune marge à
+  // franchir. Une similitude d'échelle 10,2 et de coût 2,85 était acceptée
+  // sans la moindre vérification. Une hypothèse seule n'est pas crédible pour
+  // autant.
+  coutMax: 1.0,
   // Deux points suffisent à poser une similitude ; en dessous il n'y a pas
   // de configuration, seulement un point.
   tailleGroupeMin: 2,
@@ -284,11 +299,24 @@ export function decider(toutes, A, B, options = {}) {
   const ecarteesParSens = toutes.length - compatibles.length;
   if (!compatibles.length) return { ...vide('sens_de_marche'), ecarteesParSens };
 
-  const meilleur = compatibles[0];
+  // 1 bis · plausibilité ABSOLUE. Le filtre de marge est relatif : il compare
+  //     deux hypothèses entre elles et ne dit rien de leur qualité. Une seule
+  //     hypothèse survivante passerait sans examen, aussi mauvaise soit-elle.
+  const plausibles = compatibles.filter(h => h.cout <= o.coutMax);
+  const ecarteesParCout = compatibles.length - plausibles.length;
+  if (!plausibles.length) {
+    return {
+      ...vide('aucune_hypothese_plausible'), ecarteesParSens, ecarteesParCout,
+      // Ce qu'on a refusé, pour que le refus soit relisible.
+      meilleurRefuse: resumer(compatibles[0], A, B),
+    };
+  }
+
+  const meilleur = plausibles[0];
   // Le second n'est pas la deuxième similitude : c'est la meilleure hypothèse
   // qui aboutit à un appariement DIFFÉRENT. Deux similitudes voisines qui
   // apparient pareil ne sont pas une ambiguïté.
-  const second = compatibles.find(h => h.cle !== meilleur.cle) || null;
+  const second = plausibles.find(h => h.cle !== meilleur.cle) || null;
 
   const marge = second ? second.cout - meilleur.cout : null;
   const margeRelative = second && second.cout > 1e-12 ? marge / second.cout : null;
@@ -311,8 +339,7 @@ export function decider(toutes, A, B, options = {}) {
     const plafond = o.margeMin >= 1 ? Infinity : meilleur.cout / (1 - o.margeMin);
     const vues = new Set();
     const zone = [];
-    for (const h of toutes) {
-      if (h.sens != null && h.sens <= 0) continue;
+    for (const h of plausibles) {
       if (h.cout > plafond + 1e-12) break;               // trié par coût
       if (vues.has(h.cle)) continue;
       vues.add(h.cle); zone.push(h);
@@ -324,7 +351,7 @@ export function decider(toutes, A, B, options = {}) {
   const base = {
     modele: meilleur.reflechie ? 'reflexion' : 'directe',
     meilleur: resumer(meilleur, A, B), second: second ? resumer(second, A, B) : null,
-    marge, margeRelative, ecarteesParSens,
+    marge, margeRelative, ecarteesParSens, ecarteesParCout,
     // Ce qu'aurait donné le choix SANS le contrôle de sens : la mesure de ce
     // que ce contrôle apporte réellement, plutôt que sa simple présence.
     meilleurSansControle: resumer(toutes[0], A, B),

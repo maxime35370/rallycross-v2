@@ -109,6 +109,22 @@ describe('appariement d\'un groupe', () => {
     }
   });
 
+  it('refuse une hypothèse sans concurrente mais absurde', () => {
+    // Deux pistes d'un côté, deux de l'autre : une similitude à deux points
+    // ajuste exactement, et une seule affectation survit au sens de marche.
+    // Sans plafond de coût, elle passerait sans le moindre examen — c'est
+    // exactement ce qui arrivait sur la coupure Kerlabo de 14,3 s en 4 Hz,
+    // avec une échelle de 10,2 et un coût de 2,85.
+    const A = [elt(1, 500, 500, 100, 60, -200, 0), elt(2, 520, 505, 100, 60, -200, 0)];
+    const B = [elt(11, 300, 900, 400, 240, 200, 0), elt(12, 1600, 300, 60, 36, 200, 0)];
+    const r = analyser(A, B);
+    expect(r.decision).toBe('refus');
+    expect(r.raison).toBe('aucune_hypothese_plausible');
+    expect(r.appariements).toEqual([]);
+    // le refus reste relisible : on publie ce qu'on a écarté
+    expect(r.meilleurRefuse.cout).toBeGreaterThan(REGLAGES.coutMax);
+  });
+
   it('ne tranche pas entre deux hypothèses trop proches, et le dit', () => {
     // Un carré : quatre rotations d'un quart de tour l'envoient sur lui-même.
     // Aucune configuration ne peut lever cette ambiguïté — le bon

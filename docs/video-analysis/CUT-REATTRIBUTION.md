@@ -507,10 +507,100 @@ pas encore.
 
 `margeMin` et `margeApparenceMin` sont des points de bascule d'un compromis,
 pas des constantes. `balayer()` rejoue la décision sur toute la grille
-(poids de taille × marge × marge d'apparence) et le rapport la publie. Mesuré
-sur ce cut, à 10 Hz : `margeMin ≤ 0,10` donnerait 4 justes sur 4 au lieu de 3,
-sans aucune erreur. Le réglage retenu, 0,15, coûte donc une bonne réponse ici
-et n'en évite aucune de mauvaise — mais un seul cut ne suffit pas à décider de
-le descendre. La propriété qui compte est autre : **dès qu'une marge est
-exigée, aussi minime soit-elle, aucun appariement faux n'apparaît sur toute la
-plage essayée.**
+(poids de taille × marge × marge d'apparence) et le rapport la publie.
+
+⚠ Une première lecture de cette table, faite sur le MODULE et ses cinq boîtes
+annotées, laissait croire qu'un `margeMin ≤ 0,10` donnerait 4 justes sur 4.
+C'est faux sur le RUN, et la nuance compte : le module reçoit les cinq
+voitures détectées aux deux images propres, le run ne lui donne que les pistes
+CONFIRMÉES. Or la piste qui correspond à B4 n'est jamais confirmée dans la
+fenêtre de décision — elle n'entre donc pas dans le groupe candidat, et aucun
+réglage de marge ne peut l'apparier. Le plafond atteignable sur ce run est
+3 justes sur 4, et la configuration retenue l'atteint.
+
+Le facteur limitant à 10 Hz n'est donc pas la marge : c'est la confirmation
+des pistes du plan neuf. Voir §10 pour ce que deux cuts de plus en disent.
+
+---
+
+## 10. Deux cuts de plus — ce que le second cas a tranché
+
+L'extrait de 17 s contient **trois** transitions, pas une. Scan complet
+(0,2 → 16,8 s, `derive+rampe/1`, pas 0,1 s), toutes fiables, 4 fenêtres
+concordantes sur 4, dispersion 17 ms :
+
+| rupture | bornes propres | images de transition |
+|---|---|---|
+| 2,800 s | 2,7333 → 2,8333 | 5 |
+| 5,900 s | 5,800 → 5,900 | 5 |
+| 14,300 s | 14,1667 → 14,250 | 4 |
+
+Aucune rejetée. Ces deux transitions supplémentaires servent de second et
+troisième cas, sans rien télécharger de plus.
+
+### Le trou que le second cas a révélé
+
+Au cut 14,3 s en 4 Hz, deux pistes d'un côté, deux de l'autre : une seule
+affectation survit au contrôle de sens, donc aucune concurrente, donc aucune
+marge à franchir. Une similitude d'**échelle 10,2** et de **coût 2,85** — un
+résidu moyen de près de trois fois le rayon du groupe entier — était acceptée
+sans le moindre examen, et la filiation posée.
+
+Le filtre de marge est RELATIF : il compare deux hypothèses entre elles et ne
+dit rien de leur qualité. Il fallait un plafond ABSOLU. `coutMax = 1` : au-delà
+d'un rayon de dispersion, la prédiction ne vaut pas mieux que « quelque part
+dans le peloton ». Ce n'est pas un compromis à régler comme `margeMin`, c'est
+une échelle intrinsèque. Avec lui, ce cas devient un refus.
+
+### Ce que les trois cuts disent des questions ouvertes
+
+**Le modèle gagnant varie.** Directe au cut 5,9 s (−174°), réflexion au cut
+14,3 s (−177°), et au cut 2,8 s réflexion en 10 Hz mais directe en 4 Hz —
+là où la marge vaut 0,0 %, c'est-à-dire là où le modèle gagnant n'a aucun
+sens. Supposer l'un ou l'autre aurait été faux ; il faut les essayer tous les
+deux.
+
+**Les marges sont très dispersées** : 44,8 % (14,3 s, 10 Hz), 8,9 % (5,9 s,
+10 Hz), 1,5 % (5,9 s, 4 Hz), 0,1 % et 0,0 % (2,8 s). Un seuil unique se
+comporte donc très différemment d'une transition à l'autre.
+
+**Le poids de taille ne nuit jamais, et ne sert que parfois.** Sur les cuts
+2,8 s et 14,3 s, la décision est identique de `poidsTaille = 0` à `2`. Il ne
+joue que sur le cut 5,9 s, où il est décisif. Garder 1 ne coûte rien ailleurs.
+
+**L'apparence n'a jamais tranché** : 3,3 %, 3,5 % et 3,8 % d'écart relatif,
+tous sous le seuil de 5 %, et indisponible dans deux cas (une voiture tronquée
+par le bord de l'image, donc jamais mémorisée). Elle reste strictement
+secondaire, comme prévu.
+
+**10 Hz reste nettement meilleur autour des cuts.** À 14,3 s, 10 Hz décide
+avec 44,8 % de marge et 4 Hz refuse ; à 5,9 s, 10 Hz décide et 4 Hz refuse.
+La raison est structurelle : une coupure ne tombe presque jamais sur une
+grille à 4 Hz, et les cent millisecondes de décalage suffisent à déformer la
+configuration et à tronquer une voiture au bord.
+
+### `margeMin` : 0,15 se confirme, 0,10 est écarté
+
+Le balayage croisé avec la vérité, sur les six runs :
+
+| run | `margeMin` = 0,10 | `margeMin` = 0,15 |
+|---|---|---|
+| 5,9 s · 10 Hz | 3 justes, 0 fausse | **identique** |
+| 5,9 s · 4 Hz | 0 juste, **1 FAUSSE** | 0 juste, 0 fausse (refus) |
+| 2,8 s · 10 Hz | identique | identique |
+| 2,8 s · 4 Hz | identique | identique |
+| 14,3 s · 10 Hz | identique | identique |
+| 14,3 s · 4 Hz | refus | refus |
+
+Sur trois cuts réels et deux fréquences, descendre à 0,10 **n'ajoute aucun
+appariement juste et introduit un appariement faux**. C'est exactement ce que
+le second cas devait établir, et il conclut contre l'intuition qu'un seul cut
+donnait. `margeMin` reste à 0,15.
+
+### Le nouveau facteur limitant
+
+Sur le cut 5,9 s en 10 Hz, la piste qui correspond à B4 reste `tentative` de
+5,9 à 6,3 s : jamais confirmée, donc jamais candidate. Aucun réglage de la
+réattribution ne peut la rattraper. Le facteur limitant s'est déplacé de la
+marge vers la CONFIRMATION des pistes du plan neuf — même famille de problème
+que les identités qui meurent vers 11,6 s faute de détection.
