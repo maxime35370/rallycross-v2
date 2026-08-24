@@ -1,0 +1,321 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>État du groupe — vue du dessus</title>
+<style>
+  :root { --bd:#d8d8d8; --bg:#fafafa; }
+  body { font:14px/1.5 system-ui,sans-serif; margin:0; padding:18px; background:var(--bg); color:#1b1b1b; }
+  h1 { font-size:1.15rem; margin:0 0 4px; } .sub { color:#666; margin:0 0 14px; }
+  h2 { font-size:.95rem; margin:0 0 8px; }
+  .panneau { background:#fff; border:1px solid var(--bd); border-radius:8px; padding:12px 14px; margin-bottom:12px; }
+  .rangee { display:flex; gap:14px; align-items:center; flex-wrap:wrap; }
+  label { font-size:13px; }
+  canvas { border:1px solid var(--bd); border-radius:4px; display:block; background:#fff; max-width:100%; }
+  button { font:inherit; padding:4px 10px; border:1px solid var(--bd); background:#fff; border-radius:4px; cursor:pointer; }
+  button:disabled { opacity:.4; cursor:default; }
+  input[type=range] { width:420px; }
+  table { border-collapse:collapse; font-size:12.5px; }
+  th,td { border:1px solid var(--bd); padding:3px 7px; } th { background:#f0f0f0; }
+  td.num { text-align:right; font-variant-numeric:tabular-nums; }
+  .deux { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  .pastille { display:inline-block; width:10px; height:10px; border-radius:50%; vertical-align:-1px; margin-right:4px; }
+</style>
+
+<h1>État du groupe — vue du dessus</h1>
+<p class="sub">
+  Chaque instant est aligné sur une <strong>configuration de référence</strong> par la similitude qui
+  l'explique le mieux. Ce qui reste après cet alignement ne dépend plus de la caméra : ni de son
+  cadrage, ni de son zoom, ni de son orientation. C'est l'<strong>état monde au niveau ①</strong> — le
+  seul que nos données permettent, mesuré : rang 2 sur 28 fenêtres sur 28, et une homographie y
+  sur-ajuste. Une voiture qui sort du champ garde donc une place dans ce repère.
+</p>
+
+<div class="panneau">
+  <div class="rangee">
+    <label>Rapport de suivi <code>rx-tracking/1</code> :
+      <input type="file" id="pick" accept="application/json,.json"></label>
+    <span id="etat" class="sub" style="margin:0">aucun rapport chargé</span>
+  </div>
+  <div class="rangee" style="margin-top:8px">
+    <button id="prem" disabled>⏮</button>
+    <button id="prec" disabled>◀</button>
+    <input type="range" id="curseur" min="0" max="0" value="0" disabled>
+    <button id="suiv" disabled>▶</button>
+    <button id="dern" disabled>⏭</button>
+    <span id="horodatage" class="sub" style="margin:0"></span>
+  </div>
+  <div class="rangee" style="margin-top:8px">
+    <label><input type="checkbox" id="traces" checked> trajectoires</label>
+    <label><input type="checkbox" id="fantomes" checked> voitures hors champ</label>
+    <label>Mémoire <input type="number" id="memoire" min="2" max="40" value="12" style="width:60px"> instants</label>
+  </div>
+</div>
+
+<div class="panneau">
+  <div class="deux">
+    <div>
+      <h2>Repère du groupe <span class="sub" id="titreMonde"></span></h2>
+      <canvas id="monde" width="720" height="440"></canvas>
+    </div>
+    <div>
+      <h2>Image <span class="sub" id="titreImage"></span></h2>
+      <canvas id="image" width="720" height="440"></canvas>
+    </div>
+  </div>
+  <p class="sub" style="margin:8px 0 0">
+    <span class="pastille" style="background:#1a7f37"></span>observée &nbsp;
+    <span class="pastille" style="background:#bf8700"></span>hors champ, position tenue dans le repère &nbsp;
+    <span class="pastille" style="background:#cf222e"></span>appui de l'alignement &nbsp;
+    <span style="color:#666">— le cercle des fantômes grandit avec la durée d'absence : c'est leur incertitude.</span>
+  </p>
+</div>
+
+<div class="panneau">
+  <h2>Caméra estimée, et ce que l'alignement laisse de côté</h2>
+  <div id="tableau"></div>
+</div>
+
+<script type="module">
+import { repereGroupe, similitudeMoindresCarres, appliquerSim } from '/tools/yolox-poc/lib/structure.mjs';
+
+const $ = (id) => document.getElementById(id);
+const cM = $('monde').getContext('2d'), cI = $('image').getContext('2d');
+const centre = (b) => [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2];
+let rapport = null, etats = [], instant = 0;
+
+/** Couleur stable par identité — la même dans les deux vues. */
+const teinte = (id) => `hsl(${(id * 137.508) % 360} 65% 45%)`;
+
+$('pick').addEventListener('change', async (e) => {
+  const f = e.target.files[0];
+  if (!f) return;
+  try { rapport = JSON.parse(await f.text()); } catch { $('etat').textContent = 'fichier illisible'; return; }
+  if (rapport.schema !== 'rx-tracking/1') { $('etat').textContent = `schéma ${rapport.schema} non reconnu`; return; }
+  construire();
+});
+
+/**
+ * Construit l'état monde instant par instant.
+ *
+ * La RÉFÉRENCE est la configuration du premier instant qui porte au moins
+ * trois identités confirmées. Elle est ensuite mise à jour doucement : les
+ * voitures bougent réellement les unes par rapport aux autres — mesuré, les
+ * rapports de distance varient de 5 % en médiane — donc une référence figée
+ * dériverait. Ce n'est pas un défaut du repère, c'est le peloton qui change.
+ */
+function construire() {
+  const journal = rapport.journal || [];
+  const coupures = (rapport.coupures || []).map(c => c.apres);
+  etats = [];
+  let reference = null;
+  const vues = new Map();          // identité → dernier état connu
+
+  for (const inst of journal) {
+    // La clé de l'alignement est l'identifiant de PISTE, pas l'identité
+    // logique : la réattribution change celle-ci en cours de route, et une
+    // référence indexée dessus perdrait ses appuis à cet instant précis.
+    // L'identité logique reste l'étiquette affichée — c'est elle qui a un
+    // sens pour le lecteur, pas pour l'algèbre.
+    const observees = inst.tracks
+      .filter(t => t.boiteAssociee && t.confirmee)
+      .map(t => ({ id: t.id, etiquette: t.identiteLogique ?? t.id, point: centre(t.boiteAssociee), boite: t.boiteAssociee }));
+
+    // Une coupure remet la référence à zéro : la configuration d'avant ne dit
+    // rien de l'échelle ni de l'orientation d'après.
+    if (coupures.some(c => Math.abs(c - inst.t) < 1e-6)) { reference = null; vues.clear(); }
+
+    if (!reference && observees.length >= 3) {
+      reference = new Map(observees.map(o => [o.id, o.point]));
+    }
+    const r = reference ? repereGroupe(reference, observees) : null;
+
+    if (r) {
+      for (const o of observees) {
+        vues.set(o.id, { t: inst.t, monde: r.positions.get(o.id), boite: o.boite, etiquette: o.etiquette });
+      }
+      // La référence suit lentement le peloton : un dixième d'écart par pas.
+      for (const o of observees) {
+        const p = r.positions.get(o.id);
+        if (reference.has(o.id)) {
+          const q = reference.get(o.id);
+          reference.set(o.id, [q[0] + 0.1 * (p[0] - q[0]), q[1] + 0.1 * (p[1] - q[1])]);
+        } else reference.set(o.id, p);
+      }
+    }
+    etats.push({
+      t: inst.t, repere: r,
+      observees: observees.map(o => o.id),
+      etiquettes: new Map(observees.map(o => [o.id, o.etiquette])),
+      // Ce que le repère permet de tenir : une identité connue, absente de
+      // cette image, garde sa place — et sa position ATTENDUE dans l'image se
+      // calcule en la reprojetant.
+      absentes: [...vues.entries()]
+        .filter(([id]) => !observees.some(o => o.id === id))
+        .map(([id, v]) => ({ id, etiquette: v.etiquette, monde: v.monde, depuis: Number((inst.t - v.t).toFixed(2)), boite: v.boite })),
+      tracks: inst.tracks,
+    });
+  }
+  instant = 0;
+  for (const b of ['prem', 'prec', 'suiv', 'dern']) $(b).disabled = false;
+  $('curseur').disabled = false; $('curseur').max = etats.length - 1; $('curseur').value = 0;
+  $('etat').textContent = `${etats.length} instants · ${etats.filter(e => e.repere).length} avec un repère `
+    + `· ${coupures.length} coupure(s)`;
+  montrer(0);
+}
+
+function montrer(i) {
+  instant = Math.max(0, Math.min(etats.length - 1, i));
+  $('curseur').value = instant;
+  const e = etats[instant];
+  $('horodatage').textContent = `t = ${e.t.toFixed(2)} s · ${instant + 1}/${etats.length}`;
+  dessinerMonde(e);
+  dessinerImage(e);
+  remplirTableau(e);
+}
+
+/** Cadre commun à tous les instants, pour que l'œil compare des positions. */
+function bornes(cle) {
+  const pts = [];
+  for (const e of etats) {
+    if (cle === 'monde') {
+      if (e.repere) for (const p of e.repere.positions.values()) pts.push(p);
+      for (const a of e.absentes) if (a.monde) pts.push(a.monde);
+    } else {
+      for (const t of e.tracks) if (t.boiteAssociee) pts.push(centre(t.boiteAssociee));
+    }
+  }
+  if (!pts.length) return { x0: -1, y0: -1, x1: 1, y1: 1 };
+  const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+  const mx = (Math.max(...xs) - Math.min(...xs)) * 0.08 + 20;
+  const my = (Math.max(...ys) - Math.min(...ys)) * 0.08 + 20;
+  return { x0: Math.min(...xs) - mx, y0: Math.min(...ys) - my, x1: Math.max(...xs) + mx, y1: Math.max(...ys) + my };
+}
+let cadreMonde = null, cadreImage = null;
+
+const projeter = (p, b, c) => [
+  (p[0] - b.x0) / (b.x1 - b.x0) * c.canvas.width,
+  (p[1] - b.y0) / (b.y1 - b.y0) * c.canvas.height,
+];
+
+function fond(c, titre) {
+  c.clearRect(0, 0, c.canvas.width, c.canvas.height);
+  c.strokeStyle = '#eee'; c.lineWidth = 1;
+  for (let k = 1; k < 8; k++) {
+    const x = k / 8 * c.canvas.width, y = k / 8 * c.canvas.height;
+    c.beginPath(); c.moveTo(x, 0); c.lineTo(x, c.canvas.height); c.stroke();
+    c.beginPath(); c.moveTo(0, y); c.lineTo(c.canvas.width, y); c.stroke();
+  }
+}
+
+function dessinerMonde(e) {
+  cadreMonde = cadreMonde || bornes('monde');
+  fond(cM);
+  $('titreMonde').textContent = e.repere
+    ? `— ${e.repere.appuis} appui(s), résidu ${e.repere.residuMoyen} px`
+    : '— pas de repère à cet instant';
+  if (!e.repere) return;
+
+  // trajectoires récentes dans le repère
+  if ($('traces').checked) {
+    const memoire = Number($('memoire').value);
+    const ids = new Set([...e.repere.positions.keys(), ...e.absentes.map(a => a.id)]);
+    for (const id of ids) {
+      const pts = [];
+      for (let k = Math.max(0, instant - memoire); k <= instant; k++) {
+        const p = etats[k].repere?.positions.get(id) ?? etats[k].absentes.find(a => a.id === id)?.monde;
+        if (p) pts.push(p);
+      }
+      if (pts.length < 2) continue;
+      cM.strokeStyle = teinte(id); cM.globalAlpha = 0.35; cM.lineWidth = 2;
+      cM.beginPath();
+      pts.forEach((p, k) => { const q = projeter(p, cadreMonde, cM); k ? cM.lineTo(q[0], q[1]) : cM.moveTo(q[0], q[1]); });
+      cM.stroke(); cM.globalAlpha = 1;
+    }
+  }
+
+  // voitures observées
+  for (const [id, p] of e.repere.positions) {
+    const q = projeter(p, cadreMonde, cM);
+    cM.fillStyle = teinte(id);
+    cM.beginPath(); cM.arc(q[0], q[1], 7, 0, 7); cM.fill();
+    cM.strokeStyle = '#1a7f37'; cM.lineWidth = 2; cM.stroke();
+    cM.fillStyle = '#111'; cM.font = '11px system-ui';
+    cM.fillText(String(e.etiquettes.get(id) ?? id), q[0] + 10, q[1] + 4);
+  }
+
+  // voitures hors champ — le rayon dit l'incertitude, pas la taille
+  if ($('fantomes').checked) {
+    for (const a of e.absentes) {
+      if (!a.monde) continue;
+      const q = projeter(a.monde, cadreMonde, cM);
+      const rayon = 7 + a.depuis * 22;          // grandit avec la durée d'absence
+      cM.strokeStyle = '#bf8700'; cM.lineWidth = 1.5; cM.setLineDash([4, 3]);
+      cM.beginPath(); cM.arc(q[0], q[1], rayon, 0, 7); cM.stroke(); cM.setLineDash([]);
+      cM.fillStyle = '#bf8700';
+      cM.beginPath(); cM.arc(q[0], q[1], 4, 0, 7); cM.fill();
+      cM.font = '10px system-ui';
+      cM.fillText(`${a.etiquette ?? a.id} · ${a.depuis}s`, q[0] + rayon + 3, q[1] + 3);
+    }
+  }
+}
+
+function dessinerImage(e) {
+  cadreImage = cadreImage || bornes('image');
+  fond(cI);
+  $('titreImage').textContent = `— ${e.observees.length} détection(s)`;
+  for (const t of e.tracks) {
+    const id = t.identiteLogique ?? t.id;
+    const b = t.boiteAssociee || t.box;
+    if (!b) continue;
+    const a = projeter([b[0], b[1]], cadreImage, cI), c = projeter([b[2], b[3]], cadreImage, cI);
+    cI.strokeStyle = teinte(id);
+    cI.lineWidth = t.boiteAssociee ? 2 : 1;
+    if (!t.boiteAssociee) cI.setLineDash([4, 3]);
+    cI.strokeRect(a[0], a[1], c[0] - a[0], c[1] - a[1]);
+    cI.setLineDash([]);
+    cI.fillStyle = '#111'; cI.font = '11px system-ui';
+    cI.fillText(String(id), a[0] + 2, a[1] - 3);
+  }
+  // Position ATTENDUE des absentes, reprojetée depuis le repère : c'est là
+  // qu'il faudrait aller les chercher si elles revenaient.
+  if ($('fantomes').checked && e.repere) {
+    for (const a of e.absentes) {
+      if (!a.monde) continue;
+      const p = appliquerSim(e.repere.versImage, a.monde);
+      const q = projeter(p, cadreImage, cI);
+      cI.strokeStyle = '#bf8700'; cI.lineWidth = 1.5; cI.setLineDash([3, 3]);
+      cI.beginPath(); cI.arc(q[0], q[1], 9 + a.depuis * 14, 0, 7); cI.stroke(); cI.setLineDash([]);
+      cI.fillStyle = '#bf8700'; cI.font = '10px system-ui';
+      cI.fillText(`${a.etiquette ?? a.id}?`, q[0] + 4, q[1] - 4);
+    }
+  }
+}
+
+function remplirTableau(e) {
+  const r = e.repere;
+  const lignes = [];
+  if (r) {
+    lignes.push(`<tr><td>échelle</td><td class="num">${r.camera.echelle}</td>`
+      + `<td>orientation</td><td class="num">${r.camera.angleDeg}°</td>`
+      + `<td>centre</td><td class="num">${r.camera.centre.join(', ')}</td>`
+      + `<td>appuis</td><td class="num">${r.appuis}</td>`
+      + `<td>résidu moyen</td><td class="num">${r.residuMoyen} px</td></tr>`);
+  } else lignes.push('<tr><td colspan="10">aucun repère — moins de trois identités confirmées</td></tr>');
+  if (e.absentes.length) {
+    lignes.push(`<tr><td colspan="10"><strong>hors champ</strong> : `
+      + e.absentes.map(a => `${a.etiquette ?? a.id} depuis ${a.depuis} s`).join(' · ') + '</td></tr>');
+  }
+  $('tableau').innerHTML = `<table><tbody>${lignes.join('')}</tbody></table>`;
+}
+
+$('prem').addEventListener('click', () => montrer(0));
+$('prec').addEventListener('click', () => montrer(instant - 1));
+$('suiv').addEventListener('click', () => montrer(instant + 1));
+$('dern').addEventListener('click', () => montrer(etats.length - 1));
+$('curseur').addEventListener('input', (e) => montrer(Number(e.target.value)));
+for (const id of ['traces', 'fantomes', 'memoire']) $(id).addEventListener('input', () => montrer(instant));
+document.addEventListener('keydown', (ev) => {
+  if (ev.target.tagName === 'INPUT') return;
+  if (ev.key === 'ArrowLeft') montrer(instant - 1);
+  if (ev.key === 'ArrowRight') montrer(instant + 1);
+});
+</script>
