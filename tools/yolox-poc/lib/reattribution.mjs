@@ -58,7 +58,21 @@ export const REGLAGES = {
   // mesurés, et non posé à partir d'un seul.
   margeMin: 0.15,
   // Écart relatif d'apparence exigé pour départager deux hypothèses proches.
-  margeApparenceMin: 0.05,
+  //
+  // Mesuré sur trois cuts réels : les écarts d'apparence valent 3,3 %, 3,5 %
+  // et 3,8 %, tous dans une bande étroite. À 0,05 le seuil n'était jamais
+  // franchi — l'apparence était de fait désactivée, et on aurait pu conclure
+  // à tort qu'elle ne sert à rien.
+  margeApparenceMin: 0.03,
+  // Marge relative en dessous de laquelle la géométrie est réputée MUETTE.
+  //
+  // C'est la condition d'entrée de l'apparence, et elle est de nature, pas de
+  // degré : quand deux hypothèses sont séparées de 0,0001 (mesuré au cut
+  // 2,8 s), c'est un quasi-tirage au sort qui désigne la « meilleure », et
+  // l'apparence est la seule information restante. Quand la géométrie a une
+  // vraie préférence (8,9 % au cut 5,9 s), elle décide, et l'apparence n'a
+  // pas à la renverser — elle y aurait introduit une erreur.
+  seuilGeometrieMuette: 0.02,
   // Configuration retenue par la mesure du 22/08 : 3 bandes, agrégation des
   // VECTEURS, deux observations. Elle donnait 3/4 avec l'écart normalisé le
   // plus faible (3,6 %).
@@ -96,6 +110,20 @@ export const REGLAGES = {
   // sans la moindre vérification. Une hypothèse seule n'est pas crédible pour
   // autant.
   coutMax: 1.0,
+  // Cohérence minimale du mouvement pour que le SENS DE MARCHE soit une
+  // information exploitable.
+  //
+  // La cohérence vaut |Σv| / Σ|v| : 1 quand toutes les voitures vont dans le
+  // même sens, 0 quand leurs vitesses s'annulent. Mesuré : 0,11 et 0,13 sur
+  // la grille de départ, voitures à l'arrêt — les vitesses estimées y pointent
+  // dans des sens opposés (+27, −244, +100, +226, −112 px/s) et leur somme ne
+  // laisse qu'une dérive verticale minuscule. Contre 0,87 à 0,97 sur des
+  // voitures lancées.
+  //
+  // Filtrer la moitié des hypothèses sur le signe d'un bruit est un coup de
+  // dé. Il est bien tombé sur les trois cuts mesurés ; rien ne garantit qu'il
+  // tombe bien la prochaine fois.
+  coherenceSensMin: 0.5,
   // Deux points suffisent à poser une similitude ; en dessous il n'y a pas
   // de configuration, seulement un point.
   tailleGroupeMin: 2,
@@ -128,13 +156,20 @@ export function configuration(elements) {
   // Sens de marche : somme des vitesses, normalisée. La SOMME et non la
   // moyenne des directions unitaires — une piste presque immobile, dont la
   // direction est du bruit, ne doit pas peser autant qu'une voiture lancée.
-  let dx = 0, dy = 0;
-  for (const e of elements) { dx += e.vitesse?.vx || 0; dy += e.vitesse?.vy || 0; }
+  let dx = 0, dy = 0, somme = 0;
+  for (const e of elements) {
+    dx += e.vitesse?.vx || 0; dy += e.vitesse?.vy || 0;
+    somme += Math.hypot(e.vitesse?.vx || 0, e.vitesse?.vy || 0);
+  }
   const l = Math.hypot(dx, dy);
   const direction = l > 1e-9 ? [dx / l, dy / l] : null;
+  // COHÉRENCE du mouvement : |Σv| / Σ|v|. Elle dit si la direction ci-dessus
+  // décrit un déplacement d'ensemble ou la somme de cinq bruits qui
+  // s'annulent. Sans elle, les deux se ressemblent : un vecteur unitaire.
+  const coherence = somme > 1e-9 ? l / somme : 0;
 
   return {
-    ids: elements.map(e => e.id), points, centroide, rayon, direction, elements,
+    ids: elements.map(e => e.id), points, centroide, rayon, direction, coherence, elements,
     tailles: elements.map(e => taille(e.box)),
   };
 }
@@ -256,6 +291,11 @@ export function coutApparence(paires, A, B, o = REGLAGES) {
 export function hypotheses(A, B, options = {}) {
   const o = { ...REGLAGES, ...options };
   const nA = A.points.length, nB = B.points.length;
+  // Le sens de marche ne s'exerce que si les DEUX groupes bougent de façon
+  // cohérente. Avant le départ, les voitures sont à l'arrêt et leurs vitesses
+  // estimées sont du bruit : leur signe ne doit éliminer aucune hypothèse.
+  const sensLisible = (A.coherence ?? 0) >= o.coherenceSensMin
+    && (B.coherence ?? 0) >= o.coherenceSensMin;
   const toutes = [];
   for (const reflechie of [false, true]) {
     for (let i = 0; i < nA; i++) for (let j = 0; j < nA; j++) {
@@ -264,10 +304,12 @@ export function hypotheses(A, B, options = {}) {
         if (k === l) continue;
         const T = similitude(A.points[i], A.points[j], B.points[k], B.points[l], reflechie);
         if (!T) continue;
-        const dirT = transformerDirection(T, A.direction);
+        const dirT = sensLisible ? transformerDirection(T, A.direction) : null;
         // Produit scalaire avec le sens de marche observé dans le plan B.
-        // `null` quand l'un des deux groupes n'a pas de sens mesurable :
-        // absence de contrôle, pas échec du contrôle.
+        // `null` quand l'un des deux groupes n'a pas de sens LISIBLE — soit
+        // qu'il n'ait pas de vitesse, soit que ses vitesses s'annulent. C'est
+        // une absence de contrôle, pas un échec du contrôle : aucune
+        // hypothèse n'est écartée.
         const sens = dirT && B.direction ? dirT[0] * B.direction[0] + dirT[1] * B.direction[1] : null;
         const r = coutAffectation(T, A, B, o);
         toutes.push({ ...r, T, reflechie, sens, appui: [i, j, k, l], echelle: T.echelle, angle: T.angle });
@@ -352,6 +394,13 @@ export function decider(toutes, A, B, options = {}) {
     modele: meilleur.reflechie ? 'reflexion' : 'directe',
     meilleur: resumer(meilleur, A, B), second: second ? resumer(second, A, B) : null,
     marge, margeRelative, ecarteesParSens, ecarteesParCout,
+    // La cohérence du mouvement de chaque groupe, et si elle a suffi.
+    coherenceSens: {
+      avant: Number((A.coherence ?? 0).toFixed(3)),
+      apres: Number((B.coherence ?? 0).toFixed(3)),
+      seuil: o.coherenceSensMin,
+      utilisee: (A.coherence ?? 0) >= o.coherenceSensMin && (B.coherence ?? 0) >= o.coherenceSensMin,
+    },
     // Ce qu'aurait donné le choix SANS le contrôle de sens : la mesure de ce
     // que ce contrôle apporte réellement, plutôt que sa simple présence.
     meilleurSansControle: resumer(toutes[0], A, B),
@@ -363,12 +412,23 @@ export function decider(toutes, A, B, options = {}) {
     return { ...base, paires: meilleur.paires, decision: 'marge', raison: null, apparence: null };
   }
 
-  // 3 · marge serrée : l'apparence départage — en SECOND, sur les deux
-  //     hypothèses déjà retenues par la géométrie. Elle ne propose jamais un
-  //     appariement de son cru.
-  const appM = coutApparence(meilleur.paires, A, B, o);
-  const appS = coutApparence(second.paires, A, B, o);
-  const apparence = { meilleur: appM, second: appS, ecartRelatif: null, tranche: false };
+  // 3 · l'apparence départage — mais SEULEMENT si la géométrie est muette.
+  //
+  // Mesuré : au cut 2,8 s les deux hypothèses sont séparées de 0,0001, et
+  // l'apparence désigne la bonne aux deux fréquences (5 justes sur 5 au lieu
+  // d'une). Au cut 5,9 s la géométrie a une préférence réelle (8,9 %), et
+  // laisser l'apparence trancher y aurait ajouté une erreur. Ce n'est donc
+  // pas une question de degré mais de nature : l'apparence complète une
+  // géométrie qui ne dit rien, elle ne corrige pas une géométrie qui parle.
+  const muette = margeRelative != null && margeRelative < o.seuilGeometrieMuette;
+  const appM = muette ? coutApparence(meilleur.paires, A, B, o) : null;
+  const appS = muette ? coutApparence(second.paires, A, B, o) : null;
+  const apparence = {
+    meilleur: appM, second: appS, ecartRelatif: null, tranche: false,
+    consultee: muette,
+    // Pourquoi elle n'a pas été consultée, quand c'est le cas.
+    raison: muette ? null : 'la géométrie a une préférence',
+  };
   if (appM != null && appS != null) {
     const pire = Math.max(appM, appS);
     apparence.ecartRelatif = pire > 1e-12 ? Math.abs(appS - appM) / pire : 0;
@@ -476,27 +536,35 @@ export function analyser(elementsAvant, elementsApres, options = {}) {
  * sur plusieurs cuts.
  */
 export function balayer(A, B, {
-  marges = [0, 0.02, 0.05, 0.1, 0.15, 0.25, 0.4],
-  margesApparence = [0.02, 0.05, 0.1],
+  marges = [0, 0.02, 0.05, 0.1, 0.15, 0.25],
+  margesApparence = [0.02, 0.03, 0.05],
   poidsTailles = [0, 0.5, 1, 2],
+  muettes = [0.01, 0.02, 0.05],
+  coherences = [0.4, 0.5, 0.6],
   ...options
 } = {}) {
   if (A.points.length < REGLAGES.tailleGroupeMin || B.points.length < REGLAGES.tailleGroupeMin) return [];
   const lignes = [];
+  // Seuls `poidsTaille` et `coherenceSensMin` changent les HYPOTHÈSES : le
+  // premier via le coût, le second via le filtre de sens. Les trois autres ne
+  // changent que la décision, et réutilisent le même jeu.
   for (const poidsTaille of poidsTailles) {
-    // Le poids change la géométrie, donc les hypothèses : il faut recalculer.
-    // Les marges, elles, ne changent que la décision — d'où les deux boucles
-    // internes qui réutilisent le même jeu d'hypothèses.
-    const toutes = hypotheses(A, B, { ...options, poidsTaille });
-    for (const margeMin of marges) {
-      for (const margeApparenceMin of margesApparence) {
-        const d = decider(toutes, A, B, { ...options, poidsTaille, margeMin, margeApparenceMin });
-        lignes.push({
-          poidsTaille, margeMin, margeApparenceMin,
-          decision: d.decision,
-          retenues: d.paires.length,
-          appariements: d.paires.map(p => ({ avant: A.ids[p.i], apres: B.ids[p.j] })),
-        });
+    for (const coherenceSensMin of coherences) {
+      const toutes = hypotheses(A, B, { ...options, poidsTaille, coherenceSensMin });
+      for (const margeMin of marges) {
+        for (const margeApparenceMin of margesApparence) {
+          for (const seuilGeometrieMuette of muettes) {
+            const d = decider(toutes, A, B, {
+              ...options, poidsTaille, coherenceSensMin, margeMin, margeApparenceMin, seuilGeometrieMuette,
+            });
+            lignes.push({
+              poidsTaille, coherenceSensMin, margeMin, margeApparenceMin, seuilGeometrieMuette,
+              decision: d.decision,
+              retenues: d.paires.length,
+              appariements: d.paires.map(p => ({ avant: A.ids[p.i], apres: B.ids[p.j] })),
+            });
+          }
+        }
       }
     }
   }

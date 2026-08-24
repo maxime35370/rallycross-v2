@@ -604,3 +604,93 @@ Sur le cut 5,9 s en 10 Hz, la piste qui correspond à B4 reste `tentative` de
 réattribution ne peut la rattraper. Le facteur limitant s'est déplacé de la
 marge vers la CONFIRMATION des pistes du plan neuf — même famille de problème
 que les identités qui meurent vers 11,6 s faute de détection.
+
+---
+
+## 11. Deux gardes ajoutées, et leur sensibilité
+
+### L'apparence n'intervient que si la géométrie est muette
+
+Le cut 2,8 s l'a imposé. Les deux meilleures hypothèses y sont séparées de
+**0,0001** : c'est un quasi-tirage au sort qui désigne la « meilleure », et le
+tirage tombe sur la mauvaise en 10 Hz, sur la bonne en 4 Hz. L'apparence,
+elle, désigne la bonne aux DEUX fréquences. Elle était bloquée par un seuil de
+5 % que les écarts réels (3,3 %, 3,5 %, 3,8 %) ne franchissent jamais.
+
+Deux changements, tous deux nécessaires : `margeApparenceMin` passe à 0,03, et
+l'apparence n'est consultée que si la marge géométrique est sous
+`seuilGeometrieMuette`. Le second est le plus important — sans lui, au cut
+5,9 s où la géométrie a une vraie préférence (8,9 %), l'apparence renverserait
+la décision et ajouterait une erreur.
+
+### Le sens de marche n'est lu que s'il est cohérent
+
+Avant le départ, les voitures sont à l'arrêt sur la grille. Leurs vitesses
+estimées pointent dans des sens opposés — +27, −244, +100, +226, −112 px/s —
+et leur somme ne laisse qu'une dérive verticale minuscule. Le contrôle de sens
+écartait la moitié des hypothèses sur le signe de ce bruit.
+
+`coherence = |Σv| / Σ|v|` sépare franchement les deux régimes :
+
+| situation | cohérence |
+|---|---|
+| grille de départ, voitures à l'arrêt | **0,109 – 0,127** |
+| voitures lancées | **0,572 – 0,973** |
+
+Le contrôle ne s'exerce que si les deux groupes dépassent `coherenceSensMin`.
+La cohérence est publiée dans chaque rapport, avec la mention explicite
+« exploité » ou « ignoré ».
+
+### Caméra arrière puis caméra avant
+
+Au cut 2,8 s, la réalisation passe de derrière la grille à devant elle.
+**L'ordre gauche-droite s'inverse alors nécessairement** — c'est une propriété
+du point de vue, pas un hasard de cadrage. La vérité annotée le confirme :
+A1→B5, A2→B4, A3→B3, A4→B2, A5→B1.
+
+Rien dans la méthode ne traite l'ordre en x comme un invariant, et c'est
+délibéré : une réflexion comme une rotation d'un demi-tour l'expliquent, les
+deux concourent, et le sens de marche — quand il est lisible — départage.
+Cinq tests figent ce cas avec les boîtes et la vérité réelles.
+
+### Résultats après les deux gardes
+
+| cut | fréq. | décision | justes | fausses | non décidées | marge | sens |
+|---|---|---|---|---|---|---|---|
+| 2,8 s | 10 Hz | **apparence** | **5** | 0 | 0 | 0,2 % | ignoré |
+| 2,8 s | 4 Hz | consensus | 1 | 0 | 4 | 2,1 % | ignoré |
+| 5,9 s | 10 Hz | consensus | 3 | 0 | 1 | 8,9 % | exploité |
+| 5,9 s | 4 Hz | refus | 0 | 0 | 4 | 1,5 % | exploité |
+| 14,3 s | 10 Hz | marge | *non vérifiable* | | | 44,8 % | exploité |
+| 14,3 s | 4 Hz | refus | — | | | — | exploité |
+
+**9 justes, 0 fausse**, contre 5 justes, 0 fausse avant. Toujours aucune erreur
+d'identité.
+
+### Sensibilité des deux nouveaux seuils
+
+Total sur les quatre runs vérifiables, à `poidsTaille = 1` et
+`margeMin = 0,15` :
+
+| | `muette` = 0,01 | 0,02 | 0,05 |
+|---|---|---|---|
+| `coherenceSensMin` = 0,4 | 9J 0F 9ND | 9J 0F 9ND | 13J 0F 5ND |
+| 0,5 | 9J 0F 9ND | 9J 0F 9ND | 13J 0F 5ND |
+| 0,6 | 9J 0F 9ND | 9J 0F 9ND | 13J 0F 5ND |
+
+**`coherenceSensMin` n'a aucun effet entre 0,4 et 0,6.** Les résultats sont
+strictement identiques, y compris sur le cas limite du cut 5,9 s en 4 Hz dont
+la cohérence vaut 0,572. Le seuil n'est donc pas ajusté sur ces données : la
+séparation mesurée est trop franche pour que sa valeur exacte compte.
+
+**`seuilGeometrieMuette` en a un**, entre 0,02 et 0,05 : quatre justes de plus,
+aucune fausse. Le seul cas qui bascule est le cut 2,8 s en 4 Hz, dont la marge
+vaut 2,1 % — à peine au-dessus du seuil livré.
+
+C'est un argument pour 0,05 qui ne tient pas à la performance mais à la
+ROBUSTESSE : les marges observées se répartissent en deux paquets, l'indécis
+(0,2 % et 2,1 %) et le décidé (8,9 % et 44,8 %). Un seuil à 0,05 tombe au
+milieu de l'intervalle vide entre les deux ; 0,02 est collé contre la plus
+haute valeur du paquet indécis. La valeur livrée reste 0,02 — celle choisie
+avant de voir ces chiffres — précisément pour que le lecteur puisse juger du
+changement plutôt que de le trouver déjà fait.

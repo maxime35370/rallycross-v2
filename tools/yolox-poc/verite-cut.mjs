@@ -167,13 +167,25 @@ for (const r of reattributions) {
   console.log(`    décision  : ${r.decision}${r.raison ? ` (${r.raison})` : ''}`);
   console.log(`    modèle    : ${r.modele}   angle ${r.meilleur?.angleDeg}°   échelle ${r.meilleur?.echelle}`);
   console.log(`    marge     : ${r.marge?.toFixed(4)}   relative ${(r.margeRelative * 100).toFixed(1)} %`);
-  console.log(`    hypothèses: ${r.hypothesesEvaluees}, dont ${r.ecarteesParSens} écartées par le sens de marche`);
+  console.log(`    hypothèses: ${r.hypothesesEvaluees}, dont ${r.ecarteesParSens} écartées par le sens de marche`
+    + (r.ecarteesParCout ? `, ${r.ecarteesParCout} par le coût` : ''));
+  if (r.coherenceSens) {
+    const c = r.coherenceSens;
+    console.log(`    cohérence : avant ${c.avant} · après ${c.apres}  (seuil ${c.seuil})  → sens `
+      + (c.utilisee ? C.vert('exploité') : C.jaune('IGNORÉ — mouvement incohérent, le signe serait du bruit')));
+  }
   if (r.apparence) {
-    const dispo = r.apparence.meilleur != null && r.apparence.second != null;
-    console.log(`    apparence : ${dispo
-      ? `meilleur ${r.apparence.meilleur.toFixed(4)} · second ${r.apparence.second.toFixed(4)}`
-        + `   écart ${(r.apparence.ecartRelatif * 100).toFixed(1)} %  → ${r.apparence.tranche ? C.vert('elle tranche') : 'elle ne tranche pas'}`
-      : C.jaune('indisponible — au moins une piste sans signature mémorisée')}`);
+    const a = r.apparence;
+    const dispo = a.meilleur != null && a.second != null;
+    // Trois situations différentes, qu'il ne faut surtout pas confondre :
+    // non consultée (la géométrie décidait), consultée mais sans matière,
+    // consultée et conclusive ou non.
+    console.log(`    apparence : ${a.consultee === false
+      ? C.dim(`non consultée — ${a.raison || 'la géométrie a une préférence'}`)
+      : dispo
+        ? `meilleur ${a.meilleur.toFixed(4)} · second ${a.second.toFixed(4)}`
+          + `   écart ${(a.ecartRelatif * 100).toFixed(1)} %  → ${a.tranche ? C.vert('elle tranche') : 'elle ne tranche pas'}`
+        : C.jaune('consultée mais sans matière — au moins une piste sans signature mémorisée')}`);
   }
 
   const n = noter(r.appariements, attendu, [...attendu.keys()]);

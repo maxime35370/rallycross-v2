@@ -235,11 +235,13 @@ describe('coupure Kerlabo — le cas réel', () => {
     const justes = (l) => noter(l.appariements.map(a => ({ ...a })), KERLABO_VERITE, [1, 2, 3, 4]);
     // Sans terme de taille et sans exigence de marge, on apparie les quatre —
     // dont une fausse. C'est exactement ce qu'on refuse.
-    const sansTaille = lignes.find(l => l.poidsTaille === 0 && l.margeMin === 0 && l.margeApparenceMin === 0.05);
+    const sansTaille = lignes.find(l => l.poidsTaille === 0 && l.margeMin === 0 && l.margeApparenceMin === REGLAGES.margeApparenceMin
+      && l.coherenceSensMin === REGLAGES.coherenceSensMin && l.seuilGeometrieMuette === REGLAGES.seuilGeometrieMuette);
     expect(justes(sansTaille).fausses).toBe(1);
     // Avec le terme de taille et aucune exigence de marge, les quatre sont
     // justes : le meilleur appariement EST la vérité.
-    const avecTaille = lignes.find(l => l.poidsTaille === 1 && l.margeMin === 0 && l.margeApparenceMin === 0.05);
+    const avecTaille = lignes.find(l => l.poidsTaille === 1 && l.margeMin === 0 && l.margeApparenceMin === REGLAGES.margeApparenceMin
+      && l.coherenceSensMin === REGLAGES.coherenceSensMin && l.seuilGeometrieMuette === REGLAGES.seuilGeometrieMuette);
     expect(justes(avecTaille)).toMatchObject({ justes: 4, fausses: 0, nonDecidees: 0 });
     // Et dès qu'on exige une marge, même minime, plus AUCUN appariement faux
     // sur toute la plage de poids essayée. C'est la propriété qui compte :
@@ -251,8 +253,93 @@ describe('coupure Kerlabo — le cas réel', () => {
     // réponse (3 au lieu de 4) et n'évite aucune erreur. Un seul cut ne
     // suffit pas à décider de descendre — la table est là pour ça.
     const retenu = lignes.find(l => l.poidsTaille === REGLAGES.poidsTaille
-      && l.margeMin === REGLAGES.margeMin && l.margeApparenceMin === REGLAGES.margeApparenceMin);
+      && l.margeMin === REGLAGES.margeMin && l.margeApparenceMin === REGLAGES.margeApparenceMin
+      && l.coherenceSensMin === REGLAGES.coherenceSensMin
+      && l.seuilGeometrieMuette === REGLAGES.seuilGeometrieMuette);
     expect(justes(retenu)).toMatchObject({ justes: 3, fausses: 0, nonDecidees: 1 });
+  });
+});
+
+// ═══════════════════════════════════════════════
+// SECOND CAS RÉEL — coupure Kerlabo à 2,8 s, images 164 → 170
+//
+// La caméra passe de DERRIÈRE la grille de départ à DEVANT elle. L'ordre
+// gauche-droite des voitures dans l'image s'inverse alors NÉCESSAIREMENT :
+// c'est une propriété du point de vue, pas un hasard de cadrage. Vérité
+// annotée : A1→B5, A2→B4, A3→B3, A4→B2, A5→B1.
+//
+// Deux difficultés s'y ajoutent, et c'est ce qui en fait le cas décisif :
+//   · les cinq voitures sont ALIGNÉES en file des deux côtés — un nuage
+//     quasi-1D ne contraint presque rien, et deux hypothèses se tiennent à
+//     0,0001 de coût l'une de l'autre ;
+//   · elles sont À L'ARRÊT (le départ est à 3,0 s), donc les vitesses
+//     estimées sont du bruit, et leur signe ne doit éliminer aucune
+//     hypothèse.
+// ═══════════════════════════════════════════════
+
+const GRILLE_A = [
+  { id: 1, box: [616, 609, 742, 681], vitesse: { vx: 226, vy: -13 } },
+  { id: 2, box: [750, 608, 859, 681], vitesse: { vx: 100, vy: -19 } },
+  { id: 3, box: [886, 617, 989, 690], vitesse: { vx: 27, vy: -9 } },
+  { id: 4, box: [1023, 623, 1128, 686], vitesse: { vx: -112, vy: -17 } },
+  { id: 5, box: [1148, 622, 1264, 695], vitesse: { vx: -244, vy: -20 } },
+];
+const GRILLE_B = [
+  { id: 11, box: [204, 453, 532, 656], vitesse: { vx: 15, vy: 129 } },
+  { id: 12, box: [485, 457, 768, 657], vitesse: { vx: -31, vy: 177 } },
+  { id: 13, box: [708, 468, 1031, 687], vitesse: { vx: -272, vy: 221 } },
+  { id: 14, box: [997, 469, 1282, 684], vitesse: { vx: -201, vy: 241 } },
+  { id: 15, box: [1261, 485, 1528, 696], vitesse: { vx: -218, vy: 155 } },
+];
+const GRILLE_VERITE = { 1: 15, 2: 14, 3: 13, 4: 12, 5: 11 };
+
+describe('coupure Kerlabo à 2,8 s — caméra arrière puis caméra avant', () => {
+  it('mesure que le sens de marche est ILLISIBLE sur des voitures à l\'arrêt', () => {
+    const A = configuration(GRILLE_A), B = configuration(GRILLE_B);
+    // Les vitesses du groupe A pointent dans des sens opposés et s'annulent.
+    expect(A.coherence).toBeLessThan(0.2);
+    // Celles du groupe B, voitures lancées, sont cohérentes.
+    expect(B.coherence).toBeGreaterThan(0.9);
+    // Donc aucune hypothèse n'est écartée sur le signe d'un bruit.
+    expect(analyser(GRILLE_A, GRILLE_B).ecarteesParSens).toBe(0);
+  });
+
+  it('n\'ordonne PAS les voitures par leur x : l\'inversion est attendue', () => {
+    // A1 est le plus à gauche, sa vérité B5 est le plus à droite. Un
+    // appariement qui préserverait l'ordre en x serait faux de bout en bout.
+    const r = analyser(GRILLE_A, GRILLE_B);
+    const n = noter(r.appariements, GRILLE_VERITE, [1, 2, 3, 4, 5]);
+    expect(n.fausses).toBe(0);
+    expect(n.justes).toBe(5);
+  });
+
+  it('l\'apparence n\'est PAS ce qui décide ici — la géométrie suffit une fois le sens neutralisé', () => {
+    const r = analyser(GRILLE_A, GRILLE_B);
+    // Sans mémoire d'apparence dans ce jeu de données, aucun départage par
+    // apparence n'est possible : le résultat vient de la seule géométrie.
+    expect(r.apparence?.tranche ?? false).toBe(false);
+  });
+
+  it('le contrôle de sens, s\'il s\'appliquait, écarterait la moitié des hypothèses', () => {
+    // Forcer le seuil à zéro rend le bruit « lisible » : c'est l'ancien
+    // comportement, et il filtre massivement sur une information qui n'en
+    // est pas une.
+    const r = analyser(GRILLE_A, GRILLE_B, { coherenceSensMin: 0 });
+    expect(r.ecarteesParSens).toBe(r.hypothesesEvaluees / 2);
+  });
+
+  it('la garde de cohérence est insensible à sa valeur exacte entre 0,4 et 0,6', () => {
+    for (const coherenceSensMin of [0.4, 0.5, 0.6]) {
+      const r = analyser(GRILLE_A, GRILLE_B, { coherenceSensMin });
+      expect(r.ecarteesParSens).toBe(0);
+      expect(noter(r.appariements, GRILLE_VERITE, [1, 2, 3, 4, 5])).toMatchObject({ justes: 5, fausses: 0 });
+    }
+    // Et sur le cut de 5,9 s, où le mouvement est cohérent des deux côtés,
+    // la même plage laisse le contrôle s'exercer pleinement.
+    for (const coherenceSensMin of [0.4, 0.5, 0.6]) {
+      const r = analyser(KERLABO_A, KERLABO_B, { coherenceSensMin });
+      expect(r.ecarteesParSens).toBe(r.hypothesesEvaluees / 2);
+    }
   });
 });
 
