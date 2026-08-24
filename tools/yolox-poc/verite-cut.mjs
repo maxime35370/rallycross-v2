@@ -38,10 +38,20 @@ function iou(a, b) {
   return u > 0 ? inter / u : 0;
 }
 
-/** Instant du journal le plus proche de `t`. */
-function instantPres(journal, t) {
+/**
+ * Instant du journal le plus proche de `t`, DU BON CÔTÉ de la coupure.
+ *
+ * `cote` vaut -1 pour le plan d'avant (on n'accepte que t' ≤ t) et +1 pour
+ * celui d'après (t' ≥ t). Sans cette contrainte, une grille à 4 Hz place
+ * l'instant le plus proche de la dernière image propre AVANT de l'autre côté
+ * du cut — on compare alors les boîtes du plan A aux pistes du plan B, et
+ * plus rien ne se recouvre.
+ */
+function instantPres(journal, t, cote = 0) {
   let best = null, d = Infinity;
   for (const inst of journal) {
+    if (cote < 0 && inst.t > t + 1e-9) continue;
+    if (cote > 0 && inst.t < t - 1e-9) continue;
     const e = Math.abs(inst.t - t);
     if (e < d) { d = e; best = inst; }
   }
@@ -112,8 +122,8 @@ console.log(`\n${C.bold('VÉRITÉ AU CUT')}  ${C.dim(fRapport.split('/').pop())}
 console.log(`  méthode : ${rapport.methodeReattribution || C.jaune('aucune — réattribution désactivée')}`);
 console.log(`  pas     : ${rapport.reglages?.pas} s   coupures appliquées : ${JSON.stringify(rapport.coupures)}`);
 
-const av = instantPres(journal, verite.tAvant);
-const ap = instantPres(journal, verite.tApres);
+const av = instantPres(journal, verite.tAvant, -1);
+const ap = instantPres(journal, verite.tApres, +1);
 if (!av || !ap) { console.error('  journal vide'); process.exit(1); }
 console.log(`  instants : ${av.instant.t} s (écart ${(av.ecart * 1000).toFixed(0)} ms) → `
   + `${ap.instant.t} s (écart ${(ap.ecart * 1000).toFixed(0)} ms)`);
