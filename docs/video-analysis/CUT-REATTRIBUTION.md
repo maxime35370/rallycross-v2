@@ -625,17 +625,33 @@ la décision et ajouterait une erreur.
 
 ### Le sens de marche n'est lu que s'il est cohérent
 
-Avant le départ, les voitures sont à l'arrêt sur la grille. Leurs vitesses
-estimées pointent dans des sens opposés — +27, −244, +100, +226, −112 px/s —
-et leur somme ne laisse qu'une dérive verticale minuscule. Le contrôle de sens
-écartait la moitié des hypothèses sur le signe de ce bruit.
+Avant le départ, les vitesses estimées pointent dans des sens opposés — +226,
++100, +27, −112, −244 px/s. On pourrait croire à du bruit ; c'en est le
+contraire exact.
+
+Ces vitesses sont **parfaitement ordonnées avec la position** (centres à
+x = 671, 803, 939, 1079, 1210) et changent de signe exactement au centre de
+l'image. C'est un flux convergent, signature d'une homothétie : zoom arrière
+ou éloignement d'ensemble. Confirmation : sur ce plan, le rayon du groupe
+passe de 313 à 192 px (÷1,63) pendant que le côté des boîtes passe de 160 à
+92 px (÷1,74) — le même facteur.
+
+Le signe de `vx` ne dit donc rien du sens de la course ici : il dit de quel
+côté du centre optique se trouve la voiture. Le contrôle de sens écartait la
+moitié des hypothèses là-dessus.
 
 `coherence = |Σv| / Σ|v|` sépare franchement les deux régimes :
 
-| situation | cohérence |
-|---|---|
-| grille de départ, voitures à l'arrêt | **0,109 – 0,127** |
-| voitures lancées | **0,572 – 0,973** |
+| situation | cohérence | nature du mouvement |
+|---|---|---|
+| grille de départ | **0,109 – 0,127** | homothétie (zoom / éloignement) |
+| voitures lancées | **0,572 – 0,973** | translation |
+
+La cohérence ne mesure donc pas « signal contre bruit » mais **la part de
+translation** dans le mouvement du groupe. Ce que le mouvement raconte quand
+elle est faible n'est pas perdu, seulement pas encore exploité : le facteur
+d'échelle dit si la caméra s'éloigne ou se rapproche, donc si le peloton est
+vu de dos ou de face.
 
 Le contrôle ne s'exerce que si les deux groupes dépassent `coherenceSensMin`.
 La cohérence est publiée dans chaque rapport, avec la mention explicite

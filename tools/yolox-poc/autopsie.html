@@ -1,0 +1,273 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Autopsie d'un trou de détection — image par image</title>
+<style>
+  :root { --bd:#d8d8d8; --bg:#fafafa; }
+  body { font:14px/1.5 system-ui,sans-serif; margin:0; padding:18px; background:var(--bg); color:#1b1b1b; }
+  h1 { font-size:1.15rem; margin:0 0 4px; } .sub { color:#666; margin:0 0 14px; }
+  .panneau { background:#fff; border:1px solid var(--bd); border-radius:8px; padding:12px 14px; margin-bottom:12px; }
+  .rangee { display:flex; gap:14px; align-items:center; flex-wrap:wrap; }
+  label { font-size:13px; } input[type=number]{ width:86px; }
+  table { border-collapse:collapse; width:100%; font-size:12.5px; }
+  th,td { border:1px solid var(--bd); padding:3px 6px; } th { background:#f0f0f0; position:sticky; top:0; }
+  td.num,th.num { text-align:right; font-variant-numeric:tabular-nums; }
+  button { font:inherit; padding:4px 10px; border:1px solid var(--bd); background:#fff; border-radius:4px; cursor:pointer; }
+  button:disabled { opacity:.4; cursor:default; }
+  progress { width:220px; }
+  video, canvas { display:none; }
+  .defile { max-height:420px; overflow:auto; }
+  .faible { color:#a15c00; } .forte { color:#0a6b2d; font-weight:600; }
+</style>
+
+<h1>Autopsie d'un trou de détection</h1>
+<p class="sub">
+  Détection <strong>pure</strong>, image par image, sans aucun suivi : ni association, ni piste, ni
+  prédiction. Le seuil est délibérément très bas pour voir <em>tout</em> ce que le modèle propose,
+  y compris ce que le banc rejetterait. Le but n'est pas de détecter mieux, c'est de savoir si une
+  voiture manquante est <strong>absente de l'image</strong> ou <strong>absente de la sortie du
+  modèle</strong> — deux causes qui n'appellent pas la même réponse.
+</p>
+
+<div class="panneau">
+  <p class="sub" style="margin:0 0 8px">
+    Méthode de mesure du flou : <strong><code id="methode">…</code></strong>.
+    Cet identifiant figure dans le JSON exporté ; s'il ne correspond pas au code attendu,
+    le navigateur sert une version en cache — recharge avec <kbd>Ctrl</kbd>+<kbd>Maj</kbd>+<kbd>R</kbd>.
+  </p>
+  <div class="rangee">
+    <label>Extrait + son <code>.json</code> :
+      <input type="file" id="pick" accept="video/*,application/json,.json" multiple></label>
+    <label>Modèle <select id="modele"></select></label>
+    <label>Début <input type="number" id="tDebut" step="0.001" value="10.500"></label>
+    <label>Fin <input type="number" id="tFin" step="0.001" value="13.500"></label>
+    <label>Seuil <input type="number" id="seuil" step="0.01" min="0.01" max="0.9" value="0.05"></label>
+    <label>IoU fusion <input type="number" id="iou" step="0.05" min="0.1" max="0.9" value="0.45"></label>
+  </div>
+  <div class="rangee" style="margin-top:8px">
+    <button id="lancer" disabled>Autopsier image par image</button>
+    <button id="exporter" disabled>Exporter le JSON</button>
+    <progress id="prog" value="0" max="1" style="display:none"></progress>
+    <span id="etat" class="sub" style="margin:0"></span>
+  </div>
+</div>
+
+<div class="panneau" id="panneauTable" style="display:none">
+  <h2 style="font-size:.95rem;margin:0 0 8px">Chaque image, chaque détection</h2>
+  <p class="sub" style="margin:0 0 8px">
+    <span class="forte">forte</span> = au-dessus du seuil du banc (0,30) · <span class="faible">faible</span> = entre
+    le seuil bas et 0,30. <code>bord</code> est la plus courte distance au cadre : à zéro, la voiture
+    est tronquée. <code>netteté</code> est la variance du laplacien sur la boîte, <code>rel.</code>
+    la même rapportée au contraste local.
+  </p>
+  <div class="defile"><table id="table"></table></div>
+</div>
+
+<video id="src" playsinline muted preload="auto"></video>
+<canvas id="cadre"></canvas><canvas id="tuile"></canvas>
+
+<script src="/__ort/ort.min.js"></script>
+<script type="module">
+import {
+  MODELS, DEFAULT_MODEL, VEHICLE_CLASS_IDS, letterbox, buildGrids,
+  decodeOutput, assertAnchorCount, mergeVehicleDetections,
+} from '/tools/yolox-poc/lib/detect.mjs';
+import { nettete, mouvement, distancesAuBord, METHODE_NETTETE } from '/tools/yolox-poc/lib/nettete.mjs';
+
+const ort = window.ort;
+ort.env.wasm.wasmPaths = '/__ort/';
+ort.env.wasm.numThreads = self.crossOriginIsolated
+  ? Math.min(4, navigator.hardwareConcurrency || 4) : 1;
+ort.env.logLevel = 'error';
+
+const $ = (id) => document.getElementById(id);
+$('methode').textContent = METHODE_NETTETE;
+
+const selModele = $('modele');
+selModele.innerHTML = Object.values(MODELS)
+  .map(m => `<option value="${m.id}">${m.label} · ${m.inputSize} px</option>`).join('');
+selModele.value = DEFAULT_MODEL;
+
+const video = $('src'), cadre = $('cadre'), tuile = $('tuile');
+const cadreCtx = cadre.getContext('2d', { willReadFrequently: true });
+const tuileCtx = tuile.getContext('2d', { willReadFrequently: true });
+let fps = 60, sidecar = null, resultat = null;
+
+const sessions = new Map();
+async function session(m) {
+  if (!sessions.has(m.id)) {
+    sessions.set(m.id, await ort.InferenceSession.create(`/__modele/${m.file}`, {
+      executionProviders: ['wasm'], graphOptimizationLevel: 'all',
+    }));
+  }
+  return sessions.get(m.id);
+}
+
+/** Vise le MILIEU de l'image n : (n + 0,5) / fps. */
+function allerA(n) {
+  return new Promise((ok, ko) => {
+    const fini = () => { video.removeEventListener('seeked', fini); ok(); };
+    video.addEventListener('seeked', fini, { once: true });
+    video.currentTime = (n + 0.5) / fps;
+    setTimeout(() => ko(new Error(`seek bloqué sur l'image ${n}`)), 15000);
+  });
+}
+
+function dessinerCadre() {
+  cadre.width = video.videoWidth; cadre.height = video.videoHeight;
+  cadreCtx.drawImage(video, 0, 0);
+  return cadre;
+}
+
+function preparer(src, size) {
+  tuile.width = size; tuile.height = size;
+  tuileCtx.fillStyle = '#727272'; tuileCtx.fillRect(0, 0, size, size);
+  const box = letterbox(src.width, src.height, size);
+  tuileCtx.drawImage(src, 0, 0, src.width, src.height, 0, 0, box.width, box.height);
+  const px = tuileCtx.getImageData(0, 0, size, size).data;
+  const n = size * size, data = new Float32Array(3 * n);
+  for (let i = 0; i < n; i++) {
+    data[i] = px[i * 4 + 2]; data[n + i] = px[i * 4 + 1]; data[2 * n + i] = px[i * 4];
+  }
+  return { tensor: new ort.Tensor('float32', data, [1, 3, size, size]), ratio: box.ratio };
+}
+
+$('lancer').addEventListener('click', () => autopsier().catch(e => { $('etat').textContent = e.message; }));
+
+async function autopsier() {
+  const modele = MODELS[selModele.value];
+  const seuil = Number($('seuil').value), iouThr = Number($('iou').value);
+  const n0 = Math.round(Number($('tDebut').value) * fps);
+  const n1 = Math.round(Number($('tFin').value) * fps);
+  if (!(n1 > n0)) { $('etat').textContent = 'la fin doit être après le début'; return; }
+
+  const s = await session(modele);
+  const grids = buildGrids(modele.inputSize);
+  $('lancer').disabled = true;
+  $('prog').style.display = ''; $('prog').max = n1 - n0 + 1; $('prog').value = 0;
+
+  const images = [];
+  let pixelsPrecedents = null;
+  const debut = performance.now();
+
+  for (let n = n0; n <= n1; n++) {
+    await allerA(n);
+    const src = dessinerCadre();
+    const { tensor, ratio } = preparer(src, modele.inputSize);
+    const sortie = await s.run({ images: tensor });
+    const brut = sortie[s.outputNames[0]].data;
+    assertAnchorCount(brut.length, modele.inputSize);
+    const brutes = decodeOutput(brut, grids, ratio, { scoreThreshold: seuil, classIds: VEHICLE_CLASS_IDS });
+    const dets = mergeVehicleDetections(brutes, iouThr);
+
+    const px = cadreCtx.getImageData(0, 0, cadre.width, cadre.height).data;
+    const detections = dets.map((d) => {
+      const net = nettete(px, cadre.width, cadre.height, d.box);
+      const mvt = pixelsPrecedents
+        ? mouvement(pixelsPrecedents, px, cadre.width, cadre.height, d.box) : null;
+      const [x1, y1, x2, y2] = d.box;
+      return {
+        box: d.box.map(v => Math.round(v)),
+        score: Number(d.score.toFixed(4)),
+        label: d.label || null,
+        largeur: Math.round(x2 - x1), hauteur: Math.round(y2 - y1),
+        aire: Math.round((x2 - x1) * (y2 - y1)),
+        bord: distancesAuBord(d.box, cadre.width, cadre.height),
+        nettete: net, mouvement: mvt,
+      };
+    });
+    // Netteté de l'IMAGE ENTIÈRE : la référence contre laquelle lire celle
+    // des boîtes. Un plan globalement flou et une voiture floue dans un plan
+    // net ne racontent pas la même histoire.
+    images.push({
+      image: n, t: Number((n / fps).toFixed(4)),
+      detections,
+      netteteImage: nettete(px, cadre.width, cadre.height, [0, 0, cadre.width, cadre.height]),
+      mouvementImage: pixelsPrecedents
+        ? mouvement(pixelsPrecedents, px, cadre.width, cadre.height, [0, 0, cadre.width, cadre.height]) : null,
+    });
+    pixelsPrecedents = px;
+    $('prog').value = n - n0 + 1;
+    $('etat').textContent = `${n - n0 + 1}/${n1 - n0 + 1} · image ${n} · ${dets.length} détection(s)`;
+  }
+
+  const secondes = (performance.now() - debut) / 1000;
+  $('prog').style.display = 'none'; $('lancer').disabled = false; $('exporter').disabled = false;
+  $('etat').textContent = `${images.length} images en ${secondes.toFixed(1)} s`;
+
+  resultat = {
+    schema: 'rx-autopsie/1',
+    methodeNettete: METHODE_NETTETE,
+    modele: { id: modele.id, label: modele.label, inputSize: modele.inputSize },
+    reglages: { seuil, iouFusion: iouThr, seuilBanc: 0.30 },
+    extrait: sidecar ? { file: sidecar.file, fps: sidecar.fps, clipStart: sidecar.clipStart } : null,
+    dimensions: { largeur: cadre.width, hauteur: cadre.height },
+    fenetre: { premiere: n0, derniere: n1, tDebut: n0 / fps, tFin: n1 / fps },
+    images,
+    createdAt: new Date().toISOString(),
+  };
+  window.__autopsie = resultat;
+  remplir(images);
+}
+
+function remplir(images) {
+  $('panneauTable').style.display = '';
+  const lignes = [];
+  for (const im of images) {
+    if (!im.detections.length) {
+      lignes.push(`<tr><td class="num">${im.image}</td><td class="num">${im.t.toFixed(4)}</td>`
+        + `<td colspan="7" style="color:#b00">aucune détection</td>`
+        + `<td class="num">${im.netteteImage?.variance ?? ''}</td>`
+        + `<td class="num">${im.mouvementImage?.moyenne ?? ''}</td></tr>`);
+      continue;
+    }
+    im.detections.forEach((d, i) => {
+      lignes.push(`<tr>`
+        + `<td class="num">${i ? '' : im.image}</td><td class="num">${i ? '' : im.t.toFixed(4)}</td>`
+        + `<td class="num ${d.score >= 0.30 ? 'forte' : 'faible'}">${d.score.toFixed(3)}</td>`
+        + `<td>${d.label ?? ''}</td>`
+        + `<td class="num">${d.largeur}×${d.hauteur}</td>`
+        + `<td class="num">${d.box.join(', ')}</td>`
+        + `<td class="num">${d.bord.min}</td>`
+        + `<td class="num">${d.nettete?.variance ?? ''}</td>`
+        + `<td class="num">${d.nettete?.relative ?? ''}</td>`
+        + `<td class="num">${i ? '' : (im.netteteImage?.variance ?? '')}</td>`
+        + `<td class="num">${i ? '' : (im.mouvementImage?.moyenne ?? '')}</td></tr>`);
+    });
+  }
+  $('table').innerHTML = '<thead><tr><th class="num">img</th><th class="num">t</th>'
+    + '<th class="num">score</th><th>classe</th><th class="num">taille</th><th class="num">boîte</th>'
+    + '<th class="num">bord</th><th class="num">netteté</th><th class="num">rel.</th>'
+    + '<th class="num">netteté img</th><th class="num">mouvement img</th></tr></thead><tbody>'
+    + lignes.join('') + '</tbody>';
+}
+
+$('pick').addEventListener('change', async (e) => {
+  const liste = Array.from(e.target.files);
+  const film = liste.find(f => /\.(mp4|webm|mov|mkv|m4v)$/i.test(f.name) || f.type.startsWith('video/'));
+  if (!film) { $('etat').textContent = 'aucune vidéo dans la sélection'; return; }
+  for (const json of liste.filter(f => /\.json$/i.test(f.name))) {
+    try {
+      const brut = JSON.parse(await json.text());
+      if (brut?.schema === 'rx-extract/1') { sidecar = brut; fps = brut.fps || 60; }
+      else if (brut?.extrait?.fps) { sidecar = brut.extrait; fps = brut.extrait.fps; }
+    } catch { /* illisible : on garde la cadence supposée */ }
+  }
+  video.src = URL.createObjectURL(film);
+  if (video.readyState < 1) {
+    await new Promise((ok, ko) => {
+      video.addEventListener('loadedmetadata', ok, { once: true });
+      setTimeout(() => ko(new Error('métadonnées jamais chargées')), 15000);
+    });
+  }
+  $('lancer').disabled = false;
+  $('etat').textContent = `${film.name} · ${video.videoWidth}×${video.videoHeight} · ${fps} img/s`
+    + (sidecar ? ' · cadence lue dans le sidecar' : ' · cadence SUPPOSÉE, fournis le .json');
+});
+
+$('exporter').addEventListener('click', () => {
+  const a = document.createElement('a');
+  a.download = `rapport-autopsie-${resultat.fenetre.premiere}-${resultat.fenetre.derniere}.json`;
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(resultat, null, 2)], { type: 'application/json' }));
+  a.click();
+});
+</script>

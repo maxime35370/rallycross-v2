@@ -113,16 +113,26 @@ export const REGLAGES = {
   // Cohérence minimale du mouvement pour que le SENS DE MARCHE soit une
   // information exploitable.
   //
-  // La cohérence vaut |Σv| / Σ|v| : 1 quand toutes les voitures vont dans le
-  // même sens, 0 quand leurs vitesses s'annulent. Mesuré : 0,11 et 0,13 sur
-  // la grille de départ, voitures à l'arrêt — les vitesses estimées y pointent
-  // dans des sens opposés (+27, −244, +100, +226, −112 px/s) et leur somme ne
-  // laisse qu'une dérive verticale minuscule. Contre 0,87 à 0,97 sur des
-  // voitures lancées.
+  // La cohérence vaut |Σv| / Σ|v| : elle mesure la part de TRANSLATION dans
+  // le mouvement du groupe. Elle vaut 1 quand toutes les voitures vont dans
+  // le même sens, et tombe vers 0 dès que le mouvement est d'une autre nature.
   //
-  // Filtrer la moitié des hypothèses sur le signe d'un bruit est un coup de
-  // dé. Il est bien tombé sur les trois cuts mesurés ; rien ne garantit qu'il
-  // tombe bien la prochaine fois.
+  // Mesuré à 0,11 sur la grille de départ de Kerlabo. Ce n'est PAS du bruit,
+  // contrairement à ce qu'on pourrait croire : les vitesses y sont
+  // parfaitement ordonnées avec la position (+226, +100, +27, −112, −244 px/s
+  // pour des centres à x = 671, 803, 939, 1079, 1210) et changent de signe
+  // exactement au centre de l'image. C'est un flux convergent — un zoom
+  // arrière ou un éloignement d'ensemble. Le rayon du groupe et le côté des
+  // boîtes y rétrécissent du même facteur, 1,63 contre 1,74.
+  //
+  // Le signe de vx ne dit donc rien du sens de la course dans ce cas : il dit
+  // de quel côté du centre optique se trouve la voiture. Éliminer la moitié
+  // des hypothèses là-dessus est un coup de dé — il est bien tombé sur les
+  // trois cuts mesurés, rien ne garantit la suite.
+  //
+  // Ce que le mouvement raconte alors n'est pas perdu, seulement pas encore
+  // exploité : le facteur d'échelle dit si la caméra s'éloigne ou se
+  // rapproche, donc si le peloton est vu de dos ou de face.
   coherenceSensMin: 0.5,
   // Deux points suffisent à poser une similitude ; en dessous il n'y a pas
   // de configuration, seulement un point.
@@ -163,9 +173,10 @@ export function configuration(elements) {
   }
   const l = Math.hypot(dx, dy);
   const direction = l > 1e-9 ? [dx / l, dy / l] : null;
-  // COHÉRENCE du mouvement : |Σv| / Σ|v|. Elle dit si la direction ci-dessus
-  // décrit un déplacement d'ensemble ou la somme de cinq bruits qui
-  // s'annulent. Sans elle, les deux se ressemblent : un vecteur unitaire.
+  // COHÉRENCE du mouvement : |Σv| / Σ|v|, c'est-à-dire la part de TRANSLATION.
+  // Elle distingue un déplacement d'ensemble d'un mouvement d'une autre
+  // nature — zoom, rotation, ou bruit — que la direction seule ne saurait
+  // départager : dans tous les cas elle rend un vecteur unitaire.
   const coherence = somme > 1e-9 ? l / somme : 0;
 
   return {
