@@ -61,6 +61,21 @@ export const DEFAULTS = {
   dureeAvantAbandon: 0.80,      // sans détection, avant abandon
   dureeOcclusionMax: 2.00,      // idem, pour une occlusion identifiée
   dureeReactivation: 1.50,      // fenêtre de repêchage d'une piste abandonnée
+  // Durée sans mesure au-delà de laquelle une piste ENCORE VIVANTE devient
+  // repêchable par distance, sans attendre d'être déclarée perdue.
+  //
+  // Mesuré sur Kerlabo : sur 1 260 repêchages possibles écartés, 461 le sont
+  // parce que la piste n'est « pas encore perdue », et 7 seulement parce que
+  // la détection est hors de portée. Une piste extrapolée depuis quelques
+  // dixièmes était coincée entre deux mécanismes — trop vivante pour être
+  // repêchée, trop décalée pour passer la porte IoU de l'association, la
+  // prédiction ayant pris 150 px de retard. Elle mourait dans cet interstice.
+  //
+  // Ceci n'élargit AUCUNE porte d'association : le repêchage ne voit que les
+  // détections libres, en dernier recours avant de créer une identité neuve,
+  // et garde ses propres garde-fous (portée, gabarit, piste confirmée, pas
+  // suspendue par une coupure).
+  dureeAvantRepechage: 0.30,
   porteeReactivation: 1.5,      // distance de repêchage, en largeurs de boîte
   dureeConfirmation: 0.40,      // âge minimal d'une piste avant qu'elle compte
   detectionsConfirmation: 3,    // et nombre de détections exigées
@@ -487,6 +502,8 @@ export class Suivi {
     this.dernierRattrapage = null;
     this.doublonsEcartes = 0;
     this.refus = [];
+    // Pourquoi chaque repêchage possible a échoué — mesure seule.
+    this.reactivationsRefusees = [];
     this.journal = [];
     this.coupures = [];                // { t, suspendues: [id…], reattribution }
     // Moteur d'appariement INJECTÉ. Le suivi fournit ce qu'il observe — une
@@ -1097,18 +1114,41 @@ export class Suivi {
     const o = this.opt;
     const [dx, dy] = centre(det.box);
     let meilleure = null, meilleurEcart = Infinity;
+    // Pourquoi le repêchage n'a PAS eu lieu. Purement descriptif : aucun test
+    // n'est modifié, on enregistre seulement le premier verrou rencontré pour
+    // chaque piste candidate. Sans cela, un mécanisme qui ne se déclenche
+    // jamais est indiscernable d'un mécanisme absent.
+    const bloques = [];
     for (const p of this.pistes) {
       // Repêcher à travers une coupure serait fabriquer une continuité que
       // rien n'atteste : la position d'avant ne dit rien de celle d'après.
-      if (p.suspendue || deja.has(p) || p.state !== ETATS.LOST || !p.confirmee) continue;
+      if (p.suspendue) { bloques.push({ id: p.id, verrou: 'suspendue' }); continue; }
+      if (deja.has(p)) { bloques.push({ id: p.id, verrou: 'deja_reprise' }); continue; }
+      // Perdue, ou vivante mais sans mesure depuis assez longtemps pour que
+      // sa position extrapolée ne vaille plus grand-chose.
+      const decrochee = p.state === ETATS.LOST
+        || (p.sansDetection ?? 0) >= o.dureeAvantRepechage - 1e-9;
+      if (!decrochee) { bloques.push({ id: p.id, verrou: 'pas_encore_decrochee' }); continue; }
+      // Une piste vivante ne se repêche pas sur une détection alors qu'elle
+      // vient d'en recevoir une : ce serait deux boîtes pour une voiture.
+      if (p.boiteAssociee) { bloques.push({ id: p.id, verrou: 'deja_servie' }); continue; }
+      if (!p.confirmee) { bloques.push({ id: p.id, verrou: 'jamais_confirmee' }); continue; }
       const age = t - p.lastSeen;
-      if (age > o.dureeReactivation) continue;
-      if (rapportTaille(p.boitePredite, det.box) > o.maxSizeRatio) continue;
+      if (age > o.dureeReactivation) { bloques.push({ id: p.id, verrou: 'trop_ancienne', age: Number(age.toFixed(2)) }); continue; }
+      const ratio = rapportTaille(p.boitePredite, det.box);
+      if (ratio > o.maxSizeRatio) { bloques.push({ id: p.id, verrou: 'ratio_taille', ratio: Number(ratio.toFixed(2)) }); continue; }
       const [px, py] = centre(p.boitePredite);
       const [w, h] = taille(p.boitePredite);
       const portee = Math.max(w, h) * o.porteeReactivation;
       const ecart = Math.hypot(dx - px, dy - py);
-      if (ecart <= portee && ecart < meilleurEcart) { meilleurEcart = ecart; meilleure = p; }
+      if (ecart > portee) {
+        bloques.push({ id: p.id, verrou: 'hors_portee', ecart: Math.round(ecart), portee: Math.round(portee) });
+        continue;
+      }
+      if (ecart < meilleurEcart) { meilleurEcart = ecart; meilleure = p; }
+    }
+    if (!meilleure && bloques.length) {
+      this.reactivationsRefusees.push({ t: Number(t.toFixed(3)), boite: det.box.map(v => Math.round(v)), score: det.score, bloques });
     }
     return meilleure;
   }
@@ -1611,6 +1651,16 @@ export function mesurer(suivi, { cible = 5, tV1 = null } = {}) {
         // aucune ne traverse tant qu'il n'y a pas de réattribution.
         suspenduesTotal: suivi.coupures.reduce((t, c) => t + c.suspendues.length, 0),
         reattribuees: pistes.filter(p => p.ancetre != null).length,
+        // Le repêchage d'une piste abandonnée est le seul mécanisme prévu
+        // pour rattraper un trou trop long. Compter ses ÉCHECS par verrou dit
+        // s'il est mal réglé ou simplement jamais atteint.
+        reactivationsRefusees: (() => {
+          const par = {};
+          for (const r of suivi.reactivationsRefusees) {
+            for (const b of r.bloques) par[b.verrou] = (par[b.verrou] || 0) + 1;
+          }
+          return { instants: suivi.reactivationsRefusees.length, parVerrou: par };
+        })(),
         // Le rapport de chaque réattribution, tel que le moteur l'a rendu :
         // modèle gagnant, marge, second, balayage des seuils. Sans lui, un
         // `survivantesDepart` en hausse ne se distingue pas d'un appariement

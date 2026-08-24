@@ -13,7 +13,7 @@ import { iou } from '../tools/yolox-poc/lib/detect.mjs';
 import {
   ETATS, DEFAULTS, RAISONS, REFUS, Suivi, Predicteur, hungarian, decalageCamera,
   estimerDecalageGlobal, rapportTaille, recouvrement, mesurer, signauxSuspects, concorder,
-  detecterRuptures, ventilerAutourDesRuptures, coherenceSpatiale,
+  detecterRuptures, ventilerAutourDesRuptures, coherenceSpatiale, reinitialiserIds,
 } from '../tools/yolox-poc/lib/track.mjs';
 
 /** Boîte carrée centrée, pour écrire des scénarios lisibles. */
@@ -1159,6 +1159,65 @@ describe('mémoire d\'apparence des pistes', () => {
 // repartent de zéro. C'est volontairement le PIRE cas — il donne la valeur
 // contre laquelle une réattribution devra prouver son gain.
 // ═══════════════════════════════════════════════
+
+describe('repêchage d\'une piste décrochée mais encore vivante', () => {
+  /** Une voiture lancée, un trou de `sauts` pas, puis elle réapparaît décalée. */
+  const scenario = (sauts, decalage, options = {}) => {
+    reinitialiserIds();
+    const s = new Suivi({ dt: 0.1, ...options });
+    let x = 300;
+    for (let k = 0; k < 8; k++) { s.pas(k * 0.1, [det(B(x, 500))]); x += 40; }
+    const idAvant = s.pistes[0].id;
+    for (let k = 8; k < 8 + sauts; k++) { s.pas(k * 0.1, []); x += 40; }
+    // Elle revient là où la prédiction amortie ne l'attend plus.
+    const inst = s.pas((8 + sauts) * 0.1, [det(B(x + decalage, 500))]);
+    return { s, idAvant, inst };
+  };
+
+  it('reprend l\'identité au lieu d\'en créer une neuve', () => {
+    const { s, idAvant, inst } = scenario(4, 90);
+    expect(inst.tracks.map(t => t.id)).toContain(idAvant);
+    expect(s.pistes.filter(p => p.state !== ETATS.LOST)).toHaveLength(1);
+  });
+
+  it('sans la fenêtre de repêchage, la même voiture devient une identité neuve', () => {
+    // `dureeAvantRepechage` très grand : le repêchage attend que la piste
+    // soit déclarée perdue, comme avant. La piste d'origine survit alors sans
+    // mesure, extrapolée dans le vide, pendant qu'une identité de plus naît
+    // sur la détection décalée — l'interstice exact que le diagnostic a
+    // mesuré, 461 fois sur la séquence de Kerlabo.
+    const avec = scenario(4, 90);
+    const sans = scenario(4, 90, { dureeAvantRepechage: 99 });
+    const servie = (r) => r.inst.tracks.find(t => t.id === r.idAvant)?.boiteAssociee;
+    expect(servie(avec)).toBeTruthy();
+    expect(servie(sans)).toBeFalsy();
+    expect(sans.inst.tracks.length).toBeGreaterThan(avec.inst.tracks.length);
+  });
+
+  it('ne repêche PAS une piste qui vient d\'être servie', () => {
+    // Deux voitures : celle de gauche est détectée à cet instant, elle ne
+    // doit pas en plus absorber la détection de sa voisine.
+    reinitialiserIds();
+    const s = new Suivi({ dt: 0.1 });
+    for (let k = 0; k < 8; k++) s.pas(k * 0.1, [det(B(300 + 40 * k, 500)), det(B(900 + 40 * k, 500))]);
+    const avant = s.pistes.map(p => p.id);
+    const inst = s.pas(0.8, [det(B(620, 500)), det(B(1220, 500))]);
+    // chaque piste garde SA voiture, aucune n'en prend deux
+    expect(inst.tracks.filter(t => t.boiteAssociee)).toHaveLength(2);
+    expect(inst.tracks.map(t => t.id).sort()).toEqual(avant.sort());
+  });
+
+  it('ne repêche jamais à travers une coupure', () => {
+    reinitialiserIds();
+    const s = new Suivi({ dt: 0.1 });
+    let x = 300;
+    for (let k = 0; k < 8; k++) { s.pas(k * 0.1, [det(B(x, 500))]); x += 40; }
+    const idAvant = s.pistes[0].id;
+    s.couper(0.8);
+    const inst = s.pas(0.9, [det(B(x + 90, 500))]);
+    expect(inst.tracks.map(t => t.id)).not.toContain(idAvant);
+  });
+});
 
 describe('coupure de plan', () => {
   const roulerAvecCoupure = (opts = {}) => {
