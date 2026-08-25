@@ -19,7 +19,7 @@
    modifié : c'est une mesure. */
 
 import { readFileSync } from 'node:fs';
-import { estimerDecalageGlobal, hungarian, rapportTaille } from './lib/track.mjs';
+import { estimerDecalageGlobal, hungarian, rapportTaille, rattrapageRecevable } from './lib/track.mjs';
 import { iou } from './lib/detect.mjs';
 
 const C = {
@@ -77,8 +77,10 @@ for (const j of suivi.journal) {
   const sans = affecter(P, dets);
   const decalees = P.map(b => [b[0] + d.dx, b[1] + d.dy, b[2] + d.dx, b[3] + d.dy]);
   const avec = affecter(decalees, dets);
-  const retenu = avec.paires.length > sans.paires.length;
-  if (!retenu) continue;
+  // La décision vient de la bibliothèque : un outil qui recopierait la règle
+  // mentirait dès qu'on la corrige.
+  const verdict = rattrapageRecevable(sans, avec);
+  if (!verdict.recevable) continue;
   retenus += 1;
 
   // Une piste CHANGE de partenaire : c'est la signature d'une rotation.
@@ -108,6 +110,39 @@ for (const j of suivi.journal) {
   }
 }
 
-console.log(`\n  ${C.bold('Bilan')}  ${retenus} décalage(s) retenu(s) : `
+// ── ce que le run a RÉELLEMENT appliqué ──
+//
+// Le rejeu ci-dessus reconstitue le lot de détections ; il approxime. Le
+// décalage effectivement appliqué, lui, se lit sans ambiguïté dans l'écart
+// entre prédiction brute et prédiction compensée, identique pour toutes les
+// pistes d'un même pas. Les rapports récents portent en plus le verdict du
+// suivi lui-même.
+const mediane = (a) => { const t = [...a].sort((x, y) => x - y); return t[Math.floor(t.length / 2)]; };
+const appliques = [];
+for (const j of suivi.journal) {
+  const dx = [], dy = [];
+  for (const tr of j.tracks) {
+    if (tr.boiteAvant && tr.boiteCompensee) {
+      dx.push(tr.boiteCompensee[0] - tr.boiteAvant[0]);
+      dy.push(tr.boiteCompensee[1] - tr.boiteAvant[1]);
+    }
+  }
+  if (!dx.length) continue;
+  const mx = mediane(dx), my = mediane(dy);
+  if (Math.abs(mx) < 40 && Math.abs(my) < 40) continue;
+  appliques.push({ t: j.t, mx, my, verdict: j.rattrapage ?? null });
+}
+console.log(`\n  ${C.bold('Décalages réellement appliqués')} ${C.dim('— lus dans l\'écart prédiction brute → compensée, > 40 px')}`);
+if (!appliques.length) console.log(`    ${C.dim('aucun')}`);
+for (const a of appliques) {
+  console.log(`    ${String(a.t).padEnd(6)} ${`${a.mx > 0 ? '+' : ''}${a.mx.toFixed(0)},${a.my > 0 ? '+' : ''}${a.my.toFixed(0)}`.padEnd(12)}`
+    + (a.verdict
+      ? C.dim(`  ${a.verdict.pairesAvant}→${a.verdict.pairesApres} paires · `
+        + `coût moyen ${a.verdict.coutMoyenAvant} → ${a.verdict.coutMoyenApres} · `
+        + (a.verdict.recevable ? 'retenu' : `refusé (${a.verdict.raison})`))
+      : C.dim('  (rapport sans le champ `rattrapage` : verdict non inscrit)')));
+}
+
+console.log(`\n  ${C.bold('Bilan du rejeu')}  ${retenus} décalage(s) recevable(s) : `
   + `${C.vert(`${gains} gain(s) net(s)`)} · ${C.rouge(`${rotations} rotation(s)`)}`);
 console.log(`  ${C.dim('Une rotation ajoute une paire mais réattribue les autres : le compte monte, les identités tournent.')}\n`);

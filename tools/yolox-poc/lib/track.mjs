@@ -192,6 +192,47 @@ export const taille = (b) => [Math.max(0, b[2] - b[0]), Math.max(0, b[3] - b[1])
 export const aire = (b) => { const [w, h] = taille(b); return w * h; };
 
 /**
+ * LE RATTRAPAGE D'UN DÉPLACEMENT EN BLOC EST-IL RECEVABLE ?
+ *
+ * Quand la caméra bouge brusquement, toutes les prédictions ratent d'un coup.
+ * Le suivi cherche alors le déplacement en bloc le plus voté et l'applique.
+ * Reste à décider s'il faut le garder.
+ *
+ * Le compte d'appariements ne suffit pas. Sur une grille de départ les
+ * voitures sont régulièrement espacées : décaler tout le monde d'un intervalle
+ * apparie chaque piste à la voisine de sa voisine, ce qui peut faire une paire
+ * de plus tout en faisant tourner le peloton d'un cran. C'est l'aliasing d'un
+ * motif périodique, et le compte y est aveugle.
+ *
+ * Mesuré sur Kerlabo, où l'écart entre deux voitures de la grille vaut 218 px :
+ *
+ *   3,4 s   décalage −218 px, 14 votes   4 paires coût 1,027 → 5 paires coût 2,300
+ *   10,3 s  décalage +324 px,  7 votes   3 paires coût 0,592 → 4 paires coût 1,772
+ *
+ * Une paire de plus, un coût deux à trois fois pire, et trois identités
+ * perdues. À l'inverse, les rattrapages de 5,3 à 5,8 s — le peloton qui revient
+ * en place — ajoutent des paires ET font baisser le coût moyen.
+ *
+ * Le coût MOYEN par paire sépare les deux familles sans qu'on ait à inventer
+ * un seuil : on exige simplement qu'il n'empire pas.
+ */
+export function rattrapageRecevable(avant, apres) {
+  const moyenne = (r) => (r.paires.length ? r.coutTotal / r.paires.length : Infinity);
+  const coutMoyenAvant = moyenne(avant), coutMoyenApres = moyenne(apres);
+  const base = {
+    pairesAvant: avant.paires.length, pairesApres: apres.paires.length,
+    coutMoyenAvant, coutMoyenApres,
+  };
+  if (apres.paires.length <= avant.paires.length) {
+    return { ...base, recevable: false, raison: 'pas_plus_de_paires' };
+  }
+  if (coutMoyenApres > coutMoyenAvant) {
+    return { ...base, recevable: false, raison: 'cout_moyen_degrade' };
+  }
+  return { ...base, recevable: true, raison: null };
+}
+
+/**
  * UNE DÉTECTION EST-ELLE UNE BOÎTE FUSIONNÉE ?
  *
  * Le détecteur émet parfois une seule boîte pour deux voitures qui se
@@ -566,6 +607,10 @@ export class Suivi {
   pas(t, detections) {
     const o = this.opt;
     const dt = this.journal.length ? t - this.journal[this.journal.length - 1].t : o.dt;
+    // Le rattrapage en bloc de CE pas, remis à zéro : sans lui au journal, on
+    // ne peut mesurer après coup que par un rejeu approximatif, et un outil
+    // qui rejoue ne dit pas ce que le suivi a réellement fait.
+    this.rattrapageDuPas = null;
 
     const fortes = detections.filter(d => d.score >= o.highScore);
     const faibles = detections.filter(d => d.score < o.highScore && d.score >= o.lowScore);
@@ -627,12 +672,15 @@ export class Suivi {
         };
         bouger(1);
         const bis = this._associer(candidates, utilisables, o.iouMatch);
-        // STRICTEMENT plus d'appariements, et rien d'autre. Accepter aussi un
-        // coût total plus faible à nombre égal laissait le décalage RÉAFFECTER
-        // les pistes entre elles pour économiser quelques centièmes d'IoU :
-        // un échange d'identité silencieux, d'autant plus probable à 10 Hz que
-        // le mouvement réel y est petit devant le bruit de détection.
-        if (bis.paires.length > assoc.paires.length) { assoc = bis; this.dernierRattrapage = d; }
+        // Deux conditions, ni l'une ni l'autre n'introduisant de seuil :
+        // STRICTEMENT plus d'appariements — accepter un coût total plus faible
+        // à nombre égal laissait le décalage RÉAFFECTER les pistes entre elles
+        // pour économiser quelques centièmes d'IoU — et un coût MOYEN par paire
+        // qui n'empire pas, sans quoi une grille régulièrement espacée s'aliase
+        // et le peloton tourne d'un cran. Voir `rattrapageRecevable`.
+        const verdict = rattrapageRecevable(assoc, bis);
+        this.rattrapageDuPas = { ...d, ...verdict };
+        if (verdict.recevable) { assoc = bis; this.dernierRattrapage = this.rattrapageDuPas; }
         else bouger(-1);
       }
     }
@@ -1261,6 +1309,18 @@ export class Suivi {
       // détection et plusieurs identités naissent dans le même souffle.
       association: bilan ? { ...bilan, doublons: nbDoublons } : null,
       biais: { ...this.derniereCamera },
+      // Le déplacement en bloc examiné à ce pas, retenu ou non, avec les deux
+      // grandeurs qui ont décidé : nombre de paires et coût moyen par paire.
+      rattrapage: this.rattrapageDuPas
+        ? {
+          dx: Number(this.rattrapageDuPas.dx.toFixed(1)), dy: Number(this.rattrapageDuPas.dy.toFixed(1)),
+          votes: this.rattrapageDuPas.votes,
+          pairesAvant: this.rattrapageDuPas.pairesAvant, pairesApres: this.rattrapageDuPas.pairesApres,
+          coutMoyenAvant: Number(this.rattrapageDuPas.coutMoyenAvant.toFixed(4)),
+          coutMoyenApres: Number(this.rattrapageDuPas.coutMoyenApres.toFixed(4)),
+          recevable: this.rattrapageDuPas.recevable, raison: this.rattrapageDuPas.raison,
+        }
+        : null,
       tracks: vivantes.map(p => ({
         id: p.id,
         // FILIATION : `identiteLogique` est la racine de la chaîne, `ancetre`

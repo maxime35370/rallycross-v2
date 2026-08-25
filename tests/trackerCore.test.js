@@ -14,7 +14,7 @@ import {
   ETATS, DEFAULTS, RAISONS, REFUS, Suivi, Predicteur, hungarian, decalageCamera,
   estimerDecalageGlobal, rapportTaille, recouvrement, mesurer, signauxSuspects, concorder,
   detecterRuptures, ventilerAutourDesRuptures, coherenceSpatiale, reinitialiserIds,
-  boiteFusionnee,
+  boiteFusionnee, rattrapageRecevable,
 } from '../tools/yolox-poc/lib/track.mjs';
 
 /** Boîte carrée centrée, pour écrire des scénarios lisibles. */
@@ -212,6 +212,101 @@ describe('Suivi — la bande basse sauve, mais ne crée jamais', () => {
 // ─────────────────────────────────────────────────────────
 // SUIVI — FUSION DE DEUX VOITURES
 // ─────────────────────────────────────────────────────────
+
+describe('rattrapageRecevable — cas réels de Kerlabo', () => {
+  // Coordonnées RELEVÉES dans le journal : les boîtes prédites brutes des
+  // pistes vivantes et les détections fortes du même instant. On rejoue le
+  // rattrapage avec les fonctions de la bibliothèque, pas avec une copie.
+  const INTERDIT = 10;
+  const affecter = (predites, dets) => {
+    const cout = predites.map(p => dets.map(d => {
+      const r = iou(p, d);
+      return (r < DEFAULTS.iouMatch || rapportTaille(p, d) > DEFAULTS.maxSizeRatio) ? INTERDIT : 1 - r;
+    }));
+    const aff = hungarian(cout);
+    const paires = [];
+    let coutTotal = 0;
+    aff.forEach((i, k) => {
+      if (i < 0 || i >= dets.length || cout[k][i] >= INTERDIT) return;
+      paires.push([k, i]); coutTotal += cout[k][i];
+    });
+    return { paires, coutTotal };
+  };
+  const rejouer = (predites, dets) => {
+    const d = estimerDecalageGlobal(predites, dets);
+    const decalees = predites.map(b => [b[0] + d.dx, b[1] + d.dy, b[2] + d.dx, b[3] + d.dy]);
+    return { d, verdict: rattrapageRecevable(affecter(predites, dets), affecter(decalees, dets)) };
+  };
+
+  it('refuse le décalage de 3,4 s, qui fait tourner le peloton d\'un cran', () => {
+    // L'écart entre deux voitures de la grille vaut 218 px : le décalage
+    // apparie chaque piste à la voisine de sa voisine.
+    const predites = [
+      [681, 529, 968, 730], [921, 595, 1183, 754], [250, 524, 556, 714],
+      [466, 549, 769, 716], [1169, 569, 1413, 762], [787, 541, 932, 603],
+      [998, 535, 1192, 607], [1196, 564, 1388, 664], [754, 591, 951, 732],
+      [551, 515, 762, 573],
+    ];
+    const dets = [
+      [253, 530, 546, 718], [490, 552, 731, 712], [640, 533, 941, 767],
+      [814, 13, 1457, 150], [913, 566, 1256, 757], [916, 619, 1117, 752],
+      [1006, 86, 1243, 219],
+    ];
+    const { d, verdict } = rejouer(predites, dets);
+    expect(Math.round(d.dx)).toBe(-218);
+    expect(verdict.pairesApres).toBeGreaterThan(verdict.pairesAvant);   // le compte monte
+    expect(verdict.coutMoyenApres).toBeGreaterThan(verdict.coutMoyenAvant);
+    expect(verdict.recevable).toBe(false);
+    expect(verdict.raison).toBe('cout_moyen_degrade');
+  });
+
+  it('refuse le décalage de 10,3 s, qui jette une piste sur le bord du cadre', () => {
+    const predites = [
+      [970, 387, 1210, 447], [1530, 503, 1903, 678], [1041, 422, 1192, 524],
+      [1284, 467, 1585, 604], [1238, 419, 1379, 491], [140, 250, 240, 286],
+      [319, 269, 390, 301], [456, 258, 522, 293], [585, 247, 657, 278],
+      [827, 224, 899, 255], [712, 232, 785, 267], [555, 211, 635, 251],
+      [902, 420, 1020, 517],
+    ];
+    const dets = [
+      [740, 183, 830, 227], [914, 211, 984, 245], [1044, 203, 1118, 234],
+      [1209, 418, 1361, 493], [1267, 463, 1575, 598], [1550, 498, 1920, 673],
+    ];
+    const { d, verdict } = rejouer(predites, dets);
+    expect(Math.round(d.dx)).toBe(324);
+    expect(verdict.pairesApres).toBeGreaterThan(verdict.pairesAvant);
+    expect(verdict.recevable).toBe(false);
+  });
+
+  it('accepte le décalage de 5,7 s, qui remet le peloton en place', () => {
+    // Même forme, mais ici le coût moyen BAISSE : c'est un vrai mouvement de
+    // caméra, pas un aliasing. Le garde ne doit pas l'emporter avec les autres.
+    const predites = [
+      [1157, 495, 1341, 578], [970, 507, 1125, 610], [1214, 583, 1331, 667],
+      [861, 519, 1034, 623], [680, 513, 825, 615], [1178, 551, 1377, 662],
+    ];
+    const dets = [
+      [571, 520, 746, 635], [757, 510, 954, 610], [866, 491, 1025, 592],
+      [1026, 470, 1207, 562], [1070, 525, 1260, 638],
+    ];
+    const { verdict } = rejouer(predites, dets);
+    expect(verdict.pairesApres).toBeGreaterThan(verdict.pairesAvant);
+    expect(verdict.coutMoyenApres).toBeLessThan(verdict.coutMoyenAvant);
+    expect(verdict.recevable).toBe(true);
+  });
+
+  it('refuse tout décalage qui n\'ajoute aucune paire', () => {
+    const v = rattrapageRecevable({ paires: [[0, 0], [1, 1]], coutTotal: 1 },
+      { paires: [[0, 1], [1, 0]], coutTotal: 0.1 });
+    expect(v.recevable).toBe(false);
+    expect(v.raison).toBe('pas_plus_de_paires');
+  });
+
+  it('accepte de partir de zéro paire', () => {
+    const v = rattrapageRecevable({ paires: [], coutTotal: 0 }, { paires: [[0, 0]], coutTotal: 0.9 });
+    expect(v.recevable).toBe(true);
+  });
+});
 
 describe('boiteFusionnee — cas réel de Kerlabo à 11,6 s', () => {
   // Coordonnées RELEVÉES sur le run, pas inventées : les trois boîtes prédites
