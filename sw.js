@@ -5,7 +5,7 @@
    Compatible GitHub Pages (sous-dossier) et racine.
 ═══════════════════════════════════════════════ */
 
-const CACHE_NAME = 'rx-chrono-v38';
+const CACHE_NAME = 'rx-chrono-v39';
 
 // Assets relatifs au scope du SW (pas de / en prefixe)
 const ASSET_PATHS = [
@@ -41,6 +41,7 @@ const ASSET_PATHS = [
   'js/timing.js',
   'js/standings.js',
   'js/championship.js',
+  'js/championshipChart.js',
   'js/stats.js',
   'js/spectator.js',
   'js/driverProfile.js',
