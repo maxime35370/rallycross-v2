@@ -12,7 +12,7 @@ import { calcInterimStandings, qfPoints, dfPoints, finPoints, calcStatusPoints }
 import { getChampionshipConfig } from './settings.js';
 import { getActiveChampionship, getActiveChampionshipId } from './context.js';
 import {
-  buildWeekendEvolution, defaultChartMeetingId, chartGeometry,
+  buildWeekendEvolution, buildSeasonEvolution, defaultChartMeetingId, chartGeometry,
   renderWeekendChartSvg, renderWeekendChartTable, PHASE_DEFS,
 } from './championshipChart.js';
 
@@ -22,7 +22,8 @@ let _activeRegulation = null;
 // re-dessine sans recalculer quand on change de meeting ou de mode).
 let _lastStandings  = [];
 let _chartMeetingId = null;
-let _chartMode      = 'season';   // 'season' | 'meeting'
+let _chartScope     = 'weekend';  // 'weekend' (un meeting) | 'season' (toute la saison)
+let _chartMode      = 'season';   // vue week-end : 'season' (cumul saison) | 'meeting' (week-end seul)
 
 // ─────────────────────────────────────────────────────────
 // ÉTAT LOCAL
@@ -458,31 +459,53 @@ function renderEvolution() {
     _chartMeetingId = defaultChartMeetingId(_lastStandings, allMeetings);
   }
 
-  const data = buildWeekendEvolution({
-    standings:  _lastStandings,
-    meetings:   allMeetings,
-    meetingId:  _chartMeetingId,
-    regulation: _activeRegulation,
-    mode:       _chartMode,
-  });
+  const isSeason = _chartScope === 'season';
+  const data = isSeason
+    ? buildSeasonEvolution({
+        standings:  _lastStandings,
+        meetings:   allMeetings,
+        regulation: _activeRegulation,
+      })
+    : buildWeekendEvolution({
+        standings:  _lastStandings,
+        meetings:   allMeetings,
+        meetingId:  _chartMeetingId,
+        regulation: _activeRegulation,
+        mode:       _chartMode,
+      });
 
   const meetingOptions = allMeetings.map(m => {
     const d = m.date ? new Date(m.date).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' }) : '?';
     return `<option value="${escHtml(m.id)}" ${m.id === _chartMeetingId ? 'selected' : ''}>${d} — ${escHtml(m.location || '?')}</option>`;
   }).join('');
 
-  const phasesTxt = data ? data.phases.map(k => PHASE_DEFS[k].label).join(' → ') : '';
+  const phasesTxt = data?.phases ? data.phases.map(k => PHASE_DEFS[k].label).join(' → ') : '';
   const hasData   = data && data.series.length > 0 && data.series.some(s => s.present);
+
+  const legend = isSeason
+    ? `<span>Une colonne par phase à points de chaque meeting (Int. = classement intermédiaire, ¼ / ½ = quarts / demi-finales, Fin. = finale)</span>
+       <span>·</span>
+       <span>Départ = 0, pénalités saison déduites · tableau résumé par meeting</span>`
+    : `<span>Phases à points (règlement actif) : ${escHtml(phasesTxt)}</span>
+       <span>·</span>
+       <span>${_chartMode === 'season'
+         ? 'Point de départ = total saison avant ce meeting, pénalités saison déduites'
+         : 'Point de départ = 0, seuls les points du week-end sont cumulés'}</span>`;
 
   box.innerHTML = `
     <div class="chp-evo-head">
-      <div class="chp-evo-title">📈 Évolution du top 5 sur le week-end</div>
+      <div class="chp-evo-title">📈 Évolution du top 5 ${isSeason ? 'sur la saison' : 'sur le week-end'}</div>
       <div class="chp-evo-controls">
+        <div class="chp-evo-toggle" title="Période affichée">
+          <button class="chp-evo-toggle-btn ${!isSeason ? 'is-active' : ''}" data-scope="weekend">Week-end</button>
+          <button class="chp-evo-toggle-btn ${isSeason  ? 'is-active' : ''}" data-scope="season">Saison</button>
+        </div>
+        ${isSeason ? '' : `
         <select class="toolbar-select chp-evo-select" id="chp-evo-meeting" title="Meeting à détailler">${meetingOptions}</select>
         <div class="chp-evo-toggle" title="Point de départ des courbes">
           <button class="chp-evo-toggle-btn ${_chartMode === 'season'  ? 'is-active' : ''}" data-mode="season">Cumul saison</button>
           <button class="chp-evo-toggle-btn ${_chartMode === 'meeting' ? 'is-active' : ''}" data-mode="meeting">Week-end seul</button>
-        </div>
+        </div>`}
       </div>
     </div>
     ${hasData ? `
@@ -491,21 +514,22 @@ function renderEvolution() {
         <div class="chp-evo-tooltip" id="chp-evo-tip" hidden></div>
       </div>
       ${renderWeekendChartTable(data)}
-      <div class="chp-legend">
-        <span>Phases à points (règlement actif) : ${escHtml(phasesTxt)}</span>
-        <span>·</span>
-        <span>${_chartMode === 'season'
-          ? 'Point de départ = total saison avant ce meeting, pénalités saison déduites'
-          : 'Point de départ = 0, seuls les points du week-end sont cumulés'}</span>
-      </div>`
-    : `<div class="tim-placeholder chp-evo-empty"><div class="placeholder-icon">📈</div><div class="placeholder-title">Pas encore de points sur ce meeting</div></div>`}
+      <div class="chp-legend">${legend}</div>`
+    : `<div class="tim-placeholder chp-evo-empty"><div class="placeholder-icon">📈</div><div class="placeholder-title">Pas encore de points ${isSeason ? 'cette saison' : 'sur ce meeting'}</div></div>`}
   `;
 
   box.querySelector('#chp-evo-meeting')?.addEventListener('change', e => {
     _chartMeetingId = e.target.value;
     renderEvolution();
   });
-  box.querySelectorAll('.chp-evo-toggle-btn').forEach(btn => {
+  box.querySelectorAll('.chp-evo-toggle-btn[data-scope]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (btn.dataset.scope === _chartScope) return;
+      _chartScope = btn.dataset.scope;
+      renderEvolution();
+    });
+  });
+  box.querySelectorAll('.chp-evo-toggle-btn[data-mode]').forEach(btn => {
     btn.addEventListener('click', () => {
       if (btn.dataset.mode === _chartMode) return;
       _chartMode = btn.dataset.mode;
@@ -552,7 +576,7 @@ function bindEvolutionHover(data) {
     tip.textContent = '';
     const title = document.createElement('div');
     title.className = 'chp-evo-tip-title';
-    title.textContent = idx === 0 ? data.labels[0] : PHASE_DEFS[data.phases[idx - 1]].label;
+    title.textContent = data.columns?.[idx]?.title ?? data.labels[idx];
     tip.appendChild(title);
 
     [...data.series].sort((a, b) => b.values[idx] - a.values[idx]).forEach(s => {

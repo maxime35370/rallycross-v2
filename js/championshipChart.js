@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════
-   CHAMPIONSHIPCHART.JS — Évolution du top 5 sur un week-end
+   CHAMPIONSHIPCHART.JS — Évolution du top 5 (un week-end, ou toute la saison)
 
    Module PUR (ni Firebase, ni DOM) : il reçoit le classement saison déjà
    calculé par championship.js (avec le détail des points par phase de chaque
@@ -21,11 +21,17 @@ import { escHtml } from './utils.js';
 // ─────────────────────────────────────────────────────────
 
 export const PHASE_DEFS = {
-  interim: { label: 'Classement intermédiaire', short: 'Interm.' },
-  qf:      { label: '¼ de finale',              short: '¼ finale' },
-  df:      { label: '½ finale',                 short: '½ finale' },
-  fin:     { label: 'Finale',                   short: 'Finale' },
+  interim: { label: 'Classement intermédiaire', short: 'Interm.',  abbr: 'Int.' },
+  qf:      { label: '¼ de finale',              short: '¼ finale', abbr: '¼' },
+  df:      { label: '½ finale',                 short: '½ finale', abbr: '½' },
+  fin:     { label: 'Finale',                   short: 'Finale',   abbr: 'Fin.' },
 };
+
+/** Libellé court d'un meeting : « 30/08 Lohéac ». */
+export function meetingShortLabel(m) {
+  const d = m?.date ? new Date(m.date).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' }) : '?';
+  return `${d} ${(m?.location || '').split(' ')[0] || '?'}`;
+}
 
 /** Ordre chronologique des phases d'un week-end. */
 const PHASE_ORDER = ['interim', 'qf', 'df', 'fin'];
@@ -128,14 +134,116 @@ export function buildWeekendEvolution({ standings = [], meetings = [], meetingId
   const maxY = allVals.length ? Math.max(0, ...allVals) : 0;
   const minY = allVals.length ? Math.min(0, ...allVals) : 0;
 
+  const labels = [mode === 'season' ? 'Avant' : 'Départ', ...phases.map(k => PHASE_DEFS[k].short)];
+  const columns = labels.map((label, i) => ({
+    label,
+    title: i === 0 ? label : PHASE_DEFS[phases[i - 1]].label,
+  }));
+  series.forEach(s => { s.tableValues = s.values; s.tableGains = s.gains; });
+
   return {
+    scope: 'weekend',
     meeting,
     mode,
     phases,
-    labels: [mode === 'season' ? 'Avant' : 'Départ', ...phases.map(k => PHASE_DEFS[k].short)],
+    labels,
+    columns,
+    groups: null,
+    tableLabels: labels,
     series,
     maxY,
     minY,
+  };
+}
+
+/**
+ * Construit les courbes du top N sur TOUTE la saison : une colonne par
+ * phase à points de chaque meeting, dans l'ordre chronologique. Les
+ * courbes partent de 0 (pénalités saison déduites, pour que l'arrivée
+ * corresponde au total du tableau) ; un pilote absent d'un meeting y a
+ * une courbe plate.
+ *
+ * Le tableau associé est résumé PAR MEETING (cumul après le meeting et
+ * points du meeting) : une colonne par phase serait illisible.
+ *
+ * @param {object} p — { standings, meetings, regulation, topN }
+ * @returns {object|null} même forme que buildWeekendEvolution, plus
+ *          `groups` = [{ meetingId, label, from, to }] (indices de colonnes)
+ */
+export function buildSeasonEvolution({ standings = [], meetings = [], regulation = null, topN = 5 }) {
+  if (!meetings.length) return null;
+
+  // Colonnes : « Départ » puis, par meeting, ses phases à points
+  const columns = [{ label: 'Départ', title: 'Départ de saison', meetingId: null, phase: null }];
+  const groups  = [];
+  meetings.forEach(m => {
+    const details = standings.map(d => d.meetingDetail?.[m.id]).filter(Boolean);
+    const phases  = weekendPhases(regulation, details);
+    const label   = meetingShortLabel(m);
+    const from    = columns.length;
+    phases.forEach(k => columns.push({
+      label: PHASE_DEFS[k].abbr,
+      title: `${label} — ${PHASE_DEFS[k].label}`,
+      meetingId: m.id,
+      phase: k,
+    }));
+    groups.push({ meetingId: m.id, label, from, to: columns.length - 1 });
+  });
+
+  const all = standings.map((d, rank) => {
+    const start  = 0 - (Number(d.penalty) || 0);   // « 0 - » évite un -0 quand pas de pénalité
+    const values = [start];
+    const gains  = [];
+    const tableValues = [start];
+    const tableGains  = [];
+    let cum = start;
+    let present = false;
+    columns.slice(1).forEach(c => {
+      const det = d.meetingDetail?.[c.meetingId];
+      const g   = det ? (Number(det[c.phase]) || 0) : 0;
+      gains.push(g);
+      cum += g;
+      values.push(cum);
+    });
+    meetings.forEach(m => {
+      const det = d.meetingDetail?.[m.id];
+      if (det) present = true;
+      const g = det ? (Number(det.total) || 0) : 0;
+      tableGains.push(g);
+      tableValues.push(tableValues[tableValues.length - 1] + g);
+    });
+    return {
+      driverId:  d.driverId,
+      firstName: d.firstName ?? '',
+      lastName:  d.lastName  ?? '',
+      carNumber: d.carNumber ?? '',
+      present,
+      start,
+      gains,
+      values,
+      end:       cum,
+      tableValues,
+      tableGains,
+      seasonRank: rank,
+    };
+  });
+
+  all.sort((a, b) => (b.end - a.end) || (a.seasonRank - b.seasonRank));
+  const series = all.slice(0, topN).map((s, i) => ({ ...s, slot: i + 1 }));
+  const allVals = series.flatMap(s => s.values);
+
+  return {
+    scope: 'season',
+    meeting: null,
+    mode: 'season',
+    phases: null,
+    labels: columns.map(c => c.label),
+    columns,
+    groups,
+    tableLabels: ['Départ', ...meetings.map(meetingShortLabel)],
+    series,
+    maxY: allVals.length ? Math.max(0, ...allVals) : 0,
+    minY: allVals.length ? Math.min(0, ...allVals) : 0,
   };
 }
 
@@ -158,9 +266,13 @@ export function defaultChartMeetingId(standings = [], meetings = []) {
 export const CHART_W = 640;
 export const CHART_H = 250;
 const PAD = { top: 18, right: 118, bottom: 34, left: 44 };
+/** Espace minimal entre deux colonnes en vue saison (le conteneur défile). */
+const SEASON_COL_STEP = 48;
+/** Hauteur supplémentaire sous l'axe pour la ligne des meetings (vue saison). */
+const GROUP_ROW = 16;
 
 /** Pas « joli » pour les graduations Y. */
-function niceStep(span, target = 4) {
+function niceStep(span, target = 5) {
   if (span <= 0) return 1;
   const rough = span / target;
   const mag   = Math.pow(10, Math.floor(Math.log10(rough)));
@@ -174,14 +286,21 @@ function niceStep(span, target = 4) {
  */
 export function chartGeometry(data) {
   const nX  = data.labels.length;
-  const pw  = CHART_W - PAD.left - PAD.right;
-  const ph  = CHART_H - PAD.top - PAD.bottom;
+  const hasGroups = Array.isArray(data.groups) && data.groups.length > 0;
+  const pad = hasGroups ? { ...PAD, bottom: PAD.bottom + GROUP_ROW } : PAD;
+  // Vue saison : la largeur suit le nombre de colonnes (défilement horizontal)
+  const W   = hasGroups
+    ? Math.max(CHART_W, pad.left + pad.right + (nX - 1) * SEASON_COL_STEP)
+    : CHART_W;
+  const H   = CHART_H;
+  const pw  = W - pad.left - pad.right;
+  const ph  = H - pad.top - pad.bottom;
   const step  = niceStep(data.maxY - data.minY);
   const yMin  = Math.floor(data.minY / step) * step;
   const yMax  = Math.max(yMin + step, Math.ceil(data.maxY / step) * step);
-  const xs    = Array.from({ length: nX }, (_, i) => PAD.left + (nX > 1 ? (i * pw) / (nX - 1) : pw / 2));
-  const toY   = v => PAD.top + ph - ((v - yMin) / (yMax - yMin)) * ph;
-  return { xs, toY, yMin, yMax, step, pad: PAD, pw, ph };
+  const xs    = Array.from({ length: nX }, (_, i) => pad.left + (nX > 1 ? (i * pw) / (nX - 1) : pw / 2));
+  const toY   = v => pad.top + ph - ((v - yMin) / (yMax - yMin)) * ph;
+  return { W, H, xs, toY, yMin, yMax, step, pad, pw, ph };
 }
 
 /**
@@ -209,8 +328,8 @@ function fmt(n) { return Number.isInteger(n) ? String(n) : n.toFixed(1); }
  */
 export function renderWeekendChartSvg(data) {
   const g = chartGeometry(data);
-  const { xs, toY, yMin, yMax, step, pad } = g;
-  const right = CHART_W - pad.right;
+  const { W, H, xs, toY, yMin, yMax, step, pad } = g;
+  const right = W - pad.right;
 
   // Grille horizontale, ticks Y
   let grid = '';
@@ -221,10 +340,21 @@ export function renderWeekendChartSvg(data) {
   }
 
   // Repères verticaux + libellés de phases
+  const axisY = H - pad.bottom;
   const xLabels = data.labels.map((lbl, i) => {
     const x = xs[i].toFixed(1);
-    return `<line x1="${x}" y1="${pad.top}" x2="${x}" y2="${CHART_H - pad.bottom}" class="chp-evo-grid chp-evo-grid--x"/>`
-         + `<text x="${x}" y="${CHART_H - pad.bottom + 16}" class="chp-evo-xlabel" text-anchor="middle">${escHtml(lbl)}</text>`;
+    return `<line x1="${x}" y1="${pad.top}" x2="${x}" y2="${axisY}" class="chp-evo-grid chp-evo-grid--x"/>`
+         + `<text x="${x}" y="${axisY + 16}" class="chp-evo-xlabel${data.groups ? ' chp-evo-xlabel--abbr' : ''}" text-anchor="middle">${escHtml(lbl)}</text>`;
+  }).join('');
+
+  // Vue saison : séparateurs et libellés de meetings sous les phases
+  const groupsSvg = (data.groups || []).map(grp => {
+    const half = (xs[1] - xs[0]) / 2;
+    const x0 = xs[grp.from] - half;
+    const x1 = xs[grp.to] + half;
+    const cx = (x0 + x1) / 2;
+    return `<line x1="${x0.toFixed(1)}" y1="${pad.top}" x2="${x0.toFixed(1)}" y2="${axisY + 6}" class="chp-evo-group-sep"/>`
+         + `<text x="${cx.toFixed(1)}" y="${axisY + 16 + GROUP_ROW}" class="chp-evo-group-label" text-anchor="middle">${escHtml(grp.label)}</text>`;
   }).join('');
 
   // Courbes
@@ -241,7 +371,7 @@ export function renderWeekendChartSvg(data) {
   // Libellés directs en fin de courbe (N° + nom), écartés si trop proches
   const endLabels = spreadLabels(
     data.series.map(s => ({ s, y: toY(s.end) })),
-    12, pad.top + 4, CHART_H - pad.bottom - 4
+    12, pad.top + 4, axisY - 4
   ).map(({ s, y }) => {
     const x0 = xs[xs.length - 1];
     const x1 = x0 + 8;
@@ -251,13 +381,15 @@ export function renderWeekendChartSvg(data) {
          + `<tspan class="chp-evo-endlabel-name">${escHtml(name)}</tspan> <tspan class="chp-evo-endlabel-val">${fmt(s.end)}</tspan></text>`;
   }).join('');
 
-  return `<svg viewBox="0 0 ${CHART_W} ${CHART_H}" class="chp-evo-svg" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Évolution des points du top ${data.series.length} sur le week-end">
+  const scopeTxt = data.scope === 'season' ? 'sur la saison' : 'sur le week-end';
+  return `<svg viewBox="0 0 ${W} ${H}" class="chp-evo-svg${data.groups ? ' chp-evo-svg--season' : ''}" style="min-width:${Math.max(560, W)}px" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Évolution des points du top ${data.series.length} ${scopeTxt}">
     ${grid}
     ${xLabels}
+    ${groupsSvg}
     <line x1="${pad.left}" y1="${toY(0).toFixed(1)}" x2="${right}" y2="${toY(0).toFixed(1)}" class="chp-evo-axis"/>
     ${lines}
     ${endLabels}
-    <line class="chp-evo-cursor" x1="0" y1="${pad.top}" x2="0" y2="${CHART_H - pad.bottom}" style="display:none"/>
+    <line class="chp-evo-cursor" x1="0" y1="${pad.top}" x2="0" y2="${axisY}" style="display:none"/>
   </svg>`;
 }
 
@@ -266,13 +398,16 @@ export function renderWeekendChartSvg(data) {
  * est aussi lisible ici, sans dépendre des couleurs).
  */
 export function renderWeekendChartTable(data) {
-  const head = data.labels.map((l, i) =>
+  const labels = data.tableLabels || data.labels;
+  const head = labels.map((l, i) =>
     `<th class="center${i === 0 ? '' : ' chp-evo-th-phase'}">${escHtml(l)}</th>`).join('');
 
   const rows = data.series.map(s => {
-    const cells = s.values.map((v, i) => {
+    const values = s.tableValues || s.values;
+    const gains  = s.tableGains  || s.gains;
+    const cells = values.map((v, i) => {
       if (i === 0) return `<td class="center"><span class="chp-evo-cum">${fmt(v)}</span></td>`;
-      const gain = s.gains[i - 1];
+      const gain = gains[i - 1];
       return `<td class="center"><span class="chp-evo-cum">${fmt(v)}</span>`
            + `<span class="chp-evo-gain${gain > 0 ? ' is-pos' : ''}">${gain > 0 ? '+' : ''}${fmt(gain)}</span></td>`;
     }).join('');
@@ -280,7 +415,7 @@ export function renderWeekendChartTable(data) {
       <td><span class="chp-evo-swatch" style="background:var(--chp-s${s.slot})"></span>
           ${escHtml(s.firstName)} <strong>${escHtml(s.lastName)}</strong>
           ${s.carNumber ? `<span class="tim-num">${escHtml(s.carNumber)}</span>` : ''}
-          ${s.present ? '' : '<span class="chp-absent" title="Absent de ce meeting">absent</span>'}</td>
+          ${s.present || data.scope === 'season' ? '' : '<span class="chp-absent" title="Absent de ce meeting">absent</span>'}</td>
       ${cells}
     </tr>`;
   }).join('');
