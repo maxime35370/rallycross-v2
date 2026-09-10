@@ -11,7 +11,7 @@
 
 import { describe, it, expect } from 'vitest';
 import {
-  weekendPhases, buildWeekendEvolution, defaultChartMeetingId,
+  weekendPhases, buildWeekendEvolution, buildSeasonEvolution, defaultChartMeetingId,
   renderWeekendChartSvg, renderWeekendChartTable, chartGeometry,
 } from '../js/championshipChart.js';
 
@@ -171,5 +171,59 @@ describe('rendu — SVG et tableau', () => {
     expect(g.xs).toHaveLength(4);
     expect(g.toY(g.yMax)).toBeCloseTo(g.pad.top);
     expect(g.toY(g.yMin)).toBeCloseTo(250 - g.pad.bottom);
+  });
+});
+
+describe('buildSeasonEvolution — courbes du top 5 sur toute la saison', () => {
+  const data = buildSeasonEvolution({ standings: STANDINGS, meetings: MEETINGS, regulation: FFSA });
+
+  it('une colonne « Départ » puis les phases à points de chaque meeting, groupées', () => {
+    expect(data.scope).toBe('season');
+    expect(data.labels).toEqual(['Départ', 'Int.', '½', 'Fin.', 'Int.', '½', 'Fin.', 'Int.', '½', 'Fin.']);
+    expect(data.groups.map(g => [g.from, g.to])).toEqual([[1, 3], [4, 6], [7, 9]]);
+    expect(data.groups[0].label).toBe('12/04 Lessay');
+    expect(data.columns[5].title).toBe('03/05 Châteauroux — ½ finale');
+  });
+
+  it('cumul continu d\'un meeting à l\'autre, absent = courbe plate, arrivée = total du tableau', () => {
+    const b = data.series.find(s => s.driverId === 'b');
+    expect(b.values).toEqual([-5, 10, 18, 30, 46, 56, 71, 71, 71, 71]);
+    expect(b.end).toBe(STANDINGS.find(d => d.driverId === 'b').grandTotal);
+    const d = data.series.find(s => s.driverId === 'd');
+    expect(d.values.slice(3)).toEqual([41, 41, 41, 41, 41, 41, 41]);
+  });
+
+  it('le tableau est résumé par meeting', () => {
+    expect(data.tableLabels).toEqual(['Départ', '12/04 Lessay', '03/05 Châteauroux', '14/06 Faleyras']);
+    const b = data.series.find(s => s.driverId === 'b');
+    expect(b.tableValues).toEqual([-5, 30, 71, 71]);
+    expect(b.tableGains).toEqual([35, 41, 0]);
+    const html = renderWeekendChartTable(data);
+    expect(html.match(/<th[ >]/g)).toHaveLength(1 + 4);
+    expect(html).not.toContain('absent');
+  });
+
+  it('le top 5 est celui du classement saison', () => {
+    expect(data.series.map(s => s.driverId)).toEqual(STANDINGS.slice(0, 5).map(d => d.driverId));
+  });
+
+  it('le SVG s\'élargit avec le nombre de colonnes et porte les libellés de meetings', () => {
+    const g = chartGeometry(data);
+    expect(g.W).toBe(640);                       // 3 meetings tiennent dans la largeur de base
+    expect(g.xs).toHaveLength(10);
+    const eight = Array.from({ length: 8 }, (_, i) => ({ id: `x${i}`, date: `2026-0${i + 1}-01`, location: `Circuit ${i}` }));
+    const wide = buildSeasonEvolution({ standings: STANDINGS, meetings: eight, regulation: FFSA });
+    expect(chartGeometry(wide).W).toBeGreaterThan(640);   // 25 colonnes → défilement
+    const svg = renderWeekendChartSvg(data);
+    expect(svg).toContain('12/04 Lessay');
+    expect(svg.match(/chp-evo-group-sep/g)).toHaveLength(3);
+    expect(svg.match(/<polyline/g)).toHaveLength(5);
+  });
+
+  it('sans meeting → null ; FIA → colonnes ¼ / ½ / Fin.', () => {
+    expect(buildSeasonEvolution({ standings: STANDINGS, meetings: [] })).toBeNull();
+    const fia = buildSeasonEvolution({ standings: [driver('x', 1, { m1: { qf: 8, df: 10, fin: 15 } })], meetings: MEETINGS.slice(0, 1), regulation: FIA });
+    expect(fia.labels).toEqual(['Départ', '¼', '½', 'Fin.']);
+    expect(fia.series[0].values).toEqual([0, 8, 18, 33]);
   });
 });

@@ -154,6 +154,11 @@ tbody tr:has(.chp-pos-3) { background: rgba(205,127,50,0.04); }
 
 .chp-evo-cursor { stroke: var(--clr-text-3); stroke-width: 1; pointer-events: none; }
 
+/* Vue saison : phases abrégées, séparateurs et libellés de meetings */
+.chp-evo-xlabel--abbr { font-size: 9px; fill: var(--clr-text-3); }
+.chp-evo-group-sep    { stroke: var(--clr-border-2); stroke-width: 1; }
+.chp-evo-group-label  { fill: var(--clr-text-2); font-size: 10px; font-weight: 600; font-family: var(--font-condensed); letter-spacing: 0.04em; }
+
 /* Infobulle de survol */
 .chp-evo-tooltip {
   position: absolute;
@@ -199,6 +204,7 @@ tbody tr:has(.chp-pos-3) { background: rgba(205,127,50,0.04); }
 /* Tableau détaillé (vue table du graphique) */
 .chp-evo-table-wrap { margin-top: var(--sp-sm); }
 .chp-evo-table td { vertical-align: middle; }
+.chp-evo-table td:first-child { white-space: nowrap; }
 .chp-evo-table .tim-num { margin-left: 6px; }
 .chp-evo-th-phase { min-width: 72px; }
 .chp-evo-cum {
