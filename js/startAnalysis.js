@@ -20,7 +20,7 @@ import {
   enumerateStarts, buildStartGrid, startDocId, seriesFingerprint,
   validateAnalysis, normalizePoleSide, availableTurn1Positions, pointTurn1InOrder,
   nextFreeTurn1Pos, applyV1OrderProposal, acceptV1Proposals, isV1OrderProposal,
-  countStarters,
+  buildStartGridExport, countStarters,
   orderGridByInterim, orderFinalGridFromSemis, orderByRaceResult,
 } from './startAnalysisCalc.js';
 import { calcInterimStandings } from './calc.js';
@@ -476,6 +476,8 @@ function renderWork() {
 
     <div class="sanl-actions">
       <input type="file" id="sanl-proposal-file" accept="application/json,.json" hidden>
+      <button class="btn btn-secondary" id="sanl-export-grid"
+        title="Envoyer la grille annoncée — numéros ET noms — à l'outil d'analyse vidéo">📤 Exporter la grille</button>
       <button class="btn btn-secondary" id="sanl-import-proposal" ${readOnly ? 'disabled' : ''}
         title="Charger un classement proposé par l'analyse vidéo (rx-v1-order/1)">📥 Importer une proposition</button>
       <button class="btn btn-secondary" id="sanl-accept-proposal" ${readOnly || !rows.some(r => Number.isInteger(r.autoTurn1Pos)) ? 'disabled' : ''}
@@ -1082,6 +1084,17 @@ function bindWork() {
     current.orderCompleteness = e.target.value;
     current.dirty = true;
     refreshFeedback();
+  });
+
+  document.getElementById('sanl-export-grid')?.addEventListener('click', () => {
+    const doc = buildStartGridExport({
+      start: current.start, rows: current.rows, poleSide: current.meeting?.poleSide,
+    });
+    const a = document.createElement('a');
+    a.download = `grille-${(current.start.startLabel || 'depart').replace(/[^\w-]+/g, '_')}.json`;
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(doc, null, 2)], { type: 'application/json' }));
+    a.click();
+    toast(`Grille exportée : ${doc.drivers.length} pilote(s)`, 'success');
   });
 
   document.getElementById('sanl-import-proposal')?.addEventListener('click', () => {

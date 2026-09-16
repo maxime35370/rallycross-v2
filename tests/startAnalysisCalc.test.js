@@ -5,6 +5,7 @@ import {
   laneZone, normalizePoleSide, startLabel, enumerateStarts, finishPosInStart, buildStartGrid,
   validateAnalysis, availableTurn1Positions, pointTurn1InOrder, nextFreeTurn1Pos,
   applyV1OrderProposal, acceptV1Proposals, isV1OrderProposal,
+  buildStartGridExport, isStartGridExport,
   isNonStarter, countStarters,
   orderGridByInterim, orderFinalGridFromSemis, orderByRaceResult,
 } from '../js/startAnalysisCalc.js';
@@ -1306,5 +1307,42 @@ describe('acceptV1Proposals', () => {
     const rows = avec([{ autoTurn1Pos: 1 }]);
     acceptV1Proposals(rows);
     expect(rows[0].turn1Pos).toBe(null);
+  });
+});
+
+describe('buildStartGridExport', () => {
+  const rows = [
+    { carNumber: 3,  firstName: 'Ana', lastName: 'Roux', lane: 2, gridPos: 2, didNotStart: false },
+    { carNumber: 12, firstName: 'Bo',  lastName: 'Silva', lane: 1, gridPos: 1, didNotStart: false },
+    { carNumber: 7,  firstName: 'Cy',  lastName: 'Nauy', lane: 3, gridPos: 3, didNotStart: true },
+  ];
+
+  it('rend la grille triée par couloir, non-partants exclus', () => {
+    const d = buildStartGridExport({ start: { startLabel: 'MQ3 S4' }, rows, poleSide: 'droite' });
+    expect(d.drivers.map(x => x.carNumber)).toEqual([12, 3]);
+    expect(d.starters).toBe(2);
+  });
+
+  it('porte les NOMS, pas seulement les numéros', () => {
+    // C'est tout l'objet de l'export : on reconnaît une déco, pas un numéro.
+    const d = buildStartGridExport({ rows, poleSide: 'gauche' });
+    expect(d.drivers[0]).toMatchObject({ carNumber: 12, firstName: 'Bo', lastName: 'Silva', lane: 1 });
+  });
+
+  it('normalise le côté de la pole', () => {
+    expect(buildStartGridExport({ rows, poleSide: 'gauche' }).poleSide).toBe('left');
+    expect(buildStartGridExport({ rows, poleSide: 'droite' }).poleSide).toBe('right');
+  });
+
+  it('n\'emporte ni résultat ni statut', () => {
+    const d = buildStartGridExport({ rows, poleSide: 'droite' });
+    const champs = Object.keys(d.drivers[0]).sort();
+    expect(champs).toEqual(['carNumber', 'firstName', 'gridPos', 'lane', 'lastName']);
+  });
+
+  it('se reconnaît lui-même, et rejette autre chose', () => {
+    expect(isStartGridExport(buildStartGridExport({ rows }))).toBe(true);
+    expect(isStartGridExport({ schema: 'rx-v1-order/1', positions: [] })).toBe(false);
+    expect(isStartGridExport(null)).toBe(false);
   });
 });

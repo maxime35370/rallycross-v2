@@ -1001,3 +1001,57 @@ export function acceptV1Proposals(rows = []) {
   });
   return { rows: sortie, accepted, skipped };
 }
+
+// ─────────────────────────────────────────────────────────
+// GRILLE ANNONCÉE, EXPORTABLE VERS L'OUTIL D'ANALYSE VIDÉO
+// ─────────────────────────────────────────────────────────
+
+/*
+   L'outil d'analyse vidéo est séparé de l'application : il n'a pas accès à la
+   base. Pour qu'il puisse afficher des NOMS et pas seulement des numéros, la
+   grille lui est transmise telle qu'elle est annoncée.
+
+   Les noms ne sont pas un confort d'affichage : on reconnaît une voiture à sa
+   déco bien plus vite qu'à son numéro, souvent invisible sous l'angle de la
+   caméra. Ce sont eux qui permettent de vérifier d'un coup d'œil que
+   l'attribution est juste.
+
+   Format `rx-start-grid/1` — et rien de plus que ce qu'il faut : ni pilote
+   non partant (il n'est pas sur la grille), ni résultat, ni identifiant de
+   base au-delà de celui du départ.
+*/
+
+/**
+ * @param {object} start — le départ (startLabel, sessionType, starters…)
+ * @param {Array} rows — lignes de grille issues de `buildStartGrid`
+ * @param {string} poleSide — 'droite' | 'gauche' (meeting.poleSide)
+ * @returns {object} document `rx-start-grid/1`
+ */
+export function buildStartGridExport({ start = {}, rows = [], poleSide = null } = {}) {
+  const partants = rows
+    .filter(r => !r.didNotStart)
+    .slice()
+    .sort((a, b) => (a.lane ?? a.gridPos ?? 99) - (b.lane ?? b.gridPos ?? 99));
+  return {
+    schema: 'rx-start-grid/1',
+    startId: start.id ?? null,
+    startLabel: start.startLabel ?? null,
+    sessionType: start.sessionType ?? null,
+    // Le couloir 1 est toujours du côté du premier virage : l'outil vidéo en a
+    // besoin pour proposer l'ordre gauche → droite à l'image.
+    poleSide: normalizePoleSide(poleSide),
+    starters: countStarters(rows),
+    drivers: partants.map(r => ({
+      carNumber: r.carNumber ?? null,
+      firstName: r.firstName || '',
+      lastName: r.lastName || '',
+      lane: r.lane ?? null,
+      gridPos: r.gridPos ?? null,
+    })),
+  };
+}
+
+/** Le document est-il une grille annoncée exploitable ? */
+export function isStartGridExport(doc) {
+  return Boolean(doc) && doc.schema === 'rx-start-grid/1' && Array.isArray(doc.drivers);
+}

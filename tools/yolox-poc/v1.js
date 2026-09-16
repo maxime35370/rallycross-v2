@@ -41,6 +41,9 @@ async function session(m) {
 }
 
 let sidecar = null, fps = 60;
+// Grille annoncée venue de l'application : numéros ET noms. On reconnaît une
+// déco bien plus vite qu'un numéro, souvent invisible sous l'angle de la caméra.
+let grilleAnnoncee = null;      // { poleSide, drivers: [{carNumber, firstName, lastName, lane}] }
 let etatDepart = null;          // { t, dets, pixels, largeur, hauteur }
 let etatV1 = null;
 let ordre = [];                 // indices des boîtes V1, dans l'ordre de passage
@@ -185,6 +188,13 @@ function dessiner(canvas, etat, etiquettes, actifs = null) {
   });
 }
 
+/** Nom court du pilote portant ce numéro, s'il est connu. */
+function nomDe(carNumber) {
+  const d = grilleAnnoncee?.drivers?.find(x => Number(x.carNumber) === Number(carNumber));
+  if (!d) return null;
+  return `${(d.firstName || '').charAt(0)}${d.firstName ? '. ' : ''}${d.lastName || ''}`.trim() || null;
+}
+
 const numerosGrille = () => $('grille').value.split(',')
   .map(s => s.trim()).filter(Boolean).map(Number).filter(Number.isFinite);
 
@@ -199,12 +209,15 @@ function rendreDepart() {
   dessiner($('vueDepart'), etatDepart, (i) => {
     const k = rang.get(i);
     if (k == null) return '';
-    return nums[k] != null ? `n°${nums[k]}` : `${k + 1}`;
+    if (nums[k] == null) return `${k + 1}`;
+    const nom = nomDe(nums[k]);
+    return nom ? `${nums[k]} ${nom}` : `n°${nums[k]}`;
   });
   const lignes = etatDepart.dets.map((d, i) => {
     const k = rang.get(i);
     return `<tr${d.exclue ? ' style="opacity:.45"' : ''}>
       <td class="num">${k != null ? k + 1 : '—'}</td><td class="num">${k != null ? (nums[k] ?? '—') : 'écartée'}</td>
+      <td>${k != null && nums[k] != null ? (nomDe(nums[k]) ?? '') : ''}</td>
       <td class="num">${d.score != null ? d.score.toFixed(2) : '—'}</td>
       <td class="num">${d.box[2] - d.box[0]}×${d.box[3] - d.box[1]}</td></tr>`;
   }).join('');
@@ -215,7 +228,7 @@ function rendreDepart() {
   const emboitees = etatDepart.emboitees
     ? `<p class="sub" style="margin:0 0 6px">${etatDepart.emboitees} boîte(s) emboîtée(s) dans une autre, écartée(s) d'office.</p>` : '';
   $('tableDepart').innerHTML = `${ecart}${emboitees}<table><thead><tr>
-    <th>Position</th><th>N°</th><th>Score</th><th>Taille</th></tr></thead><tbody>${lignes}</tbody></table>`;
+    <th>Position</th><th>N°</th><th>Pilote</th><th>Score</th><th>Taille</th></tr></thead><tbody>${lignes}</tbody></table>`;
 }
 
 function rendreV1() {
@@ -274,13 +287,14 @@ function rendreAppariement() {
   const lignes = res.map(r => `<tr>
     <td class="num">P${r.position}</td>
     <td class="num">${r.carNumber ?? '<span class="avert">non décidée</span>'}</td>
+    <td>${r.carNumber != null ? (nomDe(r.carNumber) ?? '') : ''}</td>
     <td class="num">${r.distance != null ? r.distance.toFixed(3) : '—'}</td>
     <td class="num">${(r.ecart * 100).toFixed(0)} %</td>
     <td>${r.raison ?? ''}</td></tr>`).join('');
   const decidees = res.filter(r => r.carNumber != null).length;
   $('tableV1').innerHTML = `<p class="sub" style="margin:0 0 6px">
       ${decidees} décidée(s) · ${res.length - decidees} non décidée(s)</p>
-    <table><thead><tr><th>Position</th><th>N°</th><th>Distance</th><th>Écart au second</th><th></th>
+    <table><thead><tr><th>Position</th><th>N°</th><th>Pilote</th><th>Distance</th><th>Écart au second</th><th></th>
     </tr></thead><tbody>${lignes}</tbody></table>`;
 }
 
@@ -353,6 +367,15 @@ $('pick').addEventListener('change', async (e) => {
   for (const j of liste.filter(f => /\.json$/i.test(f.name))) {
     const brut = JSON.parse(await j.text());
     if (brut?.schema === 'rx-extract/1') { sidecar = brut; fps = brut.fps || 60; }
+    else if (brut?.schema === 'rx-start-grid/1' && Array.isArray(brut.drivers)) {
+      grilleAnnoncee = brut;
+      // Le couloir 1 est du côté du premier virage. Vu de la caméra, l'ordre
+      // gauche → droite est donc l'un des deux sens : on propose, le bouton
+      // ⇄ corrige si la caméra est de l'autre côté.
+      const parCouloir = [...brut.drivers].sort((a, b) => (a.lane ?? 99) - (b.lane ?? 99));
+      const ordreImage = brut.poleSide === 'right' ? parCouloir.reverse() : parCouloir;
+      $('grille').value = ordreImage.map(d => d.carNumber).join(', ');
+    }
   }
   if (!film) { $('etat').textContent = 'aucune vidéo dans la sélection'; return; }
   video.src = URL.createObjectURL(film);
@@ -390,6 +413,7 @@ $('exporter').addEventListener('click', () => {
     grille: numerosGrille(),
     positions: res.map(r => ({
       carNumber: r.carNumber, turn1Pos: r.carNumber != null ? r.position : null,
+      pilote: r.carNumber != null ? nomDe(r.carNumber) : null,
       confiance: Number(r.confiance.toFixed(3)), raison: r.raison,
     })).filter(p => p.carNumber != null || p.raison),
     createdAt: new Date().toISOString(),
