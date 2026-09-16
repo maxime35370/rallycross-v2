@@ -232,6 +232,37 @@
   color: #fff;
 }
 
+/* ── Pointage DANS L'ORDRE : un seul bouton par pilote ──
+   Plus large que les pastilles P1..Pn, parce qu'il porte soit la position
+   obtenue, soit celle qui serait attribuée (« → P3 »). */
+.sanl-v1-btn--ordre {
+  min-width: 62px;
+  padding: 4px 10px;
+  font-size: 0.86rem;
+}
+
+.sanl-v1-btn--ordre:not(.is-active) {
+  border-style: dashed;
+  color: var(--clr-text-3, var(--clr-text-2));
+}
+
+/* Un bouton sans place libre n'est pas « barré » comme une position prise :
+   il n'y a simplement plus rien à attribuer. */
+.sanl-v1-btn--ordre:disabled { text-decoration: none; }
+
+/* ── Choix du mode de saisie ── */
+.sanl-mode {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 4px;
+  font-size: 0.86rem;
+  color: var(--clr-text-2);
+}
+
+.sanl-mode input { accent-color: var(--clr-accent); }
+.sanl-mode .sanl-mode-aide { color: var(--clr-text-3, var(--clr-text-2)); font-size: 0.8rem; }
+
 /* Position déjà prise par un autre pilote */
 .sanl-v1-btn:disabled {
   opacity: 0.28;

@@ -18,7 +18,8 @@ import { escHtml } from './utils.js';
 import { getActiveChampionshipId, getAllChampionships } from './context.js';
 import {
   enumerateStarts, buildStartGrid, startDocId, seriesFingerprint,
-  validateAnalysis, normalizePoleSide, availableTurn1Positions, countStarters,
+  validateAnalysis, normalizePoleSide, availableTurn1Positions, pointTurn1InOrder,
+  nextFreeTurn1Pos, countStarters,
   orderGridByInterim, orderFinalGridFromSemis, orderByRaceResult,
 } from './startAnalysisCalc.js';
 import { calcInterimStandings } from './calc.js';
@@ -49,6 +50,13 @@ let _initialised      = false;
 // Le lecteur vit HORS de la zone re-rendue : changer une position au V1 ne doit
 // jamais recharger la vidéo ni perdre la position de lecture.
 let player          = null;
+// Mode de saisie du V1. Le pointage DANS L'ORDRE évite de traduire de tête ce
+// qu'on voit en numéros de position ; le mode position par position reste
+// disponible pour corriger un seul pilote sans toucher aux autres.
+const CLE_MODE_V1 = 'rx.sanl.pointageOrdonne';
+let pointageOrdonne = (() => {
+  try { return localStorage.getItem(CLE_MODE_V1) !== '0'; } catch { return true; }
+})();
 let videoCollapsed  = false;
 let sharedFile      = null;   // fichier local courant, réutilisé d'une série à l'autre
 let sharedSidecar   = null;   // bloc « rx-extract/1 » accompagnant ce fichier, s'il a été fourni
@@ -424,6 +432,16 @@ function renderWork() {
     ${noteHtml}
     ${warnHtml}
 
+    <div class="sanl-mode">
+      <label>
+        <input type="checkbox" id="sanl-mode-ordre" ${pointageOrdonne ? 'checked' : ''} ${readOnly ? 'disabled' : ''}>
+        Pointer dans l'ordre de passage
+      </label>
+      <span class="sanl-mode-aide">${pointageOrdonne
+        ? 'Cliquez les pilotes dans l\'ordre où ils franchissent le virage — la numérotation suit.'
+        : 'Choisissez la position de chaque pilote une par une.'}</span>
+    </div>
+
     <div class="sanl-completeness">
       <label>Visibilité à l'image de mesure :</label>
       <select class="form-select" id="sanl-completeness" ${readOnly ? 'disabled' : ''}>
@@ -442,7 +460,7 @@ function renderWork() {
             <th style="width:56px" title="Couloir physique">Couloir</th>
             <th class="sanl-col-pilote">Pilote</th>
             <th style="width:52px" class="center">N°</th>
-            <th class="center sanl-col-v1" style="min-width:${n * 31 + 14}px">1er virage</th>
+            <th class="center sanl-col-v1" style="min-width:${pointageOrdonne ? 76 : n * 31 + 14}px">1er virage</th>
             <th style="width:74px" class="center">Arrivée</th>
             <th class="center sanl-col-conf">Confiance</th>
           </tr>
@@ -492,11 +510,35 @@ function renderRow(r, i, start, readOnly) {
 }
 
 /**
+ * Bouton unique du POINTAGE DANS L'ORDRE.
+ *
+ * On désigne les voitures dans l'ordre où elles franchissent le virage ; la
+ * numérotation suit. Le bouton montre la position obtenue, ou la position qui
+ * serait attribuée — pour qu'on sache où l'on en est sans compter.
+ */
+function v1OrderButtonHtml(row, starters, readOnly) {
+  const place = Number.isInteger(row.turn1Pos) ? row.turn1Pos : null;
+  const suivante = nextFreeTurn1Pos(current.rows, starters);
+  // Plus une seule place libre et ce pilote non classé : rien à faire.
+  const disabled = readOnly || (place == null && suivante == null);
+  const texte = place != null ? `P${place}` : (suivante != null ? `→ P${suivante}` : '—');
+  const titre = place != null
+    ? `Retirer ce pilote de P${place} — les suivants remontent d'un cran`
+    : (suivante != null ? `Placer ce pilote en P${suivante}` : 'Toutes les positions sont prises');
+  return `<button type="button"
+    class="sanl-v1-btn sanl-v1-btn--ordre${place != null ? ' is-active' : ''}"
+    data-driver="${escHtml(row.driverId)}" data-ordre="1"
+    aria-pressed="${place != null}" ${disabled ? 'disabled' : ''}
+    title="${escHtml(titre)}">${texte}</button>`;
+}
+
+/**
  * Boutons de position au premier virage pour un pilote.
  * Une position prise par un AUTRE pilote est désactivée ; celle du pilote
  * lui-même reste toujours cliquable pour permettre de la retirer.
  */
 function v1ButtonsHtml(row, starters, readOnly) {
+  if (pointageOrdonne) return v1OrderButtonHtml(row, starters, readOnly);
   const avail = new Set(availableTurn1Positions(row.driverId, current.rows, starters));
   let html = '';
   for (let k = 1; k <= starters; k++) {
@@ -532,6 +574,15 @@ function refreshV1Buttons() {
 function bindV1Buttons() {
   document.querySelectorAll('.sanl-v1-btn').forEach(btn => {
     btn.addEventListener('click', () => {
+      // Pointage dans l'ordre : la logique vit dans le module pur, qui rend
+      // une NOUVELLE liste — retrait compris, avec resserrement des suivants.
+      if (btn.dataset.ordre) {
+        current.rows = pointTurn1InOrder(btn.dataset.driver, current.rows, countStarters(current.rows));
+        current.dirty = true;
+        refreshV1Buttons();
+        refreshFeedback();
+        return;
+      }
       const row = current.rows.find(r => r.driverId === btn.dataset.driver);
       if (!row) return;
       const pos = parseInt(btn.dataset.pos, 10);
@@ -992,6 +1043,14 @@ function bindWork() {
       current.dirty = true;
       refreshFeedback();
     });
+  });
+
+  document.getElementById('sanl-mode-ordre')?.addEventListener('change', (e) => {
+    pointageOrdonne = e.target.checked;
+    // Le choix suit l'opérateur d'un départ à l'autre : c'est une habitude de
+    // travail, pas une donnée de l'analyse. Rien n'est envoyé en base.
+    try { localStorage.setItem(CLE_MODE_V1, pointageOrdonne ? '1' : '0'); } catch { /* stockage refusé */ }
+    renderWork();
   });
 
   document.getElementById('sanl-completeness')?.addEventListener('change', (e) => {

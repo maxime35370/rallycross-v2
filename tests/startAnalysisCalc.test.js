@@ -3,7 +3,8 @@ import {
   startDocId, gridLayoutKey, seriesFingerprint,
   maxPerSeries, resolveGridGeometry, gridCellsInOrder, placeOnGrid, checkGridLayout,
   laneZone, normalizePoleSide, startLabel, enumerateStarts, finishPosInStart, buildStartGrid,
-  validateAnalysis, availableTurn1Positions, pointTurn1InOrder, isNonStarter, countStarters,
+  validateAnalysis, availableTurn1Positions, pointTurn1InOrder, nextFreeTurn1Pos,
+  isNonStarter, countStarters,
   orderGridByInterim, orderFinalGridFromSemis, orderByRaceResult,
 } from '../js/startAnalysisCalc.js';
 import { computeSeriesSizes } from '../js/calc.js';
@@ -1152,5 +1153,45 @@ describe('pointTurn1InOrder', () => {
   it('reste sans effet sur un pilote inconnu ou un effectif nul', () => {
     expect(pos(pointTurn1InOrder('zz', grille(), 5))).toEqual(pos(grille()));
     expect(pos(pointTurn1InOrder('a', grille(), 0))).toEqual(pos(grille()));
+  });
+});
+
+describe('nextFreeTurn1Pos', () => {
+  const r = (...positions) => positions.map((p, i) => ({ driverId: 'd' + i, turn1Pos: p }));
+
+  it('rend P1 sur une grille vierge', () => {
+    expect(nextFreeTurn1Pos(r(null, null, null), 3)).toBe(1);
+  });
+
+  it('rend la plus petite position LIBRE, pas la suivante du maximum', () => {
+    // Un retrait peut laisser un trou si l'opérateur a saisi en mode manuel :
+    // c'est ce trou qu'il faut combler d'abord.
+    expect(nextFreeTurn1Pos(r(1, 3, null), 5)).toBe(2);
+  });
+
+  it('rend null quand toutes les places sont prises', () => {
+    expect(nextFreeTurn1Pos(r(1, 2, 3), 3)).toBe(null);
+  });
+
+  it('ignore les positions vides ou aberrantes', () => {
+    expect(nextFreeTurn1Pos(r(null, '', 0, -2, 1), 4)).toBe(2);
+  });
+
+  it('rend null si le nombre de partants est absurde', () => {
+    expect(nextFreeTurn1Pos(r(null), 0)).toBe(null);
+    expect(nextFreeTurn1Pos(r(null), -1)).toBe(null);
+  });
+
+  it('annonce bien ce que pointTurn1InOrder attribuera', () => {
+    // L'écran affiche « → Pn » avec cette fonction ; si les deux divergeaient,
+    // le bouton mentirait sur ce qu'il va faire.
+    const rows = [
+      { driverId: 'a', turn1Pos: 1, didNotStart: false },
+      { driverId: 'b', turn1Pos: null, didNotStart: false },
+      { driverId: 'c', turn1Pos: 3, didNotStart: false },
+    ];
+    const annonce = nextFreeTurn1Pos(rows, 5);
+    const apres = pointTurn1InOrder('b', rows, 5);
+    expect(apres.find(x => x.driverId === 'b').turn1Pos).toBe(annonce);
   });
 });
