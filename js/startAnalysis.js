@@ -30,7 +30,7 @@ import {
 } from './analysisLink.js';
 import {
   parseVideoSource, resolveStartTime, formatPreciseTime, buildVideoBlock,
-  buildExtractCommand, PAD_AVANT, PAD_APRES,
+  buildExtractRecipe, PAD_AVANT, PAD_APRES,
   keyboardAction, neighbourStartId, nextRate, ratesFor, SHORTCUT_HELP,
   parseExtractSidecar, pairExtractFiles,
 } from './videoPlayerCalc.js';
@@ -915,7 +915,7 @@ function refreshVideoUi() {
       () => player?.seek(current.video.startAt));
     document.getElementById('sanl-goto-v1')?.addEventListener('click',
       () => player?.seek(current.video.turn1At));
-    document.getElementById('sanl-extrait')?.addEventListener('click', copierCommandeExtrait);
+    document.getElementById('sanl-extrait')?.addEventListener('click', telechargerRecette);
   }
   refreshTimeDisplay();
 }
@@ -952,33 +952,41 @@ function recetteExtrait() {
     sessionType: current.start?.sessionType || null,
     sessionNum: current.start?.sessionNum ?? null,
     serie: current.start?.startIndex ?? null,
+    // Les clés Firestore : la ligne de commande ne les aurait jamais, et sans
+    // elles le sidecar ne sait pas à quelle manche l'extrait appartient.
+    meetingId: selectedMeetingId || null,
+    sessionId: current.start?.sessionId || null,
+    championshipId: m?.championshipId || null,
   };
 }
 
 function extraitHtml() {
-  const recette = recetteExtrait();
-  if (!recette) return '';
-  const r = buildExtractCommand(recette);
+  const params = recetteExtrait();
+  if (!params) return '';
+  const r = buildExtractRecipe(params);
   const titre = r.ok
-    ? `Copier la commande d'extraction — ${r.clipDuration.toFixed(1)} s, de ${formatPreciseTime(r.clipStart)} à ${formatPreciseTime(r.clipEnd)}`
+    ? `Télécharger la recette — extrait de ${r.clipDuration.toFixed(1)} s, de ${formatPreciseTime(r.clipStart)} à ${formatPreciseTime(r.clipEnd)}. `
+      + 'Double-clique ensuite le raccourci « extraire-derniere-recette » sur ton Bureau.'
     : `Il manque ${r.manques.join(', ')}`;
   return `<button class="vp-btn vp-btn--mark" id="sanl-extrait" ${r.ok ? '' : 'disabled'}
     title="${escHtml(titre)}">✂️ Préparer l'extrait${r.ok ? ` (${r.clipDuration.toFixed(1)} s)` : ''}</button>`;
 }
 
-async function copierCommandeExtrait() {
-  const recette = recetteExtrait();
-  const r = recette ? buildExtractCommand(recette) : { ok: false, manques: ['une retransmission YouTube'] };
+/**
+ * Dépose la recette dans les téléchargements. Le raccourci sur le Bureau ira
+ * la chercher : un clic ici, un double-clic là-bas, aucun terminal.
+ */
+function telechargerRecette() {
+  const params = recetteExtrait();
+  const r = params ? buildExtractRecipe(params) : { ok: false, manques: ['une retransmission YouTube'] };
   if (!r.ok) { toast(`Il manque ${r.manques.join(', ')}`, 'error'); return; }
 
-  try {
-    await navigator.clipboard.writeText(r.command);
-    toast(`Commande copiée — extrait de ${r.clipDuration.toFixed(1)} s (départ −${PAD_AVANT} s → V1 +${PAD_APRES} s). Colle-la dans un terminal.`, 'success');
-  } catch {
-    // Presse-papier refusé (contexte non sécurisé, permission) : on montre la
-    // commande plutôt que de laisser l'opérateur sans rien.
-    window.prompt('Copie cette commande (Ctrl+C) :', r.command);
-  }
+  const a = document.createElement('a');
+  a.download = r.nom;
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(r.recette, null, 2)], { type: 'application/json' }));
+  a.click();
+  toast(`Recette prête : ${r.clipDuration.toFixed(1)} s (départ −${PAD_AVANT} s → V1 +${PAD_APRES} s). `
+    + 'Double-clique « extraire-derniere-recette ».', 'success');
 }
 
 function markMoment(which) {

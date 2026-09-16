@@ -7,7 +7,7 @@ import {
   YOUTUBE_RATES, LOCAL_RATES, ratesFor, nextRate,
   computeVideoRect, projectBox, normalizeBox, sanitizeBoxes, boxLabelText,
   keyboardAction, neighbourStartId, buildVideoBlock,
-  buildExtractCommand, PAD_AVANT, PAD_APRES,
+  buildExtractCommand, buildExtractRecipe, RECIPE_SCHEMA, PAD_AVANT, PAD_APRES,
   COMMON_FPS, DEFAULT_FPS,
 } from '../js/videoPlayerCalc.js';
 
@@ -645,5 +645,71 @@ describe('buildExtractCommand', () => {
 
   it('sans argument, ne jette pas', () => {
     expect(buildExtractCommand().ok).toBe(false);
+  });
+});
+
+describe('buildExtractRecipe', () => {
+  const MANCHE = {
+    youtubeId: '_SqxZQl5zzQ', startAt: 20586, turn1At: 20594,
+    location: 'Kerlabo', year: 2026, category: 'D3',
+    sessionType: 'MQ', sessionNum: 3, serie: 4,
+    meetingId: 'meet1', sessionId: 'sess9', championshipId: 'champ1',
+  };
+
+  it('rend les clés que `--recette` sait lire', () => {
+    const { recette } = buildExtractRecipe(MANCHE);
+    expect(recette.schema).toBe(RECIPE_SCHEMA);
+    expect(recette.url).toBe('https://youtu.be/_SqxZQl5zzQ');
+    expect(recette.sourceStart).toBe(20586);
+    expect(recette.sourceEnd).toBe(20594);
+    expect(recette.v1At).toBe(20594);
+    expect(recette.padBefore).toBe(3);
+    expect(recette.padAfter).toBe(2);
+  });
+
+  it('emporte les clés Firestore — la ligne de commande ne les aurait jamais', () => {
+    const { recette } = buildExtractRecipe(MANCHE);
+    expect(recette.meetingId).toBe('meet1');
+    expect(recette.sessionId).toBe('sess9');
+    expect(recette.championshipId).toBe('champ1');
+  });
+
+  it('trace sa provenance : un extrait fabriqué par l\'application se reconnaît', () => {
+    expect(buildExtractRecipe(MANCHE).recette.origin).toBe('auto:startAnalysis@1');
+  });
+
+  it('nomme le fichier d\'après la manche, avec le suffixe que le raccourci cherche', () => {
+    expect(buildExtractRecipe(MANCHE).nom).toBe('Kerlabo_2026_D3_Q3_S4.rxrecette.json');
+  });
+
+  it('accepte un lieu accentué ou ponctué sans produire un nom de fichier bancal', () => {
+    const r = buildExtractRecipe({ ...MANCHE, location: 'Lohéac (35)' });
+    expect(r.nom).toBe('Loheac_35_2026_D3_Q3_S4.rxrecette.json');
+    expect(r.recette.location).toBe('Lohéac (35)');    // la recette garde le vrai nom
+  });
+
+  it('nomme quand même un extrait sans identité', () => {
+    const r = buildExtractRecipe({ youtubeId: 'abc', startAt: 10, turn1At: 20 });
+    expect(r.nom).toBe('extrait.rxrecette.json');
+  });
+
+  it('annonce la même fenêtre que la commande', () => {
+    const r = buildExtractRecipe(MANCHE);
+    const c = buildExtractCommand(MANCHE);
+    expect([r.clipStart, r.clipEnd, r.clipDuration]).toEqual([c.clipStart, c.clipEnd, c.clipDuration]);
+  });
+
+  it('garde les fractions de seconde', () => {
+    const { recette } = buildExtractRecipe({ ...MANCHE, startAt: 20586.483, turn1At: 20594.25 });
+    expect(recette.sourceStart).toBe(20586.483);
+    expect(recette.v1At).toBe(20594.25);
+  });
+
+  it('refuse pour les mêmes raisons que la commande, et ne rend rien à moitié', () => {
+    const r = buildExtractRecipe({ startAt: 10, turn1At: 20 });
+    expect(r.ok).toBe(false);
+    expect(r.recette).toBeNull();
+    expect(r.nom).toBeNull();
+    expect(r.manques).toEqual(['la source YouTube']);
   });
 });

@@ -42,7 +42,37 @@ Les trois outils doivent répondre. **`--download-sections` ne fonctionne pas sa
 
 ---
 
-## Utilisation
+## Depuis le site : un clic, un double-clic
+
+C'est la voie normale. Elle n'exige **aucun terminal** et fonctionne depuis le site déployé.
+
+**Une fois pour toutes :** crée un raccourci vers `tools\extract-manche\extraire-derniere-recette.cmd`
+sur ton Bureau ou dans la barre des tâches.
+
+**À chaque manche :**
+
+1. Sur le site, *Analyse des départs* : charge la retransmission YouTube, marque le départ (`D`) et
+   le premier virage (`V`).
+2. Clique **✂️ Préparer l'extrait**. Un fichier `Lieu_Année_Cat_QN_SN.rxrecette.json` part dans tes
+   téléchargements — il annonce déjà la durée de l'extrait.
+3. Double-clique le raccourci. Il prend la recette la plus récente, extrait la manche, range la
+   recette dans `recettes-faites\`.
+
+Le MP4 et son sidecar apparaissent dans `extraits/`, prêts à être chargés dans le lecteur.
+
+> **Pourquoi une recette JSON plutôt qu'un `.cmd` téléchargé ?** Windows marque tout script venu du
+> web et affiche un avertissement à **chaque** exécution. Une recette est un fichier de données :
+> aucun avertissement, et le seul programme lancé est celui qui était déjà sur la machine.
+
+La recette porte en plus les clés Firestore (`meetingId`, `sessionId`, `championshipId`) que la ligne
+de commande n'aurait jamais : le sidecar rattache donc l'extrait à sa manche sans aucune ressaisie.
+
+Le dossier fouillé est `%USERPROFILE%\Downloads`. Pour un autre dossier, passe-le en argument du
+raccourci ou définis `RX_TELECHARGEMENTS`.
+
+---
+
+## Utilisation en ligne de commande
 
 ```powershell
 tools\extract-manche\extraire.cmd ^

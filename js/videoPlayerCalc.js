@@ -594,6 +594,7 @@ export function buildVideoBlock({ kind, youtubeId, fileName, startAt, turn1At, f
 // ─────────────────────────────────────────────────────────
 
 /** Marges par défaut : assez avant pour voir la grille, juste ce qu'il faut après le virage. */
+export const RECIPE_SCHEMA = 'rx-recipe/1';
 export const PAD_AVANT = 3;
 export const PAD_APRES = 2;
 
@@ -606,6 +607,62 @@ function argument(v) {
 /** Secondes lisibles par `parseTimeInput` de l'extracteur : un nombre nu. */
 function secondes(v) {
   return String(Number(Number(v).toFixed(3)));
+}
+
+/**
+ * Recette d'extraction : le même contenu que la commande, en JSON.
+ *
+ * `extract.mjs --recette <fichier>` lit exactement ces clés. Un JSON téléchargé
+ * ne porte pas la « marque du web » qui fait afficher un avertissement à chaque
+ * script téléchargé : c'est un fichier de données, pas un exécutable. Le seul
+ * programme lancé reste celui qui est déjà sur la machine.
+ *
+ * @returns {{ok:boolean, recette:object|null, nom:string|null, manques:string[],
+ *            clipStart:number|null, clipEnd:number|null, clipDuration:number|null}}
+ */
+export function buildExtractRecipe(params = {}) {
+  const r = buildExtractCommand(params);
+  if (!r.ok) return { ok: false, recette: null, nom: null, manques: r.manques, clipStart: null, clipEnd: null, clipDuration: null };
+
+  const {
+    youtubeId, startAt, turn1At, padBefore = PAD_AVANT, padAfter = PAD_APRES,
+    location = null, year = null, category = null,
+    sessionType = null, sessionNum = null, serie = null,
+    meetingId = null, sessionId = null, championshipId = null,
+  } = params;
+
+  return {
+    ok: true,
+    manques: [],
+    clipStart: r.clipStart, clipEnd: r.clipEnd, clipDuration: r.clipDuration,
+    nom: `${slugExtrait([location, year, category, sessionType && sessionNum != null ? `Q${sessionNum}` : sessionType, serie != null ? `S${serie}` : null])}.rxrecette.json`,
+    recette: {
+      schema: RECIPE_SCHEMA,
+      url: `https://youtu.be/${youtubeId}`,
+      sourceStart: Number(Number(startAt).toFixed(3)),
+      sourceEnd: Number(Number(turn1At).toFixed(3)),
+      v1At: Number(Number(turn1At).toFixed(3)),
+      padBefore: Math.max(0, Number(padBefore) || 0),
+      padAfter: Math.max(0, Number(padAfter) || 0),
+      location, year, category, sessionType, sessionNum, serie,
+      // Les clés Firestore : l'application les connaît, la ligne de commande
+      // ne les aurait jamais. Le sidecar produit rattachera donc l'extrait à
+      // sa manche sans aucune ressaisie.
+      meetingId, sessionId, championshipId,
+      origin: 'auto:startAnalysis@1',
+    },
+  };
+}
+
+/** Nom de fichier lisible et sans surprise, à partir des morceaux connus. */
+function slugExtrait(morceaux) {
+  const nom = morceaux
+    .filter(v => v != null && v !== '')
+    .map(v => String(v).normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9]+/g, '_'))
+    // Chaque morceau peut déjà finir par « _ » (« Lohéac (35) » → « Loheac_35_ ») :
+    // sans cette fusion, le nom porterait des doubles soulignés.
+    .join('_').replace(/_+/g, '_').replace(/^_|_$/g, '');
+  return nom || 'extrait';
 }
 
 /**
