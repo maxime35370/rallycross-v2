@@ -3,7 +3,7 @@ import {
   startDocId, gridLayoutKey, seriesFingerprint,
   maxPerSeries, resolveGridGeometry, gridCellsInOrder, placeOnGrid, checkGridLayout,
   laneZone, normalizePoleSide, startLabel, enumerateStarts, finishPosInStart, buildStartGrid,
-  validateAnalysis, availableTurn1Positions, isNonStarter, countStarters,
+  validateAnalysis, availableTurn1Positions, pointTurn1InOrder, isNonStarter, countStarters,
   orderGridByInterim, orderFinalGridFromSemis, orderByRaceResult,
 } from '../js/startAnalysisCalc.js';
 import { computeSeriesSizes } from '../js/calc.js';
@@ -1086,5 +1086,71 @@ describe('validateAnalysis', () => {
     const a = okAnalysis();
     a.rows[0].lane = null;
     expect(validateAnalysis(a).warnings.join(' ')).toMatch(/couloir/i);
+  });
+});
+
+// ─────────────────────────────────────────────────────────
+// POINTAGE DANS L'ORDRE
+// ─────────────────────────────────────────────────────────
+
+describe('pointTurn1InOrder', () => {
+  const grille = (etats = {}) => ['a', 'b', 'c', 'd', 'e'].map(id => ({
+    driverId: id, turn1Pos: etats[id] ?? null, didNotStart: false, corrected: false,
+  }));
+  const pos = (rows) => Object.fromEntries(rows.map(r => [r.driverId, r.turn1Pos]));
+
+  it('attribue P1 au premier pilote désigné', () => {
+    const r = pointTurn1InOrder('c', grille(), 5);
+    expect(pos(r)).toEqual({ a: null, b: null, c: 1, d: null, e: null });
+  });
+
+  it('attribue les positions dans l\'ordre des clics', () => {
+    let r = grille();
+    for (const id of ['c', 'a', 'e']) r = pointTurn1InOrder(id, r, 5);
+    expect(pos(r)).toEqual({ a: 2, b: null, c: 1, d: null, e: 3 });
+  });
+
+  it('retire le pilote recliqué ET resserre ceux qui suivaient', () => {
+    // Sans le resserrement, retirer P1 laisserait P2 et P3 en place : un trou
+    // que l'opérateur devrait reboucher position par position.
+    let r = grille();
+    for (const id of ['c', 'a', 'e']) r = pointTurn1InOrder(id, r, 5);
+    r = pointTurn1InOrder('c', r, 5);
+    expect(pos(r)).toEqual({ a: 1, b: null, c: null, d: null, e: 2 });
+  });
+
+  it('ne laisse pas de trou quand on retire une position intermédiaire', () => {
+    let r = grille();
+    for (const id of ['a', 'b', 'c', 'd']) r = pointTurn1InOrder(id, r, 5);
+    r = pointTurn1InOrder('b', r, 5);
+    expect(pos(r)).toEqual({ a: 1, b: null, c: 2, d: 3, e: null });
+  });
+
+  it('ne classe jamais un pilote non partant', () => {
+    const rows = grille().map(r => (r.driverId === 'b' ? { ...r, didNotStart: true } : r));
+    expect(pos(pointTurn1InOrder('b', rows, 5))).toEqual({ a: null, b: null, c: null, d: null, e: null });
+  });
+
+  it('ne dépasse pas le nombre de partants', () => {
+    let r = grille();
+    for (const id of ['a', 'b', 'c']) r = pointTurn1InOrder(id, r, 3);
+    const avant = pos(r);
+    expect(pos(pointTurn1InOrder('d', r, 3))).toEqual(avant);   // plus une seule place
+  });
+
+  it('est PURE : la liste d\'entrée n\'est pas modifiée', () => {
+    const rows = grille();
+    pointTurn1InOrder('a', rows, 5);
+    expect(rows.every(r => r.turn1Pos === null)).toBe(true);
+  });
+
+  it('marque comme corrigée la seule ligne désignée', () => {
+    const r = pointTurn1InOrder('d', grille(), 5);
+    expect(r.filter(x => x.corrected).map(x => x.driverId)).toEqual(['d']);
+  });
+
+  it('reste sans effet sur un pilote inconnu ou un effectif nul', () => {
+    expect(pos(pointTurn1InOrder('zz', grille(), 5))).toEqual(pos(grille()));
+    expect(pos(pointTurn1InOrder('a', grille(), 0))).toEqual(pos(grille()));
   });
 });

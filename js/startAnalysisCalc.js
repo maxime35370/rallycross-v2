@@ -711,6 +711,67 @@ export function buildStartGrid({ start, results = [], participants = [], rankedD
  * @param {number} starters — nombre de partants (borne haute)
  * @returns {number[]} positions proposables, dans l'ordre croissant
  */
+/**
+ * POINTAGE DANS L'ORDRE — un clic par pilote, dans l'ordre de passage au V1.
+ *
+ * Le pointage position par position oblige à traduire ce qu'on voit (« celle-ci
+ * passe avant celle-là ») en numéros (« ce pilote est P3 »). Cette traduction
+ * est faite de tête, devant une vidéo qui défile, et c'est là que se logent les
+ * erreurs. Pointer dans l'ordre supprime l'étape : on désigne les voitures dans
+ * l'ordre où elles franchissent le virage, la numérotation suit.
+ *
+ * Trois règles, et rien d'autre :
+ *   • un pilote non classé prend la plus petite position libre ;
+ *   • un pilote déjà classé est RETIRÉ, et tous ceux qui le suivaient remontent
+ *     d'un cran — sans quoi un retrait laisserait un trou à reboucher à la main ;
+ *   • un pilote non partant n'est jamais classé.
+ *
+ * Fonction pure : elle ne modifie rien, elle rend la liste telle qu'elle doit
+ * devenir. L'appelant décide quoi en faire.
+ *
+ * @param {string} driverId — le pilote désigné
+ * @param {Array}  rows — lignes de grille, avec `driverId`, `turn1Pos`, `didNotStart`
+ * @param {number} starters — nombre de partants, borne haute des positions
+ * @returns {Array} une NOUVELLE liste de lignes, positions mises à jour
+ */
+export function pointTurn1InOrder(driverId, rows = [], starters = 0) {
+  const n = Number(starters);
+  const self = rows.find(r => r.driverId === driverId);
+  if (!self || self.didNotStart || !Number.isInteger(n) || n < 1) return rows.map(r => ({ ...r }));
+
+  // `Number(null)` vaut 0 et passe `Number.isInteger` : sans ce garde, une
+  // position VIDE se lisait comme la position 0 et déclenchait un retrait.
+  const rang = (v) => {
+    if (v == null || v === '') return null;
+    const k = Number(v);
+    return Number.isInteger(k) && k > 0 ? k : null;
+  };
+  const actuelle = rang(self.turn1Pos);
+
+  // Retrait : on enlève la position et on resserre ceux qui suivaient.
+  if (actuelle != null) {
+    return rows.map(r => {
+      if (r.driverId === driverId) return { ...r, turn1Pos: null, corrected: true };
+      const p = rang(r.turn1Pos);
+      if (p != null && p > actuelle) return { ...r, turn1Pos: p - 1 };
+      return { ...r };
+    });
+  }
+
+  // Ajout : la plus petite position libre, dans la limite du nombre de partants.
+  const prises = new Set(rows
+    .filter(r => r.driverId !== driverId)
+    .map(r => rang(r.turn1Pos))
+    .filter(p => p != null));
+  let libre = null;
+  for (let k = 1; k <= n; k++) if (!prises.has(k)) { libre = k; break; }
+  if (libre == null) return rows.map(r => ({ ...r }));
+
+  return rows.map(r => (r.driverId === driverId
+    ? { ...r, turn1Pos: libre, corrected: true }
+    : { ...r }));
+}
+
 export function availableTurn1Positions(driverId, rows = [], starters = 0) {
   const n = Number(starters);
   if (!Number.isInteger(n) || n < 1) return [];
