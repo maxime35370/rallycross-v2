@@ -711,6 +711,86 @@ export function buildStartGrid({ start, results = [], participants = [], rankedD
  * @param {number} starters — nombre de partants (borne haute)
  * @returns {number[]} positions proposables, dans l'ordre croissant
  */
+/**
+ * Prochaine position libre au premier virage — la règle du pointage dans
+ * l'ordre, isolée pour être testable et affichable.
+ *
+ * L'écran s'en sert pour annoncer ce qu'un clic donnerait (« → P3 ») ; c'est
+ * une décision métier, pas de la mise en forme.
+ *
+ * @returns {number|null} la plus petite position libre, ou null s'il n'en
+ *   reste aucune dans la limite des partants.
+ */
+export function nextFreeTurn1Pos(rows = [], starters = 0) {
+  const n = Number(starters);
+  if (!Number.isInteger(n) || n < 1) return null;
+  const prises = new Set(rows.map(r => turn1Rank(r.turn1Pos)).filter(p => p != null));
+  for (let k = 1; k <= n; k++) if (!prises.has(k)) return k;
+  return null;
+}
+
+/**
+ * Rang de premier virage valide, ou null.
+ *
+ * `Number(null)` vaut 0 et passe `Number.isInteger` : sans ce garde, une
+ * position VIDE se lit comme la position 0. C'est le défaut qu'ont attrapé
+ * les tests du pointage dans l'ordre.
+ */
+function turn1Rank(v) {
+  if (v == null || v === '') return null;
+  const k = Number(v);
+  return Number.isInteger(k) && k > 0 ? k : null;
+}
+
+/**
+ * POINTAGE DANS L'ORDRE — un clic par pilote, dans l'ordre de passage au V1.
+ *
+ * Le pointage position par position oblige à traduire ce qu'on voit (« celle-ci
+ * passe avant celle-là ») en numéros (« ce pilote est P3 »). Cette traduction
+ * est faite de tête, devant une vidéo qui défile, et c'est là que se logent les
+ * erreurs. Pointer dans l'ordre supprime l'étape : on désigne les voitures dans
+ * l'ordre où elles franchissent le virage, la numérotation suit.
+ *
+ * Trois règles, et rien d'autre :
+ *   • un pilote non classé prend la plus petite position libre ;
+ *   • un pilote déjà classé est RETIRÉ, et tous ceux qui le suivaient remontent
+ *     d'un cran — sans quoi un retrait laisserait un trou à reboucher à la main ;
+ *   • un pilote non partant n'est jamais classé.
+ *
+ * Fonction pure : elle ne modifie rien, elle rend la liste telle qu'elle doit
+ * devenir. L'appelant décide quoi en faire.
+ *
+ * @param {string} driverId — le pilote désigné
+ * @param {Array}  rows — lignes de grille, avec `driverId`, `turn1Pos`, `didNotStart`
+ * @param {number} starters — nombre de partants, borne haute des positions
+ * @returns {Array} une NOUVELLE liste de lignes, positions mises à jour
+ */
+export function pointTurn1InOrder(driverId, rows = [], starters = 0) {
+  const n = Number(starters);
+  const self = rows.find(r => r.driverId === driverId);
+  if (!self || self.didNotStart || !Number.isInteger(n) || n < 1) return rows.map(r => ({ ...r }));
+
+  const actuelle = turn1Rank(self.turn1Pos);
+
+  // Retrait : on enlève la position et on resserre ceux qui suivaient.
+  if (actuelle != null) {
+    return rows.map(r => {
+      if (r.driverId === driverId) return { ...r, turn1Pos: null, corrected: true };
+      const p = turn1Rank(r.turn1Pos);
+      if (p != null && p > actuelle) return { ...r, turn1Pos: p - 1 };
+      return { ...r };
+    });
+  }
+
+  // Ajout : la plus petite position libre, dans la limite du nombre de partants.
+  const libre = nextFreeTurn1Pos(rows.filter(r => r.driverId !== driverId), n);
+  if (libre == null) return rows.map(r => ({ ...r }));
+
+  return rows.map(r => (r.driverId === driverId
+    ? { ...r, turn1Pos: libre, corrected: true }
+    : { ...r }));
+}
+
 export function availableTurn1Positions(driverId, rows = [], starters = 0) {
   const n = Number(starters);
   if (!Number.isInteger(n) || n < 1) return [];
@@ -805,4 +885,182 @@ export function validateAnalysis(analysis) {
   }
 
   return { ok: errors.length === 0, errors, warnings };
+}
+
+// ─────────────────────────────────────────────────────────
+// PROPOSITION AUTOMATIQUE DU CLASSEMENT AU PREMIER VIRAGE
+// ─────────────────────────────────────────────────────────
+
+/*
+   L'analyse vidéo ne saisit JAMAIS à la place de l'opérateur. Elle remplit
+   `autoTurn1Pos`, un champ distinct de `turn1Pos` ; seul un geste humain fait
+   passer l'un dans l'autre. C'est la règle absolue du module — « aucune donnée
+   non validée n'alimente les statistiques » — et elle se tient ici, dans le
+   code, pas seulement dans l'intention.
+
+   Format d'échange `rx-v1-order/1`, volontairement minuscule (moins d'un ko) :
+   la vidéo annotée ne circule pas, seul le résultat chiffré revient.
+
+     { schema: 'rx-v1-order/1',
+       startAt: 3.0, turn1At: 13.5,
+       methode: 'similitude-groupe/1 + hsv-zonee/1',
+       positions: [ { carNumber: 12, turn1Pos: 1, confiance: 0.92 },
+                    { carNumber: 7,  turn1Pos: null, confiance: 0 } ] }
+
+   `turn1Pos: null` veut dire NON DÉCIDÉ, et c'est un résultat légitime : une
+   case vide se remplit en deux secondes, une case fausse coûte bien plus cher
+   à repérer puis à corriger.
+*/
+
+/** Le document est-il une proposition exploitable ? */
+export function isV1OrderProposal(doc) {
+  return Boolean(doc) && doc.schema === 'rx-v1-order/1' && Array.isArray(doc.positions);
+}
+
+/**
+ * Applique une proposition aux lignes d'un départ, sans jamais toucher à
+ * `turn1Pos`.
+ *
+ * Tout ce qui ne se rattache pas proprement est ÉCARTÉ et rapporté, plutôt
+ * que rapproché de force : une proposition à moitié comprise vaut moins que
+ * pas de proposition du tout.
+ *
+ * @returns {{rows:Array, applied:number, rejected:Array<{carNumber:*, raison:string}>}}
+ */
+export function applyV1OrderProposal({ rows = [], proposal = null, starters = null } = {}) {
+  const sortie = rows.map(r => ({ ...r, autoTurn1Pos: null, autoConfidence: null }));
+  const rejected = [];
+  if (!isV1OrderProposal(proposal)) {
+    return { rows: sortie, applied: 0, rejected: [{ carNumber: null, raison: 'format non reconnu' }] };
+  }
+
+  const n = Number.isInteger(Number(starters)) && Number(starters) > 0
+    ? Number(starters) : countStarters(rows);
+  const parNumero = new Map();
+  for (const r of sortie) {
+    const num = Number(r.carNumber);
+    if (!Number.isFinite(num)) continue;
+    // Deux pilotes au même numéro dans un départ : on ne devine pas lequel.
+    if (parNumero.has(num)) parNumero.set(num, null); else parNumero.set(num, r);
+  }
+
+  // Premier passage : ne garder que des propositions individuellement valables.
+  const retenues = [];
+  for (const p of proposal.positions) {
+    const num = Number(p?.carNumber);
+    const pos = turn1Rank(p?.turn1Pos);
+    const ligne = parNumero.get(num);
+    if (!Number.isFinite(num)) { rejected.push({ carNumber: p?.carNumber, raison: 'numéro illisible' }); continue; }
+    if (ligne === undefined) { rejected.push({ carNumber: num, raison: 'absent de ce départ' }); continue; }
+    if (ligne === null) { rejected.push({ carNumber: num, raison: 'numéro en double dans le départ' }); continue; }
+    if (pos == null) continue;                       // non décidé : silence, pas un rejet
+    if (pos > n) { rejected.push({ carNumber: num, raison: `position ${pos} au-delà de ${n} partants` }); continue; }
+    if (ligne.didNotStart) { rejected.push({ carNumber: num, raison: 'pilote non partant' }); continue; }
+    retenues.push({ ligne, pos, confiance: Number(p?.confiance) });
+  }
+
+  // Second passage : une position revendiquée deux fois n'est attribuée à
+  // personne. Trancher au hasard ferait entrer une erreur silencieuse.
+  const compte = new Map();
+  for (const x of retenues) compte.set(x.pos, (compte.get(x.pos) || 0) + 1);
+  let applied = 0;
+  for (const x of retenues) {
+    if (compte.get(x.pos) > 1) {
+      rejected.push({ carNumber: Number(x.ligne.carNumber), raison: `position ${x.pos} proposée à plusieurs voitures` });
+      continue;
+    }
+    x.ligne.autoTurn1Pos = x.pos;
+    x.ligne.autoConfidence = Number.isFinite(x.confiance) ? x.confiance : null;
+    applied += 1;
+  }
+  return { rows: sortie, applied, rejected };
+}
+
+/**
+ * Reprend les propositions à son compte : `autoTurn1Pos` devient `turn1Pos`.
+ *
+ * Jamais d'écrasement : une position déjà saisie à la main l'emporte toujours
+ * sur la machine, et les propositions qui entreraient en collision avec elle
+ * sont laissées de côté.
+ *
+ * @returns {{rows:Array, accepted:number, skipped:number}}
+ */
+export function acceptV1Proposals(rows = []) {
+  const prises = new Set(rows.map(r => turn1Rank(r.turn1Pos)).filter(p => p != null));
+  let accepted = 0, skipped = 0;
+  const sortie = rows.map(r => {
+    const auto = turn1Rank(r.autoTurn1Pos);
+    if (auto == null || turn1Rank(r.turn1Pos) != null || r.didNotStart) {
+      if (auto != null && turn1Rank(r.turn1Pos) == null && !r.didNotStart) skipped += 1;
+      return { ...r };
+    }
+    if (prises.has(auto)) { skipped += 1; return { ...r }; }
+    prises.add(auto);
+    accepted += 1;
+    return { ...r, turn1Pos: auto, corrected: false };
+  });
+  return { rows: sortie, accepted, skipped };
+}
+
+// ─────────────────────────────────────────────────────────
+// GRILLE ANNONCÉE, EXPORTABLE VERS L'OUTIL D'ANALYSE VIDÉO
+// ─────────────────────────────────────────────────────────
+
+/*
+   L'outil d'analyse vidéo est séparé de l'application : il n'a pas accès à la
+   base. Pour qu'il puisse afficher des NOMS et pas seulement des numéros, la
+   grille lui est transmise telle qu'elle est annoncée.
+
+   Les noms ne sont pas un confort d'affichage : on reconnaît une voiture à sa
+   déco bien plus vite qu'à son numéro, souvent invisible sous l'angle de la
+   caméra. Ce sont eux qui permettent de vérifier d'un coup d'œil que
+   l'attribution est juste.
+
+   Format `rx-start-grid/1` — et rien de plus que ce qu'il faut : ni pilote
+   non partant (il n'est pas sur la grille), ni résultat, ni identifiant de
+   base au-delà de celui du départ.
+*/
+
+/**
+ * @param {object} start — le départ (startLabel, sessionType, starters…)
+ * @param {Array} rows — lignes de grille issues de `buildStartGrid`
+ * @param {string} poleSide — 'droite' | 'gauche' (meeting.poleSide)
+ * @returns {object} document `rx-start-grid/1`
+ */
+export function buildStartGridExport({ start = {}, rows = [], poleSide = null } = {}) {
+  const partants = rows
+    .filter(r => !r.didNotStart)
+    .slice()
+    .sort((a, b) => (a.lane ?? a.gridPos ?? 99) - (b.lane ?? b.gridPos ?? 99));
+  return {
+    schema: 'rx-start-grid/1',
+    // Les départs énumérés ne portent pas d'`id` : c'est la paire
+    // (session, série) qui les identifie, comme pour le document Firestore.
+    // Sans lui, un classement qui revient ne saurait pas à quel départ il
+    // appartient — et deux départs ouverts se rempliraient l'un l'autre.
+    startId: start.id ?? identifiantDepart(start),
+    startLabel: start.startLabel ?? null,
+    sessionType: start.sessionType ?? null,
+    // Le couloir 1 est toujours du côté du premier virage : l'outil vidéo en a
+    // besoin pour proposer l'ordre gauche → droite à l'image.
+    poleSide: normalizePoleSide(poleSide),
+    starters: countStarters(rows),
+    drivers: partants.map(r => ({
+      carNumber: r.carNumber ?? null,
+      firstName: r.firstName || '',
+      lastName: r.lastName || '',
+      lane: r.lane ?? null,
+      gridPos: r.gridPos ?? null,
+    })),
+  };
+}
+
+/** Identifiant du départ, ou rien si les données ne permettent pas de le former. */
+function identifiantDepart(start) {
+  try { return startDocId(start.sessionId, start.startIndex); } catch { return null; }
+}
+
+/** Le document est-il une grille annoncée exploitable ? */
+export function isStartGridExport(doc) {
+  return Boolean(doc) && doc.schema === 'rx-start-grid/1' && Array.isArray(doc.drivers);
 }

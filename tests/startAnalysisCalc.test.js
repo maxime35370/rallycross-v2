@@ -3,7 +3,10 @@ import {
   startDocId, gridLayoutKey, seriesFingerprint,
   maxPerSeries, resolveGridGeometry, gridCellsInOrder, placeOnGrid, checkGridLayout,
   laneZone, normalizePoleSide, startLabel, enumerateStarts, finishPosInStart, buildStartGrid,
-  validateAnalysis, availableTurn1Positions, isNonStarter, countStarters,
+  validateAnalysis, availableTurn1Positions, pointTurn1InOrder, nextFreeTurn1Pos,
+  applyV1OrderProposal, acceptV1Proposals, isV1OrderProposal,
+  buildStartGridExport, isStartGridExport,
+  isNonStarter, countStarters,
   orderGridByInterim, orderFinalGridFromSemis, orderByRaceResult,
 } from '../js/startAnalysisCalc.js';
 import { computeSeriesSizes } from '../js/calc.js';
@@ -1086,5 +1089,277 @@ describe('validateAnalysis', () => {
     const a = okAnalysis();
     a.rows[0].lane = null;
     expect(validateAnalysis(a).warnings.join(' ')).toMatch(/couloir/i);
+  });
+});
+
+// ─────────────────────────────────────────────────────────
+// POINTAGE DANS L'ORDRE
+// ─────────────────────────────────────────────────────────
+
+describe('pointTurn1InOrder', () => {
+  const grille = (etats = {}) => ['a', 'b', 'c', 'd', 'e'].map(id => ({
+    driverId: id, turn1Pos: etats[id] ?? null, didNotStart: false, corrected: false,
+  }));
+  const pos = (rows) => Object.fromEntries(rows.map(r => [r.driverId, r.turn1Pos]));
+
+  it('attribue P1 au premier pilote désigné', () => {
+    const r = pointTurn1InOrder('c', grille(), 5);
+    expect(pos(r)).toEqual({ a: null, b: null, c: 1, d: null, e: null });
+  });
+
+  it('attribue les positions dans l\'ordre des clics', () => {
+    let r = grille();
+    for (const id of ['c', 'a', 'e']) r = pointTurn1InOrder(id, r, 5);
+    expect(pos(r)).toEqual({ a: 2, b: null, c: 1, d: null, e: 3 });
+  });
+
+  it('retire le pilote recliqué ET resserre ceux qui suivaient', () => {
+    // Sans le resserrement, retirer P1 laisserait P2 et P3 en place : un trou
+    // que l'opérateur devrait reboucher position par position.
+    let r = grille();
+    for (const id of ['c', 'a', 'e']) r = pointTurn1InOrder(id, r, 5);
+    r = pointTurn1InOrder('c', r, 5);
+    expect(pos(r)).toEqual({ a: 1, b: null, c: null, d: null, e: 2 });
+  });
+
+  it('ne laisse pas de trou quand on retire une position intermédiaire', () => {
+    let r = grille();
+    for (const id of ['a', 'b', 'c', 'd']) r = pointTurn1InOrder(id, r, 5);
+    r = pointTurn1InOrder('b', r, 5);
+    expect(pos(r)).toEqual({ a: 1, b: null, c: 2, d: 3, e: null });
+  });
+
+  it('ne classe jamais un pilote non partant', () => {
+    const rows = grille().map(r => (r.driverId === 'b' ? { ...r, didNotStart: true } : r));
+    expect(pos(pointTurn1InOrder('b', rows, 5))).toEqual({ a: null, b: null, c: null, d: null, e: null });
+  });
+
+  it('ne dépasse pas le nombre de partants', () => {
+    let r = grille();
+    for (const id of ['a', 'b', 'c']) r = pointTurn1InOrder(id, r, 3);
+    const avant = pos(r);
+    expect(pos(pointTurn1InOrder('d', r, 3))).toEqual(avant);   // plus une seule place
+  });
+
+  it('est PURE : la liste d\'entrée n\'est pas modifiée', () => {
+    const rows = grille();
+    pointTurn1InOrder('a', rows, 5);
+    expect(rows.every(r => r.turn1Pos === null)).toBe(true);
+  });
+
+  it('marque comme corrigée la seule ligne désignée', () => {
+    const r = pointTurn1InOrder('d', grille(), 5);
+    expect(r.filter(x => x.corrected).map(x => x.driverId)).toEqual(['d']);
+  });
+
+  it('reste sans effet sur un pilote inconnu ou un effectif nul', () => {
+    expect(pos(pointTurn1InOrder('zz', grille(), 5))).toEqual(pos(grille()));
+    expect(pos(pointTurn1InOrder('a', grille(), 0))).toEqual(pos(grille()));
+  });
+});
+
+describe('nextFreeTurn1Pos', () => {
+  const r = (...positions) => positions.map((p, i) => ({ driverId: 'd' + i, turn1Pos: p }));
+
+  it('rend P1 sur une grille vierge', () => {
+    expect(nextFreeTurn1Pos(r(null, null, null), 3)).toBe(1);
+  });
+
+  it('rend la plus petite position LIBRE, pas la suivante du maximum', () => {
+    // Un retrait peut laisser un trou si l'opérateur a saisi en mode manuel :
+    // c'est ce trou qu'il faut combler d'abord.
+    expect(nextFreeTurn1Pos(r(1, 3, null), 5)).toBe(2);
+  });
+
+  it('rend null quand toutes les places sont prises', () => {
+    expect(nextFreeTurn1Pos(r(1, 2, 3), 3)).toBe(null);
+  });
+
+  it('ignore les positions vides ou aberrantes', () => {
+    expect(nextFreeTurn1Pos(r(null, '', 0, -2, 1), 4)).toBe(2);
+  });
+
+  it('rend null si le nombre de partants est absurde', () => {
+    expect(nextFreeTurn1Pos(r(null), 0)).toBe(null);
+    expect(nextFreeTurn1Pos(r(null), -1)).toBe(null);
+  });
+
+  it('annonce bien ce que pointTurn1InOrder attribuera', () => {
+    // L'écran affiche « → Pn » avec cette fonction ; si les deux divergeaient,
+    // le bouton mentirait sur ce qu'il va faire.
+    const rows = [
+      { driverId: 'a', turn1Pos: 1, didNotStart: false },
+      { driverId: 'b', turn1Pos: null, didNotStart: false },
+      { driverId: 'c', turn1Pos: 3, didNotStart: false },
+    ];
+    const annonce = nextFreeTurn1Pos(rows, 5);
+    const apres = pointTurn1InOrder('b', rows, 5);
+    expect(apres.find(x => x.driverId === 'b').turn1Pos).toBe(annonce);
+  });
+});
+
+// ─────────────────────────────────────────────────────────
+// PROPOSITION AUTOMATIQUE DU V1
+// ─────────────────────────────────────────────────────────
+
+describe('applyV1OrderProposal', () => {
+  const grille = () => [
+    { driverId: 'a', carNumber: 12, turn1Pos: null, didNotStart: false },
+    { driverId: 'b', carNumber: 7,  turn1Pos: null, didNotStart: false },
+    { driverId: 'c', carNumber: 3,  turn1Pos: null, didNotStart: false },
+  ];
+  const prop = (positions) => ({ schema: 'rx-v1-order/1', positions });
+  const autos = (rows) => Object.fromEntries(rows.map(r => [r.carNumber, r.autoTurn1Pos]));
+
+  it('remplit autoTurn1Pos et ne touche JAMAIS turn1Pos', () => {
+    const r = applyV1OrderProposal({
+      rows: grille(), starters: 3,
+      proposal: prop([{ carNumber: 12, turn1Pos: 2 }, { carNumber: 7, turn1Pos: 1 }]),
+    });
+    expect(autos(r.rows)).toEqual({ 12: 2, 7: 1, 3: null });
+    expect(r.rows.every(x => x.turn1Pos === null)).toBe(true);
+    expect(r.applied).toBe(2);
+  });
+
+  it('accepte « non décidé » sans le compter comme un rejet', () => {
+    const r = applyV1OrderProposal({
+      rows: grille(), starters: 3,
+      proposal: prop([{ carNumber: 12, turn1Pos: 1 }, { carNumber: 7, turn1Pos: null }]),
+    });
+    expect(r.applied).toBe(1);
+    expect(r.rejected).toEqual([]);
+  });
+
+  it('n\'attribue à PERSONNE une position revendiquée deux fois', () => {
+    // Trancher au hasard ferait entrer une erreur silencieuse — exactement ce
+    // qu'on refuse : mieux vaut deux cases vides qu'une case fausse.
+    const r = applyV1OrderProposal({
+      rows: grille(), starters: 3,
+      proposal: prop([{ carNumber: 12, turn1Pos: 1 }, { carNumber: 7, turn1Pos: 1 }]),
+    });
+    expect(autos(r.rows)).toEqual({ 12: null, 7: null, 3: null });
+    expect(r.applied).toBe(0);
+    expect(r.rejected).toHaveLength(2);
+  });
+
+  it('écarte une voiture absente du départ, une position hors effectif, un DNS', () => {
+    const rows = grille().map(r => (r.carNumber === 3 ? { ...r, didNotStart: true } : r));
+    const r = applyV1OrderProposal({
+      rows, starters: 2,
+      proposal: prop([
+        { carNumber: 99, turn1Pos: 1 },
+        { carNumber: 12, turn1Pos: 5 },
+        { carNumber: 3,  turn1Pos: 2 },
+        { carNumber: 7,  turn1Pos: 1 },
+      ]),
+    });
+    expect(autos(r.rows)).toEqual({ 12: null, 7: 1, 3: null });
+    expect(r.rejected.map(x => x.carNumber).sort((a, b) => a - b)).toEqual([3, 12, 99]);
+  });
+
+  it('refuse un document au mauvais schéma', () => {
+    const r = applyV1OrderProposal({ rows: grille(), proposal: { positions: [] } });
+    expect(r.applied).toBe(0);
+    expect(r.rejected[0].raison).toMatch(/format/);
+  });
+
+  it('ne devine pas quand deux pilotes portent le même numéro', () => {
+    const rows = [...grille(), { driverId: 'd', carNumber: 12, turn1Pos: null, didNotStart: false }];
+    const r = applyV1OrderProposal({ rows, starters: 4, proposal: prop([{ carNumber: 12, turn1Pos: 1 }]) });
+    expect(r.applied).toBe(0);
+    expect(r.rejected[0].raison).toMatch(/double/);
+  });
+});
+
+describe('acceptV1Proposals', () => {
+  const avec = (specs) => specs.map((s, i) => ({
+    driverId: 'd' + i, carNumber: 10 + i, turn1Pos: null, autoTurn1Pos: null, didNotStart: false, ...s,
+  }));
+
+  it('reprend les propositions à son compte', () => {
+    const r = acceptV1Proposals(avec([{ autoTurn1Pos: 2 }, { autoTurn1Pos: 1 }]));
+    expect(r.rows.map(x => x.turn1Pos)).toEqual([2, 1]);
+    expect(r.accepted).toBe(2);
+  });
+
+  it('ne remplace JAMAIS une position saisie à la main', () => {
+    const r = acceptV1Proposals(avec([{ turn1Pos: 1, autoTurn1Pos: 3 }, { autoTurn1Pos: 2 }]));
+    expect(r.rows.map(x => x.turn1Pos)).toEqual([1, 2]);
+    expect(r.accepted).toBe(1);
+  });
+
+  it('laisse de côté une proposition qui heurte une saisie manuelle', () => {
+    // La machine propose P1 pour le second, mais un humain a déjà mis P1
+    // ailleurs : on ne bouscule pas, on signale en ne faisant rien.
+    const r = acceptV1Proposals(avec([{ turn1Pos: 1 }, { autoTurn1Pos: 1 }]));
+    expect(r.rows.map(x => x.turn1Pos)).toEqual([1, null]);
+    expect(r.accepted).toBe(0);
+    expect(r.skipped).toBe(1);
+  });
+
+  it('ne classe jamais un non-partant', () => {
+    const r = acceptV1Proposals(avec([{ autoTurn1Pos: 1, didNotStart: true }]));
+    expect(r.rows[0].turn1Pos).toBe(null);
+    expect(r.accepted).toBe(0);
+  });
+
+  it('est pure', () => {
+    const rows = avec([{ autoTurn1Pos: 1 }]);
+    acceptV1Proposals(rows);
+    expect(rows[0].turn1Pos).toBe(null);
+  });
+});
+
+describe('buildStartGridExport', () => {
+  const rows = [
+    { carNumber: 3,  firstName: 'Ana', lastName: 'Roux', lane: 2, gridPos: 2, didNotStart: false },
+    { carNumber: 12, firstName: 'Bo',  lastName: 'Silva', lane: 1, gridPos: 1, didNotStart: false },
+    { carNumber: 7,  firstName: 'Cy',  lastName: 'Nauy', lane: 3, gridPos: 3, didNotStart: true },
+  ];
+
+  it('rend la grille triée par couloir, non-partants exclus', () => {
+    const d = buildStartGridExport({ start: { startLabel: 'MQ3 S4' }, rows, poleSide: 'droite' });
+    expect(d.drivers.map(x => x.carNumber)).toEqual([12, 3]);
+    expect(d.starters).toBe(2);
+  });
+
+  it('porte les NOMS, pas seulement les numéros', () => {
+    // C'est tout l'objet de l'export : on reconnaît une déco, pas un numéro.
+    const d = buildStartGridExport({ rows, poleSide: 'gauche' });
+    expect(d.drivers[0]).toMatchObject({ carNumber: 12, firstName: 'Bo', lastName: 'Silva', lane: 1 });
+  });
+
+  it('identifie le départ par (session, série) : les départs énumérés n\'ont pas d\'`id`', () => {
+    // Sans cet identifiant, un classement qui revient de l'outil vidéo ne sait
+    // pas à quel départ il appartient.
+    const d = buildStartGridExport({ start: { sessionId: 'sess9', startIndex: 4 }, rows });
+    expect(d.startId).toBe(startDocId('sess9', 4));
+  });
+
+  it('préfère un `id` explicite quand le départ en porte un', () => {
+    const d = buildStartGridExport({ start: { id: 'depart-maison', sessionId: 'sess9', startIndex: 4 }, rows });
+    expect(d.startId).toBe('depart-maison');
+  });
+
+  it('rend un départ sans identifiant plutôt que de jeter, si la session manque', () => {
+    expect(buildStartGridExport({ start: {}, rows }).startId).toBeNull();
+    expect(buildStartGridExport({ start: { sessionId: 'sess9', startIndex: 0 }, rows }).startId).toBeNull();
+  });
+
+  it('normalise le côté de la pole', () => {
+    expect(buildStartGridExport({ rows, poleSide: 'gauche' }).poleSide).toBe('left');
+    expect(buildStartGridExport({ rows, poleSide: 'droite' }).poleSide).toBe('right');
+  });
+
+  it('n\'emporte ni résultat ni statut', () => {
+    const d = buildStartGridExport({ rows, poleSide: 'droite' });
+    const champs = Object.keys(d.drivers[0]).sort();
+    expect(champs).toEqual(['carNumber', 'firstName', 'gridPos', 'lane', 'lastName']);
+  });
+
+  it('se reconnaît lui-même, et rejette autre chose', () => {
+    expect(isStartGridExport(buildStartGridExport({ rows }))).toBe(true);
+    expect(isStartGridExport({ schema: 'rx-v1-order/1', positions: [] })).toBe(false);
+    expect(isStartGridExport(null)).toBe(false);
   });
 });

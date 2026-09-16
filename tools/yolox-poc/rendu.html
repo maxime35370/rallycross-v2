@@ -1,0 +1,211 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Rendu annoté — Rallycross</title>
+<style>
+  :root { --bd:#d6d6d6; --sub:#666; }
+  body { font: 14px/1.5 system-ui, sans-serif; margin: 16px; color:#111; }
+  h1 { font-size: 1.1rem; margin: 0 0 4px; }
+  .sub { color: var(--sub); font-size: .85rem; margin: 0 0 12px; }
+  .panneau { border:1px solid var(--bd); border-radius:6px; padding:12px; margin-bottom:12px; }
+  .rangee { display:flex; gap:14px; align-items:center; flex-wrap:wrap; }
+  canvas { max-width:100%; border:1px solid var(--bd); border-radius:4px; background:#000; }
+  video { display:none; }
+  button { padding:5px 12px; }
+</style>
+
+<h1>Rendu annoté d'un rapport de suivi</h1>
+<p class="sub">
+  L'extrait et son rapport de suivi, superposés. Les boîtes ne sont pas dessinées à la main :
+  ce sont celles que le suivi a mesurées, avec leur état. Tout reste local.
+</p>
+
+<div class="panneau">
+  <div class="rangee">
+    <label>Extrait + rapport de suivi
+      <input type="file" id="pick" accept="video/*,application/json,.json" multiple></label>
+    <label>Cadence de rendu <select id="fps">
+      <option value="30" selected>30 img/s</option>
+      <option value="25">25 img/s</option>
+      <option value="15">15 img/s</option>
+    </select></label>
+    <span id="etat" class="sub" style="margin:0"></span>
+  </div>
+</div>
+
+<div class="panneau">
+  <canvas id="vue" width="1920" height="1080"></canvas>
+</div>
+
+<video id="src" preload="auto" muted playsinline></video>
+
+<script type="module">
+const $ = (id) => document.getElementById(id);
+const video = $('src'), vue = $('vue'), ctx = vue.getContext('2d', { alpha: false });
+
+// Une couleur par IDENTITÉ LOGIQUE, pas par piste : c'est l'identité du
+// départ qu'on suit des yeux, et elle doit garder sa couleur même quand la
+// réattribution change le numéro de piste au passage d'une coupure.
+const COULEURS = ['#ff3b30', '#34c759', '#0a84ff', '#ff9f0a', '#bf5af2', '#00c7be', '#ff2d92', '#a2845e'];
+let rapport = null, sidecar = null, fps = 60, idsDepart = new Set(), rang = new Map();
+
+const couleurDe = (ident) => COULEURS[((rang.get(ident) ?? ident) - 1) % COULEURS.length];
+
+$('pick').addEventListener('change', async (e) => {
+  const liste = Array.from(e.target.files);
+  const film = liste.find(f => /\.(mp4|webm|mov|mkv|m4v)$/i.test(f.name) || f.type.startsWith('video/'));
+  for (const j of liste.filter(f => /\.json$/i.test(f.name))) {
+    const brut = JSON.parse(await j.text());
+    if (brut?.schema === 'rx-tracking/1') rapport = brut;
+    else if (brut?.schema === 'rx-extract/1') { sidecar = brut; fps = brut.fps || 60; }
+  }
+  if (!film || !rapport) { $('etat').textContent = 'il faut l\'extrait ET son rapport de suivi'; return; }
+
+  // Les identités du départ, dans l'ordre où elles apparaissent sur la grille,
+  // de gauche à droite : c'est le repère que l'œil cherche.
+  // Une boîte largement CONTENUE dans une autre n'est pas une voiture de plus :
+  // c'est un morceau de celle du dessous. Sur cette grille, le détecteur pose
+  // un liseré de 132 x 51 px sur le pavillon d'une voiture — mesuré. Le
+  // numéroter donnerait six voitures là où il y en a cinq.
+  const aire = (b) => Math.max(0, b[2] - b[0]) * Math.max(0, b[3] - b[1]);
+  const contenue = (p, g) => {
+    const i = Math.max(0, Math.min(p[2], g[2]) - Math.max(p[0], g[0]))
+      * Math.max(0, Math.min(p[3], g[3]) - Math.max(p[1], g[1]));
+    return aire(p) > 0 && i / aire(p) > 0.5;
+  };
+  // PAS le premier instant : aucun tracker ne publie d'identité avant d'avoir
+  // confirmé, et le nombre de confirmations demandées diffère de l'un à
+  // l'autre — ByteTrack ne publie rien avant 3,2 s. On prend, dans la première
+  // seconde, l'instant le mieux garni : c'est là que la grille est au complet.
+  const t0 = rapport.journal[0].t;
+  const premier = rapport.journal
+    .filter(j => j.t <= t0 + 1.0 + 1e-9)
+    .reduce((best, j) => (j.tracks.filter(t => t.boiteAssociee).length
+      > best.tracks.filter(t => t.boiteAssociee).length ? j : best), rapport.journal[0]);
+  const boites = premier.tracks.filter(t => t.boiteAssociee);
+  const surGrille = boites
+    .filter(t => !boites.some(u => u !== t && aire(u.boiteAssociee) > aire(t.boiteAssociee)
+      && contenue(t.boiteAssociee, u.boiteAssociee)))
+    .sort((a, b) => (a.boiteAssociee[0] + a.boiteAssociee[2]) - (b.boiteAssociee[0] + b.boiteAssociee[2]));
+  surGrille.forEach((t, i) => rang.set(t.identiteLogique, i + 1));
+  idsDepart = new Set(surGrille.map(t => t.identiteLogique));
+
+  video.src = URL.createObjectURL(film);
+  if (video.readyState < 1) await new Promise(ok => video.addEventListener('loadedmetadata', ok, { once: true }));
+  vue.width = video.videoWidth; vue.height = video.videoHeight;
+  $('etat').textContent = `${video.videoWidth}×${video.videoHeight} · ${rapport.journal.length} instants `
+    + `· ${rang.size} voiture(s) sur la grille`;
+  window.__pret = true;
+});
+
+/** L'instant du journal qui décrit le mieux le temps `t`. */
+function instantPour(t) {
+  const pas = rapport.reglages.pas ?? 0.1;
+  let meilleur = null, ecart = Infinity;
+  for (const j of rapport.journal) {
+    const d = Math.abs(j.t - t);
+    if (d < ecart) { ecart = d; meilleur = j; }
+  }
+  return ecart <= pas ? meilleur : null;
+}
+
+function coin(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
+}
+
+function dessiner(t) {
+  ctx.drawImage(video, 0, 0, vue.width, vue.height);
+  const e = vue.width / 1920;
+  const j = instantPour(t);
+  const vivantes = [];
+
+  if (j) {
+    for (const p of j.tracks) {
+      if (p.suspendue || !p.confirmee) continue;
+      const b = p.boiteAssociee || p.box;
+      const grille = idsDepart.has(p.identiteLogique) && rang.has(p.identiteLogique);
+      const c = grille ? couleurDe(p.identiteLogique) : '#8e8e93';
+      const mesuree = Boolean(p.boiteAssociee);
+      const [x1, y1, x2, y2] = b;
+
+      // Une piste sans détection est PRÉDITE : trait pointillé et translucide.
+      // Astra interpole ; nous, on avoue quand on ne mesure plus.
+      ctx.save();
+      ctx.globalAlpha = mesuree ? 1 : 0.55;
+      ctx.setLineDash(mesuree ? [] : [12 * e, 8 * e]);
+      ctx.lineWidth = (grille ? 3.5 : 2) * e;
+      ctx.strokeStyle = c;
+      ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+      ctx.restore();
+
+      if (!grille) continue;
+      vivantes.push({ ident: p.identiteLogique, mesuree });
+
+      // Étiquette : le numéro de la voiture SUR LA GRILLE, pas l'identifiant
+      // interne. C'est le seul numéro qui veut dire quelque chose pour l'œil.
+      const txt = String(rang.get(p.identiteLogique));
+      ctx.font = `700 ${Math.round(30 * e)}px system-ui, sans-serif`;
+      const lw = ctx.measureText(txt).width + 24 * e, lh = 40 * e;
+      const lx = Math.max(2, Math.min(vue.width - lw - 2, x1 - 2 * e));
+      const ly = Math.max(2, y1 - lh - 14 * e);
+      ctx.strokeStyle = c; ctx.lineWidth = 3 * e; ctx.setLineDash([]);
+      ctx.beginPath(); ctx.moveTo(lx + lw / 2, ly + lh); ctx.lineTo(lx + lw / 2, y1); ctx.stroke();
+      ctx.fillStyle = c; coin(lx, ly, lw, lh, 8 * e); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.textBaseline = 'middle'; ctx.textAlign = 'center';
+      ctx.fillText(txt, lx + lw / 2, ly + lh / 2 + 1 * e);
+      ctx.textAlign = 'left';
+    }
+  }
+
+  // ── bandeau ──
+  const hb = 92 * e;
+  ctx.fillStyle = 'rgba(12,12,14,0.88)';
+  ctx.fillRect(0, vue.height - hb, vue.width, hb);
+  ctx.textBaseline = 'middle';
+
+  ctx.font = `600 ${Math.round(26 * e)}px system-ui, sans-serif`;
+  ctx.fillStyle = '#fff';
+  ctx.fillText('GRILLE', 24 * e, vue.height - hb + 30 * e);
+  let x = 120 * e;
+  for (const [ident, r] of [...rang.entries()].sort((a, b) => a[1] - b[1])) {
+    const v = vivantes.find(w => w.ident === ident);
+    ctx.globalAlpha = v ? 1 : 0.28;
+    ctx.fillStyle = couleurDe(ident);
+    coin(x, vue.height - hb + 14 * e, 34 * e, 32 * e, 6 * e); ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.font = `700 ${Math.round(22 * e)}px system-ui, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.fillText(String(r), x + 17 * e, vue.height - hb + 31 * e);
+    ctx.textAlign = 'left';
+    if (v && !v.mesuree) { ctx.font = `${Math.round(15 * e)}px system-ui, sans-serif`; ctx.fillText('~', x + 38 * e, vue.height - hb + 31 * e); }
+    ctx.globalAlpha = 1;
+    x += 52 * e;
+  }
+
+  ctx.font = `${Math.round(20 * e)}px system-ui, sans-serif`;
+  ctx.fillStyle = '#b9b9c0';
+  ctx.fillText('Suivi automatique · boîtes mesurées image par image · trait plein = détectée, pointillé = position prédite',
+    24 * e, vue.height - 26 * e);
+  ctx.textAlign = 'right';
+  ctx.fillStyle = '#fff';
+  ctx.font = `600 ${Math.round(24 * e)}px system-ui, sans-serif`;
+  ctx.fillText(`${t.toFixed(2)} s`, vue.width - 24 * e, vue.height - hb + 30 * e);
+  ctx.font = `${Math.round(18 * e)}px system-ui, sans-serif`;
+  ctx.fillStyle = '#b9b9c0';
+  ctx.fillText(`${vivantes.length} / ${rang.size} identités du départ tenues`, vue.width - 24 * e, vue.height - 26 * e);
+  ctx.textAlign = 'left';
+}
+
+/** Point d'entrée du pilote : place la vidéo à `t` et dessine. */
+window.__rendre = async (t) => {
+  if (Math.abs(video.currentTime - t) > 1e-4) {
+    video.currentTime = t;
+    await new Promise(ok => video.addEventListener('seeked', ok, { once: true }));
+  }
+  dessiner(t);
+  return true;
+};
+window.__bornes = () => ({ debut: rapport.fenetre.debut, fin: rapport.fenetre.fin });
+</script>

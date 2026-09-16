@@ -18,14 +18,19 @@ import { escHtml } from './utils.js';
 import { getActiveChampionshipId, getAllChampionships } from './context.js';
 import {
   enumerateStarts, buildStartGrid, startDocId, seriesFingerprint,
-  validateAnalysis, normalizePoleSide, availableTurn1Positions, countStarters,
+  validateAnalysis, normalizePoleSide, availableTurn1Positions, pointTurn1InOrder,
+  nextFreeTurn1Pos, applyV1OrderProposal, acceptV1Proposals, isV1OrderProposal,
+  buildStartGridExport, countStarters,
   orderGridByInterim, orderFinalGridFromSemis, orderByRaceResult,
 } from './startAnalysisCalc.js';
 import { calcInterimStandings } from './calc.js';
 import { createVideoPlayer } from './videoPlayer.js';
+import { panneauHtml, brancherPanneau } from './turn1Analysis.js';
 import {
   parseVideoSource, resolveStartTime, formatPreciseTime, buildVideoBlock,
+  buildExtractRecipe, localiserMarques, PAD_AVANT, PAD_APRES,
   keyboardAction, neighbourStartId, nextRate, ratesFor, SHORTCUT_HELP,
+  parseExtractSidecar, pairExtractFiles,
 } from './videoPlayerCalc.js';
 
 // ─────────────────────────────────────────────────────────
@@ -48,10 +53,22 @@ let _initialised      = false;
 // Le lecteur vit HORS de la zone re-rendue : changer une position au V1 ne doit
 // jamais recharger la vidéo ni perdre la position de lecture.
 let player          = null;
+// Mode de saisie du V1. Le pointage DANS L'ORDRE évite de traduire de tête ce
+// qu'on voit en numéros de position ; le mode position par position reste
+// disponible pour corriger un seul pilote sans toucher aux autres.
+const CLE_MODE_V1 = 'rx.sanl.pointageOrdonne';
+let pointageOrdonne = (() => {
+  try { return localStorage.getItem(CLE_MODE_V1) !== '0'; } catch { return true; }
+})();
 let videoCollapsed  = false;
 let sharedFile      = null;   // fichier local courant, réutilisé d'une série à l'autre
+let sharedSidecar   = null;   // bloc « rx-extract/1 » accompagnant ce fichier, s'il a été fourni
 let videoState      = { time: 0, playing: false, ready: false, error: '' };
 let _keysBound      = false;
+
+// L'analyse du premier virage est une PARTIE de cet écran, pas un outil à
+// côté : la vidéo, les deux instants et la grille annoncée y sont déjà.
+let panneauV1Ouvert = false;
 
 const FS = 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 
@@ -203,6 +220,10 @@ function renderView() {
       <aside class="sanl-list" id="sanl-list"></aside>
       <div class="sanl-right">
         <section class="sanl-video" id="sanl-video"></section>
+        <!-- L'analyse du premier virage vit HORS de #sanl-work : ses canvas
+             portent le pointage en cours, qu'une saisie de position ne doit
+             pas effacer. -->
+        <section class="sanl-turn1" id="sanl-turn1"></section>
         <section class="sanl-work" id="sanl-work"></section>
       </div>
     </div>
@@ -313,6 +334,10 @@ function selectStart(docId) {
   const start = startsIndex.find(s => startDocId(s.sessionId, s.startIndex) === docId);
   if (!start) return;
 
+  // Changer de départ ferme l'analyse en cours : son pointage porte sur la
+  // grille du départ qu'on quitte.
+  fermerAnalyse();
+
   const meeting = allMeetings.find(m => m.id === selectedMeetingId);
   const { rows, warnings } = buildStartGrid({
     start,
@@ -332,6 +357,10 @@ function selectStart(docId) {
         row.confidence = s.confidence || 'green';
         row.note = s.note || '';
         row.corrected = !!s.corrected;
+        // La proposition est relue elle aussi : importée une fois, elle doit
+        // être encore là quand on revient sur ce départ.
+        row.autoTurn1Pos = s.autoTurn1Pos ?? null;
+        row.autoConfidence = s.autoConfidence ?? null;
         if (s.gridPos != null && start.sessionType !== 'MQ') row.gridPos = s.gridPos;
       }
     }
@@ -422,6 +451,16 @@ function renderWork() {
     ${noteHtml}
     ${warnHtml}
 
+    <div class="sanl-mode">
+      <label>
+        <input type="checkbox" id="sanl-mode-ordre" ${pointageOrdonne ? 'checked' : ''} ${readOnly ? 'disabled' : ''}>
+        Pointer dans l'ordre de passage
+      </label>
+      <span class="sanl-mode-aide">${pointageOrdonne
+        ? 'Cliquez les pilotes dans l\'ordre où ils franchissent le virage — la numérotation suit.'
+        : 'Choisissez la position de chaque pilote une par une.'}</span>
+    </div>
+
     <div class="sanl-completeness">
       <label>Visibilité à l'image de mesure :</label>
       <select class="form-select" id="sanl-completeness" ${readOnly ? 'disabled' : ''}>
@@ -440,7 +479,7 @@ function renderWork() {
             <th style="width:56px" title="Couloir physique">Couloir</th>
             <th class="sanl-col-pilote">Pilote</th>
             <th style="width:52px" class="center">N°</th>
-            <th class="center sanl-col-v1" style="min-width:${n * 31 + 14}px">1er virage</th>
+            <th class="center sanl-col-v1" style="min-width:${pointageOrdonne ? 76 : n * 31 + 14}px">1er virage</th>
             <th style="width:74px" class="center">Arrivée</th>
             <th class="center sanl-col-conf">Confiance</th>
           </tr>
@@ -450,6 +489,15 @@ function renderWork() {
     </div>
 
     <div class="sanl-actions">
+      <input type="file" id="sanl-proposal-file" accept="application/json,.json" hidden>
+      <button class="btn btn-secondary" id="sanl-open-analysis" ${readOnly ? 'disabled' : ''}
+        title="Classer les voitures au premier virage, ici même">${panneauV1Ouvert ? '🎬 Fermer l\'analyse' : '🎬 Analyser la vidéo'}</button>
+      <button class="btn btn-secondary" id="sanl-export-grid"
+        title="Exporter la grille en fichier — utile seulement si l'outil tourne sur une autre machine">📤 Exporter la grille</button>
+      <button class="btn btn-secondary" id="sanl-import-proposal" ${readOnly ? 'disabled' : ''}
+        title="Charger un classement proposé par l'analyse vidéo (rx-v1-order/1)">📥 Importer une proposition</button>
+      <button class="btn btn-secondary" id="sanl-accept-proposal" ${readOnly || !rows.some(r => Number.isInteger(r.autoTurn1Pos)) ? 'disabled' : ''}
+        title="Reprendre les positions proposées — les saisies manuelles sont conservées">✔️ Reprendre les propositions</button>
       <button class="btn btn-secondary" id="sanl-clear" ${readOnly ? 'disabled' : ''}>Effacer les positions V1</button>
       <button class="btn btn-secondary" id="sanl-draft" ${readOnly ? 'disabled' : ''}>💾 Enregistrer en brouillon</button>
       <button class="btn btn-primary"   id="sanl-validate" ${readOnly ? 'disabled' : ''}>✅ Valider l'analyse</button>
@@ -477,7 +525,7 @@ function renderRow(r, i, start, readOnly) {
       <td class="center">${r.lane ?? '<span class="text-muted">—</span>'}</td>
       <td>${escHtml(((r.firstName || '') + ' ' + (r.lastName || '')).trim() || r.driverId)}</td>
       <td class="center">${r.carNumber ?? '—'}</td>
-      <td class="center"><div class="sanl-v1-group" data-driver="${escHtml(r.driverId)}">${v1Buttons}</div></td>
+      <td class="center"><div class="sanl-v1-group" data-driver="${escHtml(r.driverId)}">${v1Buttons}${v1AutoBadgeHtml(r)}</div></td>
       <td class="center">${finish}</td>
       <td class="center">
         <select class="form-select sanl-conf" data-driver="${escHtml(r.driverId)}" ${readOnly ? 'disabled' : ''}>
@@ -490,11 +538,50 @@ function renderRow(r, i, start, readOnly) {
 }
 
 /**
+ * Pastille de PROPOSITION automatique.
+ *
+ * Elle est posée À CÔTÉ des boutons, jamais à leur place : ce que la machine
+ * propose et ce que l'opérateur a saisi ne doivent pas pouvoir être confondus
+ * d'un coup d'œil. Elle disparaît dès que la position est saisie.
+ */
+function v1AutoBadgeHtml(row) {
+  const auto = Number.isInteger(row.autoTurn1Pos) ? row.autoTurn1Pos : null;
+  if (auto == null || Number.isInteger(row.turn1Pos)) return '';
+  const c = Number(row.autoConfidence);
+  const conf = Number.isFinite(c) ? ` · confiance ${Math.round(c * 100)} %` : '';
+  return `<span class="sanl-v1-auto" title="Proposition de l'analyse vidéo${escHtml(conf)} — à confirmer">P${auto}</span>`;
+}
+
+/**
+ * Bouton unique du POINTAGE DANS L'ORDRE.
+ *
+ * On désigne les voitures dans l'ordre où elles franchissent le virage ; la
+ * numérotation suit. Le bouton montre la position obtenue, ou la position qui
+ * serait attribuée — pour qu'on sache où l'on en est sans compter.
+ */
+function v1OrderButtonHtml(row, starters, readOnly) {
+  const place = Number.isInteger(row.turn1Pos) ? row.turn1Pos : null;
+  const suivante = nextFreeTurn1Pos(current.rows, starters);
+  // Plus une seule place libre et ce pilote non classé : rien à faire.
+  const disabled = readOnly || (place == null && suivante == null);
+  const texte = place != null ? `P${place}` : (suivante != null ? `→ P${suivante}` : '—');
+  const titre = place != null
+    ? `Retirer ce pilote de P${place} — les suivants remontent d'un cran`
+    : (suivante != null ? `Placer ce pilote en P${suivante}` : 'Toutes les positions sont prises');
+  return `<button type="button"
+    class="sanl-v1-btn sanl-v1-btn--ordre${place != null ? ' is-active' : ''}"
+    data-driver="${escHtml(row.driverId)}" data-ordre="1"
+    aria-pressed="${place != null}" ${disabled ? 'disabled' : ''}
+    title="${escHtml(titre)}">${texte}</button>`;
+}
+
+/**
  * Boutons de position au premier virage pour un pilote.
  * Une position prise par un AUTRE pilote est désactivée ; celle du pilote
  * lui-même reste toujours cliquable pour permettre de la retirer.
  */
 function v1ButtonsHtml(row, starters, readOnly) {
+  if (pointageOrdonne) return v1OrderButtonHtml(row, starters, readOnly);
   const avail = new Set(availableTurn1Positions(row.driverId, current.rows, starters));
   let html = '';
   for (let k = 1; k <= starters; k++) {
@@ -521,7 +608,7 @@ function refreshV1Buttons() {
   document.querySelectorAll('.sanl-v1-group').forEach(group => {
     const row = current.rows.find(r => r.driverId === group.dataset.driver);
     if (!row) return;
-    group.innerHTML = v1ButtonsHtml(row, n, readOnly);
+    group.innerHTML = v1ButtonsHtml(row, n, readOnly) + v1AutoBadgeHtml(row);
   });
   bindV1Buttons();
 }
@@ -530,6 +617,15 @@ function refreshV1Buttons() {
 function bindV1Buttons() {
   document.querySelectorAll('.sanl-v1-btn').forEach(btn => {
     btn.addEventListener('click', () => {
+      // Pointage dans l'ordre : la logique vit dans le module pur, qui rend
+      // une NOUVELLE liste — retrait compris, avec resserrement des suivants.
+      if (btn.dataset.ordre) {
+        current.rows = pointTurn1InOrder(btn.dataset.driver, current.rows, countStarters(current.rows));
+        current.dirty = true;
+        refreshV1Buttons();
+        refreshFeedback();
+        return;
+      }
       const row = current.rows.find(r => r.driverId === btn.dataset.driver);
       if (!row) return;
       const pos = parseInt(btn.dataset.pos, 10);
@@ -634,9 +730,9 @@ function videoShellHtml() {
     <div class="vp-source">
       <input type="text" class="vp-url" id="sanl-vurl" placeholder="Lien YouTube (https://youtu.be/…)">
       <button class="vp-btn" id="sanl-vload">Charger</button>
-      <label class="vp-btn vp-file-label">
-        📁 Fichier local
-        <input type="file" id="sanl-vfile" accept="video/*">
+      <label class="vp-btn vp-file-label" title="Sélectionne la vidéo ET son .json : la cadence exacte y est écrite">
+        📁 Fichier local <span class="vp-file-hint">(+ son .json)</span>
+        <input type="file" id="sanl-vfile" accept="video/*,application/json,.json" multiple>
       </label>
       <span class="vp-local-note" id="sanl-vsource"></span>
     </div>
@@ -738,7 +834,13 @@ function applySourceForCurrent() {
     return;
   }
   _loadedKey = key;
-  if (wantsFile) player.loadFile(sharedFile, at);
+  // Cadence annoncée au lecteur plutôt que devinée. Le sidecar l'emporte : il
+  // décrit le fichier chargé, quelle que soit la série sélectionnée. À défaut,
+  // on ne réutilise la cadence enregistrée que si elle a été établie sur CE
+  // fichier — l'annoncer à tort désactiverait la mesure sans rien signaler.
+  const knownFps = sharedSidecar?.fps
+    ?? (sharedFile && current.video.fileName === sharedFile.name ? current.video.fps : null);
+  if (wantsFile) player.loadFile(sharedFile, at, { fps: knownFps });
   else player.loadYoutube(resolved.youtubeId, at);
 }
 
@@ -771,7 +873,13 @@ function refreshVideoUi() {
     if (kind === 'file') bits.push(`📁 ${escHtml(player.fileName || '')}`);
     else if (kind === 'youtube') bits.push('▶ YouTube');
     else bits.push('aucune source');
-    if (player?.fps) bits.push(`${player.fps} img/s`);
+    // La provenance est affichée : une cadence mesurée peut être fausse (elle
+    // reflète la présentation, pas le fichier), une cadence de sidecar non.
+    if (player?.fps) {
+      bits.push(`${player.fps} img/s ${player.fpsSource === 'declared' ? '(sidecar)' : '(mesurée)'}`);
+    } else if (player?.kind === 'file') {
+      bits.push('cadence inconnue');
+    }
     if (r.source === 'meeting') {
       bits.push(r.approximate
         ? '⚠️ timecode du meeting : il vise la 1ʳᵉ série de cette session'
@@ -795,13 +903,152 @@ function refreshVideoUi() {
         ${v.turn1At != null
           ? `<button class="vp-btn vp-mark-val" id="sanl-goto-v1">${fmt(v.turn1At)}</button>`
           : '<span class="vp-mark--unset">non marquée</span>'}
-      </span>`;
+      </span>
+      ${extraitHtml()}`;
     document.getElementById('sanl-goto-start')?.addEventListener('click',
       () => player?.seek(current.video.startAt));
     document.getElementById('sanl-goto-v1')?.addEventListener('click',
       () => player?.seek(current.video.turn1At));
+    document.getElementById('sanl-extrait')?.addEventListener('click', lancerExtraction);
   }
   refreshTimeDisplay();
+}
+
+// ─────────────────────────────────────────────────────────
+// PRÉPARER L'EXTRAIT
+//
+// Le navigateur ne découpe pas la retransmission : récupérer les flux de
+// YouTube depuis une page web contourne sa restriction d'accès. La coupe reste
+// le travail de `tools/extract-manche`, en local. Ce qu'on supprime ici, c'est
+// la recopie à la main des deux timecodes et de l'identité de la manche.
+// ─────────────────────────────────────────────────────────
+
+/**
+ * Les deux instants et l'identité de la manche, tels que l'extracteur les
+ * attend.
+ *
+ * Le garde-fou décisif est `kind === 'youtube'` : marqués sur un FICHIER local,
+ * les mêmes instants sont comptés depuis le début de l'extrait, pas depuis le
+ * début de la retransmission. La commande découperait alors quelques secondes
+ * du tout début de la vidéo — sans rien signaler.
+ */
+function recetteExtrait() {
+  const v = current?.video;
+  if (!v || v.kind !== 'youtube') return null;
+  const m = current.meeting;
+  const annee = m?.date ? new Date(m.date).getFullYear() : null;
+  return {
+    youtubeId: current._resolved?.youtubeId || v.youtubeId || null,
+    startAt: v.startAt, turn1At: v.turn1At,
+    location: m?.location || null,
+    year: Number.isFinite(annee) ? annee : null,
+    category: selectedCategory || null,
+    sessionType: current.start?.sessionType || null,
+    sessionNum: current.start?.sessionNum ?? null,
+    serie: current.start?.startIndex ?? null,
+    // Les clés Firestore : la ligne de commande ne les aurait jamais, et sans
+    // elles le sidecar ne sait pas à quelle manche l'extrait appartient.
+    meetingId: selectedMeetingId || null,
+    sessionId: current.start?.sessionId || null,
+    championshipId: m?.championshipId || null,
+  };
+}
+
+function extraitHtml() {
+  const params = recetteExtrait();
+  if (!params) return '';
+  const r = buildExtractRecipe(params);
+  const titre = r.ok
+    ? `Découper l'extrait — ${r.clipDuration.toFixed(1)} s, de ${formatPreciseTime(r.clipStart)} à ${formatPreciseTime(r.clipEnd)}. `
+      + 'Sans serveur local, la recette est téléchargée à la place.'
+    : `Il manque ${r.manques.join(', ')}`;
+  return `<button class="vp-btn vp-btn--mark" id="sanl-extrait" ${r.ok ? '' : 'disabled'}
+    title="${escHtml(titre)}">✂️ Préparer l'extrait${r.ok ? ` (${r.clipDuration.toFixed(1)} s)` : ''}</button>`;
+}
+
+/**
+ * Découpe l'extrait, sans quitter l'application.
+ *
+ * Le seul geste qui ne peut pas vivre dans la page est le téléchargement chez
+ * YouTube : ses serveurs de média ne renvoient pas d'en-têtes CORS, donc le
+ * navigateur ne peut pas lire ces octets. Le serveur local, lui, le peut — il
+ * lance l'outil qui existait déjà. De ce côté-ci, c'est un clic.
+ *
+ * Sans serveur local (site déployé seul), on retombe sur la recette à
+ * télécharger : le travail n'est pas perdu, il demande un double-clic de plus.
+ */
+async function lancerExtraction() {
+  const params = recetteExtrait();
+  const r = params ? buildExtractRecipe(params) : { ok: false, manques: ['une retransmission YouTube'] };
+  if (!r.ok) { toast(`Il manque ${r.manques.join(', ')}`, 'error'); return; }
+
+  const btn = document.getElementById('sanl-extrait');
+  const libelle = btn?.textContent;
+  if (btn) { btn.disabled = true; btn.textContent = '✂️ Découpage…'; }
+  toast(`Découpage de ${r.clipDuration.toFixed(1)} s en cours — yt-dlp ne prend que cette plage.`, 'info');
+
+  try {
+    const rep = await fetch('/__extraire', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(r.recette),
+    });
+    const res = await rep.json();
+    if (!res.ok) {
+      // Le journal de l'extracteur dit précisément ce qui a manqué : on le
+      // garde en console plutôt que de le résumer de travers.
+      console.warn('[extraction]', res.journal || '');
+      toast(`Découpage échoué : ${res.erreur || 'raison inconnue'} — détail en console`, 'error');
+      return;
+    }
+    await chargerExtraitProduit(res);
+  } catch {
+    telechargerRecette(r);
+  } finally {
+    if (btn) { btn.disabled = false; if (libelle) btn.textContent = libelle; }
+    refreshVideoUi();
+  }
+}
+
+/** Récupère l'extrait fabriqué par le serveur local et le met dans le lecteur. */
+async function chargerExtraitProduit(res) {
+  const [video, meta] = await Promise.all([
+    fetch(res.video).then(r => r.blob()),
+    fetch(res.sidecar).then(r => r.text()).catch(() => null),
+  ]);
+
+  sharedSidecar = meta ? parseExtractSidecar(meta) : null;
+  sharedFile = new File([video], `${res.nom}.mp4`, { type: 'video/mp4' });
+
+  // Les marques étaient en secondes de la retransmission ; l'extrait commence
+  // à `clipStart`. Sans ce report, elles pointeraient très au-delà de sa fin.
+  const local = localiserMarques({
+    startAt: current.video.startAt, turn1At: current.video.turn1At,
+    clipStart: sharedSidecar?.clipStart,
+  });
+  current.video.kind = 'file';
+  current.video.fileName = sharedFile.name;
+  current.video.startAt = local.startAt;
+  current.video.turn1At = local.turn1At;
+  if (sharedSidecar?.fps) current.video.fps = sharedSidecar.fps;
+  current.dirty = true;
+  _loadedKey = `file:${sharedFile.name}`;
+  player?.loadFile(sharedFile, current.video.startAt ?? 0, { fps: sharedSidecar?.fps ?? null });
+
+  const taille = (sharedFile.size / 1e6).toFixed(1);
+  toast(`Extrait prêt : ${res.nom}.mp4 · ${taille} Mo en ${res.secondes} s. `
+    + 'Départ et V1 reportés sur l\'extrait.', 'success');
+}
+
+/**
+ * Repli sans serveur local : la recette part dans les téléchargements, et le
+ * raccourci du Bureau ira la chercher.
+ */
+function telechargerRecette(r) {
+  const a = document.createElement('a');
+  a.download = r.nom;
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(r.recette, null, 2)], { type: 'application/json' }));
+  a.click();
+  toast('Pas de serveur local : recette téléchargée. Double-clique « extraire-derniere-recette ».', 'warning');
 }
 
 function markMoment(which) {
@@ -844,16 +1091,32 @@ function bindVideoControls() {
     refreshVideoUi();
   });
 
-  document.getElementById('sanl-vfile')?.addEventListener('change', (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  document.getElementById('sanl-vfile')?.addEventListener('change', async (e) => {
+    const { video: file, sidecar } = pairExtractFiles(e.target.files || []);
+    if (!file) { toast('Aucun fichier vidéo dans la sélection', 'error'); return; }
+
+    // Le sidecar porte la cadence relevée par ffprobe à l'extraction. La lire
+    // vaut infiniment mieux que la deviner : `requestVideoFrameCallback` mesure
+    // la cadence de PRÉSENTATION, qui tombe à 30 dès que le navigateur saute
+    // une image sur deux — ce qui arrive sur du 1080p60.
+    sharedSidecar = null;
+    if (sidecar) {
+      try {
+        sharedSidecar = parseExtractSidecar(await sidecar.text());
+        if (!sharedSidecar) toast(`${sidecar.name} n'est pas un sidecar rx-extract/1`, 'error');
+      } catch {
+        toast(`Lecture impossible de ${sidecar.name}`, 'error');
+      }
+    }
+
     // Le fichier reste sur la machine : aucune donnée n'est envoyée à Firebase.
     sharedFile = file;
     current.video.kind = 'file';
     current.video.fileName = file.name;
+    if (sharedSidecar?.fps) current.video.fps = sharedSidecar.fps;
     current.dirty = true;
     _loadedKey = `file:${file.name}`;
-    player.loadFile(file, current.video.startAt ?? 0);
+    player.loadFile(file, current.video.startAt ?? 0, { fps: sharedSidecar?.fps ?? null });
     refreshVideoUi();
   });
 
@@ -964,10 +1227,55 @@ function bindWork() {
     });
   });
 
+  document.getElementById('sanl-mode-ordre')?.addEventListener('change', (e) => {
+    pointageOrdonne = e.target.checked;
+    // Le choix suit l'opérateur d'un départ à l'autre : c'est une habitude de
+    // travail, pas une donnée de l'analyse. Rien n'est envoyé en base.
+    try { localStorage.setItem(CLE_MODE_V1, pointageOrdonne ? '1' : '0'); } catch { /* stockage refusé */ }
+    renderWork();
+  });
+
   document.getElementById('sanl-completeness')?.addEventListener('change', (e) => {
     current.orderCompleteness = e.target.value;
     current.dirty = true;
     refreshFeedback();
+  });
+
+  document.getElementById('sanl-open-analysis')?.addEventListener('click', ouvrirAnalyse);
+
+  document.getElementById('sanl-export-grid')?.addEventListener('click', () => {
+    const doc = buildStartGridExport({
+      start: current.start, rows: current.rows, poleSide: current.meeting?.poleSide,
+    });
+    const a = document.createElement('a');
+    a.download = `grille-${(current.start.startLabel || 'depart').replace(/[^\w-]+/g, '_')}.json`;
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(doc, null, 2)], { type: 'application/json' }));
+    a.click();
+    toast(`Grille exportée : ${doc.drivers.length} pilote(s)`, 'success');
+  });
+
+  document.getElementById('sanl-import-proposal')?.addEventListener('click', () => {
+    document.getElementById('sanl-proposal-file')?.click();
+  });
+
+  document.getElementById('sanl-proposal-file')?.addEventListener('change', async (e) => {
+    const f = e.target.files?.[0];
+    e.target.value = '';                      // re-choisir le même fichier reste possible
+    if (!f) return;
+    let doc = null;
+    try { doc = JSON.parse(await f.text()); } catch { toast('Fichier illisible', 'error'); return; }
+    if (!isV1OrderProposal(doc)) { toast('Ce fichier n\'est pas un classement rx-v1-order/1', 'error'); return; }
+    appliquerProposition(doc);
+  });
+
+  document.getElementById('sanl-accept-proposal')?.addEventListener('click', () => {
+    const { rows: maj, accepted, skipped } = acceptV1Proposals(current.rows);
+    current.rows = maj;
+    if (accepted) current.dirty = true;
+    renderWork();
+    toast(skipped
+      ? `${accepted} position(s) reprise(s), ${skipped} laissée(s) de côté (conflit avec une saisie)`
+      : `${accepted} position(s) reprise(s)`, skipped ? 'warning' : 'success');
   });
 
   document.getElementById('sanl-clear')?.addEventListener('click', () => {
@@ -1024,6 +1332,7 @@ function buildDoc() {
       lane: r.lane ?? null,
       turn1Pos: r.turn1Pos ?? null,
       autoTurn1Pos: r.autoTurn1Pos ?? null,
+      autoConfidence: r.autoConfidence ?? null,
       finishPosInStart: r.finishPosInStart ?? null,
       finishStatus: r.finishStatus ?? null,
       confidence: r.confidence || 'green',
@@ -1032,6 +1341,85 @@ function buildDoc() {
     })),
     createdAt: existingAnalyses.get(startDocId(start.sessionId, start.startIndex))?.createdAt || new Date(),
   };
+}
+
+// ─────────────────────────────────────────────────────────
+// ANALYSE DU PREMIER VIRAGE
+//
+// Rien ne s'ouvre, rien ne se télécharge : le panneau s'installe sous le
+// lecteur, avec la vidéo, les deux instants et la grille annoncée qui sont
+// déjà à l'écran. Le classement retombe dans les propositions du tableau.
+// ─────────────────────────────────────────────────────────
+
+/** L'identifiant du départ ouvert, tel que le porte la grille. */
+function idDuDepartCourant() {
+  if (!current?.start) return null;
+  try { return startDocId(current.start.sessionId, current.start.startIndex); } catch { return null; }
+}
+
+function ouvrirAnalyse() {
+  const hote = document.getElementById('sanl-turn1');
+  if (!hote || !current) return;
+
+  if (panneauV1Ouvert) { fermerAnalyse(); return; }
+
+  // L'analyse lit les pixels image par image : une iframe YouTube ne le permet
+  // pas, et aucune contorsion ne le permettra. Il faut l'extrait local — que
+  // le bouton « Préparer l'extrait » fabrique justement.
+  const video = player?.videoElement;
+  if (!video) {
+    toast('Chargez d\'abord l\'extrait local — « ✂️ Préparer l\'extrait » le fabrique', 'error');
+    return;
+  }
+  if (current.video.startAt == null || current.video.turn1At == null) {
+    toast('Marquez le départ (D) et le premier virage (V) avant d\'analyser', 'error');
+    return;
+  }
+
+  hote.innerHTML = panneauHtml();
+  brancherPanneau({
+    video,
+    grille: buildStartGridExport({
+      start: current.start, rows: current.rows, poleSide: current.meeting?.poleSide,
+    }),
+    startAt: current.video.startAt,
+    turn1At: current.video.turn1At,
+    startId: idDuDepartCourant(),
+    onProposal: (doc) => {
+      if (!isV1OrderProposal(doc)) { toast('Classement illisible', 'error'); return; }
+      appliquerProposition(doc);
+    },
+  });
+  panneauV1Ouvert = true;
+  hote.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  renderWork();
+}
+
+function fermerAnalyse() {
+  const hote = document.getElementById('sanl-turn1');
+  if (hote) hote.innerHTML = '';
+  panneauV1Ouvert = false;
+  renderWork();
+}
+
+/**
+ * Applique une proposition, d'où qu'elle vienne — panneau d'analyse ou
+ * fichier importé.
+ *
+ * On dit ce qui a été ÉCARTÉ, pas seulement ce qui a marché : une proposition
+ * à moitié comprise doit se voir.
+ */
+function appliquerProposition(doc) {
+  const { rows: maj, applied, rejected } = applyV1OrderProposal({
+    rows: current.rows, proposal: doc, starters: countStarters(current.rows),
+  });
+  current.rows = maj;
+  renderWork();
+  if (rejected.length) {
+    toast(`${applied} proposition(s) retenue(s), ${rejected.length} écartée(s) — ${rejected[0].raison}`, 'warning');
+  } else {
+    toast(`${applied} proposition(s) retenue(s)`, 'success');
+  }
 }
 
 async function persist(validated) {

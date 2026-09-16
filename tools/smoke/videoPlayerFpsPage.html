@@ -1,0 +1,155 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Contrôle de cadence — lecteur Rallycross V2</title>
+<style>
+  body { font: 14px/1.5 system-ui, sans-serif; margin: 24px; max-width: 900px; }
+  h1 { font-size: 1.2rem; }
+  .zone { border: 1px solid #ccc; border-radius: 8px; padding: 12px; margin: 12px 0; }
+  table { border-collapse: collapse; width: 100%; margin-top: 8px; }
+  th, td { border: 1px solid #ddd; padding: 5px 8px; text-align: left; font-size: 13px; }
+  th { background: #f4f4f4; }
+  .ok { color: #0a7d28; font-weight: 600; }
+  .ko { color: #b30021; font-weight: 600; }
+  #player { max-width: 480px; }
+  pre { background: #f7f7f7; padding: 8px; overflow-x: auto; font-size: 12px; }
+</style>
+
+<h1>Contrôle de cadence du lecteur</h1>
+<p>
+  Compare ce que le lecteur <strong>mesure</strong> (via <code>requestVideoFrameCallback</code>) et ce
+  que le sidecar <code>rx-extract/1</code> <strong>annonce</strong>, sur le même fichier.
+</p>
+
+<div class="zone">
+  <label>Sélectionne la vidéo <em>et</em> son <code>.json</code> :
+    <input type="file" id="pick" accept="video/*,application/json,.json" multiple>
+  </label>
+</div>
+
+<div id="out"></div>
+<div id="player"></div>
+
+<script type="module">
+import { createVideoPlayer } from '/js/videoPlayer.js';
+import { frameOf, parseExtractSidecar, pairExtractFiles } from '/js/videoPlayerCalc.js';
+
+const out = document.getElementById('out');
+const host = document.getElementById('player');
+const REPERES = [43, 51];              // départ et V1 relevés sur l'extrait Kerlabo
+
+const wait = (ms) => new Promise(r => setTimeout(r, ms));
+
+/**
+ * Charge le fichier dans un vrai lecteur et renvoie ce qu'il en déduit.
+ * `jouer` = durée de lecture en ms, nécessaire pour que la mesure par
+ * requestVideoFrameCallback ait des images à observer.
+ */
+async function mesurer(file, { fps = null, jouer = 0 } = {}) {
+  const infos = [];
+  const p = createVideoPlayer(host, { onReady: (i) => infos.push(i) });
+  p.loadFile(file, 0, fps ? { fps } : undefined);
+
+  for (let i = 0; i < 100 && !p.duration; i++) await wait(50);   // métadonnées
+  if (jouer) { p.play(); await wait(jouer); p.pause(); await wait(100); }
+
+  // Pas image par image réellement appliqué par le lecteur.
+  p.seek(REPERES[0]);
+  await wait(150);
+  const avant = p.getTime();
+  p.step(+1, 'frame');
+  const apres = p.getTime();
+
+  const res = {
+    fps: p.fps,
+    fpsSource: p.fpsSource,
+    frameStep: p.frameStep,
+    duration: p.duration,
+    pasReel: apres - avant,
+    frames: REPERES.map(t => (p.fps ? frameOf(t, p.fps) : null)),
+    reveils: infos.length,
+  };
+  p.destroy();
+  return res;
+}
+
+function ligne(label, valeur, attendu, ok) {
+  return `<tr><td>${label}</td><td><strong>${valeur}</strong></td><td>${attendu}</td>
+          <td class="${ok ? 'ok' : 'ko'}">${ok ? 'OK' : 'ECHEC'}</td></tr>`;
+}
+
+async function lancer(files) {
+  const { video, sidecar } = pairExtractFiles(files);
+  if (!video) { out.innerHTML = '<p class="ko">Aucun fichier video dans la selection.</p>'; return; }
+
+  let side = null;
+  if (sidecar) side = parseExtractSidecar(await sidecar.text());
+
+  out.innerHTML = '<p>Mesure en cours (lecture de 3 s)…</p>';
+
+  const mesure = await mesurer(video, { jouer: 3000 });
+  const annonce = side?.fps ? await mesurer(video, { fps: side.fps }) : null;
+
+  const vrai = side?.fps ?? null;
+  const rows = [];
+  rows.push(ligne('Cadence MESUREE (rVFC)', `${mesure.fps ?? '—'} img/s`,
+    vrai ? `${vrai} attendu` : 'inconnue sans sidecar', vrai ? mesure.fps === vrai : true));
+  if (annonce) {
+    rows.push(ligne('Cadence ANNONCEE (sidecar)', `${annonce.fps} img/s (${annonce.fpsSource})`,
+      `${vrai} / declared`, annonce.fps === vrai && annonce.fpsSource === 'declared'));
+    rows.push(ligne('Pas image par image', `${(annonce.frameStep * 1000).toFixed(3)} ms`,
+      `${(1000 / vrai).toFixed(3)} ms`, Math.abs(annonce.frameStep - 1 / vrai) < 1e-6));
+    rows.push(ligne('Pas REELLEMENT applique', `${(annonce.pasReel * 1000).toFixed(3)} ms`,
+      `${(1000 / vrai).toFixed(3)} ms`, Math.abs(annonce.pasReel - 1 / vrai) < 1e-3));
+    rows.push(ligne(`Image a ${REPERES[0]}.000 s`, annonce.frames[0],
+      Math.floor(REPERES[0] * vrai), annonce.frames[0] === Math.floor(REPERES[0] * vrai)));
+    rows.push(ligne(`Image a ${REPERES[1]}.000 s`, annonce.frames[1],
+      Math.floor(REPERES[1] * vrai), annonce.frames[1] === Math.floor(REPERES[1] * vrai)));
+  }
+
+  const sonde = document.createElement('video');
+  const verdict = {
+    codecs: {
+      h264: sonde.canPlayType('video/mp4; codecs="avc1.640028"') || 'non',
+      vp9: sonde.canPlayType('video/webm; codecs="vp9"') || 'non',
+      rvfc: typeof HTMLVideoElement.prototype.requestVideoFrameCallback === 'function',
+    },
+    decodee: mesure.duration > 0,
+    fichier: video.name,
+    sidecar: sidecar ? sidecar.name : null,
+    sidecarValide: !!side,
+    fpsSidecar: vrai,
+    fpsMesure: mesure.fps,
+    fpsSourceAnnonce: annonce?.fpsSource ?? null,
+    frameStepMs: annonce ? annonce.frameStep * 1000 : null,
+    pasReelMs: annonce ? annonce.pasReel * 1000 : null,
+    frames: annonce?.frames ?? mesure.frames,
+    duree: mesure.duration,
+    toutesOk: rows.every(r => r.includes('>OK<')),
+  };
+
+  out.innerHTML = `
+    <div class="zone">
+      <p><strong>${video.name}</strong>${sidecar ? ` + ${sidecar.name}` : ' (sans sidecar)'}</p>
+      <table><tr><th>Contrôle</th><th>Obtenu</th><th>Attendu</th><th></th></tr>${rows.join('')}</table>
+      ${!side && sidecar ? '<p class="ko">Le .json fourni n\'est pas un sidecar rx-extract/1.</p>' : ''}
+      ${!sidecar ? '<p class="ko">Aucun .json selectionne : la cadence ne peut qu\'etre devinee.</p>' : ''}
+    </div>
+    <pre>${JSON.stringify(verdict, null, 2)}</pre>`;
+  window.__result = verdict;
+}
+
+document.getElementById('pick').addEventListener('change', (e) => lancer(e.target.files));
+
+// Mode automatique : ?auto=<url du mp4> — le .json voisin est deduit du nom.
+const auto = new URLSearchParams(location.search).get('auto');
+if (auto) {
+  (async () => {
+    const nom = auto.split('/').pop();
+    const files = [new File([await (await fetch(auto)).blob()], nom, { type: 'video/mp4' })];
+    const jsonUrl = auto.replace(/\.[^.]+$/, '.json');
+    const rj = await fetch(jsonUrl);
+    if (rj.ok) files.push(new File([await rj.blob()], nom.replace(/\.[^.]+$/, '.json'), { type: 'application/json' }));
+    await lancer(files);
+  })().catch((err) => { out.innerHTML = `<p class="ko">${err.message}</p>`; window.__result = { erreur: err.message }; });
+}
+</script>

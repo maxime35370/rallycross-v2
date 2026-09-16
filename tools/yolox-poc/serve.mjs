@@ -1,0 +1,305 @@
+/* BANC DE DÉTECTION YOLOX-tiny — serveur local du POC.
+
+   Sert la page d'analyse, ONNX Runtime Web et le modèle. Rien ne sort de la
+   machine : les images sont ouvertes par le navigateur depuis le disque, et
+   l'inférence tourne en WebAssembly dans l'onglet.
+
+     node tools/yolox-poc/serve.mjs
+         sert la page ; ouvre l'URL affichée, sélectionne les 6 PNG du corpus
+         et son corpus.json.
+
+     node tools/yolox-poc/serve.mjs --check <image.jpg>
+         contrôle automatique en Chromium (playwright) : lance la détection sur
+         une image et affiche les boîtes obtenues. Sert à vérifier le portage.
+
+   Le modèle YOLOX-tiny (Apache 2.0) est téléchargé une fois dans
+   tools/yolox-poc/modele/ — dossier ignoré par git, comme tous les .onnx. */
+
+import { createServer } from 'node:http';
+import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { existsSync, statSync, createReadStream } from 'node:fs';
+import { join, extname, resolve, dirname, basename } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+import { spawn } from 'node:child_process';
+import { tmpdir } from 'node:os';
+
+import { MODELS, DEFAULT_MODEL } from '../../js/vision/detect.js';
+import { sanitizeRecipe, buildBaseName } from '../extract-manche/lib/recipe.mjs';
+
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
+const MODELE_DIR = join(ROOT, 'tools', 'yolox-poc', 'modele');
+const ORT_DIR = join(ROOT, 'node_modules', 'onnxruntime-web', 'dist');
+const PORT = Number(process.env.YOLOX_PORT || 8798);
+const CHROMIUM = process.env.CHROMIUM_PATH || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
+
+const args = process.argv.slice(2);
+const CHECK = args.includes('--check') ? args[args.indexOf('--check') + 1] : null;
+const SEUIL = args.includes('--seuil') ? args[args.indexOf('--seuil') + 1] : '0.30';
+const MODELE = args.includes('--modele') ? args[args.indexOf('--modele') + 1] : DEFAULT_MODEL;
+const PRECHARGER = args.includes('--precharger');
+
+if (!MODELS[MODELE]) {
+  console.error(`\n  modèle inconnu : « ${MODELE} ». Disponibles : ${Object.keys(MODELS).join(', ')}\n`);
+  process.exit(1);
+}
+
+/**
+ * Télécharge un modèle s'il manque, et le met en cache sur le disque.
+ *
+ * L'URL vient TOUJOURS du registre, jamais de la requête : le nom de fichier
+ * demandé par la page ne sert qu'à choisir une entrée connue.
+ */
+const enCours = new Map();
+async function assurerModele(file) {
+  const modele = Object.values(MODELS).find(m => m.file === file);
+  if (!modele) return null;
+  const chemin = join(MODELE_DIR, modele.file);
+  if (existsSync(chemin)) return chemin;
+  if (enCours.has(modele.id)) return enCours.get(modele.id);
+
+  const promesse = (async () => {
+    console.log(`  téléchargement de ${modele.label} (~${modele.approxMo} Mo)…`);
+    await mkdir(MODELE_DIR, { recursive: true });
+    const r = await fetch(modele.url);
+    if (!r.ok) throw new Error(`HTTP ${r.status} sur ${modele.url}`);
+    await writeFile(chemin, Buffer.from(await r.arrayBuffer()));
+    console.log(`  ${modele.file} enregistré (${(statSync(chemin).size / 1048576).toFixed(1)} Mo)`);
+    return chemin;
+  })();
+  enCours.set(modele.id, promesse);
+  return promesse;
+}
+
+const MIME = {
+  '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
+  '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8', '.wasm': 'application/wasm',
+  '.onnx': 'application/octet-stream', '.png': 'image/png', '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg', '.mjs.map': 'application/json',
+};
+
+// ── Modèle ──────────────────────────────────────────────
+if (!existsSync(ORT_DIR)) {
+  console.error('\n  onnxruntime-web est absent. Lance d\'abord :  npm install\n');
+  process.exit(1);
+}
+// Les modèles sont récupérés à la demande, à la première requête de la page.
+// `--precharger` les prend tous d'avance, pour préparer une machine hors ligne.
+try {
+  if (PRECHARGER) for (const m of Object.values(MODELS)) await assurerModele(m.file);
+  else await assurerModele(MODELS[CHECK ? MODELE : DEFAULT_MODEL].file);
+} catch (err) {
+  console.error(`\n  échec du téléchargement : ${err.message}`);
+  console.error(`  Récupère les .onnx à la main et place-les dans ${MODELE_DIR}\n`);
+  process.exit(1);
+}
+
+// ── Serveur ─────────────────────────────────────────────
+const mediaDir = CHECK ? dirname(resolve(CHECK)) : null;
+
+const EXTRAITS = join(ROOT, 'tools', 'extract-manche', 'extraits');
+
+/** `Range: bytes=début-fin`, ou null si l'en-tête est absent ou inexploitable. */
+function lirePlage(entete, taille) {
+  const m = /^bytes=(\d*)-(\d*)$/.exec(String(entete || '').trim());
+  if (!m || taille <= 0) return null;
+  const [, a, b] = m;
+  // « bytes=-500 » demande les 500 DERNIERS octets, pas les 500 premiers.
+  const debut = a === '' ? Math.max(0, taille - Number(b)) : Number(a);
+  const fin = a === '' || b === '' ? taille - 1 : Math.min(Number(b), taille - 1);
+  if (!Number.isFinite(debut) || !Number.isFinite(fin) || debut > fin || debut < 0) return null;
+  return { debut, fin };
+}
+
+/** Réponse JSON, sans mise en cache : rien ici n'est un asset. */
+function repondreJson(res, code, corps) {
+  const texte = JSON.stringify(corps);
+  res.writeHead(code, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Content-Length': String(Buffer.byteLength(texte)),
+    'Cache-Control': 'no-store',
+  });
+  res.end(texte);
+}
+
+function lireCorps(req, maxOctets = 64 * 1024) {
+  return new Promise((ok, ko) => {
+    let total = 0;
+    const morceaux = [];
+    req.on('data', (c) => {
+      total += c.length;
+      // Une recette tient en 500 octets : au-delà, ce n'est pas une recette.
+      if (total > maxOctets) { ko(new Error('corps trop volumineux')); req.destroy(); return; }
+      morceaux.push(c);
+    });
+    req.on('end', () => ok(Buffer.concat(morceaux).toString('utf8')));
+    req.on('error', ko);
+  });
+}
+
+/**
+ * Découpe demandée par l'application.
+ *
+ * C'est le seul geste qui ne peut pas vivre dans la page : les serveurs de
+ * média de YouTube ne renvoient pas d'en-têtes CORS, donc le navigateur ne
+ * peut pas lire ces octets. Ici, on lance l'outil qui existait déjà — rien de
+ * nouveau n'est tenté, et la vidéo ne quitte pas la machine.
+ */
+async function extraire(req, res) {
+  let brut = null;
+  try { brut = JSON.parse(await lireCorps(req)); }
+  catch (err) { repondreJson(res, 400, { ok: false, erreur: `recette illisible : ${err.message}` }); return; }
+
+  const { ok, recette, erreur } = sanitizeRecipe(brut);
+  if (!ok) { repondreJson(res, 400, { ok: false, erreur }); return; }
+
+  // La recette part par FICHIER, jamais par la ligne de commande : aucun champ
+  // ne devient un argument, donc aucun ne peut en devenir un autre.
+  const fichier = join(await mkdtempSafe(), 'recette.json');
+  await writeFile(fichier, JSON.stringify(recette), 'utf8');
+
+  const nom = buildBaseName(recette) || null;
+  const debut = Date.now();
+  const journal = [];
+  const enfant = spawn(process.execPath, [join(ROOT, 'tools', 'extract-manche', 'extract.mjs'), '--recette', fichier],
+    { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] });
+  enfant.stdout.on('data', d => journal.push(String(d)));
+  enfant.stderr.on('data', d => journal.push(String(d)));
+
+  const code = await new Promise(fin => {
+    enfant.on('error', (err) => { journal.push(err.message); fin(-1); });
+    enfant.on('close', fin);
+  });
+
+  const texte = journal.join('');
+  if (code !== 0 || !nom || !existsSync(join(EXTRAITS, `${nom}.mp4`))) {
+    repondreJson(res, 500, { ok: false, erreur: 'extraction échouée', journal: texte, code });
+    return;
+  }
+  // Les chemins rendus sont ceux que le navigateur peut aller chercher : le
+  // serveur sert déjà la racine du dépôt.
+  repondreJson(res, 200, {
+    ok: true, nom,
+    video: `/tools/extract-manche/extraits/${nom}.mp4`,
+    sidecar: `/tools/extract-manche/extraits/${nom}.json`,
+    secondes: Number(((Date.now() - debut) / 1000).toFixed(1)),
+    journal: texte,
+  });
+}
+
+/** Dossier temporaire propre à cette recette. */
+async function mkdtempSafe() {
+  const dir = join(tmpdir(), `rx-recette-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+  await mkdir(dir, { recursive: true });
+  return dir;
+}
+
+const server = createServer(async (req, res) => {
+  const path = decodeURIComponent(req.url.split('?')[0]);
+  try {
+    // ── Découpage à la demande ──
+    if (path === '/__extraire') {
+      if (req.method === 'POST') { await extraire(req, res); return; }
+      // Sonde : l'application demande simplement si un serveur local écoute.
+      // Sur le site déployé, cette requête échoue — et c'est la réponse.
+      repondreJson(res, 200, { ok: true, service: 'rx-extraction/1' });
+      return;
+    }
+
+    let file;
+    if (path === '/' || path === '/__page') file = join(ROOT, 'tools', 'yolox-poc', 'page.html');
+    else if (path === '/__suivi') file = join(ROOT, 'tools', 'yolox-poc', 'track.html');
+    else if (path === '/__plans') file = join(ROOT, 'tools', 'yolox-poc', 'plans.html');
+    else if (path === '/__apparence') file = join(ROOT, 'tools', 'yolox-poc', 'appariement.html');
+    else if (path === '/__autopsie') file = join(ROOT, 'tools', 'yolox-poc', 'autopsie.html');
+    else if (path === '/__monde') file = join(ROOT, 'tools', 'yolox-poc', 'monde.html');
+    else if (path === '/__rendu') file = join(ROOT, 'tools', 'yolox-poc', 'rendu.html');
+    else if (path.startsWith('/__ort/')) file = join(ORT_DIR, basename(path));
+    else if (path.startsWith('/__modele/')) {
+      file = await assurerModele(basename(path));
+      if (!file) { res.writeHead(404); res.end('modèle inconnu'); return; }
+    }
+    else if (path.startsWith('/__media/')) file = join(mediaDir || '', basename(path));
+    else file = join(ROOT, path);
+
+    // L'isolation d'origine n'est posée que sur les OUTILS. L'application, elle,
+    // est servie sans : `require-corp` bloquerait l'iframe YouTube du lecteur,
+    // et `same-origin` la couperait de tout. Les deux documents restent de même
+    // origine, donc le `BroadcastChannel` qui les relie traverse quand même.
+    const isole = path === '/' || path.startsWith('/__');
+
+    if (!existsSync(file) || statSync(file).isDirectory()) { res.writeHead(404); res.end(); return; }
+
+    // Requêtes partielles. Sans elles, un <video src="/chemin"> se charge mais
+    // ne se DÉPLACE pas : `currentTime = t` reste sans effet et `seeked` part
+    // quand même. Mesuré — deux instants différents rendaient deux fois la
+    // première image, et une analyse comparait une image à elle-même.
+    const taille = statSync(file).size;
+    const plage = lirePlage(req.headers.range, taille);
+    const entetes = {
+      'Content-Type': MIME[extname(file)] || 'application/octet-stream',
+      'Accept-Ranges': 'bytes',
+      // Sans en-tête de cache, le navigateur applique sa propre heuristique et
+      // peut resservir un module d'une session précédente. Sur un banc de
+      // mesure, faire tourner l'ancien code en croyant mesurer le nouveau coûte
+      // un aller-retour entier — et il n'y a rien ici qui gagne à être caché.
+      'Cache-Control': 'no-store, must-revalidate',
+      Pragma: 'no-cache',
+      // Ressource réservée à cette origine, outil ou non.
+      'Cross-Origin-Resource-Policy': 'same-origin',
+      // Isolation d'origine : autorise le WebAssembly multi-thread.
+      ...(isole ? {
+        'Cross-Origin-Opener-Policy': 'same-origin',
+        'Cross-Origin-Embedder-Policy': 'require-corp',
+      } : {}),
+    };
+    if (plage) {
+      res.writeHead(206, {
+        ...entetes,
+        'Content-Range': `bytes ${plage.debut}-${plage.fin}/${taille}`,
+        'Content-Length': String(plage.fin - plage.debut + 1),
+      });
+      createReadStream(file, { start: plage.debut, end: plage.fin }).pipe(res);
+      return;
+    }
+    res.writeHead(200, { ...entetes, 'Content-Length': String(taille) });
+    createReadStream(file).pipe(res);
+  } catch (err) {
+    res.writeHead(500); res.end(String(err.message));
+  }
+});
+await new Promise(ok => server.listen(PORT, '127.0.0.1', ok));
+
+if (!CHECK) {
+  console.log(`\n  Banc de détection : http://127.0.0.1:${PORT}/__page`);
+  console.log(`  Modèles : ${Object.values(MODELS).map(m => `${m.label} (${m.inputSize} px)`).join(' · ')}`);
+  console.log(`  Suivi temporel   : http://127.0.0.1:${PORT}/__suivi`);
+  console.log(`  Plans (sans modèle) : http://127.0.0.1:${PORT}/__plans`);
+  console.log(`  Apparence au cut    : http://127.0.0.1:${PORT}/__apparence`);
+  console.log(`  Autopsie d'un trou  : http://127.0.0.1:${PORT}/__autopsie`);
+  console.log(`  État du groupe      : http://127.0.0.1:${PORT}/__monde`);
+  console.log(`  Rendu annoté        : http://127.0.0.1:${PORT}/__rendu`);
+  console.log('  Banc : les images du corpus ET son corpus.json. Suivi : l\'extrait .mp4 ET son .json.');
+  console.log('  Tout reste local : aucune image n\'est envoyée nulle part.');
+  console.log('  Ctrl+C pour arrêter.\n');
+} else {
+  if (!existsSync(CHECK)) { console.error(`\n  image introuvable : ${CHECK}\n`); process.exit(1); }
+  const { chromium } = await import('playwright');
+  const browser = await chromium.launch({ executablePath: existsSync(CHROMIUM) ? CHROMIUM : undefined });
+  const page = await browser.newPage();
+  page.on('pageerror', e => console.error('  [page]', e.message));
+  await page.goto(`http://127.0.0.1:${PORT}/__page?auto=/__media/${encodeURIComponent(basename(CHECK))}&seuil=${SEUIL}&modele=${MODELE}`);
+  await page.waitForFunction(() => window.__pret, null, { timeout: 180000 });
+  const err = await page.evaluate(() => window.__erreur);
+  const dets = await page.evaluate(() => window.__resultats?.[0]?.detections ?? []);
+  await browser.close();
+  server.close();
+  if (err) { console.error(`\n  échec : ${err}\n`); process.exit(1); }
+  console.log(`\n  ${basename(CHECK)} — ${MODELS[MODELE].label} (${MODELS[MODELE].inputSize} px) — seuil ${SEUIL} — ${dets.length} détection(s)\n`);
+  for (const d of dets) {
+    const alt = d.alsoDetectedAs?.length ? ` (aussi ${d.alsoDetectedAs.join(', ')})` : '';
+    console.log(`    ${d.label.padEnd(8)} ${d.score.toFixed(3)}  [${d.box.join(', ')}]${alt}`);
+  }
+  console.log('');
+}

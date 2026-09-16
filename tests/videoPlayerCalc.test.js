@@ -1,11 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import {
   parseVideoSource, resolveStartTime, youtubeIdOfMeetingVideo,
-  estimateFps, frameDuration, clampTime, stepTime, frameOf,
+  estimateFps, normalizeFps, frameDuration, clampTime, stepTime, frameOf,
+  parseExtractSidecar, pairExtractFiles, EXTRACT_SCHEMA,
   formatPreciseTime, parsePreciseTime,
   YOUTUBE_RATES, LOCAL_RATES, ratesFor, nextRate,
   computeVideoRect, projectBox, normalizeBox, sanitizeBoxes, boxLabelText,
   keyboardAction, neighbourStartId, buildVideoBlock,
+  buildExtractCommand, buildExtractRecipe, localiserMarques, RECIPE_SCHEMA, PAD_AVANT, PAD_APRES,
   COMMON_FPS, DEFAULT_FPS,
 } from '../js/videoPlayerCalc.js';
 
@@ -114,6 +116,108 @@ describe('estimateFps', () => {
     const fps = estimateFps([0.125, 0.125, 0.125, 0.125]);
     expect(fps).toBeCloseTo(8, 3);
     expect(COMMON_FPS).not.toContain(fps);
+  });
+});
+
+describe('estimateFps — résistance aux images sautées', () => {
+  it('retrouve 60 alors que la majorité des images est sautée', () => {
+    // Cas réel : un extrait 1080p60 présenté en partie à 30 img/s. La médiane
+    // tombait sur 1/30 et renvoyait 30 — une valeur « plausible », donc une
+    // erreur silencieuse. Le quartile bas retrouve la bonne cadence, parce que
+    // la présentation ne peut que PERDRE des images, jamais en inventer.
+    const deltas = [...Array(8).fill(1 / 60), ...Array(12).fill(2 / 60)];
+    expect(estimateFps(deltas)).toBe(60);
+  });
+
+  it('ne transforme pas une vraie vidéo à 30 en 60', () => {
+    expect(estimateFps(Array(20).fill(1 / 30))).toBe(30);
+  });
+
+  it('reste juste sur une cadence propre', () => {
+    expect(estimateFps(Array(20).fill(1 / 50))).toBe(50);
+    expect(estimateFps(Array(20).fill(1001 / 30000))).toBe(29.97);
+  });
+});
+
+describe('parseExtractSidecar', () => {
+  const valide = {
+    schema: 'rx-extract/1', fps: 60, clipStart: 20543, sourceStart: 20546,
+    v1At: 20554, youtubeId: '_SqxZQl5zzQ', file: 'Kerlabo.mp4',
+    serie: 4, sessionType: 'MQ', sessionNum: 3, category: 'D3', location: 'Kerlabo',
+  };
+
+  it('lit un sidecar produit par tools/extract-manche', () => {
+    const r = parseExtractSidecar(JSON.stringify(valide));
+    expect(r).toMatchObject({ fps: 60, clipStart: 20543, v1At: 20554, serie: 4, category: 'D3' });
+  });
+
+  it('refuse tout ce qui n\'est pas ce schéma', () => {
+    // Un JSON quelconque déposé par erreur ne doit pas imposer une cadence.
+    expect(parseExtractSidecar(JSON.stringify({ fps: 60 }))).toBeNull();
+    expect(parseExtractSidecar(JSON.stringify({ ...valide, schema: 'autre/2' }))).toBeNull();
+    expect(parseExtractSidecar('pas du json')).toBeNull();
+    expect(parseExtractSidecar('')).toBeNull();
+    expect(parseExtractSidecar(null)).toBeNull();
+  });
+
+  it('neutralise une cadence absurde plutôt que de la propager', () => {
+    expect(parseExtractSidecar(JSON.stringify({ ...valide, fps: 0 })).fps).toBeNull();
+    expect(parseExtractSidecar(JSON.stringify({ ...valide, fps: 'soixante' })).fps).toBeNull();
+    expect(EXTRACT_SCHEMA).toBe('rx-extract/1');
+  });
+});
+
+describe('pairExtractFiles', () => {
+  const f = (name, type = '') => ({ name, type });
+
+  it('apparie la vidéo et son sidecar par le nom de base', () => {
+    const r = pairExtractFiles([f('autre.json'), f('K_Q3_S4.mp4'), f('K_Q3_S4.json')]);
+    expect(r.video.name).toBe('K_Q3_S4.mp4');
+    expect(r.sidecar.name).toBe('K_Q3_S4.json');
+  });
+
+  it('accepte un couple unique même si les noms diffèrent', () => {
+    const r = pairExtractFiles([f('manche.mp4'), f('description.json')]);
+    expect(r.sidecar.name).toBe('description.json');
+  });
+
+  it('n\'apparie rien quand le choix est ambigu', () => {
+    const r = pairExtractFiles([f('a.mp4'), f('b.mp4'), f('x.json'), f('y.json')]);
+    expect(r.video.name).toBe('a.mp4');
+    expect(r.sidecar).toBeNull();
+  });
+
+  it('reconnaît une vidéo par son type quand l\'extension est inhabituelle', () => {
+    expect(pairExtractFiles([f('rush', 'video/mp4')]).video.name).toBe('rush');
+  });
+
+  it('supporte une sélection vide ou sans vidéo', () => {
+    expect(pairExtractFiles([])).toEqual({ video: null, sidecar: null });
+    expect(pairExtractFiles([f('seul.json')]).sidecar.name).toBe('seul.json');
+    expect(pairExtractFiles(undefined)).toEqual({ video: null, sidecar: null });
+  });
+});
+
+describe('normalizeFps — cadence ANNONCÉE (sidecar ffprobe)', () => {
+  it('accepte une cadence plausible et l\'arrondit à 3 décimales', () => {
+    expect(normalizeFps(50)).toBe(50);
+    expect(normalizeFps('25')).toBe(25);
+    expect(normalizeFps(30000 / 1001)).toBe(29.97);   // même valeur qu'estimateFps
+    expect(normalizeFps(23.976023976)).toBe(23.976);
+  });
+
+  it('refuse ce qui n\'est pas une cadence — jamais de valeur par défaut', () => {
+    // Renvoyer DEFAULT_FPS ici recréerait exactement le repli silencieux que
+    // cette fonction existe pour supprimer.
+    for (const bad of [0, -25, null, undefined, '', 'cinquante', NaN, Infinity, 5000]) {
+      expect(normalizeFps(bad)).toBeNull();
+    }
+  });
+
+  it('ne recale sur aucune valeur standard, contrairement à estimateFps', () => {
+    // Elle vient de ffprobe : elle est exacte, il n'y a rien à corriger.
+    expect(normalizeFps(48)).toBe(48);
+    expect(normalizeFps(19.5)).toBe(19.5);
   });
 });
 
@@ -439,5 +543,213 @@ describe('buildVideoBlock', () => {
     const b = buildVideoBlock({ kind: 'youtube', youtubeId: 'abc', startAt: -3, turn1At: 'x' });
     expect(b.startAt).toBeNull();
     expect(b.turn1At).toBeNull();
+  });
+});
+
+// ─────────────────────────────────────────────────────────
+// PRÉPARATION DE L'EXTRAIT
+// ─────────────────────────────────────────────────────────
+
+describe('buildExtractCommand', () => {
+  // Kerlabo, MQ3 série 4 : départ à 5:43:06, premier virage 8 s plus tard.
+  const MANCHE = {
+    youtubeId: '_SqxZQl5zzQ', startAt: 20586, turn1At: 20594,
+    location: 'Kerlabo', year: 2026, category: 'D3',
+    sessionType: 'MQ', sessionNum: 3, serie: 4,
+  };
+
+  it('encadre la plage utile : départ − 3 s, premier virage + 2 s', () => {
+    const r = buildExtractCommand(MANCHE);
+    expect(r.ok).toBe(true);
+    expect(r.clipStart).toBe(20583);      // 20586 − 3
+    expect(r.clipEnd).toBe(20596);        // 20594 + 2
+    expect(r.clipDuration).toBe(13);
+  });
+
+  it('les marges par défaut sont bien 3 avant et 2 après', () => {
+    expect([PAD_AVANT, PAD_APRES]).toEqual([3, 2]);
+  });
+
+  it('rend une commande complète, prête à coller', () => {
+    expect(buildExtractCommand(MANCHE).command).toBe(
+      'tools\\extract-manche\\extraire.cmd --url https://youtu.be/_SqxZQl5zzQ ' +
+      '--start 20586 --fin 20594 --v1 20594 --pad-avant 3 --pad-apres 2 ' +
+      '--lieu Kerlabo --annee 2026 --categorie D3 --type MQ --num 3 --serie 4');
+  });
+
+  it('passe le premier virage en `--v1` : le sidecar doit le porter', () => {
+    // C'est ce champ que l'outil d'analyse relit pour se placer.
+    expect(buildExtractCommand(MANCHE).command).toMatch(/--v1 20594/);
+  });
+
+  it('garde les fractions de seconde : marquer à l\'image ne sert à rien si on arrondit', () => {
+    const r = buildExtractCommand({ ...MANCHE, startAt: 20586.483, turn1At: 20594.25 });
+    expect(r.command).toMatch(/--start 20586\.483 --fin 20594\.25/);
+    expect(r.clipDuration).toBe(12.767);
+  });
+
+  it('protège une valeur contenant un espace', () => {
+    const r = buildExtractCommand({ ...MANCHE, location: 'Mayenne (53)' });
+    expect(r.command).toMatch(/--lieu "Mayenne \(53\)"/);
+  });
+
+  it('omet ce qu\'il ne sait pas plutôt que d\'inventer', () => {
+    const r = buildExtractCommand({ youtubeId: 'abc', startAt: 10, turn1At: 20 });
+    expect(r.ok).toBe(true);
+    expect(r.command).not.toMatch(/--lieu|--annee|--categorie|--type|--num|--serie/);
+  });
+
+  it('accepte la série 0 et la manche 0 : ce sont des valeurs, pas des absences', () => {
+    const r = buildExtractCommand({ ...MANCHE, sessionNum: 0, serie: 0 });
+    expect(r.command).toMatch(/--num 0 --serie 0/);
+  });
+
+  it('propose la variante hors Windows', () => {
+    const r = buildExtractCommand({ ...MANCHE, platform: 'linux' });
+    expect(r.command.startsWith('node tools/extract-manche/extract.mjs ')).toBe(true);
+  });
+
+  it('respecte des marges choisies', () => {
+    const r = buildExtractCommand({ ...MANCHE, padBefore: 5, padAfter: 0 });
+    expect(r.clipStart).toBe(20581);
+    expect(r.clipEnd).toBe(20594);
+    expect(r.command).toMatch(/--pad-avant 5 --pad-apres 0/);
+  });
+
+  it('ne recule pas avant le début de la vidéo', () => {
+    const r = buildExtractCommand({ ...MANCHE, startAt: 1, turn1At: 9 });
+    expect(r.clipStart).toBe(0);
+    expect(r.clipDuration).toBe(11);
+  });
+
+  it('dit ce qui manque plutôt que de rendre une commande fausse', () => {
+    expect(buildExtractCommand({ startAt: 10, turn1At: 20 }).manques).toEqual(['la source YouTube']);
+    expect(buildExtractCommand({ youtubeId: 'abc' }).manques)
+      .toEqual(['l\'instant du départ', 'l\'instant du premier virage']);
+    expect(buildExtractCommand({ youtubeId: 'abc', startAt: 10 }).manques)
+      .toEqual(['l\'instant du premier virage']);
+  });
+
+  it('un instant absent n\'est pas l\'instant 0 — `Number(null)` vaut 0', () => {
+    const r = buildExtractCommand({ youtubeId: 'abc', startAt: null, turn1At: 20 });
+    expect(r.ok).toBe(false);
+    expect(r.manques).toContain('l\'instant du départ');
+  });
+
+  it('refuse un premier virage marqué avant le départ', () => {
+    const r = buildExtractCommand({ ...MANCHE, startAt: 20594, turn1At: 20586 });
+    expect(r.ok).toBe(false);
+    expect(r.command).toBeNull();
+    expect(r.manques[0]).toMatch(/avant le départ/);
+  });
+
+  it('sans argument, ne jette pas', () => {
+    expect(buildExtractCommand().ok).toBe(false);
+  });
+});
+
+describe('buildExtractRecipe', () => {
+  const MANCHE = {
+    youtubeId: '_SqxZQl5zzQ', startAt: 20586, turn1At: 20594,
+    location: 'Kerlabo', year: 2026, category: 'D3',
+    sessionType: 'MQ', sessionNum: 3, serie: 4,
+    meetingId: 'meet1', sessionId: 'sess9', championshipId: 'champ1',
+  };
+
+  it('rend les clés que `--recette` sait lire', () => {
+    const { recette } = buildExtractRecipe(MANCHE);
+    expect(recette.schema).toBe(RECIPE_SCHEMA);
+    expect(recette.url).toBe('https://youtu.be/_SqxZQl5zzQ');
+    expect(recette.sourceStart).toBe(20586);
+    expect(recette.sourceEnd).toBe(20594);
+    expect(recette.v1At).toBe(20594);
+    expect(recette.padBefore).toBe(3);
+    expect(recette.padAfter).toBe(2);
+  });
+
+  it('emporte les clés Firestore — la ligne de commande ne les aurait jamais', () => {
+    const { recette } = buildExtractRecipe(MANCHE);
+    expect(recette.meetingId).toBe('meet1');
+    expect(recette.sessionId).toBe('sess9');
+    expect(recette.championshipId).toBe('champ1');
+  });
+
+  it('trace sa provenance : un extrait fabriqué par l\'application se reconnaît', () => {
+    expect(buildExtractRecipe(MANCHE).recette.origin).toBe('auto:startAnalysis@1');
+  });
+
+  it('nomme le fichier d\'après la manche, avec le suffixe que le raccourci cherche', () => {
+    expect(buildExtractRecipe(MANCHE).nom).toBe('Kerlabo_2026_D3_Q3_S4.rxrecette.json');
+  });
+
+  it('accepte un lieu accentué ou ponctué sans produire un nom de fichier bancal', () => {
+    const r = buildExtractRecipe({ ...MANCHE, location: 'Lohéac (35)' });
+    expect(r.nom).toBe('Loheac_35_2026_D3_Q3_S4.rxrecette.json');
+    expect(r.recette.location).toBe('Lohéac (35)');    // la recette garde le vrai nom
+  });
+
+  it('nomme quand même un extrait sans identité', () => {
+    const r = buildExtractRecipe({ youtubeId: 'abc', startAt: 10, turn1At: 20 });
+    expect(r.nom).toBe('extrait.rxrecette.json');
+  });
+
+  it('annonce la même fenêtre que la commande', () => {
+    const r = buildExtractRecipe(MANCHE);
+    const c = buildExtractCommand(MANCHE);
+    expect([r.clipStart, r.clipEnd, r.clipDuration]).toEqual([c.clipStart, c.clipEnd, c.clipDuration]);
+  });
+
+  it('garde les fractions de seconde', () => {
+    const { recette } = buildExtractRecipe({ ...MANCHE, startAt: 20586.483, turn1At: 20594.25 });
+    expect(recette.sourceStart).toBe(20586.483);
+    expect(recette.v1At).toBe(20594.25);
+  });
+
+  it('refuse pour les mêmes raisons que la commande, et ne rend rien à moitié', () => {
+    const r = buildExtractRecipe({ startAt: 10, turn1At: 20 });
+    expect(r.ok).toBe(false);
+    expect(r.recette).toBeNull();
+    expect(r.nom).toBeNull();
+    expect(r.manques).toEqual(['la source YouTube']);
+  });
+});
+
+describe('localiserMarques — de la retransmission vers l\'extrait', () => {
+  // Kerlabo : départ 20586, V1 20594, extrait commençant à 20583.
+  it('reporte les deux marques sur l\'extrait', () => {
+    expect(localiserMarques({ startAt: 20586, turn1At: 20594, clipStart: 20583 }))
+      .toEqual({ startAt: 3, turn1At: 11 });
+  });
+
+  it('garde les fractions de seconde', () => {
+    expect(localiserMarques({ startAt: 20586.483, turn1At: 20594.25, clipStart: 20583 }))
+      .toEqual({ startAt: 3.483, turn1At: 11.25 });
+  });
+
+  it('écarte un instant situé avant le début de l\'extrait', () => {
+    // Mieux vaut aucune marque qu'une marque négative que le lecteur lirait 0.
+    expect(localiserMarques({ startAt: 20580, turn1At: 20594, clipStart: 20583 }))
+      .toEqual({ startAt: null, turn1At: 11 });
+  });
+
+  it('un instant pile au début de l\'extrait vaut 0, pas « absent »', () => {
+    expect(localiserMarques({ startAt: 20583, turn1At: 20594, clipStart: 20583 }).startAt).toBe(0);
+  });
+
+  it('sans clipStart, ne reporte rien plutôt que de soustraire 0', () => {
+    // `Number(null)` vaut 0 : sans garde, les marques resteraient à leurs
+    // valeurs YouTube en ayant l'air converties.
+    expect(localiserMarques({ startAt: 20586, turn1At: 20594 }))
+      .toEqual({ startAt: null, turn1At: null });
+    expect(localiserMarques({ startAt: 20586, turn1At: 20594, clipStart: null }).startAt).toBeNull();
+  });
+
+  it('laisse null ce qui était null', () => {
+    expect(localiserMarques({ startAt: null, turn1At: 20594, clipStart: 20583 }))
+      .toEqual({ startAt: null, turn1At: 11 });
+  });
+
+  it('sans argument, ne jette pas', () => {
+    expect(localiserMarques()).toEqual({ startAt: null, turn1At: null });
   });
 });

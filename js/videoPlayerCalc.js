@@ -121,8 +121,20 @@ export const DEFAULT_FPS = 25;
 
 /**
  * Estime la cadence d'une vidéo à partir d'écarts entre images successives
- * (fournis par requestVideoFrameCallback). La médiane résiste aux images
- * doublées ou sautées, contrairement à la moyenne.
+ * (fournis par requestVideoFrameCallback).
+ *
+ * ⚠️ Ce que cette fonction mesure est la cadence de PRÉSENTATION, pas celle du
+ * fichier. Les deux diffèrent dès que le navigateur n'arrive pas à suivre : il
+ * saute alors une image sur deux, et une vidéo à 60 img/s est mesurée à 30.
+ * Constaté sur un extrait 1080p60 réel — d'où l'existence de `normalizeFps()`
+ * et du champ `fps` du sidecar `rx-extract/1`, qui font autorité sur elle.
+ *
+ * D'où le choix du QUARTILE BAS plutôt que de la médiane : la présentation ne
+ * peut que perdre des images, jamais en inventer. Le vrai pas se trouve donc
+ * du côté des plus PETITS écarts, et la médiane se laisse tirer vers le haut
+ * dès qu'un tiers des images est sauté. Le quartile bas récupère la bonne
+ * valeur tant que les pertes ne sont pas systématiques ; quand elles le sont,
+ * aucune mesure ne peut retrouver la cadence — seul le sidecar le peut.
  *
  * @param {number[]} deltas — écarts en secondes entre images consécutives
  * @returns {number|null} cadence recalée sur une valeur standard, ou null
@@ -130,9 +142,7 @@ export const DEFAULT_FPS = 25;
 export function estimateFps(deltas = []) {
   const usable = deltas.filter(d => Number.isFinite(d) && d > 0.001 && d < 0.5).sort((a, b) => a - b);
   if (usable.length < 3) return null;
-  const mid = Math.floor(usable.length / 2);
-  const median = usable.length % 2 ? usable[mid] : (usable[mid - 1] + usable[mid]) / 2;
-  const raw = 1 / median;
+  const raw = 1 / usable[Math.floor((usable.length - 1) * 0.25)];
   // Recale sur la cadence standard la plus proche si l'écart reste sous 5 %.
   let best = null, bestGap = Infinity;
   for (const f of COMMON_FPS) {
@@ -140,6 +150,97 @@ export function estimateFps(deltas = []) {
     if (gap < bestGap) { bestGap = gap; best = f; }
   }
   return bestGap <= 0.05 ? best : Math.round(raw * 1000) / 1000;
+}
+
+/**
+ * Valide une cadence ANNONCÉE, par opposition à `estimateFps()` qui en mesure
+ * une. Elle vient de `ffprobe` (champ `fps` du sidecar `rx-extract/1`), donc
+ * d'une source exacte : on ne la recale sur aucune valeur standard, on se
+ * contente de la refuser si elle est absurde.
+ *
+ * Arrondie à 3 décimales pour rester lisible à l'affichage et donner le même
+ * nombre que `estimateFps()` sur les cadences NTSC (30000/1001 → 29.97).
+ *
+ * @param {number|string|null} value
+ * @returns {number|null} cadence utilisable, ou null
+ */
+export function normalizeFps(value) {
+  const f = Number(value);
+  if (!Number.isFinite(f) || f <= 0 || f > 1000) return null;
+  return Number(f.toFixed(3));
+}
+
+// ─────────────────────────────────────────────────────────
+// SIDECAR D'EXTRAIT — « rx-extract/1 »
+// ─────────────────────────────────────────────────────────
+
+export const EXTRACT_SCHEMA = 'rx-extract/1';
+
+/** Extensions vidéo reconnues à côté d'un sidecar. */
+const VIDEO_EXT = /\.(mp4|webm|mov|mkv|m4v)$/i;
+
+/**
+ * Lit le sidecar JSON produit par `tools/extract-manche/`.
+ *
+ * N'accepte QUE le schéma attendu : un JSON quelconque déposé par erreur ne
+ * doit pas se faire passer pour une description d'extrait et imposer une
+ * cadence fausse. Renvoie null dans tous les cas douteux.
+ *
+ * @param {string} text — contenu du fichier .json
+ * @returns {{fps:number|null, clipStart:number|null, sourceStart:number|null,
+ *            v1At:number|null, youtubeId:string|null, file:string|null,
+ *            serie:number|null, sessionType:string|null, sessionNum:number|null,
+ *            category:string|null, location:string|null}|null}
+ */
+export function parseExtractSidecar(text) {
+  let raw;
+  try {
+    raw = JSON.parse(String(text || ''));
+  } catch {
+    return null;
+  }
+  if (!raw || typeof raw !== 'object' || raw.schema !== EXTRACT_SCHEMA) return null;
+  const num = v => (Number.isFinite(Number(v)) ? Number(v) : null);
+  return {
+    fps: normalizeFps(raw.fps),
+    clipStart: num(raw.clipStart),
+    sourceStart: num(raw.sourceStart),
+    v1At: num(raw.v1At),
+    youtubeId: raw.youtubeId || null,
+    file: raw.file || null,
+    serie: num(raw.serie),
+    sessionType: raw.sessionType || null,
+    sessionNum: num(raw.sessionNum),
+    category: raw.category || null,
+    location: raw.location || null,
+  };
+}
+
+/**
+ * Sépare une sélection de fichiers en « la vidéo » et « son sidecar ».
+ *
+ * L'utilisateur sélectionne les deux d'un coup dans le sélecteur de fichiers.
+ * L'appariement se fait d'abord sur le nom de base — c'est ce que produit
+ * l'outil d'extraction — puis, à défaut, sur le fait qu'il n'y ait qu'un seul
+ * JSON pour une seule vidéo. La validation réelle reste le schéma, lu par
+ * `parseExtractSidecar()`.
+ *
+ * @param {Array<{name:string, type?:string}>} files
+ * @returns {{video:object|null, sidecar:object|null}}
+ */
+export function pairExtractFiles(files = []) {
+  const list = Array.from(files || []).filter(f => f && typeof f.name === 'string');
+  const videos = list.filter(f => VIDEO_EXT.test(f.name) || String(f.type || '').startsWith('video/'));
+  const jsons = list.filter(f => /\.json$/i.test(f.name));
+  const video = videos[0] || null;
+  if (!video) return { video: null, sidecar: jsons.length === 1 ? jsons[0] : null };
+
+  const base = video.name.replace(VIDEO_EXT, '');
+  const exact = jsons.find(f => f.name.replace(/\.json$/i, '') === base);
+  return {
+    video,
+    sidecar: exact || (jsons.length === 1 && videos.length === 1 ? jsons[0] : null),
+  };
 }
 
 /** Durée d'une image, en secondes. */
@@ -477,4 +578,195 @@ export function buildVideoBlock({ kind, youtubeId, fileName, startAt, turn1At, f
   const meaningful = block.kind || block.youtubeId || block.fileName
     || block.startAt != null || block.turn1At != null;
   return meaningful ? block : null;
+}
+
+// ─────────────────────────────────────────────────────────
+// PRÉPARATION DE L'EXTRAIT
+//
+// Le navigateur ne peut pas — et ne doit pas — découper la retransmission :
+// récupérer les flux de YouTube depuis une page web contourne sa restriction
+// d'accès. La coupe reste le travail de `tools/extract-manche`, en local.
+//
+// Ce que l'application PEUT faire, c'est éviter la recopie à la main. Elle
+// connaît déjà les deux instants (marqués avec D et V sur la retransmission,
+// donc en secondes absolues de la vidéo YouTube) et l'identité de la manche.
+// Elle rend donc la commande toute faite.
+// ─────────────────────────────────────────────────────────
+
+/** Marges par défaut : assez avant pour voir la grille, juste ce qu'il faut après le virage. */
+export const RECIPE_SCHEMA = 'rx-recipe/1';
+export const PAD_AVANT = 3;
+export const PAD_APRES = 2;
+
+/** Une valeur d'argument, protégée si elle contient un espace. */
+function argument(v) {
+  const s = String(v);
+  return /[\s"]/.test(s) ? `"${s.replace(/"/g, '\\"')}"` : s;
+}
+
+/** Secondes lisibles par `parseTimeInput` de l'extracteur : un nombre nu. */
+function secondes(v) {
+  return String(Number(Number(v).toFixed(3)));
+}
+
+/**
+ * Recette d'extraction : le même contenu que la commande, en JSON.
+ *
+ * `extract.mjs --recette <fichier>` lit exactement ces clés. Un JSON téléchargé
+ * ne porte pas la « marque du web » qui fait afficher un avertissement à chaque
+ * script téléchargé : c'est un fichier de données, pas un exécutable. Le seul
+ * programme lancé reste celui qui est déjà sur la machine.
+ *
+ * @returns {{ok:boolean, recette:object|null, nom:string|null, manques:string[],
+ *            clipStart:number|null, clipEnd:number|null, clipDuration:number|null}}
+ */
+export function buildExtractRecipe(params = {}) {
+  const r = buildExtractCommand(params);
+  if (!r.ok) return { ok: false, recette: null, nom: null, manques: r.manques, clipStart: null, clipEnd: null, clipDuration: null };
+
+  const {
+    youtubeId, startAt, turn1At, padBefore = PAD_AVANT, padAfter = PAD_APRES,
+    location = null, year = null, category = null,
+    sessionType = null, sessionNum = null, serie = null,
+    meetingId = null, sessionId = null, championshipId = null,
+  } = params;
+
+  return {
+    ok: true,
+    manques: [],
+    clipStart: r.clipStart, clipEnd: r.clipEnd, clipDuration: r.clipDuration,
+    nom: `${slugExtrait([location, year, category, sessionType && sessionNum != null ? `Q${sessionNum}` : sessionType, serie != null ? `S${serie}` : null])}.rxrecette.json`,
+    recette: {
+      schema: RECIPE_SCHEMA,
+      url: `https://youtu.be/${youtubeId}`,
+      sourceStart: Number(Number(startAt).toFixed(3)),
+      sourceEnd: Number(Number(turn1At).toFixed(3)),
+      v1At: Number(Number(turn1At).toFixed(3)),
+      padBefore: Math.max(0, Number(padBefore) || 0),
+      padAfter: Math.max(0, Number(padAfter) || 0),
+      location, year, category, sessionType, sessionNum, serie,
+      // Les clés Firestore : l'application les connaît, la ligne de commande
+      // ne les aurait jamais. Le sidecar produit rattachera donc l'extrait à
+      // sa manche sans aucune ressaisie.
+      meetingId, sessionId, championshipId,
+      origin: 'auto:startAnalysis@1',
+    },
+  };
+}
+
+/** Nom de fichier lisible et sans surprise, à partir des morceaux connus. */
+function slugExtrait(morceaux) {
+  const nom = morceaux
+    .filter(v => v != null && v !== '')
+    .map(v => String(v).normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9]+/g, '_'))
+    // Chaque morceau peut déjà finir par « _ » (« Lohéac (35) » → « Loheac_35_ ») :
+    // sans cette fusion, le nom porterait des doubles soulignés.
+    .join('_').replace(/_+/g, '_').replace(/^_|_$/g, '');
+  return nom || 'extrait';
+}
+
+/**
+ * Commande d'extraction pour la manche ouverte, ou la raison de ne pas la
+ * proposer.
+ *
+ * Les marges encadrent la plage utile [départ, V1] : l'extrait va donc de
+ * `départ − padBefore` à `V1 + padAfter`. `--v1` est passé en plus pour que le
+ * sidecar porte l'instant du premier virage, que l'outil d'analyse relit.
+ *
+ * @returns {{ok:boolean, command:string|null, manques:string[],
+ *            clipStart:number|null, clipEnd:number|null, clipDuration:number|null}}
+ */
+export function buildExtractCommand({
+  youtubeId = null, startAt = null, turn1At = null,
+  padBefore = PAD_AVANT, padAfter = PAD_APRES,
+  location = null, year = null, category = null,
+  sessionType = null, sessionNum = null, serie = null,
+  platform = 'windows',
+} = {}) {
+  // `Number(null)` vaut 0 : une borne absente deviendrait « début de la vidéo ».
+  const num = v => (v == null || v === '' ? NaN : Number(v));
+  const debut = num(startAt);
+  const fin = num(turn1At);
+
+  const manques = [];
+  if (!youtubeId) manques.push('la source YouTube');
+  if (!Number.isFinite(debut) || debut < 0) manques.push('l\'instant du départ');
+  if (!Number.isFinite(fin) || fin < 0) manques.push('l\'instant du premier virage');
+  if (manques.length) {
+    return { ok: false, command: null, manques, clipStart: null, clipEnd: null, clipDuration: null };
+  }
+  if (fin <= debut) {
+    return {
+      ok: false, command: null, clipStart: null, clipEnd: null, clipDuration: null,
+      manques: ['le premier virage est marqué avant le départ'],
+    };
+  }
+
+  const pb = Math.max(0, Number(padBefore) || 0);
+  const pa = Math.max(0, Number(padAfter) || 0);
+  const clipStart = Math.max(0, debut - pb);
+  const clipEnd = fin + pa;
+
+  const lanceur = platform === 'windows'
+    ? 'tools\\extract-manche\\extraire.cmd'
+    : 'node tools/extract-manche/extract.mjs';
+
+  const parts = [
+    lanceur,
+    '--url', `https://youtu.be/${youtubeId}`,
+    '--start', secondes(debut),
+    '--fin', secondes(fin),
+    '--v1', secondes(fin),
+    // Les marges restent EXPLICITES jusque dans le sidecar : sans elles, on ne
+    // saurait plus trois mois après si l'instant noté est le départ ou le
+    // départ moins trois secondes.
+    '--pad-avant', String(pb),
+    '--pad-apres', String(pa),
+  ];
+  // L'identité n'est pas décorative : elle nomme le fichier et remplit le
+  // sidecar, donc le rattachement de l'extrait à la manche.
+  if (location) parts.push('--lieu', argument(location));
+  if (year) parts.push('--annee', String(year));
+  if (category) parts.push('--categorie', argument(category));
+  if (sessionType) parts.push('--type', argument(sessionType));
+  if (sessionNum != null) parts.push('--num', String(sessionNum));
+  if (serie != null) parts.push('--serie', String(serie));
+
+  return {
+    ok: true,
+    command: parts.join(' '),
+    manques: [],
+    clipStart: Number(clipStart.toFixed(3)),
+    clipEnd: Number(clipEnd.toFixed(3)),
+    clipDuration: Number((clipEnd - clipStart).toFixed(3)),
+  };
+}
+
+/**
+ * Reporte sur l'extrait des instants marqués sur la retransmission.
+ *
+ * `t = 0` de l'extrait correspond exactement à `clipStart` de la
+ * retransmission. Sans cette conversion, les marques resteraient à leurs
+ * valeurs YouTube — des dizaines de milliers de secondes — et pointeraient
+ * bien au-delà de la fin d'un extrait de treize secondes.
+ *
+ * @returns {{startAt:number|null, turn1At:number|null}}
+ */
+export function localiserMarques({ startAt = null, turn1At = null, clipStart = null } = {}) {
+  // `Number(null)` vaut 0 : sans écarter l'absence AVANT de convertir, une
+  // origine inconnue passerait pour « l'extrait commence à zéro » et les
+  // marques ressortiraient inchangées, en ayant l'air converties.
+  if (clipStart == null || clipStart === '') return { startAt: null, turn1At: null };
+  const base = Number(clipStart);
+  if (!Number.isFinite(base)) return { startAt: null, turn1At: null };
+  const reporte = (v) => {
+    if (v == null || v === '') return null;
+    const n = Number(v);
+    if (!Number.isFinite(n)) return null;
+    const local = n - base;
+    // Un instant hors de l'extrait n'est pas reportable : mieux vaut aucune
+    // marque qu'une marque fausse.
+    return local >= 0 ? Number(local.toFixed(3)) : null;
+  };
+  return { startAt: reporte(startAt), turn1At: reporte(turn1At) };
 }

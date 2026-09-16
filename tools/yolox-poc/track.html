@@ -1,0 +1,680 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Suivi temporel — départ → V1</title>
+<style>
+  :root { --bd:#d8d8d8; --bg:#fafafa; }
+  body { font:14px/1.5 system-ui,sans-serif; margin:0; padding:18px; background:var(--bg); color:#1b1b1b; }
+  h1 { font-size:1.15rem; margin:0 0 4px; } .sub { color:#666; margin:0 0 14px; }
+  .panneau { background:#fff; border:1px solid var(--bd); border-radius:8px; padding:12px 14px; margin-bottom:12px; }
+  .rangee { display:flex; gap:14px; align-items:center; flex-wrap:wrap; }
+  label { font-size:13px; } input[type=number]{ width:70px; } input[type=text]{ width:90px; }
+  canvas { max-width:100%; border:1px solid var(--bd); border-radius:4px; display:block; }
+  table { border-collapse:collapse; width:100%; font-size:12.5px; }
+  th,td { border:1px solid var(--bd); padding:3px 6px; } th { background:#f0f0f0; }
+  td.num,th.num { text-align:right; font-variant-numeric:tabular-nums; }
+  button { font:inherit; padding:4px 10px; border:1px solid var(--bd); background:#fff; border-radius:4px; cursor:pointer; }
+  button:disabled { opacity:.4; cursor:default; }
+  .grille { display:grid; grid-template-columns:minmax(0,1.7fr) minmax(280px,1fr); gap:14px; align-items:start; }
+  .etat { display:inline-block; padding:0 5px; border-radius:3px; font-size:11.5px; color:#fff; }
+  .s-detected{background:#0a7d28}.s-predicted{background:#b06f00}.s-occluded{background:#7a1fa2}
+  .s-tentative{background:#777}.s-lost{background:#b30021}
+  .sig { cursor:pointer; } .sig:hover { background:#fff6e0; }
+  pre { background:#f4f4f4; padding:9px; overflow:auto; font-size:11.5px; max-height:260px; }
+  progress { width:220px; }
+  video { display:none; }
+</style>
+
+<h1>Suivi temporel des voitures — du départ à la sortie du V1</h1>
+<p class="sub">
+  YOLOX détecte chaque instant indépendamment ; le suivi relie ces instants en
+  <strong>pistes persistantes</strong>. Une voiture momentanément non détectée n'est pas perdue
+  tant que sa piste tient — mais sa position est alors marquée <em>prédite</em>, jamais observée.
+</p>
+
+<div class="panneau">
+  <div class="rangee">
+    <label>Extrait + son <code>.json</code> :
+      <input type="file" id="pick" accept="video/*,application/json,.json" multiple></label>
+    <label>Modèle <select id="modele"></select></label>
+    <label>Départ <input type="number" id="tDebut" step="0.001" value="3.000"></label>
+    <label>Sortie V1 <input type="number" id="tFin" step="0.001" value="13.500"></label>
+    <label>Pas <select id="pas">
+      <option value="0.50">0,50 s · 2 Hz</option>
+      <option value="0.25" selected>0,25 s · 4 Hz</option>
+      <option value="0.10">0,10 s · 10 Hz</option>
+    </select></label>
+  </div>
+  <div class="rangee" style="margin-top:8px">
+    <label>Seuil <input type="number" id="seuil" step="0.05" min="0.05" max="0.9" value="0.30"></label>
+    <label>Bande basse <input type="number" id="bande" step="0.05" min="0.02" max="0.3" value="0.10"></label>
+    <label>IoU fusion <input type="number" id="iou" step="0.05" min="0.1" max="0.9" value="0.45"></label>
+    <label><input type="checkbox" id="cmc" checked> compensation caméra</label>
+    <label>Modèle <select id="modeleCam"></select></label>
+    <label><input type="checkbox" id="montrerCmc"> montrer la compensation</label>
+    <label><input type="checkbox" id="sondeApparence" checked> sonde d'apparence</label>
+    <label><input type="checkbox" id="reattribution" checked> réattribution après coupure</label>
+    <span id="etatCoupures" class="sub" style="margin:0"></span>
+    <button id="lancer" disabled>Analyser la séquence</button>
+    <progress id="prog" value="0" max="1" style="display:none"></progress>
+    <span id="etat" class="sub"></span>
+  </div>
+</div>
+
+<div class="grille">
+  <div class="panneau">
+    <div class="rangee" style="justify-content:space-between">
+      <div class="rangee">
+        <button id="prem">⏮</button><button id="prec">◀</button>
+        <span id="horodatage" style="font-variant-numeric:tabular-nums">—</span>
+        <button id="suiv">▶</button><button id="dern">⏭</button>
+      </div>
+      <span id="resume" class="sub"></span>
+    </div>
+    <canvas id="vue" style="margin-top:8px"></canvas>
+    <video id="src" preload="auto" muted playsinline></video>
+    <div id="pistesInstant" style="margin-top:8px"></div>
+  </div>
+
+  <div>
+    <div class="panneau">
+      <h2 style="font-size:.95rem;margin:0 0 6px">Mesures</h2>
+      <div id="mesures"><p class="sub">Analyse la séquence pour obtenir des chiffres.</p></div>
+    </div>
+    <div class="panneau">
+      <h2 style="font-size:.95rem;margin:0 0 6px">À regarder</h2>
+      <div id="signaux"><p class="sub">—</p></div>
+    </div>
+    <div class="panneau">
+      <button id="exporter" disabled>Exporter le rapport JSON</button>
+      <p class="sub" style="margin:6px 0 0">Tout reste local : la vidéo n'est jamais envoyée.</p>
+    </div>
+  </div>
+</div>
+
+<script src="/__ort/ort.min.js"></script>
+<script type="module">
+import {
+  MODELS, DEFAULT_MODEL, VEHICLE_CLASS_IDS, letterbox, buildGrids,
+  decodeOutput, assertAnchorCount, mergeVehicleDetections,
+} from '/js/vision/detect.js';
+import { Suivi, ETATS, DEFAULTS, mesurer, signauxSuspects } from '/tools/yolox-poc/lib/track.mjs';
+import {
+  PROFIL, signature, separabilite, traverseeDeCoupure, signatureImage, detecterCoupures,
+} from '/js/vision/apparence.js';
+import { MODELES_CAMERA, ORDRE_MODELES } from '/tools/yolox-poc/lib/camera.mjs';
+import { analyser as reattribuer, METHODE_REATTRIBUTION } from '/tools/yolox-poc/lib/reattribution.mjs';
+
+const ort = window.ort;
+ort.env.wasm.wasmPaths = '/__ort/';
+// Le serveur pose les en-têtes d'isolation d'origine : quand elles prennent,
+// le WebAssembly multi-thread divise le temps d'inférence. Sinon, repli sûr.
+ort.env.wasm.numThreads = self.crossOriginIsolated
+  ? Math.max(1, Math.min(4, navigator.hardwareConcurrency || 1))
+  : 1;
+ort.env.logLevel = 'error';
+
+const $ = (id) => document.getElementById(id);
+const COULEURS = ['#e8000d','#0a7d28','#0b57d0','#b06f00','#7a1fa2','#00838f','#c2185b','#5d4037','#1a237e','#00695c'];
+const couleurDe = (id) => COULEURS[(id - 1) % COULEURS.length];
+
+const selModele = $('modele');
+selModele.innerHTML = Object.values(MODELS).map(m => `<option value="${m.id}">${m.label} · ${m.inputSize} px</option>`).join('');
+selModele.value = 's';                      // le meilleur des deux sur ce corpus
+
+const selCam = $('modeleCam');
+selCam.innerHTML = ORDRE_MODELES
+  .map(id => `<option value="${id}">${MODELES_CAMERA[id].label} (${MODELES_CAMERA[id].params} p.)</option>`)
+  .join('') + '<option value="auto">auto — le plus simple qui gagne</option>';
+selCam.value = 'globale';
+
+const grilles = new Map();
+const sessions = new Map();
+let video = $('src'), fps = 60, sidecar = null;
+let journal = [], suivi = null, mesure = null, signaux = [], instant = 0;
+let apparence = null, observations = [];
+let plans = null;
+// Bornes propres de chaque coupure, lues dans un rapport `rx-plans/1`.
+let bornesCoupures = [];
+
+function grillesDe(size) {
+  if (!grilles.has(size)) grilles.set(size, buildGrids(size));
+  return grilles.get(size);
+}
+
+async function session(modele) {
+  if (sessions.has(modele.id)) return sessions.get(modele.id);
+  $('etat').textContent = `chargement de ${modele.label}…`;
+  const s = await ort.InferenceSession.create(`/__modele/${modele.file}`, {
+    executionProviders: ['wasm'], graphOptimizationLevel: 'all',
+  });
+  sessions.set(modele.id, s);
+  return s;
+}
+
+// ── Échantillonnage de la vidéo ─────────────────────────
+const cadre = document.createElement('canvas');
+const cadreCtx = cadre.getContext('2d', { willReadFrequently: true });
+
+/**
+ * Place la vidéo sur l'image affichée à l'instant `t`.
+ *
+ * On vise le MILIEU de l'image (`t + 0,5/fps`) : `<video>` affiche celle dont
+ * l'intervalle contient `currentTime`, donc ce point ne dépend d'aucun arrondi.
+ * C'est l'inverse de la règle de ffmpeg, qui écarte les images dont le PTS est
+ * strictement inférieur à `-ss` — vérifié par tools/smoke/videoSeek.mjs.
+ */
+function allerA(t) {
+  return new Promise((ok, ko) => {
+    const fini = () => { video.removeEventListener('seeked', fini); ok(); };
+    video.addEventListener('seeked', fini);
+    video.currentTime = t + 0.5 / fps;
+    setTimeout(() => { video.removeEventListener('seeked', fini); ko(new Error(`seek ${t}`)); }, 8000);
+  });
+}
+
+function dessinerCadre() {
+  cadre.width = video.videoWidth; cadre.height = video.videoHeight;
+  cadreCtx.drawImage(video, 0, 0);
+  return cadre;
+}
+
+function preparer(source, size) {
+  const box = letterbox(source.width, source.height, size);
+  const c = document.createElement('canvas');
+  c.width = size; c.height = size;
+  const ctx = c.getContext('2d', { willReadFrequently: true });
+  ctx.fillStyle = 'rgb(114,114,114)';
+  ctx.fillRect(0, 0, size, size);
+  ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(source, 0, 0, box.width, box.height);
+  const px = ctx.getImageData(0, 0, size, size).data;
+  const n = size * size;
+  const data = new Float32Array(3 * n);
+  for (let i = 0; i < n; i++) {
+    data[i] = px[i * 4 + 2]; data[n + i] = px[i * 4 + 1]; data[2 * n + i] = px[i * 4];
+  }
+  return { tensor: new ort.Tensor('float32', data, [1, 3, size, size]), ratio: box.ratio };
+}
+
+// ── Analyse ─────────────────────────────────────────────
+async function analyser() {
+  const modele = MODELS[selModele.value];
+  const seuil = Number($('seuil').value);
+  const bande = Number($('bande').value);
+  const iouThr = Number($('iou').value);
+  const pas = Number($('pas').value);
+  const t0 = Number($('tDebut').value), t1 = Number($('tFin').value);
+  if (!(t1 > t0)) { $('etat').textContent = 'la sortie V1 doit être après le départ'; return; }
+
+  const s = await session(modele);
+  const grids = grillesDe(modele.inputSize);
+  suivi = new Suivi({
+    dt: pas, highScore: seuil, lowScore: bande,
+    cameraCompensation: $('cmc').checked,
+    modeleCamera: selCam.value,
+    // Le moteur de réattribution est INJECTÉ : décoché, le suivi retombe
+    // exactement sur le témoin ①, sans qu'aucun autre réglage ne change.
+    moteurReattribution: $('reattribution').checked ? reattribuer : null,
+    // Le suivi ne voit pas l'image : sans ces dimensions il ne peut pas
+    // écarter les boîtes tronquées au bord, et la mémoire d'apparence se
+    // remplit de livrées coupées en deux.
+    largeurImage: video.videoWidth || null,
+    hauteurImage: video.videoHeight || null,
+  });
+
+  const instants = [];
+  for (let t = t0; t <= t1 + 1e-6; t += pas) instants.push(Number(t.toFixed(3)));
+  $('prog').style.display = ''; $('prog').max = instants.length; $('prog').value = 0;
+
+  journal = [];
+  observations = []; apparence = null; plans = null;
+  const sonde = $('sondeApparence').checked;
+  const imagesSig = [];
+  const debut = performance.now();
+  // Coupures à traiter, dans l'ordre. `faite` empêche de couper deux fois.
+  const coupures = bornesCoupures
+    .filter(b => b.avant >= t0 - 1e-9 && b.apres <= t1 + 1e-9)
+    .map(b => ({ ...b, faite: false }))
+    .sort((a, b) => a.avant - b.avant);
+
+  for (const [i, t] of instants.entries()) {
+    // 1 · un instant TOMBÉ DANS la transition n'appartient à aucun plan : ses
+    //     détections mélangent les deux images, on ne les passe pas au suivi.
+    const dedans = coupures.find(c => t > c.avant + 1e-9 && t < c.apres - 1e-9);
+    if (dedans) {
+      $('etat').textContent = `${i + 1}/${instants.length} · t=${t.toFixed(2)} s — écarté (transition)`;
+      continue;
+    }
+    // 2 · au premier instant du nouveau plan, on suspend tout : rien ne
+    //     traverse une coupure, ni position, ni vitesse, ni modèle de caméra.
+    const franchie = coupures.find(c => !c.faite && t >= c.apres - 1e-9);
+    if (franchie) {
+      franchie.faite = true;
+      franchie.suspendues = suivi.couper(t);
+    }
+    await allerA(t);
+    const { tensor, ratio } = preparer(dessinerCadre(), modele.inputSize);
+    const sortie = await s.run({ images: tensor });
+    const brut = sortie[s.outputNames[0]].data;
+    assertAnchorCount(brut.length, modele.inputSize);
+    // On décode jusqu'à la BANDE BASSE : le suivi en a besoin pour raccrocher
+    // une piste. Le seuil du banc reste celui qui crée les pistes.
+    const brutes = decodeOutput(brut, grids, ratio, { scoreThreshold: bande, classIds: VEHICLE_CLASS_IDS });
+    const dets = mergeVehicleDetections(brutes, iouThr);
+    // Signature de chaque détection FORTE, calculée AVANT le pas.
+    //
+    // Sans elle, `det.sig` n'existe pas, la mémoire d'apparence des pistes
+    // reste vide, et le départage par apparence ne peut jamais s'exercer :
+    // il refuserait toujours, faute de matière. Seules les détections fortes
+    // sont signées — c'est la même règle qu'à la mémorisation, et le calcul
+    // sur les faibles serait perdu.
+    const pixels = cadreCtx.getImageData(0, 0, cadre.width, cadre.height).data;
+    for (const d of dets) {
+      if (d.score >= seuil) d.sig = signature(pixels, cadre.width, cadre.height, d.box);
+    }
+    const instantane = suivi.pas(t, dets);
+    journal.push(instantane);
+    // SONDE D'APPARENCE — mesure seule, sur la boîte réellement DÉTECTÉE.
+    // Jamais sur une boîte prédite : on y mesurerait la couleur du bitume.
+    // Rien de ce qui est calculé ici ne revient dans l'association.
+    if (sonde) {
+      const px = pixels;
+      for (const tr of instantane.tracks) {
+        if (!tr.boiteAssociee) continue;
+        observations.push({ t, id: tr.id, sig: signature(px, cadre.width, cadre.height, tr.boiteAssociee) });
+      }
+      // Signature de l'IMAGE ENTIÈRE — un changement de plan est un fait
+      // d'image, pas un comportement du suivi. Ce calcul ne regarde ni les
+      // pistes, ni les détections, ni les seuils.
+      imagesSig.push({ t, sig: signatureImage(px, cadre.width, cadre.height) });
+    }
+    $('prog').value = i + 1;
+    $('etat').textContent = `${i + 1}/${instants.length} · t=${t.toFixed(2)} s`;
+  }
+  const secondes = (performance.now() - debut) / 1000;
+  $('prog').style.display = 'none';
+  $('etat').textContent = `${instants.length} instants en ${secondes.toFixed(1)} s `
+    + `(${(secondes / instants.length * 1000).toFixed(0)} ms/instant) · ${modele.label}`;
+
+  mesure = mesurer(suivi, { cible: 5, tV1: t1 });
+  signaux = signauxSuspects(suivi);
+  plans = imagesSig.length > 2 ? detecterCoupures(imagesSig) : null;
+  apparence = sonde && observations.length ? {
+    profil: PROFIL,
+    separabilite: separabilite(observations),
+    // Ce que l'apparence DIRAIT à chaque coupure détectée — sans que rien ne
+    // s'en serve. C'est la seule façon de savoir si elle mérite d'être câblée.
+    // Les traversées se calent sur les coupures vues dans l'IMAGE lorsqu'on
+    // les a — pas sur celles déduites du comportement du suivi, qui se
+    // trompent quand un plan large découvre des véhicules immobiles au fond.
+    traversees: (plans?.coupures.length ? plans.coupures.map(c => c.t) : (mesure?.ruptures?.cuts || []).map(c => c.debut))
+      .map(t => traverseeDeCoupure(observations, t, { fenetre: Math.max(1, pas * 6) })),
+  } : null;
+  // Exposé pour le contrôle automatique (tools/smoke/), jamais lu par la page.
+  window.__etatSuivi = { instants: journal.length, journal, mesure, signaux, apparence, plans, secondes };
+  instant = 0;
+  $('exporter').disabled = false;
+  afficherMesures(); afficherSignaux(); await montrer(0);
+}
+
+// ── Affichage ───────────────────────────────────────────
+async function montrer(i) {
+  if (!journal.length) return;
+  instant = Math.max(0, Math.min(journal.length - 1, i));
+  const inst = journal[instant];
+  await allerA(inst.t);
+  const src = dessinerCadre();
+
+  const vue = $('vue');
+  vue.width = src.width; vue.height = src.height;
+  const ctx = vue.getContext('2d');
+  ctx.drawImage(src, 0, 0);
+
+  const e = Math.max(1, vue.width / 900);
+  ctx.lineWidth = 3 * e;
+  ctx.font = `600 ${Math.round(15 * e)}px system-ui, sans-serif`;
+  ctx.textBaseline = 'bottom';
+
+  // Diagnostic de compensation : prédiction brute, prédiction compensée, et
+  // la détection finalement associée. Voir dans quelle direction la correction
+  // pousse la piste vaut mieux que de lire un résidu moyen.
+  if ($('montrerCmc').checked) {
+    for (const t of inst.tracks) {
+      if (!t.confirmee) continue;
+      const c = couleurDe(t.id);
+      ctx.lineWidth = 1.5 * e;
+      if (t.boiteAvant) {
+        ctx.strokeStyle = '#888'; ctx.setLineDash([3 * e, 3 * e]);
+        ctx.strokeRect(t.boiteAvant[0], t.boiteAvant[1], t.boiteAvant[2] - t.boiteAvant[0], t.boiteAvant[3] - t.boiteAvant[1]);
+      }
+      if (t.boiteCompensee) {
+        ctx.strokeStyle = c; ctx.globalAlpha = 0.7; ctx.setLineDash([7 * e, 4 * e]);
+        ctx.strokeRect(t.boiteCompensee[0], t.boiteCompensee[1], t.boiteCompensee[2] - t.boiteCompensee[0], t.boiteCompensee[3] - t.boiteCompensee[1]);
+        ctx.globalAlpha = 1;
+      }
+      if (t.boiteAvant && t.boiteCompensee) {
+        const a = [(t.boiteAvant[0] + t.boiteAvant[2]) / 2, (t.boiteAvant[1] + t.boiteAvant[3]) / 2];
+        const b2 = [(t.boiteCompensee[0] + t.boiteCompensee[2]) / 2, (t.boiteCompensee[1] + t.boiteCompensee[3]) / 2];
+        ctx.setLineDash([]); ctx.strokeStyle = c;
+        ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b2[0], b2[1]); ctx.stroke();
+      }
+      ctx.setLineDash([]);
+    }
+  }
+
+  for (const t of inst.tracks) {
+    const c = couleurDe(t.id);
+    const [x1, y1, x2, y2] = t.box;
+    const observe = t.state === ETATS.DETECTED;
+    // Une piste non confirmée est dessinée en fil : elle existe, mais elle ne
+    // compte pas encore comme une voiture.
+    ctx.lineWidth = (t.confirmee ? 3 : 1.5) * e;
+    ctx.globalAlpha = observe ? 1 : (t.confirmee ? 0.55 : 0.35);
+    ctx.strokeStyle = c;
+    // Trait plein = observé ; pointillé = extrapolé ou occlus. La distinction
+    // doit sauter aux yeux : une position devinée ne doit jamais ressembler à
+    // une mesure.
+    ctx.setLineDash(observe ? [] : [10 * e, 6 * e]);
+    ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+    ctx.setLineDash([]);
+
+    if (t.trail.length > 1) {
+      ctx.beginPath();
+      ctx.moveTo(t.trail[0][0], t.trail[0][1]);
+      for (const [px, py] of t.trail.slice(1)) ctx.lineTo(px, py);
+      ctx.lineWidth = 2 * e; ctx.stroke(); ctx.lineWidth = 3 * e;
+    }
+
+    if (!t.confirmee) { ctx.globalAlpha = 1; continue; }   // pas d'étiquette avant confirmation
+    const txt = `#${t.id} ${t.state.slice(0, 4)}${t.score != null && observe ? ' ' + t.score.toFixed(2) : ''}${t.ambiguous ? ' ?' : ''}`;
+    const w = ctx.measureText(txt).width + 10 * e, h = 21 * e;
+    ctx.fillStyle = c; ctx.fillRect(x1, Math.max(h, y1) - h, w, h);
+    ctx.fillStyle = '#fff'; ctx.fillText(txt, x1 + 5 * e, Math.max(h, y1) - 4 * e);
+    ctx.globalAlpha = 1;
+  }
+
+  $('horodatage').textContent = `t = ${inst.t.toFixed(3)} s  ·  image ${Math.round(inst.t * fps)}  ·  ${instant + 1}/${journal.length}`;
+  $('resume').textContent = `${inst.counts.detected} détectée(s) · ${inst.counts.occluded} occluse(s) · `
+    + `${inst.counts.predicted} prédite(s) · ${inst.counts.tentative} à confirmer · `
+    + `${inst.detections.fortes} détection(s) forte(s)`
+    + (inst.detections.doublons ? ` · ${inst.detections.doublons} doublon(s) écarté(s)` : '')
+    + (inst.detections.fusions ? ` · ${inst.detections.fusions} fusion(s)` : '');
+
+  $('pistesInstant').innerHTML = `<table>
+    <tr><th>piste</th><th>état</th><th class="num">score</th><th class="num">absences</th><th>occluse par</th></tr>
+    ${inst.tracks.map(t => `<tr>
+      <td><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:${couleurDe(t.id)}"></span> #${t.id}</td>
+      <td><span class="etat s-${t.state}">${t.state}</span>${t.ambiguous ? ' <span title="association peu sûre">?</span>' : ''}</td>
+      <td class="num">${t.score != null ? t.score.toFixed(2) : '—'}</td>
+      <td class="num">${t.misses}</td>
+      <td>${t.confirmee ? (t.occludedBy ?? '—') : 'à confirmer'}</td></tr>`).join('')}
+  </table>`;
+}
+
+function afficherMesures() {
+  if (!mesure) return;
+  const m = mesure;
+  $('mesures').innerHTML = `<table>
+    <tr><td>instants analysés</td><td class="num">${m.instants}</td></tr>
+    <tr><td>pistes créées</td><td class="num">${m.pistesCreees}</td></tr>
+    <tr><td><strong>pistes longues (≥ 70 % de la séquence)</strong></td><td class="num"><strong>${m.pistesLongues}</strong> / ${m.cible}</td></tr>
+    <tr><td>voitures suivies — min / moy / max</td><td class="num">${m.suiviesMin} / ${m.suiviesMoyenne} / ${m.suiviesMax}</td></tr>
+    <tr><td>pertes temporaires</td><td class="num">${m.pertesTemporaires}</td></tr>
+    <tr><td>sauvetages par la bande basse</td><td class="num">${m.sauvetagesBandeBasse}</td></tr>
+    <tr><td>reprises après occlusion</td><td class="num">${m.reprisesApresOcclusion}</td></tr>
+    <tr><td><strong>au V1 (t = ${m.auV1?.t ?? '—'})</strong></td>
+        <td class="num"><strong>${m.auV1?.suivies ?? '—'}</strong> suivies, ${m.auV1?.detectees ?? '—'} détectées</td></tr>
+  </table>
+  <p class="sub" style="margin-top:6px">Pistes au V1 : ${m.auV1 ? m.auV1.ids.map(i => `#${i}`).join(', ') : '—'}</p>
+  ${m.identites ? `<h3 style="font-size:.9rem;margin:10px 0 4px">Identités logiques — l'objectif</h3>
+  <table>
+    <tr><td>coupures traversées</td>
+        <td class="num">${m.identites.coupures.length
+          ? m.identites.coupures.map(c => `t = ${c.t} s (${c.suspendues} piste(s) suspendue(s))`).join(' · ')
+          : 'aucune'}</td></tr>
+    <tr><td>identités nées à l'instant de départ</td><td class="num">${m.identites.auDepart}</td></tr>
+    <tr><td>identités logiques présentes au V1</td><td class="num">${m.identites.auV1}</td></tr>
+    <tr><td><strong>identités du DÉPART présentes au V1</strong></td>
+        <td class="num"><strong>${m.identites.survivantesDepart} / ${m.identites.auDepart}</strong>
+        ${m.identites.idsSurvivantes.length ? `<span class="sub">— ${m.identites.idsSurvivantes.map(i => `#${i}`).join(', ')}</span>` : ''}</td></tr>
+    <tr><td class="sub">pistes réattribuées après coupure</td><td class="num">${m.identites.reattribuees}</td></tr>
+    <tr><td class="sub">instants où deux pistes partagent une identité</td><td class="num">${m.identites.instantsBifurques}</td></tr>
+  </table>
+  <p class="sub">« Cinq pistes actives au V1 » ne dit rien : ce sont peut-être cinq identités nées après la
+  coupure. La ligne qui compte est celle des identités du <strong>départ</strong> qui y arrivent par une
+  chaîne ininterrompue. Sans réattribution, la coupure les casse toutes — c'est le témoin.</p>` : ''}
+  <h3 style="font-size:.9rem;margin:10px 0 4px">Fragmentation</h3>
+  <table>
+    <tr><td>pistes créées / <strong>confirmées</strong></td><td class="num">${m.pistesCreees} / <strong>${m.pistesConfirmeesCreees}</strong></td></tr>
+    <tr><td>jamais confirmées</td><td class="num">${m.pistesJamaisConfirmees}</td></tr>
+    <tr><td>durée médiane des pistes</td><td class="num">${m.dureeMedianePistes ?? '—'} s</td></tr>
+    <tr><td>nouvelles pistes par seconde</td><td class="num">${m.nouvellesPistesParSeconde ?? '—'}</td></tr>
+    <tr><td>suppressions</td><td class="num">${m.suppressions}</td></tr>
+    <tr><td>réactivations</td><td class="num">${m.reactivations}</td></tr>
+    <tr><td>doublons écartés</td><td class="num">${m.doublonsEcartes}</td></tr>
+  </table>
+  ${m.deriveTaille ? `<table style="margin-top:6px">
+    <tr><td><strong>dérive de taille</strong> — médiane / p90 / max</td>
+        <td class="num"><strong>×${m.deriveTaille.median} / ×${m.deriveTaille.p90} / ×${m.deriveTaille.max}</strong></td></tr>
+    <tr><td class="sub">vitesse plafonnée / résidus écrêtés</td>
+        <td class="num">${m.deriveTaille.vitesseBornee} / ${m.deriveTaille.residusEcretes}</td></tr>
+  </table>
+  <p class="sub">Amplitude de la boîte publiée sur la vie d'une piste. Une voiture qui s'approche
+  grossit d'un facteur ~1,4 sur cette séquence ; au-delà de quelques unités, ce n'est plus la
+  voiture, c'est la prédiction.</p>` : ''}
+  <p class="sub" style="margin-top:4px">
+    créations : ${Object.entries(m.raisons.creation).map(([k, v]) => `${k} ${v}`).join(' · ') || '—'}<br>
+    suppressions : ${Object.entries(m.raisons.suppression).map(([k, v]) => `${k} ${v}`).join(' · ') || '—'}
+  </p>
+  ${m.camera ? `<h3 style="font-size:.9rem;margin:10px 0 4px">Compensation de caméra</h3>
+  <table>
+    <tr><td>modèle demandé / appliqué</td><td class="num">${m.camera.modele} / ${m.camera.modeleApplique ?? '—'}</td></tr>
+    <tr><td>résidu médian avant / après</td><td class="num">${m.camera.residuMedianAvant ?? '—'} → ${m.camera.residuMedianApres ?? '—'} px</td></tr>
+    <tr><td><strong>gain</strong></td><td class="num"><strong>${m.camera.gain == null ? '—' : (m.camera.gain * 100).toFixed(1) + ' %'}</strong></td></tr>
+  </table>
+  ${m.camera.comparaison ? `<table style="margin-top:6px">
+    <tr><th>modèle</th><th class="num">p.</th><th class="num">ajustement</th><th class="num">laissé-de-côté</th></tr>
+    ${Object.entries(m.camera.comparaison.resultats).map(([k, v]) => `<tr${k === m.camera.comparaison.recommande ? ' style="font-weight:600"' : ''}>
+      <td>${k}</td><td class="num">${v.params}</td>
+      <td class="num">${v.residuAjustement ?? '—'}</td>
+      <td class="num">${v.erreurLaisseeDeCote ?? '—'}</td></tr>`).join('')}
+  </table>
+  ${m.camera.comparaisonAgregee ? `<p class="sub">Sur les ${m.camera.comparaisonAgregee.pas} pas :
+  ${Object.entries(m.camera.comparaisonAgregee.retenusParInstant).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}×`).join(' · ')}
+  — erreur laissée-de-côté médiane :
+  ${Object.entries(m.camera.comparaisonAgregee.erreurLaisseeDeCoteMediane).filter(([, v]) => v != null).map(([k, v]) => `${k} ${v}`).join(' · ') || '—'}</p>` : ''}
+  <p class="sub">Recommandé sur le dernier pas : <strong>${m.camera.comparaison.recommande}</strong>.
+  Le juge est l'erreur laissée-de-côté, pas le résidu d'ajustement : celui-ci décroît toujours quand on ajoute des paramètres.</p>` : ''}` : ''}
+  <h3 style="font-size:.9rem;margin:10px 0 4px">Pourquoi les associations échouent</h3>
+  <table>
+    <tr><th>cause</th><th class="num">nombre</th></tr>
+    ${Object.entries(m.refus.parRaison).sort((a, b) => b[1] - a[1])
+      .map(([k, v]) => `<tr${k === m.refus.dominante?.raison ? ' style="font-weight:600"' : ''}>
+        <td>${k}</td><td class="num">${v}</td></tr>`).join('') || '<tr><td colspan="2">—</td></tr>'}
+    <tr><td class="sub">côté piste / côté détection</td><td class="num">${m.refus.parCote.piste} / ${m.refus.parCote.detection}</td></tr>
+    <tr><td class="sub">refus par instant</td><td class="num">${m.refus.parInstant ?? '—'}</td></tr>
+  </table>
+  <p class="sub" style="margin-top:4px">
+    médianes au moment du refus — IoU ${m.refus.medianes.iou ?? '—'} ·
+    rapport de taille ${m.refus.medianes.ratio ?? '—'} ·
+    distance ${m.refus.medianes.distance ?? '—'} largeur(s) de boîte
+  </p>
+  ${plans ? `<h3 style="font-size:.9rem;margin:10px 0 4px">Changements de plan — vus dans l'image</h3>
+  <table>
+    <tr><td><strong>coupures (histogramme d'image)</strong></td>
+        <td class="num"><strong>${plans.coupures.length ? plans.coupures.map(c => `t = ${c.t} s (×${c.rapport})`).join(' · ') : 'aucune'}</strong></td></tr>
+    <tr><td class="sub">plus fortes distances image à image</td>
+        <td class="num">${[...plans.distances].sort((a, b) => b.d - a.d).slice(0, 4).map(x => `${x.t}s : ${x.d} (×${x.rapport ?? '—'})`).join('<br>')}</td></tr>
+  </table>
+  <p class="sub">Mesure faite sur les pixels : elle ne regarde ni les pistes, ni les détections, ni les
+  seuils. Le juge est le rapport au niveau LOCAL des distances — un panoramique fait monter tout le
+  voisinage, seul un pic isolé est une coupure.</p>` : ''}
+  ${m.ruptures ? `<h3 style="font-size:.9rem;margin:10px 0 4px">Ruptures déduites du comportement du suivi</h3>
+  <table>
+    <tr><td>ruptures supposées</td><td class="num">${m.ruptures.cuts.length ? m.ruptures.cuts.map(c => `t = ${c.debut}${c.fin !== c.debut ? '–' + c.fin : ''} s`).join(' · ') : 'aucune'}</td></tr>
+    <tr><td><strong>créations imputables à une coupure</strong></td>
+        <td class="num"><strong>${m.ruptures.ventilation.creations.pres}</strong> / ${m.ruptures.ventilation.creations.total}
+        (${m.ruptures.ventilation.creations.partPres == null ? '—' : (m.ruptures.ventilation.creations.partPres * 100).toFixed(0) + ' %'})</td></tr>
+    <tr><td>refus par instant — près / hors coupure</td>
+        <td class="num">${m.ruptures.ventilation.refus.pres.parInstant ?? '—'} / ${m.ruptures.ventilation.refus.hors.parInstant ?? '—'}</td></tr>
+    <tr><td>refus de compétition (arbitrables)</td>
+        <td class="num">${m.ruptures.ventilation.competition.total} (${m.ruptures.ventilation.competition.part == null ? '—' : (m.ruptures.ventilation.competition.part * 100).toFixed(0) + ' %'}),
+        dont ${m.ruptures.ventilation.competition.hors} hors coupure</td></tr>
+  </table>
+  <p class="sub">À confronter à la ligne du dessus : ce détecteur-ci déduit la coupure du comportement
+  du suivi, et un plan large qui découvre des véhicules immobiles au fond lui donne exactement la même
+  signature. Quand les deux divergent, c'est l'image qui a raison.</p>` : ''}
+  ${m.coherenceSpatiale ? `<h3 style="font-size:.9rem;margin:10px 0 4px">Cohérence spatiale du groupe</h3>
+  <table>
+    <tr><td><strong>ordre gauche-droite conservé</strong></td>
+        <td class="num"><strong>${m.coherenceSpatiale.tauxInversion == null ? '—' : (100 * (1 - m.coherenceSpatiale.tauxInversion)).toFixed(1) + ' %'}</strong>
+        (${m.coherenceSpatiale.inversions} inversions / ${m.coherenceSpatiale.pairesSuivies} paires)</td></tr>
+    <tr><td>écart entre voisins — p10 / médian / p90</td>
+        <td class="num">${m.coherenceSpatiale.ecartVoisins.p10 ?? '—'} / ${m.coherenceSpatiale.ecartVoisins.median ?? '—'} / ${m.coherenceSpatiale.ecartVoisins.p90 ?? '—'} largeur(s)</td></tr>
+  </table>
+  <p class="sub">Un p10 très bas veut dire que l'ordre est souvent serré : la cohérence ne peut être
+  qu'un coût, jamais un interdit — sinon elle interdirait les dépassements au V1.</p>` : ''}
+  ${apparence ? `<h3 style="font-size:.9rem;margin:10px 0 4px">Sonde d'apparence (mesure seule)</h3>
+  <table>
+    <tr><td>observations / pistes</td><td class="num">${apparence.separabilite.observations} / ${apparence.separabilite.pistes}</td></tr>
+    <tr><td>distance médiane — même piste / pistes différentes</td>
+        <td class="num">${apparence.separabilite.intra.median ?? '—'} / ${apparence.separabilite.inter.median ?? '—'}</td></tr>
+    <tr><td><strong>contraste (inter / intra)</strong></td><td class="num"><strong>${apparence.separabilite.contraste ?? '—'}</strong></td></tr>
+    <tr><td><strong>taux de reconnaissance</strong></td>
+        <td class="num"><strong>${apparence.separabilite.tauxPlusProche == null ? '—' : (apparence.separabilite.tauxPlusProche * 100).toFixed(0) + ' %'}</strong>
+        sur ${apparence.separabilite.decisions} décisions</td></tr>
+    <tr><td>marge médiane de décision</td><td class="num">${apparence.separabilite.margeMediane ?? '—'}</td></tr>
+    ${apparence.traversees.map(tr => `<tr><td class="sub">traversée de la coupure t = ${tr.t}</td>
+      <td class="num">${tr.paires.length ? tr.paires.map(p => `#${p.avant}→#${p.apres} (${p.d}, marge ${p.marge ?? '—'})`).join('<br>') : '—'}</td></tr>`).join('')}
+  </table>
+  <p class="sub">Rien de tout cela n'entre dans l'association : la sonde mesure si les livrées sont
+  séparables sur CETTE vidéo. Tant que le contraste ne dépasse pas franchement 1, câbler l'apparence
+  remplacerait une géométrie mesurée par une couleur supposée.</p>` : ''}
+  <p class="sub">Aucun de ces chiffres ne dit qu'un identifiant désigne toujours la même voiture :
+  cela demande ton œil, guidé par la liste ci-dessous.</p>`;
+}
+
+function afficherSignaux() {
+  const el = $('signaux');
+  if (!signaux.length) { el.innerHTML = '<p class="sub">aucun signal — ce qui ne vaut pas preuve.</p>'; return; }
+  const LIB = { echange: 'ordre inversé', relais: 'identifiant relayé', taille: 'gabarit changé', reprise: 'sortie d\'occlusion', ambigu: 'association peu sûre' };
+  el.innerHTML = `<table><tr><th>t</th><th>signal</th><th>pistes</th></tr>
+    ${signaux.map(s => `<tr class="sig" data-t="${s.t}">
+      <td class="num">${s.t.toFixed(2)}</td><td>${LIB[s.type] || s.type}</td>
+      <td>#${s.id}${s.autre ? ` ↔ #${s.autre}` : ''}${s.valeur != null ? ` (${s.valeur})` : ''}</td></tr>`).join('')}
+  </table>`;
+  el.querySelectorAll('.sig').forEach(tr => tr.addEventListener('click', () => {
+    const t = Number(tr.dataset.t);
+    const i = journal.findIndex(j => Math.abs(j.t - t) < 1e-6);
+    if (i >= 0) montrer(i);
+  }));
+}
+
+// ── Entrées ─────────────────────────────────────────────
+$('pick').addEventListener('change', async (e) => {
+  const liste = Array.from(e.target.files);
+  // TOUS les .json de la sélection, pas seulement le premier : le suivi a
+  // besoin du sidecar (cadence) ET du rapport de plans (bornes de coupure),
+  // et ils arrivent ensemble.
+  const jsons = liste.filter(f => /\.json$/i.test(f.name));
+  const film = liste.find(f => /\.(mp4|webm|mov|mkv|m4v)$/i.test(f.name) || f.type.startsWith('video/'));
+  if (!film) { $('etat').textContent = 'aucune vidéo dans la sélection'; return; }
+
+  for (const json of jsons) {
+    try {
+      const brut = JSON.parse(await json.text());
+      if (brut?.schema === 'rx-plans/1') {
+        // Les bornes du scan de plans : entre `avant` et `apres`, les images
+        // contiennent les deux plans en transparence et n'appartiennent à
+        // aucun des deux.
+        bornesCoupures = (brut.bornesPropres || []).map(b => ({ avant: b.avant, apres: b.apres }));
+      }
+      else if (brut?.schema === 'rx-extract/1') { sidecar = brut; fps = brut.fps || 60; }
+      else if (brut?.schema === 'rx-corpus/1') {
+        sidecar = brut.extract; fps = brut.extract?.fps || 60;
+        if (brut.marks) { $('tDebut').value = brut.marks.departLocal; }
+      } else $('etat').textContent = `${json.name} : schéma non reconnu`;
+    } catch { $('etat').textContent = `${json.name} illisible`; }
+  }
+
+  video.src = URL.createObjectURL(film);
+  // `readyState` d'abord : si les métadonnées sont déjà là, attendre
+  // l'évènement bloquerait indéfiniment.
+  if (video.readyState < 1) {
+    await new Promise((ok, ko) => {
+      video.addEventListener('loadedmetadata', ok, { once: true });
+      setTimeout(() => ko(new Error('métadonnées de la vidéo jamais chargées')), 15000);
+    });
+  }
+  $('lancer').disabled = false;
+  $('etatCoupures').textContent = bornesCoupures.length
+    ? `${bornesCoupures.length} coupure(s) : ` + bornesCoupures.map(b => `${b.avant} → ${b.apres} s`).join(' · ')
+    : 'aucun rapport de plans chargé — le suivi traversera les coupures';
+  $('etat').textContent = `${film.name} · ${video.videoWidth}×${video.videoHeight} · ${video.duration.toFixed(3)} s · ${fps} img/s`
+    + (sidecar ? ' · cadence lue dans le sidecar' : ' · cadence supposée, fournis le .json');
+});
+
+$('lancer').addEventListener('click', () => analyser().catch(err => { $('etat').textContent = err.message; }));
+$('prem').addEventListener('click', () => montrer(0));
+$('prec').addEventListener('click', () => montrer(instant - 1));
+$('suiv').addEventListener('click', () => montrer(instant + 1));
+$('dern').addEventListener('click', () => montrer(journal.length - 1));
+document.addEventListener('keydown', (e) => {
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+  if (e.key === 'ArrowLeft') montrer(instant - 1);
+  if (e.key === 'ArrowRight') montrer(instant + 1);
+});
+
+$('exporter').addEventListener('click', () => {
+  const modele = MODELS[selModele.value];
+  const pas = Number($('pas').value);
+  const rapport = {
+    schema: 'rx-tracking/1',
+    modele: { id: modele.id, label: modele.label, file: modele.file, inputSize: modele.inputSize, licence: 'Apache 2.0' },
+    // De quel code vient ce rapport. À vérifier avant d'en tirer la moindre
+    // conclusion sur la réattribution.
+    methodeReattribution: $('reattribution').checked ? METHODE_REATTRIBUTION : null,
+    coupures: bornesCoupures,
+    reglages: {
+      pas, frequenceHz: Number((1 / pas).toFixed(2)),
+      seuilConfiance: Number($('seuil').value),
+      bandeBasse: Number($('bande').value),
+      iouFusion: Number($('iou').value),
+      compensationCamera: $('cmc').checked,
+      modeleCamera: selCam.value,
+      tracker: { ...DEFAULTS, dt: pas, highScore: Number($('seuil').value), lowScore: Number($('bande').value) },
+    },
+    extrait: sidecar ? { file: sidecar.file, fps: sidecar.fps, clipStart: sidecar.clipStart, youtubeId: sidecar.youtubeId } : null,
+    fenetre: { debut: Number($('tDebut').value), fin: Number($('tFin').value) },
+    mesures: mesure,
+    refus: suivi ? suivi.refus : [],
+    signaux,
+    apparence,
+    plans,
+    // Le journal exporte maintenant les trois boîtes du diagnostic et les
+    // VITESSES de l'état interne. Sans elles, une boîte prédite absurde ne se
+    // distinguait pas d'une voiture qui grossit vraiment, et le bilan
+    // d'association manquait pour situer les ruptures de plan.
+    journal: journal.map(j => ({
+      t: j.t, detections: j.detections, counts: j.counts, association: j.association, biais: j.biais,
+      tracks: j.tracks.map(t => ({
+        id: t.id, identiteLogique: t.identiteLogique, ancetre: t.ancetre,
+        box: t.box, boiteAvant: t.boiteAvant, boiteCompensee: t.boiteCompensee,
+        boiteAssociee: t.boiteAssociee, vitesse: t.vitesse,
+        state: t.state, score: t.score, confirmee: t.confirmee, ambiguous: t.ambiguous,
+        suspendue: t.suspendue, occludedBy: t.occludedBy,
+        // Le COMPTE de signatures mémorisées : sans lui, un départage par
+        // apparence qui ne s'exerce pas ne se distingue pas d'un départage
+        // qui s'exerce et conclut à l'égalité.
+        apparences: t.apparences,
+      })),
+    })),
+    createdAt: new Date().toISOString(),
+  };
+  const a = document.createElement('a');
+  a.download = `rapport-suivi-${modele.id}-${String(rapport.reglages.frequenceHz).replace('.', 'p')}hz.json`;
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(rapport, null, 2)], { type: 'application/json' }));
+  a.click();
+  window.__rapportSuivi = rapport;
+});
+</script>
