@@ -7,6 +7,10 @@ import {
 } from '/tools/yolox-poc/lib/detect.mjs';
 import { signature, distance } from '/tools/yolox-poc/lib/apparence.mjs';
 import { hungarian } from '/tools/yolox-poc/lib/track.mjs';
+import {
+  ouvrirCanal, messagePour, messageClassement,
+  MSG_GRILLE, MSG_PRET,
+} from '/js/analysisLink.js';
 
 const ort = window.ort;
 ort.env.wasm.wasmPaths = '/__ort/';
@@ -47,6 +51,7 @@ let grilleAnnoncee = null;      // { poleSide, drivers: [{carNumber, firstName, 
 let etatDepart = null;          // { t, dets, pixels, largeur, hauteur }
 let etatV1 = null;
 let ordre = [];                 // indices des boîtes V1, dans l'ordre de passage
+let startId = null;             // départ désigné par l'application, s'il y en a un
 
 // ─────────────────────────────────────────────────────────
 // VIDÉO ET DÉTECTION
@@ -361,27 +366,38 @@ async function rafraichir() {
   window.__pret = true;
 }
 
+/**
+ * Pose la grille annoncée : numéros, noms, et sens de lecture à l'image.
+ *
+ * Le couloir 1 est du côté du premier virage. Vu de la caméra, l'ordre
+ * gauche → droite est donc l'un des deux sens : on propose, le bouton ⇄
+ * corrige si la caméra filme de l'autre côté.
+ */
+function poserGrille(doc) {
+  grilleAnnoncee = doc;
+  const parCouloir = [...doc.drivers].sort((a, b) => (a.lane ?? 99) - (b.lane ?? 99));
+  const ordreImage = doc.poleSide === 'right' ? parCouloir.reverse() : parCouloir;
+  $('grille').value = ordreImage.map(d => d.carNumber).join(', ');
+}
+
+/** Charge un fichier vidéo, qu'il vienne du sélecteur ou du canal. */
+async function chargerFilm(film) {
+  video.src = URL.createObjectURL(film);
+  if (video.readyState < 1) await new Promise(ok => video.addEventListener('loadedmetadata', ok, { once: true }));
+  $('etat').textContent = `${video.videoWidth}×${video.videoHeight} · ${video.duration.toFixed(2)} s · ${fps} img/s`;
+  window.__charge = true;
+}
+
 $('pick').addEventListener('change', async (e) => {
   const liste = Array.from(e.target.files);
   const film = liste.find(f => /\.(mp4|webm|mov|mkv|m4v)$/i.test(f.name) || f.type.startsWith('video/'));
   for (const j of liste.filter(f => /\.json$/i.test(f.name))) {
     const brut = JSON.parse(await j.text());
     if (brut?.schema === 'rx-extract/1') { sidecar = brut; fps = brut.fps || 60; }
-    else if (brut?.schema === 'rx-start-grid/1' && Array.isArray(brut.drivers)) {
-      grilleAnnoncee = brut;
-      // Le couloir 1 est du côté du premier virage. Vu de la caméra, l'ordre
-      // gauche → droite est donc l'un des deux sens : on propose, le bouton
-      // ⇄ corrige si la caméra est de l'autre côté.
-      const parCouloir = [...brut.drivers].sort((a, b) => (a.lane ?? 99) - (b.lane ?? 99));
-      const ordreImage = brut.poleSide === 'right' ? parCouloir.reverse() : parCouloir;
-      $('grille').value = ordreImage.map(d => d.carNumber).join(', ');
-    }
+    else if (brut?.schema === 'rx-start-grid/1' && Array.isArray(brut.drivers)) poserGrille(brut);
   }
   if (!film) { $('etat').textContent = 'aucune vidéo dans la sélection'; return; }
-  video.src = URL.createObjectURL(film);
-  if (video.readyState < 1) await new Promise(ok => video.addEventListener('loadedmetadata', ok, { once: true }));
-  $('etat').textContent = `${video.videoWidth}×${video.videoHeight} · ${video.duration.toFixed(2)} s · ${fps} img/s`;
-  window.__charge = true;
+  await chargerFilm(film);
 });
 
 $('balayer').addEventListener('click', async () => {
@@ -416,14 +432,55 @@ $('exporter').addEventListener('click', () => {
       pilote: r.carNumber != null ? nomDe(r.carNumber) : null,
       confiance: Number(r.confiance.toFixed(3)), raison: r.raison,
     })).filter(p => p.carNumber != null || p.raison),
+    startId,
     createdAt: new Date().toISOString(),
   };
+  window.__export = doc;
+
+  // Quand l'application nous a ouverts, le classement lui revient tout seul :
+  // c'est le trajet utile. Le fichier reste là pour le cas où l'outil a été
+  // ouvert seul, ou pour garder une trace.
+  if (canal && startId != null) {
+    canal.poster(messageClassement({ doc, startId }));
+    $('etat').textContent = 'classement renvoyé à l\'application';
+    return;
+  }
   const a = document.createElement('a');
   a.download = `classement-v1-${doc.startAt}-${doc.turn1At}.json`;
   a.href = URL.createObjectURL(new Blob([JSON.stringify(doc, null, 2)], { type: 'application/json' }));
   a.click();
-  window.__export = doc;
 });
 
 installerDepart();
 installerPointage();
+
+// ─────────────────────────────────────────────────────────
+// PONT AVEC L'APPLICATION
+// Même origine, documents séparés : l'outil a besoin de l'isolation COOP/COEP
+// que l'application ne peut pas poser sans casser l'iframe YouTube. Un
+// `BroadcastChannel` traverse cette frontière — et transporte le FICHIER
+// vidéo lui-même, par clonage. Rien ne passe par le réseau.
+// ─────────────────────────────────────────────────────────
+const canal = ouvrirCanal();
+
+if (canal) {
+  canal.ecouter(async (msg) => {
+    if (!messagePour(msg, MSG_GRILLE)) return;
+    startId = msg.startId ?? null;
+    if (msg.grid?.drivers?.length) poserGrille(msg.grid);
+    if (msg.sidecar?.schema === 'rx-extract/1') { sidecar = msg.sidecar; fps = msg.sidecar.fps || fps; }
+    if (msg.startAt != null) $('tDepart').value = msg.startAt;
+    if (msg.turn1At != null) $('tV1').value = msg.turn1At;
+    if (msg.file) {
+      $('etat').textContent = `${msg.file.name} — reçu de l'application`;
+      await chargerFilm(msg.file);
+    }
+    window.__recu = { startId, grille: $('grille').value, startAt: msg.startAt, turn1At: msg.turn1At };
+  });
+
+  // L'application poste sa grille dès qu'elle nous ouvre ; à cet instant ce
+  // document n'écoute pas encore. On annonce donc qu'on est là, et elle
+  // renvoie. Sans cette poignée de main, le premier message se perd.
+  canal.poster({ type: MSG_PRET, envoi: Date.now() });
+  window.addEventListener('pagehide', () => canal.fermer());
+}

@@ -1034,7 +1034,11 @@ export function buildStartGridExport({ start = {}, rows = [], poleSide = null } 
     .sort((a, b) => (a.lane ?? a.gridPos ?? 99) - (b.lane ?? b.gridPos ?? 99));
   return {
     schema: 'rx-start-grid/1',
-    startId: start.id ?? null,
+    // Les départs énumérés ne portent pas d'`id` : c'est la paire
+    // (session, série) qui les identifie, comme pour le document Firestore.
+    // Sans lui, un classement qui revient ne saurait pas à quel départ il
+    // appartient — et deux départs ouverts se rempliraient l'un l'autre.
+    startId: start.id ?? identifiantDepart(start),
     startLabel: start.startLabel ?? null,
     sessionType: start.sessionType ?? null,
     // Le couloir 1 est toujours du côté du premier virage : l'outil vidéo en a
@@ -1049,6 +1053,11 @@ export function buildStartGridExport({ start = {}, rows = [], poleSide = null } 
       gridPos: r.gridPos ?? null,
     })),
   };
+}
+
+/** Identifiant du départ, ou rien si les données ne permettent pas de le former. */
+function identifiantDepart(start) {
+  try { return startDocId(start.sessionId, start.startIndex); } catch { return null; }
 }
 
 /** Le document est-il une grille annoncée exploitable ? */

@@ -26,6 +26,9 @@ import {
 import { calcInterimStandings } from './calc.js';
 import { createVideoPlayer } from './videoPlayer.js';
 import {
+  ouvrirCanal, messageGrille, messagePour, MSG_CLASSEMENT, MSG_PRET,
+} from './analysisLink.js';
+import {
   parseVideoSource, resolveStartTime, formatPreciseTime, buildVideoBlock,
   keyboardAction, neighbourStartId, nextRate, ratesFor, SHORTCUT_HELP,
   parseExtractSidecar, pairExtractFiles,
@@ -63,6 +66,18 @@ let sharedFile      = null;   // fichier local courant, réutilisé d'une série
 let sharedSidecar   = null;   // bloc « rx-extract/1 » accompagnant ce fichier, s'il a été fourni
 let videoState      = { time: 0, playing: false, ready: false, error: '' };
 let _keysBound      = false;
+
+// ── Pont vers l'outil d'analyse vidéo ──
+// L'outil vit dans un document séparé — il lui faut l'isolation d'origine que
+// le lecteur YouTube de cette page ne supporte pas. Documents séparés, mais
+// même origine : le canal les relie sans passer par des fichiers.
+//
+// L'adresse est celle du serveur d'outils (`tools/yolox-poc/serve.mjs`). En
+// production, l'outil doit être déployé à côté de l'application pour que le
+// canal fonctionne : un autre domaine ne verrait rien passer.
+const OUTIL_V1 = '/__v1';
+let canalAnalyse = null;
+let envoiEnAttente = null;    // renvoyé quand l'outil annonce qu'il écoute
 
 const FS = 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 
@@ -324,6 +339,10 @@ function selectStart(docId) {
   const start = startsIndex.find(s => startDocId(s.sessionId, s.startIndex) === docId);
   if (!start) return;
 
+  // Changer de départ périme ce qu'on renverrait à l'outil : sans cela, un
+  // outil rechargé plus tard recevrait la grille du départ précédent.
+  envoiEnAttente = null;
+
   const meeting = allMeetings.find(m => m.id === selectedMeetingId);
   const { rows, warnings } = buildStartGrid({
     start,
@@ -476,8 +495,10 @@ function renderWork() {
 
     <div class="sanl-actions">
       <input type="file" id="sanl-proposal-file" accept="application/json,.json" hidden>
+      <button class="btn btn-secondary" id="sanl-open-analysis" ${readOnly ? 'disabled' : ''}
+        title="Ouvrir l'outil d'analyse avec la grille, la vidéo et les deux timecodes déjà en place">🎬 Analyser la vidéo</button>
       <button class="btn btn-secondary" id="sanl-export-grid"
-        title="Envoyer la grille annoncée — numéros ET noms — à l'outil d'analyse vidéo">📤 Exporter la grille</button>
+        title="Exporter la grille en fichier — utile seulement si l'outil tourne sur une autre machine">📤 Exporter la grille</button>
       <button class="btn btn-secondary" id="sanl-import-proposal" ${readOnly ? 'disabled' : ''}
         title="Charger un classement proposé par l'analyse vidéo (rx-v1-order/1)">📥 Importer une proposition</button>
       <button class="btn btn-secondary" id="sanl-accept-proposal" ${readOnly || !rows.some(r => Number.isInteger(r.autoTurn1Pos)) ? 'disabled' : ''}
@@ -1086,6 +1107,8 @@ function bindWork() {
     refreshFeedback();
   });
 
+  document.getElementById('sanl-open-analysis')?.addEventListener('click', ouvrirAnalyse);
+
   document.getElementById('sanl-export-grid')?.addEventListener('click', () => {
     const doc = buildStartGridExport({
       start: current.start, rows: current.rows, poleSide: current.meeting?.poleSide,
@@ -1108,18 +1131,7 @@ function bindWork() {
     let doc = null;
     try { doc = JSON.parse(await f.text()); } catch { toast('Fichier illisible', 'error'); return; }
     if (!isV1OrderProposal(doc)) { toast('Ce fichier n\'est pas un classement rx-v1-order/1', 'error'); return; }
-    const { rows: maj, applied, rejected } = applyV1OrderProposal({
-      rows: current.rows, proposal: doc, starters: countStarters(current.rows),
-    });
-    current.rows = maj;
-    renderWork();
-    // On dit ce qui a été ÉCARTÉ, pas seulement ce qui a marché : une
-    // proposition à moitié comprise doit se voir.
-    if (rejected.length) {
-      toast(`${applied} proposition(s) retenue(s), ${rejected.length} écartée(s) — ${rejected[0].raison}`, 'warning');
-    } else {
-      toast(`${applied} proposition(s) retenue(s)`, 'success');
-    }
+    appliquerProposition(doc);
   });
 
   document.getElementById('sanl-accept-proposal')?.addEventListener('click', () => {
@@ -1195,6 +1207,105 @@ function buildDoc() {
     })),
     createdAt: existingAnalyses.get(startDocId(start.sessionId, start.startIndex))?.createdAt || new Date(),
   };
+}
+
+// ─────────────────────────────────────────────────────────
+// PONT AVEC L'OUTIL D'ANALYSE VIDÉO
+//
+// Exporter une grille, la retrouver dans son dossier, la recharger, refaire le
+// chemin inverse : pour quelques secondes de vidéo, c'est plus long que la
+// mesure elle-même. Les deux documents sont de même origine — ils peuvent se
+// parler. On n'utilise PAS `window.opener` : l'isolation d'origine de l'outil
+// (COOP `same-origin`) coupe précisément ce lien. Le canal, lui, traverse, et
+// il transporte le FICHIER vidéo par clonage : aucun octet ne part sur le
+// réseau, et l'opérateur n'a pas à re-désigner l'extrait.
+// ─────────────────────────────────────────────────────────
+
+/** L'identifiant du départ ouvert, tel que le porte la grille exportée. */
+function idDuDepartCourant() {
+  if (!current?.start) return null;
+  try { return startDocId(current.start.sessionId, current.start.startIndex); } catch { return null; }
+}
+
+/** Branche le canal une fois pour toutes, s'il est disponible. */
+function brancherPont() {
+  const canal = ouvrirCanal();
+  if (!canal) return null;
+
+  canal.ecouter((msg) => {
+    // L'outil vient de s'ouvrir et annonce qu'il écoute : notre premier envoi
+    // est parti dans le vide, on le refait. Sans cette poignée de main, la
+    // grille n'arrive jamais.
+    if (messagePour(msg, MSG_PRET) && envoiEnAttente) {
+      canal.poster(envoiEnAttente);
+      return;
+    }
+    // Le classement ne concerne que le départ ouvert ici : deux onglets sur
+    // deux départs ne doivent pas se remplir l'un l'autre.
+    if (!current || !messagePour(msg, MSG_CLASSEMENT, idDuDepartCourant())) return;
+    if (!isV1OrderProposal(msg.doc)) { toast('Classement reçu mais illisible', 'error'); return; }
+    appliquerProposition(msg.doc);
+  });
+  return canal;
+}
+
+/**
+ * Ouvre l'outil avec tout ce qu'il faut : la grille nommée, les deux
+ * timecodes, et l'extrait lui-même quand il est chargé ici.
+ */
+function ouvrirAnalyse() {
+  if (!current) return;
+  canalAnalyse = canalAnalyse || brancherPont();
+  if (!canalAnalyse) {
+    toast('Ce navigateur ne sait pas relier deux onglets : passez par l\'export de grille', 'error');
+    return;
+  }
+
+  const grid = buildStartGridExport({
+    start: current.start, rows: current.rows, poleSide: current.meeting?.poleSide,
+  });
+  envoiEnAttente = messageGrille({
+    grid, file: sharedFile, sidecar: sharedSidecar,
+    startAt: current.video.startAt, turn1At: current.video.turn1At,
+  });                                      // le départ vient de la grille elle-même
+
+  // Une fenêtre NOMMÉE : un deuxième clic réutilise l'onglet au lieu d'en
+  // empiler un troisième.
+  const onglet = window.open(OUTIL_V1, 'rx-analyse-video');
+  if (!onglet) { toast('Le navigateur a bloqué l\'ouverture de l\'outil', 'error'); return; }
+
+  // L'outil peut déjà être ouvert : dans ce cas il reçoit tout de suite. Sinon
+  // il répondra `pret` en se chargeant, et nous renverrons.
+  canalAnalyse.poster(envoiEnAttente);
+
+  // On dit ce qui MANQUE plutôt que de laisser l'opérateur le découvrir.
+  const manques = [];
+  if (!sharedFile) manques.push('l\'extrait vidéo');
+  if (current.video.startAt == null) manques.push('l\'instant du départ');
+  if (current.video.turn1At == null) manques.push('l\'instant du premier virage');
+  toast(manques.length
+    ? `Outil ouvert — à compléter sur place : ${manques.join(', ')}`
+    : `Outil ouvert avec la grille (${grid.drivers.length} pilotes), l'extrait et les deux timecodes`,
+    manques.length ? 'warning' : 'success');
+}
+
+/**
+ * Applique une proposition, d'où qu'elle vienne — fichier ou canal.
+ *
+ * On dit ce qui a été ÉCARTÉ, pas seulement ce qui a marché : une proposition
+ * à moitié comprise doit se voir.
+ */
+function appliquerProposition(doc) {
+  const { rows: maj, applied, rejected } = applyV1OrderProposal({
+    rows: current.rows, proposal: doc, starters: countStarters(current.rows),
+  });
+  current.rows = maj;
+  renderWork();
+  if (rejected.length) {
+    toast(`${applied} proposition(s) retenue(s), ${rejected.length} écartée(s) — ${rejected[0].raison}`, 'warning');
+  } else {
+    toast(`${applied} proposition(s) retenue(s)`, 'success');
+  }
 }
 
 async function persist(validated) {

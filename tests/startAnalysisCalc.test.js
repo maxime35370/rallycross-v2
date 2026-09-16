@@ -1329,6 +1329,23 @@ describe('buildStartGridExport', () => {
     expect(d.drivers[0]).toMatchObject({ carNumber: 12, firstName: 'Bo', lastName: 'Silva', lane: 1 });
   });
 
+  it('identifie le départ par (session, série) : les départs énumérés n\'ont pas d\'`id`', () => {
+    // Sans cet identifiant, un classement qui revient de l'outil vidéo ne sait
+    // pas à quel départ il appartient.
+    const d = buildStartGridExport({ start: { sessionId: 'sess9', startIndex: 4 }, rows });
+    expect(d.startId).toBe(startDocId('sess9', 4));
+  });
+
+  it('préfère un `id` explicite quand le départ en porte un', () => {
+    const d = buildStartGridExport({ start: { id: 'depart-maison', sessionId: 'sess9', startIndex: 4 }, rows });
+    expect(d.startId).toBe('depart-maison');
+  });
+
+  it('rend un départ sans identifiant plutôt que de jeter, si la session manque', () => {
+    expect(buildStartGridExport({ start: {}, rows }).startId).toBeNull();
+    expect(buildStartGridExport({ start: { sessionId: 'sess9', startIndex: 0 }, rows }).startId).toBeNull();
+  });
+
   it('normalise le côté de la pole', () => {
     expect(buildStartGridExport({ rows, poleSide: 'gauche' }).poleSide).toBe('left');
     expect(buildStartGridExport({ rows, poleSide: 'droite' }).poleSide).toBe('right');

@@ -114,6 +114,12 @@ const server = createServer(async (req, res) => {
     else if (path.startsWith('/__media/')) file = join(mediaDir || '', basename(path));
     else file = join(ROOT, path);
 
+    // L'isolation d'origine n'est posée que sur les OUTILS. L'application, elle,
+    // est servie sans : `require-corp` bloquerait l'iframe YouTube du lecteur,
+    // et `same-origin` la couperait de tout. Les deux documents restent de même
+    // origine, donc le `BroadcastChannel` qui les relie traverse quand même.
+    const isole = path === '/' || path.startsWith('/__');
+
     if (!existsSync(file) || statSync(file).isDirectory()) { res.writeHead(404); res.end(); return; }
     res.writeHead(200, {
       'Content-Type': MIME[extname(file)] || 'application/octet-stream',
@@ -124,10 +130,13 @@ const server = createServer(async (req, res) => {
       // un aller-retour entier — et il n'y a rien ici qui gagne à être caché.
       'Cache-Control': 'no-store, must-revalidate',
       Pragma: 'no-cache',
-      // Isolation d'origine : autorise le WebAssembly multi-thread.
-      'Cross-Origin-Opener-Policy': 'same-origin',
-      'Cross-Origin-Embedder-Policy': 'require-corp',
+      // Ressource réservée à cette origine, outil ou non.
       'Cross-Origin-Resource-Policy': 'same-origin',
+      // Isolation d'origine : autorise le WebAssembly multi-thread.
+      ...(isole ? {
+        'Cross-Origin-Opener-Policy': 'same-origin',
+        'Cross-Origin-Embedder-Policy': 'require-corp',
+      } : {}),
     });
     createReadStream(file).pipe(res);
   } catch (err) {
