@@ -100,6 +100,18 @@ const mediaDir = CHECK ? dirname(resolve(CHECK)) : null;
 
 const EXTRAITS = join(ROOT, 'tools', 'extract-manche', 'extraits');
 
+/** `Range: bytes=début-fin`, ou null si l'en-tête est absent ou inexploitable. */
+function lirePlage(entete, taille) {
+  const m = /^bytes=(\d*)-(\d*)$/.exec(String(entete || '').trim());
+  if (!m || taille <= 0) return null;
+  const [, a, b] = m;
+  // « bytes=-500 » demande les 500 DERNIERS octets, pas les 500 premiers.
+  const debut = a === '' ? Math.max(0, taille - Number(b)) : Number(a);
+  const fin = a === '' || b === '' ? taille - 1 : Math.min(Number(b), taille - 1);
+  if (!Number.isFinite(debut) || !Number.isFinite(fin) || debut > fin || debut < 0) return null;
+  return { debut, fin };
+}
+
 /** Réponse JSON, sans mise en cache : rien ici n'est un asset. */
 function repondreJson(res, code, corps) {
   const texte = JSON.stringify(corps);
@@ -203,7 +215,6 @@ const server = createServer(async (req, res) => {
     else if (path === '/__autopsie') file = join(ROOT, 'tools', 'yolox-poc', 'autopsie.html');
     else if (path === '/__monde') file = join(ROOT, 'tools', 'yolox-poc', 'monde.html');
     else if (path === '/__rendu') file = join(ROOT, 'tools', 'yolox-poc', 'rendu.html');
-    else if (path === '/__v1') file = join(ROOT, 'tools', 'yolox-poc', 'v1.html');
     else if (path.startsWith('/__ort/')) file = join(ORT_DIR, basename(path));
     else if (path.startsWith('/__modele/')) {
       file = await assurerModele(basename(path));
@@ -219,9 +230,16 @@ const server = createServer(async (req, res) => {
     const isole = path === '/' || path.startsWith('/__');
 
     if (!existsSync(file) || statSync(file).isDirectory()) { res.writeHead(404); res.end(); return; }
-    res.writeHead(200, {
+
+    // Requêtes partielles. Sans elles, un <video src="/chemin"> se charge mais
+    // ne se DÉPLACE pas : `currentTime = t` reste sans effet et `seeked` part
+    // quand même. Mesuré — deux instants différents rendaient deux fois la
+    // première image, et une analyse comparait une image à elle-même.
+    const taille = statSync(file).size;
+    const plage = lirePlage(req.headers.range, taille);
+    const entetes = {
       'Content-Type': MIME[extname(file)] || 'application/octet-stream',
-      'Content-Length': String(statSync(file).size),
+      'Accept-Ranges': 'bytes',
       // Sans en-tête de cache, le navigateur applique sa propre heuristique et
       // peut resservir un module d'une session précédente. Sur un banc de
       // mesure, faire tourner l'ancien code en croyant mesurer le nouveau coûte
@@ -235,7 +253,17 @@ const server = createServer(async (req, res) => {
         'Cross-Origin-Opener-Policy': 'same-origin',
         'Cross-Origin-Embedder-Policy': 'require-corp',
       } : {}),
-    });
+    };
+    if (plage) {
+      res.writeHead(206, {
+        ...entetes,
+        'Content-Range': `bytes ${plage.debut}-${plage.fin}/${taille}`,
+        'Content-Length': String(plage.fin - plage.debut + 1),
+      });
+      createReadStream(file, { start: plage.debut, end: plage.fin }).pipe(res);
+      return;
+    }
+    res.writeHead(200, { ...entetes, 'Content-Length': String(taille) });
     createReadStream(file).pipe(res);
   } catch (err) {
     res.writeHead(500); res.end(String(err.message));
@@ -252,7 +280,6 @@ if (!CHECK) {
   console.log(`  Autopsie d'un trou  : http://127.0.0.1:${PORT}/__autopsie`);
   console.log(`  État du groupe      : http://127.0.0.1:${PORT}/__monde`);
   console.log(`  Rendu annoté        : http://127.0.0.1:${PORT}/__rendu`);
-  console.log(`  Classement au V1    : http://127.0.0.1:${PORT}/__v1`);
   console.log('  Banc : les images du corpus ET son corpus.json. Suivi : l\'extrait .mp4 ET son .json.');
   console.log('  Tout reste local : aucune image n\'est envoyée nulle part.');
   console.log('  Ctrl+C pour arrêter.\n');

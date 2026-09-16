@@ -5,7 +5,7 @@
    Compatible GitHub Pages (sous-dossier) et racine.
 ═══════════════════════════════════════════════ */
 
-const CACHE_NAME = 'rx-chrono-v39';
+const CACHE_NAME = 'rx-chrono-v40';
 
 // Assets relatifs au scope du SW (pas de / en prefixe)
 const ASSET_PATHS = [
@@ -56,7 +56,8 @@ const ASSET_PATHS = [
   'js/vision/hongrois.js',
   'js/vision/detect.js',
   'js/vision/apparence.js',
-  'js/analysisLink.js',
+  'js/turn1AnalysisCalc.js',
+  'js/turn1Analysis.js',
   'js/startAnalysisCalc.js',
   'js/startAnalysis.js',
   'js/startStatsCalc.js',

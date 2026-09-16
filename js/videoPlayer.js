@@ -460,5 +460,9 @@ export function createVideoPlayer(container, opts = {}) {
     get fileName() { return state.fileName; },
     get frameStep() { return frameDuration(state.fps || DEFAULT_FPS); },
     get element()  { return stage; },
+    /** L'élément <video> lui-même, ou null en mode YouTube.
+     *  L'analyse du premier virage en a besoin : elle se déplace à l'image et
+     *  lit les pixels, ce qu'aucune iframe ne permet. */
+    get videoElement() { return state.kind === 'file' ? state.video : null; },
   };
 }

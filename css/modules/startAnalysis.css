@@ -309,3 +309,91 @@
   background: var(--clr-surface);
   color: var(--clr-text-3);
 }
+
+/* ── Analyse du premier virage ──
+   Un panneau de l'écran, pas un outil à côté : il reprend le fond et la
+   bordure des autres blocs, et s'intercale sous le lecteur. */
+.sanl-turn1:empty { display: none; }
+
+.t1a {
+  background: var(--clr-bg-2);
+  border: 1px solid var(--clr-border);
+  border-radius: var(--r-lg);
+  padding: var(--sp-md);
+}
+
+.t1a-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--sp-sm);
+  flex-wrap: wrap;
+}
+
+.t1a-etat {
+  font-size: 0.82rem;
+  color: var(--clr-text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.t1a-sub,
+.t1a-aide {
+  font-size: 0.8rem;
+  color: var(--clr-text-3);
+  margin: 4px 0 var(--sp-sm);
+  line-height: 1.45;
+}
+
+.t1a-aide { margin: 2px 0 6px; }
+
+.t1a-actions {
+  display: flex;
+  gap: var(--sp-sm);
+  flex-wrap: wrap;
+  margin-bottom: var(--sp-md);
+}
+
+.t1a-vues {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--sp-md);
+}
+
+@media (max-width: 980px) {
+  .t1a-vues { grid-template-columns: 1fr; }
+}
+
+.t1a-vues h4 {
+  font-family: var(--font-condensed);
+  font-size: 0.86rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--clr-accent);
+  margin: 0;
+}
+
+/* Le curseur dit le geste : on clique une boîte, ou on en trace une. */
+.t1a-vue {
+  width: 100%;
+  height: auto;
+  display: block;
+  background: #000;
+  border: 1px solid var(--clr-border);
+  border-radius: var(--r-sm);
+  cursor: crosshair;
+}
+
+.t1a-bilan {
+  font-size: 0.84rem;
+  color: var(--clr-text-2);
+  margin: var(--sp-md) 0 6px;
+}
+
+.t1a-table { width: 100%; font-size: 0.84rem; }
+.t1a-table td { font-variant-numeric: tabular-nums; }
+
+/* Le doute se voit : jamais la même couleur qu'une position décidée. */
+.t1a-doute {
+  color: var(--clr-warning, #f0a020);
+  font-style: italic;
+}
