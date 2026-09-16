@@ -105,6 +105,7 @@ const server = createServer(async (req, res) => {
     else if (path === '/__autopsie') file = join(ROOT, 'tools', 'yolox-poc', 'autopsie.html');
     else if (path === '/__monde') file = join(ROOT, 'tools', 'yolox-poc', 'monde.html');
     else if (path === '/__rendu') file = join(ROOT, 'tools', 'yolox-poc', 'rendu.html');
+    else if (path === '/__v1') file = join(ROOT, 'tools', 'yolox-poc', 'v1.html');
     else if (path.startsWith('/__ort/')) file = join(ORT_DIR, basename(path));
     else if (path.startsWith('/__modele/')) {
       file = await assurerModele(basename(path));
@@ -144,6 +145,7 @@ if (!CHECK) {
   console.log(`  Autopsie d'un trou  : http://127.0.0.1:${PORT}/__autopsie`);
   console.log(`  État du groupe      : http://127.0.0.1:${PORT}/__monde`);
   console.log(`  Rendu annoté        : http://127.0.0.1:${PORT}/__rendu`);
+  console.log(`  Classement au V1    : http://127.0.0.1:${PORT}/__v1`);
   console.log('  Banc : les images du corpus ET son corpus.json. Suivi : l\'extrait .mp4 ET son .json.');
   console.log('  Tout reste local : aucune image n\'est envoyée nulle part.');
   console.log('  Ctrl+C pour arrêter.\n');
