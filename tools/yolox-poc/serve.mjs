@@ -24,7 +24,7 @@ import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 
-import { MODELS, DEFAULT_MODEL } from './lib/detect.mjs';
+import { MODELS, DEFAULT_MODEL } from '../../js/vision/detect.js';
 import { sanitizeRecipe, buildBaseName } from '../extract-manche/lib/recipe.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');

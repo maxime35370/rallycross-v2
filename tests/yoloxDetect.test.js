@@ -18,7 +18,7 @@ import {
   anchorCount, assertAnchorCount,
   letterbox, buildGrids, decodeOutput, iou, mergeVehicleDetections,
   scoreImage, aggregate, verdict,
-} from '../tools/yolox-poc/lib/detect.mjs';
+} from '../js/vision/detect.js';
 
 describe('registre des modèles', () => {
   it('déclare tiny et s, avec des tailles d\'entrée DIFFÉRENTES', () => {

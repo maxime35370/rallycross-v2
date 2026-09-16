@@ -12,7 +12,7 @@ import {
   PROFIL, TAILLE_SIGNATURE, rgbVersHsv, signature, distance, moyenner,
   separabilite, traverseeDeCoupure, signatureImage, detecterCoupures,
   comparerGroupes, METHODE_APPARENCE, distanceMemoire, tailler, evaluerAppariement,
-} from '../tools/yolox-poc/lib/apparence.mjs';
+} from '../js/vision/apparence.js';
 
 /** Image RGBA unie, dans laquelle on peint des rectangles. */
 function image(w, h, [r, g, b] = [0, 0, 0]) {

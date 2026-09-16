@@ -64,7 +64,7 @@
 import {
   MODELS, DEFAULT_MODEL, VEHICLE_CLASS_IDS, letterbox, buildGrids, decodeOutput,
   assertAnchorCount, mergeVehicleDetections, scoreImage, aggregate, verdict,
-} from '/tools/yolox-poc/lib/detect.mjs';
+} from '/js/vision/detect.js';
 
 const ort = window.ort;
 ort.env.wasm.wasmPaths = '/__ort/';

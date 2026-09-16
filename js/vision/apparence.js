@@ -38,7 +38,7 @@
    capter cet agencement sans dépendre de l'orientation exacte de la voiture.
 ═══════════════════════════════════════════════ */
 
-import { hungarian } from './track.mjs';
+import { hungarian } from './hongrois.js';
 
 /** Identifiant de la méthode d'apparence, inscrit dans les rapports. */
 export const METHODE_APPARENCE = 'hsv-zonee/1';

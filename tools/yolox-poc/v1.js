@@ -4,8 +4,8 @@
 import {
   MODELS, DEFAULT_MODEL, VEHICLE_CLASS_IDS, letterbox, buildGrids,
   decodeOutput, assertAnchorCount, mergeVehicleDetections,
-} from '/tools/yolox-poc/lib/detect.mjs';
-import { signature, distance } from '/tools/yolox-poc/lib/apparence.mjs';
+} from '/js/vision/detect.js';
+import { signature, distance } from '/js/vision/apparence.js';
 import { hungarian } from '/tools/yolox-poc/lib/track.mjs';
 import {
   ouvrirCanal, messagePour, messageClassement,

@@ -96,11 +96,11 @@
 import {
   MODELS, DEFAULT_MODEL, VEHICLE_CLASS_IDS, letterbox, buildGrids,
   decodeOutput, assertAnchorCount, mergeVehicleDetections,
-} from '/tools/yolox-poc/lib/detect.mjs';
+} from '/js/vision/detect.js';
 import { Suivi, ETATS, DEFAULTS, mesurer, signauxSuspects } from '/tools/yolox-poc/lib/track.mjs';
 import {
   PROFIL, signature, separabilite, traverseeDeCoupure, signatureImage, detecterCoupures,
-} from '/tools/yolox-poc/lib/apparence.mjs';
+} from '/js/vision/apparence.js';
 import { MODELES_CAMERA, ORDRE_MODELES } from '/tools/yolox-poc/lib/camera.mjs';
 import { analyser as reattribuer, METHODE_REATTRIBUTION } from '/tools/yolox-poc/lib/reattribution.mjs';
 

@@ -46,7 +46,7 @@
 ═══════════════════════════════════════════════ */
 
 import { hungarian } from './track.mjs';
-import { distanceMemoire, moyenner, tailler } from './apparence.mjs';
+import { distanceMemoire, moyenner, tailler } from '../../../js/vision/apparence.js';
 
 /** Identifiant de méthode. À vérifier dans tout rapport avant d'en conclure. */
 export const METHODE_REATTRIBUTION = 'similitude-groupe/1';

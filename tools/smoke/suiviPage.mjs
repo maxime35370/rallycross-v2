@@ -68,7 +68,7 @@ try {
 
   // Sonde d'apparence, sur des pixels réels produits par le navigateur.
   const resultat = await page.evaluate(async (port) => {
-    const { signature, distance } = await import(`http://127.0.0.1:${port}/tools/yolox-poc/lib/apparence.mjs`);
+    const { signature, distance } = await import(`http://127.0.0.1:${port}/js/vision/apparence.js`);
     const c = document.createElement('canvas');
     c.width = 300; c.height = 200;
     const ctx = c.getContext('2d', { willReadFrequently: true });
@@ -92,7 +92,7 @@ try {
 
   // Détection de plan, sur des images réellement peintes par le navigateur.
   const plans = await page.evaluate(async (port) => {
-    const { signatureImage, detecterCoupures } = await import(`http://127.0.0.1:${port}/tools/yolox-poc/lib/apparence.mjs`);
+    const { signatureImage, detecterCoupures } = await import(`http://127.0.0.1:${port}/js/vision/apparence.js`);
     const c = document.createElement('canvas');
     c.width = 320; c.height = 180;
     const ctx = c.getContext('2d', { willReadFrequently: true });
@@ -123,7 +123,7 @@ try {
     'elle propose par défaut les deux images propres de la coupure Kerlabo');
 
   const cmp = await pageApp.evaluate(async (port) => {
-    const { comparerGroupes } = await import(`http://127.0.0.1:${port}/tools/yolox-poc/lib/apparence.mjs`);
+    const { comparerGroupes } = await import(`http://127.0.0.1:${port}/js/vision/apparence.js`);
     const r = comparerGroupes(
       [{ id: 'A1', sig: [1, 0, 0] }, { id: 'A2', sig: [0, 1, 0] }],
       [{ id: 'B1', sig: [0, 0.95, 0.05] }, { id: 'B2', sig: [0.95, 0.05, 0] }],
@@ -135,7 +135,7 @@ try {
   // Le témoin mesuré sur la vraie coupure, rejoué dans le navigateur : c'est la
   // référence contre laquelle la mémoire multi-observations sera jugée.
   const temoin = await pageApp.evaluate(async (port) => {
-    const { evaluerAppariement } = await import(`http://127.0.0.1:${port}/tools/yolox-poc/lib/apparence.mjs`);
+    const { evaluerAppariement } = await import(`http://127.0.0.1:${port}/js/vision/apparence.js`);
     const D = [[0.4967, 0.6100, 0.6540, 0.6241, 0.4810], [0.6049, 0.6372, 0.7105, 0.5365, 0.6135],
       [0.5273, 0.5749, 0.6330, 0.5365, 0.5314], [0.6613, 0.6689, 0.7495, 0.6849, 0.6365]];
     const r = evaluerAppariement(D, [4, 3, 2, 1]);

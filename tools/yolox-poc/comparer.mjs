@@ -20,7 +20,7 @@
 
 import { readFileSync } from 'node:fs';
 import { coherenceSpatiale } from './lib/track.mjs';
-import { iou } from './lib/detect.mjs';
+import { iou } from '../../js/vision/detect.js';
 
 const C = {
   bold: (s) => `\x1b[1m${s}\x1b[0m`, dim: (s) => `\x1b[90m${s}\x1b[0m`,

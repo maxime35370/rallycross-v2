@@ -9,7 +9,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { centre } from '../tools/yolox-poc/lib/track.mjs';
-import { iou } from '../tools/yolox-poc/lib/detect.mjs';
+import { iou } from '../js/vision/detect.js';
 import {
   ETATS, DEFAULTS, RAISONS, REFUS, Suivi, Predicteur, hungarian, decalageCamera,
   estimerDecalageGlobal, rapportTaille, recouvrement, mesurer, signauxSuspects, concorder,
