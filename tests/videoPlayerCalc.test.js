@@ -7,7 +7,7 @@ import {
   YOUTUBE_RATES, LOCAL_RATES, ratesFor, nextRate,
   computeVideoRect, projectBox, normalizeBox, sanitizeBoxes, boxLabelText,
   keyboardAction, neighbourStartId, buildVideoBlock,
-  buildExtractCommand, buildExtractRecipe, RECIPE_SCHEMA, PAD_AVANT, PAD_APRES,
+  buildExtractCommand, buildExtractRecipe, localiserMarques, RECIPE_SCHEMA, PAD_AVANT, PAD_APRES,
   COMMON_FPS, DEFAULT_FPS,
 } from '../js/videoPlayerCalc.js';
 
@@ -711,5 +711,45 @@ describe('buildExtractRecipe', () => {
     expect(r.recette).toBeNull();
     expect(r.nom).toBeNull();
     expect(r.manques).toEqual(['la source YouTube']);
+  });
+});
+
+describe('localiserMarques — de la retransmission vers l\'extrait', () => {
+  // Kerlabo : départ 20586, V1 20594, extrait commençant à 20583.
+  it('reporte les deux marques sur l\'extrait', () => {
+    expect(localiserMarques({ startAt: 20586, turn1At: 20594, clipStart: 20583 }))
+      .toEqual({ startAt: 3, turn1At: 11 });
+  });
+
+  it('garde les fractions de seconde', () => {
+    expect(localiserMarques({ startAt: 20586.483, turn1At: 20594.25, clipStart: 20583 }))
+      .toEqual({ startAt: 3.483, turn1At: 11.25 });
+  });
+
+  it('écarte un instant situé avant le début de l\'extrait', () => {
+    // Mieux vaut aucune marque qu'une marque négative que le lecteur lirait 0.
+    expect(localiserMarques({ startAt: 20580, turn1At: 20594, clipStart: 20583 }))
+      .toEqual({ startAt: null, turn1At: 11 });
+  });
+
+  it('un instant pile au début de l\'extrait vaut 0, pas « absent »', () => {
+    expect(localiserMarques({ startAt: 20583, turn1At: 20594, clipStart: 20583 }).startAt).toBe(0);
+  });
+
+  it('sans clipStart, ne reporte rien plutôt que de soustraire 0', () => {
+    // `Number(null)` vaut 0 : sans garde, les marques resteraient à leurs
+    // valeurs YouTube en ayant l'air converties.
+    expect(localiserMarques({ startAt: 20586, turn1At: 20594 }))
+      .toEqual({ startAt: null, turn1At: null });
+    expect(localiserMarques({ startAt: 20586, turn1At: 20594, clipStart: null }).startAt).toBeNull();
+  });
+
+  it('laisse null ce qui était null', () => {
+    expect(localiserMarques({ startAt: null, turn1At: 20594, clipStart: 20583 }))
+      .toEqual({ startAt: null, turn1At: 11 });
+  });
+
+  it('sans argument, ne jette pas', () => {
+    expect(localiserMarques()).toEqual({ startAt: null, turn1At: null });
   });
 });

@@ -13,6 +13,8 @@
 
 import { parsePreciseTime } from '../../../js/videoPlayerCalc.js';
 
+import { extractYoutubeId } from '../../../js/utils.js';
+
 export const SCHEMA = 'rx-extract/1';
 
 /** Marges par défaut, en secondes (EXTRACTION-YOUTUBE.md §2.4).
@@ -444,3 +446,64 @@ export function planCorpusFrames({ baseName, startAt, v1At, clipStart, clipDurat
 export function frameFileName(baseName, zone, absoluteTime, clipFrame) {
   return `${baseName}__${slug(zone)}__t${Number(absoluteTime).toFixed(3)}__f${clipFrame}.png`;
 }
+
+// ─────────────────────────────────────────────────────────
+// RECETTE REÇUE D'AILLEURS
+//
+// Quand l'application poste une recette au serveur local, ce n'est plus une
+// ligne de commande tapée par son auteur : c'est une entrée. On ne laisse donc
+// passer que les champs qui décrivent QUOI extraire, jamais ceux qui décident
+// OÙ écrire ni COMMENT appeler yt-dlp.
+// ─────────────────────────────────────────────────────────
+
+/** Champs qu'une recette venue de l'application a le droit de porter. */
+export const RECIPE_FIELDS = [
+  'url', 'sourceStart', 'sourceEnd', 'v1At', 'padBefore', 'padAfter',
+  'location', 'year', 'category', 'sessionType', 'sessionNum', 'serie',
+  'meetingId', 'sessionId', 'championshipId', 'origin',
+];
+
+/**
+ * Ne garde d'une recette que les champs connus, et vérifie qu'elle décrit
+ * vraiment une extraction.
+ *
+ * `outDir`, `nom` et `format` sont volontairement ABSENTS de la liste :
+ * le premier choisirait où écrire sur le disque, le dernier passerait un
+ * sélecteur arbitraire à yt-dlp. Le nom du fichier se déduit de l'identité,
+ * et c'est très bien ainsi.
+ *
+ * @returns {{ok:boolean, recette:object|null, erreur:string|null}}
+ */
+export function sanitizeRecipe(brut) {
+  if (!brut || typeof brut !== 'object' || Array.isArray(brut)) {
+    return { ok: false, recette: null, erreur: 'recette absente ou illisible' };
+  }
+  const recette = {};
+  for (const cle of RECIPE_FIELDS) {
+    if (brut[cle] !== undefined && brut[cle] !== null) recette[cle] = brut[cle];
+  }
+
+  const url = String(recette.url || '');
+  if (!extractYoutubeId(url)) {
+    return { ok: false, recette: null, erreur: `« ${url || '(vide)'} » n'est pas une URL YouTube reconnue` };
+  }
+  const debut = parseTimeInput(recette.sourceStart);
+  const fin = parseTimeInput(recette.sourceEnd);
+  if (debut == null) return { ok: false, recette: null, erreur: 'début illisible' };
+  if (fin == null) return { ok: false, recette: null, erreur: 'fin illisible' };
+  if (fin <= debut) return { ok: false, recette: null, erreur: 'la fin doit être après le début' };
+
+  // Une fenêtre démesurée n'est pas une manche : c'est une erreur de saisie, ou
+  // pire, toute la retransmission. Un départ tient largement en deux minutes.
+  const pb = Math.max(0, Number(recette.padBefore) || 0);
+  const pa = Math.max(0, Number(recette.padAfter) || 0);
+  const duree = (fin + pa) - Math.max(0, debut - pb);
+  if (duree > MAX_CLIP_SECONDS) {
+    return { ok: false, recette: null, erreur: `fenêtre de ${duree.toFixed(0)} s : au-delà de ${MAX_CLIP_SECONDS} s, ce n'est plus un départ` };
+  }
+
+  return { ok: true, recette, erreur: null };
+}
+
+/** Deux minutes : très au-delà d'un départ, très en deçà d'une retransmission. */
+export const MAX_CLIP_SECONDS = 120;

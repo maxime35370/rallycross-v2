@@ -22,6 +22,7 @@ import {
   formatSelector, buildYtDlpArgs,
   parseRational, checkProbe, buildSidecar,
   planCorpusFrames, frameFileName,
+  sanitizeRecipe, RECIPE_FIELDS, MAX_CLIP_SECONDS,
 } from '../tools/extract-manche/lib/recipe.mjs';
 import {
   ytDlpReleaseDate, ytDlpAgeDays, explainFailure, INSTALL_HINTS,
@@ -469,5 +470,85 @@ describe('explainFailure', () => {
   it('propose une installation adaptée à la plateforme', () => {
     expect(INSTALL_HINTS['yt-dlp']).toBeTruthy();
     expect(INSTALL_HINTS.ffmpeg).toBeTruthy();
+  });
+});
+
+// ─────────────────────────────────────────────────────────
+// RECETTE REÇUE D'AILLEURS
+//
+// Depuis que l'application peut demander une extraction au serveur local, une
+// recette n'est plus forcément écrite par son auteur : c'est une entrée.
+// ─────────────────────────────────────────────────────────
+
+describe('sanitizeRecipe', () => {
+  const BONNE = {
+    url: 'https://youtu.be/_SqxZQl5zzQ',
+    sourceStart: 20586, sourceEnd: 20594, v1At: 20594,
+    padBefore: 3, padAfter: 2,
+    location: 'Kerlabo', year: 2026, category: 'D3',
+    sessionType: 'MQ', sessionNum: 3, serie: 4,
+    meetingId: 'm1', sessionId: 's9', championshipId: 'c1',
+  };
+
+  it('laisse passer une recette complète', () => {
+    const r = sanitizeRecipe(BONNE);
+    expect(r.ok).toBe(true);
+    expect(r.recette).toEqual(BONNE);
+  });
+
+  it('retire ce qui déciderait OÙ écrire ou COMMENT appeler yt-dlp', () => {
+    const { recette } = sanitizeRecipe({
+      ...BONNE, outDir: '/etc', sortie: '/etc', nom: '../../ailleurs', format: '-x', mode: 'fast',
+    });
+    expect(recette.outDir).toBeUndefined();
+    expect(recette.sortie).toBeUndefined();
+    expect(recette.nom).toBeUndefined();
+    expect(recette.format).toBeUndefined();
+    expect(recette.mode).toBeUndefined();
+  });
+
+  it('la liste des champs admis ne contient aucun de ces quatre-là', () => {
+    for (const interdit of ['outDir', 'sortie', 'nom', 'format']) {
+      expect(RECIPE_FIELDS).not.toContain(interdit);
+    }
+  });
+
+  it('exige une vraie URL YouTube', () => {
+    expect(sanitizeRecipe({ ...BONNE, url: 'https://exemple.fr/x' }).ok).toBe(false);
+    expect(sanitizeRecipe({ ...BONNE, url: '' }).erreur).toMatch(/YouTube/);
+  });
+
+  it('refuse une fenêtre qui n\'est plus un départ', () => {
+    const r = sanitizeRecipe({ ...BONNE, sourceStart: 0, sourceEnd: 9000 });
+    expect(r.ok).toBe(false);
+    expect(r.erreur).toMatch(new RegExp(`${MAX_CLIP_SECONDS} s`));
+  });
+
+  it('accepte une fenêtre juste sous la limite, refuse juste au-dessus', () => {
+    const base = { ...BONNE, sourceStart: 1000, padBefore: 0, padAfter: 0 };
+    expect(sanitizeRecipe({ ...base, sourceEnd: 1000 + MAX_CLIP_SECONDS }).ok).toBe(true);
+    expect(sanitizeRecipe({ ...base, sourceEnd: 1000 + MAX_CLIP_SECONDS + 1 }).ok).toBe(false);
+  });
+
+  it('compte les marges dans la fenêtre : elles agrandissent l\'extrait', () => {
+    const r = sanitizeRecipe({ ...BONNE, sourceStart: 1000, sourceEnd: 1100, padBefore: 20, padAfter: 20 });
+    expect(r.ok).toBe(false);          // 140 s au total
+  });
+
+  it('refuse des bornes illisibles ou inversées', () => {
+    expect(sanitizeRecipe({ ...BONNE, sourceStart: 'bientôt' }).erreur).toMatch(/début/);
+    expect(sanitizeRecipe({ ...BONNE, sourceEnd: null }).erreur).toMatch(/fin/);
+    expect(sanitizeRecipe({ ...BONNE, sourceStart: 200, sourceEnd: 100 }).erreur).toMatch(/après le début/);
+  });
+
+  it('refuse ce qui n\'est pas un objet', () => {
+    for (const rien of [null, undefined, 'texte', 42, []]) {
+      expect(sanitizeRecipe(rien).ok).toBe(false);
+    }
+  });
+
+  it('accepte les timecodes en H:MM:SS comme la ligne de commande', () => {
+    const r = sanitizeRecipe({ ...BONNE, sourceStart: '5:43:06', sourceEnd: '5:43:14' });
+    expect(r.ok).toBe(true);
   });
 });

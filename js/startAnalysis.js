@@ -30,7 +30,7 @@ import {
 } from './analysisLink.js';
 import {
   parseVideoSource, resolveStartTime, formatPreciseTime, buildVideoBlock,
-  buildExtractRecipe, PAD_AVANT, PAD_APRES,
+  buildExtractRecipe, localiserMarques, PAD_AVANT, PAD_APRES,
   keyboardAction, neighbourStartId, nextRate, ratesFor, SHORTCUT_HELP,
   parseExtractSidecar, pairExtractFiles,
 } from './videoPlayerCalc.js';
@@ -915,7 +915,7 @@ function refreshVideoUi() {
       () => player?.seek(current.video.startAt));
     document.getElementById('sanl-goto-v1')?.addEventListener('click',
       () => player?.seek(current.video.turn1At));
-    document.getElementById('sanl-extrait')?.addEventListener('click', telechargerRecette);
+    document.getElementById('sanl-extrait')?.addEventListener('click', lancerExtraction);
   }
   refreshTimeDisplay();
 }
@@ -965,28 +965,96 @@ function extraitHtml() {
   if (!params) return '';
   const r = buildExtractRecipe(params);
   const titre = r.ok
-    ? `Télécharger la recette — extrait de ${r.clipDuration.toFixed(1)} s, de ${formatPreciseTime(r.clipStart)} à ${formatPreciseTime(r.clipEnd)}. `
-      + 'Double-clique ensuite le raccourci « extraire-derniere-recette » sur ton Bureau.'
+    ? `Découper l'extrait — ${r.clipDuration.toFixed(1)} s, de ${formatPreciseTime(r.clipStart)} à ${formatPreciseTime(r.clipEnd)}. `
+      + 'Sans serveur local, la recette est téléchargée à la place.'
     : `Il manque ${r.manques.join(', ')}`;
   return `<button class="vp-btn vp-btn--mark" id="sanl-extrait" ${r.ok ? '' : 'disabled'}
     title="${escHtml(titre)}">✂️ Préparer l'extrait${r.ok ? ` (${r.clipDuration.toFixed(1)} s)` : ''}</button>`;
 }
 
 /**
- * Dépose la recette dans les téléchargements. Le raccourci sur le Bureau ira
- * la chercher : un clic ici, un double-clic là-bas, aucun terminal.
+ * Découpe l'extrait, sans quitter l'application.
+ *
+ * Le seul geste qui ne peut pas vivre dans la page est le téléchargement chez
+ * YouTube : ses serveurs de média ne renvoient pas d'en-têtes CORS, donc le
+ * navigateur ne peut pas lire ces octets. Le serveur local, lui, le peut — il
+ * lance l'outil qui existait déjà. De ce côté-ci, c'est un clic.
+ *
+ * Sans serveur local (site déployé seul), on retombe sur la recette à
+ * télécharger : le travail n'est pas perdu, il demande un double-clic de plus.
  */
-function telechargerRecette() {
+async function lancerExtraction() {
   const params = recetteExtrait();
   const r = params ? buildExtractRecipe(params) : { ok: false, manques: ['une retransmission YouTube'] };
   if (!r.ok) { toast(`Il manque ${r.manques.join(', ')}`, 'error'); return; }
 
+  const btn = document.getElementById('sanl-extrait');
+  const libelle = btn?.textContent;
+  if (btn) { btn.disabled = true; btn.textContent = '✂️ Découpage…'; }
+  toast(`Découpage de ${r.clipDuration.toFixed(1)} s en cours — yt-dlp ne prend que cette plage.`, 'info');
+
+  try {
+    const rep = await fetch('/__extraire', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(r.recette),
+    });
+    const res = await rep.json();
+    if (!res.ok) {
+      // Le journal de l'extracteur dit précisément ce qui a manqué : on le
+      // garde en console plutôt que de le résumer de travers.
+      console.warn('[extraction]', res.journal || '');
+      toast(`Découpage échoué : ${res.erreur || 'raison inconnue'} — détail en console`, 'error');
+      return;
+    }
+    await chargerExtraitProduit(res);
+  } catch {
+    telechargerRecette(r);
+  } finally {
+    if (btn) { btn.disabled = false; if (libelle) btn.textContent = libelle; }
+    refreshVideoUi();
+  }
+}
+
+/** Récupère l'extrait fabriqué par le serveur local et le met dans le lecteur. */
+async function chargerExtraitProduit(res) {
+  const [video, meta] = await Promise.all([
+    fetch(res.video).then(r => r.blob()),
+    fetch(res.sidecar).then(r => r.text()).catch(() => null),
+  ]);
+
+  sharedSidecar = meta ? parseExtractSidecar(meta) : null;
+  sharedFile = new File([video], `${res.nom}.mp4`, { type: 'video/mp4' });
+
+  // Les marques étaient en secondes de la retransmission ; l'extrait commence
+  // à `clipStart`. Sans ce report, elles pointeraient très au-delà de sa fin.
+  const local = localiserMarques({
+    startAt: current.video.startAt, turn1At: current.video.turn1At,
+    clipStart: sharedSidecar?.clipStart,
+  });
+  current.video.kind = 'file';
+  current.video.fileName = sharedFile.name;
+  current.video.startAt = local.startAt;
+  current.video.turn1At = local.turn1At;
+  if (sharedSidecar?.fps) current.video.fps = sharedSidecar.fps;
+  current.dirty = true;
+  _loadedKey = `file:${sharedFile.name}`;
+  player?.loadFile(sharedFile, current.video.startAt ?? 0, { fps: sharedSidecar?.fps ?? null });
+
+  const taille = (sharedFile.size / 1e6).toFixed(1);
+  toast(`Extrait prêt : ${res.nom}.mp4 · ${taille} Mo en ${res.secondes} s. `
+    + 'Départ et V1 reportés sur l\'extrait.', 'success');
+}
+
+/**
+ * Repli sans serveur local : la recette part dans les téléchargements, et le
+ * raccourci du Bureau ira la chercher.
+ */
+function telechargerRecette(r) {
   const a = document.createElement('a');
   a.download = r.nom;
   a.href = URL.createObjectURL(new Blob([JSON.stringify(r.recette, null, 2)], { type: 'application/json' }));
   a.click();
-  toast(`Recette prête : ${r.clipDuration.toFixed(1)} s (départ −${PAD_AVANT} s → V1 +${PAD_APRES} s). `
-    + 'Double-clique « extraire-derniere-recette ».', 'success');
+  toast('Pas de serveur local : recette téléchargée. Double-clique « extraire-derniere-recette ».', 'warning');
 }
 
 function markMoment(which) {

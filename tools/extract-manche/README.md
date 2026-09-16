@@ -42,23 +42,36 @@ Les trois outils doivent répondre. **`--download-sections` ne fonctionne pas sa
 
 ---
 
-## Depuis le site : un clic, un double-clic
+## Depuis l'application : un clic
 
-C'est la voie normale. Elle n'exige **aucun terminal** et fonctionne depuis le site déployé.
+C'est la voie normale, et elle n'exige **aucun terminal**.
 
-**Une fois pour toutes :** crée un raccourci vers `tools\extract-manche\extraire-derniere-recette.cmd`
-sur ton Bureau ou dans la barre des tâches.
+L'application tourne sur le serveur local (`node tools/yolox-poc/serve.mjs`, puis
+`http://localhost:8798/index.html`). Dans *Analyse des départs* :
 
-**À chaque manche :**
+1. Charge la retransmission YouTube, marque le départ (`D`) et le premier virage (`V`).
+2. Clique **✂️ Préparer l'extrait**. Il annonce la durée avant même le clic.
 
-1. Sur le site, *Analyse des départs* : charge la retransmission YouTube, marque le départ (`D`) et
-   le premier virage (`V`).
-2. Clique **✂️ Préparer l'extrait**. Un fichier `Lieu_Année_Cat_QN_SN.rxrecette.json` part dans tes
-   téléchargements — il annonce déjà la durée de l'extrait.
-3. Double-clique le raccourci. Il prend la recette la plus récente, extrait la manche, range la
-   recette dans `recettes-faites\`.
+Le serveur découpe, et **l'extrait se charge tout seul dans le lecteur** — les deux marques sont
+reportées au passage sur le temps de l'extrait (`t = 0` correspond à `clipStart`). Le MP4 et son
+sidecar restent dans `extraits/`.
 
-Le MP4 et son sidecar apparaissent dans `extraits/`, prêts à être chargés dans le lecteur.
+> Le téléchargement chez YouTube est le seul geste qui ne peut pas vivre dans la page : les serveurs
+> de média de YouTube ne renvoient pas d'en-têtes CORS, donc le navigateur ne peut pas lire ces
+> octets. Le serveur local lance l'outil décrit ici — rien de nouveau n'est tenté, et la vidéo ne
+> quitte jamais la machine.
+
+Le point d'entrée est `POST /__extraire`. Il n'accepte que les champs de `RECIPE_FIELDS` :
+`outDir`, `nom` et `format` en sont volontairement absents — les deux premiers choisiraient où
+écrire sur le disque, le dernier passerait un sélecteur arbitraire à yt-dlp. Une fenêtre de plus de
+120 s est refusée : ce n'est plus un départ.
+
+### Repli : le site déployé, sans serveur local
+
+Si l'application tourne sans serveur local, le bouton **télécharge une recette** au lieu de
+découper. Crée alors un raccourci vers `tools\extract-manche\extraire-derniere-recette.cmd` sur
+ton Bureau : il prend la recette la plus récente de tes téléchargements, extrait la manche, et range
+la recette dans `recettes-faites\`.
 
 > **Pourquoi une recette JSON plutôt qu'un `.cmd` téléchargé ?** Windows marque tout script venu du
 > web et affiche un avertissement à **chaque** exécution. Une recette est un fichier de données :

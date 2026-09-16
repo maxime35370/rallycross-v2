@@ -741,3 +741,32 @@ export function buildExtractCommand({
     clipDuration: Number((clipEnd - clipStart).toFixed(3)),
   };
 }
+
+/**
+ * Reporte sur l'extrait des instants marqués sur la retransmission.
+ *
+ * `t = 0` de l'extrait correspond exactement à `clipStart` de la
+ * retransmission. Sans cette conversion, les marques resteraient à leurs
+ * valeurs YouTube — des dizaines de milliers de secondes — et pointeraient
+ * bien au-delà de la fin d'un extrait de treize secondes.
+ *
+ * @returns {{startAt:number|null, turn1At:number|null}}
+ */
+export function localiserMarques({ startAt = null, turn1At = null, clipStart = null } = {}) {
+  // `Number(null)` vaut 0 : sans écarter l'absence AVANT de convertir, une
+  // origine inconnue passerait pour « l'extrait commence à zéro » et les
+  // marques ressortiraient inchangées, en ayant l'air converties.
+  if (clipStart == null || clipStart === '') return { startAt: null, turn1At: null };
+  const base = Number(clipStart);
+  if (!Number.isFinite(base)) return { startAt: null, turn1At: null };
+  const reporte = (v) => {
+    if (v == null || v === '') return null;
+    const n = Number(v);
+    if (!Number.isFinite(n)) return null;
+    const local = n - base;
+    // Un instant hors de l'extrait n'est pas reportable : mieux vaut aucune
+    // marque qu'une marque fausse.
+    return local >= 0 ? Number(local.toFixed(3)) : null;
+  };
+  return { startAt: reporte(startAt), turn1At: reporte(turn1At) };
+}

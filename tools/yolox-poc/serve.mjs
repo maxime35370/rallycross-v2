@@ -21,7 +21,11 @@ import { existsSync, statSync, createReadStream } from 'node:fs';
 import { join, extname, resolve, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { spawn } from 'node:child_process';
+import { tmpdir } from 'node:os';
+
 import { MODELS, DEFAULT_MODEL } from './lib/detect.mjs';
+import { sanitizeRecipe, buildBaseName } from '../extract-manche/lib/recipe.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const MODELE_DIR = join(ROOT, 'tools', 'yolox-poc', 'modele');
@@ -94,9 +98,103 @@ try {
 // ── Serveur ─────────────────────────────────────────────
 const mediaDir = CHECK ? dirname(resolve(CHECK)) : null;
 
+const EXTRAITS = join(ROOT, 'tools', 'extract-manche', 'extraits');
+
+/** Réponse JSON, sans mise en cache : rien ici n'est un asset. */
+function repondreJson(res, code, corps) {
+  const texte = JSON.stringify(corps);
+  res.writeHead(code, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Content-Length': String(Buffer.byteLength(texte)),
+    'Cache-Control': 'no-store',
+  });
+  res.end(texte);
+}
+
+function lireCorps(req, maxOctets = 64 * 1024) {
+  return new Promise((ok, ko) => {
+    let total = 0;
+    const morceaux = [];
+    req.on('data', (c) => {
+      total += c.length;
+      // Une recette tient en 500 octets : au-delà, ce n'est pas une recette.
+      if (total > maxOctets) { ko(new Error('corps trop volumineux')); req.destroy(); return; }
+      morceaux.push(c);
+    });
+    req.on('end', () => ok(Buffer.concat(morceaux).toString('utf8')));
+    req.on('error', ko);
+  });
+}
+
+/**
+ * Découpe demandée par l'application.
+ *
+ * C'est le seul geste qui ne peut pas vivre dans la page : les serveurs de
+ * média de YouTube ne renvoient pas d'en-têtes CORS, donc le navigateur ne
+ * peut pas lire ces octets. Ici, on lance l'outil qui existait déjà — rien de
+ * nouveau n'est tenté, et la vidéo ne quitte pas la machine.
+ */
+async function extraire(req, res) {
+  let brut = null;
+  try { brut = JSON.parse(await lireCorps(req)); }
+  catch (err) { repondreJson(res, 400, { ok: false, erreur: `recette illisible : ${err.message}` }); return; }
+
+  const { ok, recette, erreur } = sanitizeRecipe(brut);
+  if (!ok) { repondreJson(res, 400, { ok: false, erreur }); return; }
+
+  // La recette part par FICHIER, jamais par la ligne de commande : aucun champ
+  // ne devient un argument, donc aucun ne peut en devenir un autre.
+  const fichier = join(await mkdtempSafe(), 'recette.json');
+  await writeFile(fichier, JSON.stringify(recette), 'utf8');
+
+  const nom = buildBaseName(recette) || null;
+  const debut = Date.now();
+  const journal = [];
+  const enfant = spawn(process.execPath, [join(ROOT, 'tools', 'extract-manche', 'extract.mjs'), '--recette', fichier],
+    { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] });
+  enfant.stdout.on('data', d => journal.push(String(d)));
+  enfant.stderr.on('data', d => journal.push(String(d)));
+
+  const code = await new Promise(fin => {
+    enfant.on('error', (err) => { journal.push(err.message); fin(-1); });
+    enfant.on('close', fin);
+  });
+
+  const texte = journal.join('');
+  if (code !== 0 || !nom || !existsSync(join(EXTRAITS, `${nom}.mp4`))) {
+    repondreJson(res, 500, { ok: false, erreur: 'extraction échouée', journal: texte, code });
+    return;
+  }
+  // Les chemins rendus sont ceux que le navigateur peut aller chercher : le
+  // serveur sert déjà la racine du dépôt.
+  repondreJson(res, 200, {
+    ok: true, nom,
+    video: `/tools/extract-manche/extraits/${nom}.mp4`,
+    sidecar: `/tools/extract-manche/extraits/${nom}.json`,
+    secondes: Number(((Date.now() - debut) / 1000).toFixed(1)),
+    journal: texte,
+  });
+}
+
+/** Dossier temporaire propre à cette recette. */
+async function mkdtempSafe() {
+  const dir = join(tmpdir(), `rx-recette-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+  await mkdir(dir, { recursive: true });
+  return dir;
+}
+
 const server = createServer(async (req, res) => {
   const path = decodeURIComponent(req.url.split('?')[0]);
   try {
+    // ── Découpage à la demande ──
+    if (path === '/__extraire') {
+      if (req.method === 'POST') { await extraire(req, res); return; }
+      // Sonde : l'application demande simplement si un serveur local écoute.
+      // Sur le site déployé, cette requête échoue — et c'est la réponse.
+      repondreJson(res, 200, { ok: true, service: 'rx-extraction/1' });
+      return;
+    }
+
     let file;
     if (path === '/' || path === '/__page') file = join(ROOT, 'tools', 'yolox-poc', 'page.html');
     else if (path === '/__suivi') file = join(ROOT, 'tools', 'yolox-poc', 'track.html');
