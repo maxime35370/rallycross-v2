@@ -30,6 +30,7 @@ import {
 } from './analysisLink.js';
 import {
   parseVideoSource, resolveStartTime, formatPreciseTime, buildVideoBlock,
+  buildExtractCommand, PAD_AVANT, PAD_APRES,
   keyboardAction, neighbourStartId, nextRate, ratesFor, SHORTCUT_HELP,
   parseExtractSidecar, pairExtractFiles,
 } from './videoPlayerCalc.js';
@@ -908,13 +909,76 @@ function refreshVideoUi() {
         ${v.turn1At != null
           ? `<button class="vp-btn vp-mark-val" id="sanl-goto-v1">${fmt(v.turn1At)}</button>`
           : '<span class="vp-mark--unset">non marquée</span>'}
-      </span>`;
+      </span>
+      ${extraitHtml()}`;
     document.getElementById('sanl-goto-start')?.addEventListener('click',
       () => player?.seek(current.video.startAt));
     document.getElementById('sanl-goto-v1')?.addEventListener('click',
       () => player?.seek(current.video.turn1At));
+    document.getElementById('sanl-extrait')?.addEventListener('click', copierCommandeExtrait);
   }
   refreshTimeDisplay();
+}
+
+// ─────────────────────────────────────────────────────────
+// PRÉPARER L'EXTRAIT
+//
+// Le navigateur ne découpe pas la retransmission : récupérer les flux de
+// YouTube depuis une page web contourne sa restriction d'accès. La coupe reste
+// le travail de `tools/extract-manche`, en local. Ce qu'on supprime ici, c'est
+// la recopie à la main des deux timecodes et de l'identité de la manche.
+// ─────────────────────────────────────────────────────────
+
+/**
+ * Les deux instants et l'identité de la manche, tels que l'extracteur les
+ * attend.
+ *
+ * Le garde-fou décisif est `kind === 'youtube'` : marqués sur un FICHIER local,
+ * les mêmes instants sont comptés depuis le début de l'extrait, pas depuis le
+ * début de la retransmission. La commande découperait alors quelques secondes
+ * du tout début de la vidéo — sans rien signaler.
+ */
+function recetteExtrait() {
+  const v = current?.video;
+  if (!v || v.kind !== 'youtube') return null;
+  const m = current.meeting;
+  const annee = m?.date ? new Date(m.date).getFullYear() : null;
+  return {
+    youtubeId: current._resolved?.youtubeId || v.youtubeId || null,
+    startAt: v.startAt, turn1At: v.turn1At,
+    location: m?.location || null,
+    year: Number.isFinite(annee) ? annee : null,
+    category: selectedCategory || null,
+    sessionType: current.start?.sessionType || null,
+    sessionNum: current.start?.sessionNum ?? null,
+    serie: current.start?.startIndex ?? null,
+  };
+}
+
+function extraitHtml() {
+  const recette = recetteExtrait();
+  if (!recette) return '';
+  const r = buildExtractCommand(recette);
+  const titre = r.ok
+    ? `Copier la commande d'extraction — ${r.clipDuration.toFixed(1)} s, de ${formatPreciseTime(r.clipStart)} à ${formatPreciseTime(r.clipEnd)}`
+    : `Il manque ${r.manques.join(', ')}`;
+  return `<button class="vp-btn vp-btn--mark" id="sanl-extrait" ${r.ok ? '' : 'disabled'}
+    title="${escHtml(titre)}">✂️ Préparer l'extrait${r.ok ? ` (${r.clipDuration.toFixed(1)} s)` : ''}</button>`;
+}
+
+async function copierCommandeExtrait() {
+  const recette = recetteExtrait();
+  const r = recette ? buildExtractCommand(recette) : { ok: false, manques: ['une retransmission YouTube'] };
+  if (!r.ok) { toast(`Il manque ${r.manques.join(', ')}`, 'error'); return; }
+
+  try {
+    await navigator.clipboard.writeText(r.command);
+    toast(`Commande copiée — extrait de ${r.clipDuration.toFixed(1)} s (départ −${PAD_AVANT} s → V1 +${PAD_APRES} s). Colle-la dans un terminal.`, 'success');
+  } catch {
+    // Presse-papier refusé (contexte non sécurisé, permission) : on montre la
+    // commande plutôt que de laisser l'opérateur sans rien.
+    window.prompt('Copie cette commande (Ctrl+C) :', r.command);
+  }
 }
 
 function markMoment(which) {

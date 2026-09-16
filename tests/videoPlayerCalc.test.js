@@ -7,6 +7,7 @@ import {
   YOUTUBE_RATES, LOCAL_RATES, ratesFor, nextRate,
   computeVideoRect, projectBox, normalizeBox, sanitizeBoxes, boxLabelText,
   keyboardAction, neighbourStartId, buildVideoBlock,
+  buildExtractCommand, PAD_AVANT, PAD_APRES,
   COMMON_FPS, DEFAULT_FPS,
 } from '../js/videoPlayerCalc.js';
 
@@ -542,5 +543,107 @@ describe('buildVideoBlock', () => {
     const b = buildVideoBlock({ kind: 'youtube', youtubeId: 'abc', startAt: -3, turn1At: 'x' });
     expect(b.startAt).toBeNull();
     expect(b.turn1At).toBeNull();
+  });
+});
+
+// ─────────────────────────────────────────────────────────
+// PRÉPARATION DE L'EXTRAIT
+// ─────────────────────────────────────────────────────────
+
+describe('buildExtractCommand', () => {
+  // Kerlabo, MQ3 série 4 : départ à 5:43:06, premier virage 8 s plus tard.
+  const MANCHE = {
+    youtubeId: '_SqxZQl5zzQ', startAt: 20586, turn1At: 20594,
+    location: 'Kerlabo', year: 2026, category: 'D3',
+    sessionType: 'MQ', sessionNum: 3, serie: 4,
+  };
+
+  it('encadre la plage utile : départ − 3 s, premier virage + 2 s', () => {
+    const r = buildExtractCommand(MANCHE);
+    expect(r.ok).toBe(true);
+    expect(r.clipStart).toBe(20583);      // 20586 − 3
+    expect(r.clipEnd).toBe(20596);        // 20594 + 2
+    expect(r.clipDuration).toBe(13);
+  });
+
+  it('les marges par défaut sont bien 3 avant et 2 après', () => {
+    expect([PAD_AVANT, PAD_APRES]).toEqual([3, 2]);
+  });
+
+  it('rend une commande complète, prête à coller', () => {
+    expect(buildExtractCommand(MANCHE).command).toBe(
+      'tools\\extract-manche\\extraire.cmd --url https://youtu.be/_SqxZQl5zzQ ' +
+      '--start 20586 --fin 20594 --v1 20594 --pad-avant 3 --pad-apres 2 ' +
+      '--lieu Kerlabo --annee 2026 --categorie D3 --type MQ --num 3 --serie 4');
+  });
+
+  it('passe le premier virage en `--v1` : le sidecar doit le porter', () => {
+    // C'est ce champ que l'outil d'analyse relit pour se placer.
+    expect(buildExtractCommand(MANCHE).command).toMatch(/--v1 20594/);
+  });
+
+  it('garde les fractions de seconde : marquer à l\'image ne sert à rien si on arrondit', () => {
+    const r = buildExtractCommand({ ...MANCHE, startAt: 20586.483, turn1At: 20594.25 });
+    expect(r.command).toMatch(/--start 20586\.483 --fin 20594\.25/);
+    expect(r.clipDuration).toBe(12.767);
+  });
+
+  it('protège une valeur contenant un espace', () => {
+    const r = buildExtractCommand({ ...MANCHE, location: 'Mayenne (53)' });
+    expect(r.command).toMatch(/--lieu "Mayenne \(53\)"/);
+  });
+
+  it('omet ce qu\'il ne sait pas plutôt que d\'inventer', () => {
+    const r = buildExtractCommand({ youtubeId: 'abc', startAt: 10, turn1At: 20 });
+    expect(r.ok).toBe(true);
+    expect(r.command).not.toMatch(/--lieu|--annee|--categorie|--type|--num|--serie/);
+  });
+
+  it('accepte la série 0 et la manche 0 : ce sont des valeurs, pas des absences', () => {
+    const r = buildExtractCommand({ ...MANCHE, sessionNum: 0, serie: 0 });
+    expect(r.command).toMatch(/--num 0 --serie 0/);
+  });
+
+  it('propose la variante hors Windows', () => {
+    const r = buildExtractCommand({ ...MANCHE, platform: 'linux' });
+    expect(r.command.startsWith('node tools/extract-manche/extract.mjs ')).toBe(true);
+  });
+
+  it('respecte des marges choisies', () => {
+    const r = buildExtractCommand({ ...MANCHE, padBefore: 5, padAfter: 0 });
+    expect(r.clipStart).toBe(20581);
+    expect(r.clipEnd).toBe(20594);
+    expect(r.command).toMatch(/--pad-avant 5 --pad-apres 0/);
+  });
+
+  it('ne recule pas avant le début de la vidéo', () => {
+    const r = buildExtractCommand({ ...MANCHE, startAt: 1, turn1At: 9 });
+    expect(r.clipStart).toBe(0);
+    expect(r.clipDuration).toBe(11);
+  });
+
+  it('dit ce qui manque plutôt que de rendre une commande fausse', () => {
+    expect(buildExtractCommand({ startAt: 10, turn1At: 20 }).manques).toEqual(['la source YouTube']);
+    expect(buildExtractCommand({ youtubeId: 'abc' }).manques)
+      .toEqual(['l\'instant du départ', 'l\'instant du premier virage']);
+    expect(buildExtractCommand({ youtubeId: 'abc', startAt: 10 }).manques)
+      .toEqual(['l\'instant du premier virage']);
+  });
+
+  it('un instant absent n\'est pas l\'instant 0 — `Number(null)` vaut 0', () => {
+    const r = buildExtractCommand({ youtubeId: 'abc', startAt: null, turn1At: 20 });
+    expect(r.ok).toBe(false);
+    expect(r.manques).toContain('l\'instant du départ');
+  });
+
+  it('refuse un premier virage marqué avant le départ', () => {
+    const r = buildExtractCommand({ ...MANCHE, startAt: 20594, turn1At: 20586 });
+    expect(r.ok).toBe(false);
+    expect(r.command).toBeNull();
+    expect(r.manques[0]).toMatch(/avant le départ/);
+  });
+
+  it('sans argument, ne jette pas', () => {
+    expect(buildExtractCommand().ok).toBe(false);
   });
 });

@@ -579,3 +579,108 @@ export function buildVideoBlock({ kind, youtubeId, fileName, startAt, turn1At, f
     || block.startAt != null || block.turn1At != null;
   return meaningful ? block : null;
 }
+
+// ─────────────────────────────────────────────────────────
+// PRÉPARATION DE L'EXTRAIT
+//
+// Le navigateur ne peut pas — et ne doit pas — découper la retransmission :
+// récupérer les flux de YouTube depuis une page web contourne sa restriction
+// d'accès. La coupe reste le travail de `tools/extract-manche`, en local.
+//
+// Ce que l'application PEUT faire, c'est éviter la recopie à la main. Elle
+// connaît déjà les deux instants (marqués avec D et V sur la retransmission,
+// donc en secondes absolues de la vidéo YouTube) et l'identité de la manche.
+// Elle rend donc la commande toute faite.
+// ─────────────────────────────────────────────────────────
+
+/** Marges par défaut : assez avant pour voir la grille, juste ce qu'il faut après le virage. */
+export const PAD_AVANT = 3;
+export const PAD_APRES = 2;
+
+/** Une valeur d'argument, protégée si elle contient un espace. */
+function argument(v) {
+  const s = String(v);
+  return /[\s"]/.test(s) ? `"${s.replace(/"/g, '\\"')}"` : s;
+}
+
+/** Secondes lisibles par `parseTimeInput` de l'extracteur : un nombre nu. */
+function secondes(v) {
+  return String(Number(Number(v).toFixed(3)));
+}
+
+/**
+ * Commande d'extraction pour la manche ouverte, ou la raison de ne pas la
+ * proposer.
+ *
+ * Les marges encadrent la plage utile [départ, V1] : l'extrait va donc de
+ * `départ − padBefore` à `V1 + padAfter`. `--v1` est passé en plus pour que le
+ * sidecar porte l'instant du premier virage, que l'outil d'analyse relit.
+ *
+ * @returns {{ok:boolean, command:string|null, manques:string[],
+ *            clipStart:number|null, clipEnd:number|null, clipDuration:number|null}}
+ */
+export function buildExtractCommand({
+  youtubeId = null, startAt = null, turn1At = null,
+  padBefore = PAD_AVANT, padAfter = PAD_APRES,
+  location = null, year = null, category = null,
+  sessionType = null, sessionNum = null, serie = null,
+  platform = 'windows',
+} = {}) {
+  // `Number(null)` vaut 0 : une borne absente deviendrait « début de la vidéo ».
+  const num = v => (v == null || v === '' ? NaN : Number(v));
+  const debut = num(startAt);
+  const fin = num(turn1At);
+
+  const manques = [];
+  if (!youtubeId) manques.push('la source YouTube');
+  if (!Number.isFinite(debut) || debut < 0) manques.push('l\'instant du départ');
+  if (!Number.isFinite(fin) || fin < 0) manques.push('l\'instant du premier virage');
+  if (manques.length) {
+    return { ok: false, command: null, manques, clipStart: null, clipEnd: null, clipDuration: null };
+  }
+  if (fin <= debut) {
+    return {
+      ok: false, command: null, clipStart: null, clipEnd: null, clipDuration: null,
+      manques: ['le premier virage est marqué avant le départ'],
+    };
+  }
+
+  const pb = Math.max(0, Number(padBefore) || 0);
+  const pa = Math.max(0, Number(padAfter) || 0);
+  const clipStart = Math.max(0, debut - pb);
+  const clipEnd = fin + pa;
+
+  const lanceur = platform === 'windows'
+    ? 'tools\\extract-manche\\extraire.cmd'
+    : 'node tools/extract-manche/extract.mjs';
+
+  const parts = [
+    lanceur,
+    '--url', `https://youtu.be/${youtubeId}`,
+    '--start', secondes(debut),
+    '--fin', secondes(fin),
+    '--v1', secondes(fin),
+    // Les marges restent EXPLICITES jusque dans le sidecar : sans elles, on ne
+    // saurait plus trois mois après si l'instant noté est le départ ou le
+    // départ moins trois secondes.
+    '--pad-avant', String(pb),
+    '--pad-apres', String(pa),
+  ];
+  // L'identité n'est pas décorative : elle nomme le fichier et remplit le
+  // sidecar, donc le rattachement de l'extrait à la manche.
+  if (location) parts.push('--lieu', argument(location));
+  if (year) parts.push('--annee', String(year));
+  if (category) parts.push('--categorie', argument(category));
+  if (sessionType) parts.push('--type', argument(sessionType));
+  if (sessionNum != null) parts.push('--num', String(sessionNum));
+  if (serie != null) parts.push('--serie', String(serie));
+
+  return {
+    ok: true,
+    command: parts.join(' '),
+    manques: [],
+    clipStart: Number(clipStart.toFixed(3)),
+    clipEnd: Number(clipEnd.toFixed(3)),
+    clipDuration: Number((clipEnd - clipStart).toFixed(3)),
+  };
+}
