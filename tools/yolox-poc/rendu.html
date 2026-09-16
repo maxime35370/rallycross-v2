@@ -72,7 +72,15 @@ $('pick').addEventListener('change', async (e) => {
       * Math.max(0, Math.min(p[3], g[3]) - Math.max(p[1], g[1]));
     return aire(p) > 0 && i / aire(p) > 0.5;
   };
-  const premier = rapport.journal[0];
+  // PAS le premier instant : aucun tracker ne publie d'identité avant d'avoir
+  // confirmé, et le nombre de confirmations demandées diffère de l'un à
+  // l'autre — ByteTrack ne publie rien avant 3,2 s. On prend, dans la première
+  // seconde, l'instant le mieux garni : c'est là que la grille est au complet.
+  const t0 = rapport.journal[0].t;
+  const premier = rapport.journal
+    .filter(j => j.t <= t0 + 1.0 + 1e-9)
+    .reduce((best, j) => (j.tracks.filter(t => t.boiteAssociee).length
+      > best.tracks.filter(t => t.boiteAssociee).length ? j : best), rapport.journal[0]);
   const boites = premier.tracks.filter(t => t.boiteAssociee);
   const surGrille = boites
     .filter(t => !boites.some(u => u !== t && aire(u.boiteAssociee) > aire(t.boiteAssociee)
