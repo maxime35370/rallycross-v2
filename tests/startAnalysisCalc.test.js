@@ -4,6 +4,7 @@ import {
   maxPerSeries, resolveGridGeometry, gridCellsInOrder, placeOnGrid, checkGridLayout,
   laneZone, normalizePoleSide, startLabel, enumerateStarts, finishPosInStart, buildStartGrid,
   validateAnalysis, availableTurn1Positions, pointTurn1InOrder, nextFreeTurn1Pos,
+  applyV1OrderProposal, acceptV1Proposals, isV1OrderProposal,
   isNonStarter, countStarters,
   orderGridByInterim, orderFinalGridFromSemis, orderByRaceResult,
 } from '../js/startAnalysisCalc.js';
@@ -1193,5 +1194,117 @@ describe('nextFreeTurn1Pos', () => {
     const annonce = nextFreeTurn1Pos(rows, 5);
     const apres = pointTurn1InOrder('b', rows, 5);
     expect(apres.find(x => x.driverId === 'b').turn1Pos).toBe(annonce);
+  });
+});
+
+// ─────────────────────────────────────────────────────────
+// PROPOSITION AUTOMATIQUE DU V1
+// ─────────────────────────────────────────────────────────
+
+describe('applyV1OrderProposal', () => {
+  const grille = () => [
+    { driverId: 'a', carNumber: 12, turn1Pos: null, didNotStart: false },
+    { driverId: 'b', carNumber: 7,  turn1Pos: null, didNotStart: false },
+    { driverId: 'c', carNumber: 3,  turn1Pos: null, didNotStart: false },
+  ];
+  const prop = (positions) => ({ schema: 'rx-v1-order/1', positions });
+  const autos = (rows) => Object.fromEntries(rows.map(r => [r.carNumber, r.autoTurn1Pos]));
+
+  it('remplit autoTurn1Pos et ne touche JAMAIS turn1Pos', () => {
+    const r = applyV1OrderProposal({
+      rows: grille(), starters: 3,
+      proposal: prop([{ carNumber: 12, turn1Pos: 2 }, { carNumber: 7, turn1Pos: 1 }]),
+    });
+    expect(autos(r.rows)).toEqual({ 12: 2, 7: 1, 3: null });
+    expect(r.rows.every(x => x.turn1Pos === null)).toBe(true);
+    expect(r.applied).toBe(2);
+  });
+
+  it('accepte « non décidé » sans le compter comme un rejet', () => {
+    const r = applyV1OrderProposal({
+      rows: grille(), starters: 3,
+      proposal: prop([{ carNumber: 12, turn1Pos: 1 }, { carNumber: 7, turn1Pos: null }]),
+    });
+    expect(r.applied).toBe(1);
+    expect(r.rejected).toEqual([]);
+  });
+
+  it('n\'attribue à PERSONNE une position revendiquée deux fois', () => {
+    // Trancher au hasard ferait entrer une erreur silencieuse — exactement ce
+    // qu'on refuse : mieux vaut deux cases vides qu'une case fausse.
+    const r = applyV1OrderProposal({
+      rows: grille(), starters: 3,
+      proposal: prop([{ carNumber: 12, turn1Pos: 1 }, { carNumber: 7, turn1Pos: 1 }]),
+    });
+    expect(autos(r.rows)).toEqual({ 12: null, 7: null, 3: null });
+    expect(r.applied).toBe(0);
+    expect(r.rejected).toHaveLength(2);
+  });
+
+  it('écarte une voiture absente du départ, une position hors effectif, un DNS', () => {
+    const rows = grille().map(r => (r.carNumber === 3 ? { ...r, didNotStart: true } : r));
+    const r = applyV1OrderProposal({
+      rows, starters: 2,
+      proposal: prop([
+        { carNumber: 99, turn1Pos: 1 },
+        { carNumber: 12, turn1Pos: 5 },
+        { carNumber: 3,  turn1Pos: 2 },
+        { carNumber: 7,  turn1Pos: 1 },
+      ]),
+    });
+    expect(autos(r.rows)).toEqual({ 12: null, 7: 1, 3: null });
+    expect(r.rejected.map(x => x.carNumber).sort((a, b) => a - b)).toEqual([3, 12, 99]);
+  });
+
+  it('refuse un document au mauvais schéma', () => {
+    const r = applyV1OrderProposal({ rows: grille(), proposal: { positions: [] } });
+    expect(r.applied).toBe(0);
+    expect(r.rejected[0].raison).toMatch(/format/);
+  });
+
+  it('ne devine pas quand deux pilotes portent le même numéro', () => {
+    const rows = [...grille(), { driverId: 'd', carNumber: 12, turn1Pos: null, didNotStart: false }];
+    const r = applyV1OrderProposal({ rows, starters: 4, proposal: prop([{ carNumber: 12, turn1Pos: 1 }]) });
+    expect(r.applied).toBe(0);
+    expect(r.rejected[0].raison).toMatch(/double/);
+  });
+});
+
+describe('acceptV1Proposals', () => {
+  const avec = (specs) => specs.map((s, i) => ({
+    driverId: 'd' + i, carNumber: 10 + i, turn1Pos: null, autoTurn1Pos: null, didNotStart: false, ...s,
+  }));
+
+  it('reprend les propositions à son compte', () => {
+    const r = acceptV1Proposals(avec([{ autoTurn1Pos: 2 }, { autoTurn1Pos: 1 }]));
+    expect(r.rows.map(x => x.turn1Pos)).toEqual([2, 1]);
+    expect(r.accepted).toBe(2);
+  });
+
+  it('ne remplace JAMAIS une position saisie à la main', () => {
+    const r = acceptV1Proposals(avec([{ turn1Pos: 1, autoTurn1Pos: 3 }, { autoTurn1Pos: 2 }]));
+    expect(r.rows.map(x => x.turn1Pos)).toEqual([1, 2]);
+    expect(r.accepted).toBe(1);
+  });
+
+  it('laisse de côté une proposition qui heurte une saisie manuelle', () => {
+    // La machine propose P1 pour le second, mais un humain a déjà mis P1
+    // ailleurs : on ne bouscule pas, on signale en ne faisant rien.
+    const r = acceptV1Proposals(avec([{ turn1Pos: 1 }, { autoTurn1Pos: 1 }]));
+    expect(r.rows.map(x => x.turn1Pos)).toEqual([1, null]);
+    expect(r.accepted).toBe(0);
+    expect(r.skipped).toBe(1);
+  });
+
+  it('ne classe jamais un non-partant', () => {
+    const r = acceptV1Proposals(avec([{ autoTurn1Pos: 1, didNotStart: true }]));
+    expect(r.rows[0].turn1Pos).toBe(null);
+    expect(r.accepted).toBe(0);
+  });
+
+  it('est pure', () => {
+    const rows = avec([{ autoTurn1Pos: 1 }]);
+    acceptV1Proposals(rows);
+    expect(rows[0].turn1Pos).toBe(null);
   });
 });

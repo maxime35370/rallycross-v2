@@ -886,3 +886,118 @@ export function validateAnalysis(analysis) {
 
   return { ok: errors.length === 0, errors, warnings };
 }
+
+// ─────────────────────────────────────────────────────────
+// PROPOSITION AUTOMATIQUE DU CLASSEMENT AU PREMIER VIRAGE
+// ─────────────────────────────────────────────────────────
+
+/*
+   L'analyse vidéo ne saisit JAMAIS à la place de l'opérateur. Elle remplit
+   `autoTurn1Pos`, un champ distinct de `turn1Pos` ; seul un geste humain fait
+   passer l'un dans l'autre. C'est la règle absolue du module — « aucune donnée
+   non validée n'alimente les statistiques » — et elle se tient ici, dans le
+   code, pas seulement dans l'intention.
+
+   Format d'échange `rx-v1-order/1`, volontairement minuscule (moins d'un ko) :
+   la vidéo annotée ne circule pas, seul le résultat chiffré revient.
+
+     { schema: 'rx-v1-order/1',
+       startAt: 3.0, turn1At: 13.5,
+       methode: 'similitude-groupe/1 + hsv-zonee/1',
+       positions: [ { carNumber: 12, turn1Pos: 1, confiance: 0.92 },
+                    { carNumber: 7,  turn1Pos: null, confiance: 0 } ] }
+
+   `turn1Pos: null` veut dire NON DÉCIDÉ, et c'est un résultat légitime : une
+   case vide se remplit en deux secondes, une case fausse coûte bien plus cher
+   à repérer puis à corriger.
+*/
+
+/** Le document est-il une proposition exploitable ? */
+export function isV1OrderProposal(doc) {
+  return Boolean(doc) && doc.schema === 'rx-v1-order/1' && Array.isArray(doc.positions);
+}
+
+/**
+ * Applique une proposition aux lignes d'un départ, sans jamais toucher à
+ * `turn1Pos`.
+ *
+ * Tout ce qui ne se rattache pas proprement est ÉCARTÉ et rapporté, plutôt
+ * que rapproché de force : une proposition à moitié comprise vaut moins que
+ * pas de proposition du tout.
+ *
+ * @returns {{rows:Array, applied:number, rejected:Array<{carNumber:*, raison:string}>}}
+ */
+export function applyV1OrderProposal({ rows = [], proposal = null, starters = null } = {}) {
+  const sortie = rows.map(r => ({ ...r, autoTurn1Pos: null, autoConfidence: null }));
+  const rejected = [];
+  if (!isV1OrderProposal(proposal)) {
+    return { rows: sortie, applied: 0, rejected: [{ carNumber: null, raison: 'format non reconnu' }] };
+  }
+
+  const n = Number.isInteger(Number(starters)) && Number(starters) > 0
+    ? Number(starters) : countStarters(rows);
+  const parNumero = new Map();
+  for (const r of sortie) {
+    const num = Number(r.carNumber);
+    if (!Number.isFinite(num)) continue;
+    // Deux pilotes au même numéro dans un départ : on ne devine pas lequel.
+    if (parNumero.has(num)) parNumero.set(num, null); else parNumero.set(num, r);
+  }
+
+  // Premier passage : ne garder que des propositions individuellement valables.
+  const retenues = [];
+  for (const p of proposal.positions) {
+    const num = Number(p?.carNumber);
+    const pos = turn1Rank(p?.turn1Pos);
+    const ligne = parNumero.get(num);
+    if (!Number.isFinite(num)) { rejected.push({ carNumber: p?.carNumber, raison: 'numéro illisible' }); continue; }
+    if (ligne === undefined) { rejected.push({ carNumber: num, raison: 'absent de ce départ' }); continue; }
+    if (ligne === null) { rejected.push({ carNumber: num, raison: 'numéro en double dans le départ' }); continue; }
+    if (pos == null) continue;                       // non décidé : silence, pas un rejet
+    if (pos > n) { rejected.push({ carNumber: num, raison: `position ${pos} au-delà de ${n} partants` }); continue; }
+    if (ligne.didNotStart) { rejected.push({ carNumber: num, raison: 'pilote non partant' }); continue; }
+    retenues.push({ ligne, pos, confiance: Number(p?.confiance) });
+  }
+
+  // Second passage : une position revendiquée deux fois n'est attribuée à
+  // personne. Trancher au hasard ferait entrer une erreur silencieuse.
+  const compte = new Map();
+  for (const x of retenues) compte.set(x.pos, (compte.get(x.pos) || 0) + 1);
+  let applied = 0;
+  for (const x of retenues) {
+    if (compte.get(x.pos) > 1) {
+      rejected.push({ carNumber: Number(x.ligne.carNumber), raison: `position ${x.pos} proposée à plusieurs voitures` });
+      continue;
+    }
+    x.ligne.autoTurn1Pos = x.pos;
+    x.ligne.autoConfidence = Number.isFinite(x.confiance) ? x.confiance : null;
+    applied += 1;
+  }
+  return { rows: sortie, applied, rejected };
+}
+
+/**
+ * Reprend les propositions à son compte : `autoTurn1Pos` devient `turn1Pos`.
+ *
+ * Jamais d'écrasement : une position déjà saisie à la main l'emporte toujours
+ * sur la machine, et les propositions qui entreraient en collision avec elle
+ * sont laissées de côté.
+ *
+ * @returns {{rows:Array, accepted:number, skipped:number}}
+ */
+export function acceptV1Proposals(rows = []) {
+  const prises = new Set(rows.map(r => turn1Rank(r.turn1Pos)).filter(p => p != null));
+  let accepted = 0, skipped = 0;
+  const sortie = rows.map(r => {
+    const auto = turn1Rank(r.autoTurn1Pos);
+    if (auto == null || turn1Rank(r.turn1Pos) != null || r.didNotStart) {
+      if (auto != null && turn1Rank(r.turn1Pos) == null && !r.didNotStart) skipped += 1;
+      return { ...r };
+    }
+    if (prises.has(auto)) { skipped += 1; return { ...r }; }
+    prises.add(auto);
+    accepted += 1;
+    return { ...r, turn1Pos: auto, corrected: false };
+  });
+  return { rows: sortie, accepted, skipped };
+}

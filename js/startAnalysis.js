@@ -19,7 +19,8 @@ import { getActiveChampionshipId, getAllChampionships } from './context.js';
 import {
   enumerateStarts, buildStartGrid, startDocId, seriesFingerprint,
   validateAnalysis, normalizePoleSide, availableTurn1Positions, pointTurn1InOrder,
-  nextFreeTurn1Pos, countStarters,
+  nextFreeTurn1Pos, applyV1OrderProposal, acceptV1Proposals, isV1OrderProposal,
+  countStarters,
   orderGridByInterim, orderFinalGridFromSemis, orderByRaceResult,
 } from './startAnalysisCalc.js';
 import { calcInterimStandings } from './calc.js';
@@ -342,6 +343,10 @@ function selectStart(docId) {
         row.confidence = s.confidence || 'green';
         row.note = s.note || '';
         row.corrected = !!s.corrected;
+        // La proposition est relue elle aussi : importée une fois, elle doit
+        // être encore là quand on revient sur ce départ.
+        row.autoTurn1Pos = s.autoTurn1Pos ?? null;
+        row.autoConfidence = s.autoConfidence ?? null;
         if (s.gridPos != null && start.sessionType !== 'MQ') row.gridPos = s.gridPos;
       }
     }
@@ -470,6 +475,11 @@ function renderWork() {
     </div>
 
     <div class="sanl-actions">
+      <input type="file" id="sanl-proposal-file" accept="application/json,.json" hidden>
+      <button class="btn btn-secondary" id="sanl-import-proposal" ${readOnly ? 'disabled' : ''}
+        title="Charger un classement proposé par l'analyse vidéo (rx-v1-order/1)">📥 Importer une proposition</button>
+      <button class="btn btn-secondary" id="sanl-accept-proposal" ${readOnly || !rows.some(r => Number.isInteger(r.autoTurn1Pos)) ? 'disabled' : ''}
+        title="Reprendre les positions proposées — les saisies manuelles sont conservées">✔️ Reprendre les propositions</button>
       <button class="btn btn-secondary" id="sanl-clear" ${readOnly ? 'disabled' : ''}>Effacer les positions V1</button>
       <button class="btn btn-secondary" id="sanl-draft" ${readOnly ? 'disabled' : ''}>💾 Enregistrer en brouillon</button>
       <button class="btn btn-primary"   id="sanl-validate" ${readOnly ? 'disabled' : ''}>✅ Valider l'analyse</button>
@@ -497,7 +507,7 @@ function renderRow(r, i, start, readOnly) {
       <td class="center">${r.lane ?? '<span class="text-muted">—</span>'}</td>
       <td>${escHtml(((r.firstName || '') + ' ' + (r.lastName || '')).trim() || r.driverId)}</td>
       <td class="center">${r.carNumber ?? '—'}</td>
-      <td class="center"><div class="sanl-v1-group" data-driver="${escHtml(r.driverId)}">${v1Buttons}</div></td>
+      <td class="center"><div class="sanl-v1-group" data-driver="${escHtml(r.driverId)}">${v1Buttons}${v1AutoBadgeHtml(r)}</div></td>
       <td class="center">${finish}</td>
       <td class="center">
         <select class="form-select sanl-conf" data-driver="${escHtml(r.driverId)}" ${readOnly ? 'disabled' : ''}>
@@ -507,6 +517,21 @@ function renderRow(r, i, start, readOnly) {
         </select>
       </td>
     </tr>`;
+}
+
+/**
+ * Pastille de PROPOSITION automatique.
+ *
+ * Elle est posée À CÔTÉ des boutons, jamais à leur place : ce que la machine
+ * propose et ce que l'opérateur a saisi ne doivent pas pouvoir être confondus
+ * d'un coup d'œil. Elle disparaît dès que la position est saisie.
+ */
+function v1AutoBadgeHtml(row) {
+  const auto = Number.isInteger(row.autoTurn1Pos) ? row.autoTurn1Pos : null;
+  if (auto == null || Number.isInteger(row.turn1Pos)) return '';
+  const c = Number(row.autoConfidence);
+  const conf = Number.isFinite(c) ? ` · confiance ${Math.round(c * 100)} %` : '';
+  return `<span class="sanl-v1-auto" title="Proposition de l'analyse vidéo${escHtml(conf)} — à confirmer">P${auto}</span>`;
 }
 
 /**
@@ -565,7 +590,7 @@ function refreshV1Buttons() {
   document.querySelectorAll('.sanl-v1-group').forEach(group => {
     const row = current.rows.find(r => r.driverId === group.dataset.driver);
     if (!row) return;
-    group.innerHTML = v1ButtonsHtml(row, n, readOnly);
+    group.innerHTML = v1ButtonsHtml(row, n, readOnly) + v1AutoBadgeHtml(row);
   });
   bindV1Buttons();
 }
@@ -1059,6 +1084,41 @@ function bindWork() {
     refreshFeedback();
   });
 
+  document.getElementById('sanl-import-proposal')?.addEventListener('click', () => {
+    document.getElementById('sanl-proposal-file')?.click();
+  });
+
+  document.getElementById('sanl-proposal-file')?.addEventListener('change', async (e) => {
+    const f = e.target.files?.[0];
+    e.target.value = '';                      // re-choisir le même fichier reste possible
+    if (!f) return;
+    let doc = null;
+    try { doc = JSON.parse(await f.text()); } catch { toast('Fichier illisible', 'error'); return; }
+    if (!isV1OrderProposal(doc)) { toast('Ce fichier n\'est pas un classement rx-v1-order/1', 'error'); return; }
+    const { rows: maj, applied, rejected } = applyV1OrderProposal({
+      rows: current.rows, proposal: doc, starters: countStarters(current.rows),
+    });
+    current.rows = maj;
+    renderWork();
+    // On dit ce qui a été ÉCARTÉ, pas seulement ce qui a marché : une
+    // proposition à moitié comprise doit se voir.
+    if (rejected.length) {
+      toast(`${applied} proposition(s) retenue(s), ${rejected.length} écartée(s) — ${rejected[0].raison}`, 'warning');
+    } else {
+      toast(`${applied} proposition(s) retenue(s)`, 'success');
+    }
+  });
+
+  document.getElementById('sanl-accept-proposal')?.addEventListener('click', () => {
+    const { rows: maj, accepted, skipped } = acceptV1Proposals(current.rows);
+    current.rows = maj;
+    if (accepted) current.dirty = true;
+    renderWork();
+    toast(skipped
+      ? `${accepted} position(s) reprise(s), ${skipped} laissée(s) de côté (conflit avec une saisie)`
+      : `${accepted} position(s) reprise(s)`, skipped ? 'warning' : 'success');
+  });
+
   document.getElementById('sanl-clear')?.addEventListener('click', () => {
     current.rows.forEach(r => { r.turn1Pos = null; });
     current.dirty = true;
@@ -1113,6 +1173,7 @@ function buildDoc() {
       lane: r.lane ?? null,
       turn1Pos: r.turn1Pos ?? null,
       autoTurn1Pos: r.autoTurn1Pos ?? null,
+      autoConfidence: r.autoConfidence ?? null,
       finishPosInStart: r.finishPosInStart ?? null,
       finishStatus: r.finishStatus ?? null,
       confidence: r.confidence || 'green',
