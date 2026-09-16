@@ -1,0 +1,14 @@
+# Modèles ONNX : téléchargés à la demande (voir README § Obtenir les modèles)
+models/
+node_modules/
+package-lock.json
+
+# Corpus : des images de retransmission n'ont RIEN à faire dans un dépôt public.
+# Seules les images de validation technique (assets publics de YOLOX/YOLOv5)
+# sont versionnées, et encore : elles se re-téléchargent en une commande.
+images/*
+!images/.gitkeep
+!images/corpus.example.json
+
+# Sorties de mesure : rapports lourds (images en base64), relevés locaux.
+out/

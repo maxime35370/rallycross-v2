@@ -1,0 +1,15 @@
+{
+  "name": "rx-video-poc",
+  "private": true,
+  "type": "module",
+  "description": "POC isolé — mesure de la qualité de détection YOLOX sur images de rallycross. Jamais importé par l'application.",
+  "scripts": {
+    "detect": "node run.mjs",
+    "test": "node --test decode.test.mjs"
+  },
+  "devDependencies": {
+    "onnxruntime-web": "^1.27.0",
+    "jpeg-js": "^0.4.4",
+    "pngjs": "^7.0.0"
+  }
+}

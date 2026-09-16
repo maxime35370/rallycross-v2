@@ -5,7 +5,7 @@
    Compatible GitHub Pages (sous-dossier) et racine.
 ═══════════════════════════════════════════════ */
 
-const CACHE_NAME = 'rx-chrono-v40';
+const CACHE_NAME = 'rx-chrono-v42';
 
 // Assets relatifs au scope du SW (pas de / en prefixe)
 const ASSET_PATHS = [
@@ -36,11 +36,13 @@ const ASSET_PATHS = [
   'js/calc.js',
   'js/drivers.js',
   'js/meetings.js',
+  'js/meetingSessionsSync.js',
   'js/engagements.js',
   'js/sessions.js',
   'js/timing.js',
   'js/standings.js',
   'js/championship.js',
+  'js/championshipChart.js',
   'js/stats.js',
   'js/spectator.js',
   'js/driverProfile.js',
@@ -81,6 +83,13 @@ const ASSET_PATHS = [
   'js/videoPlayer.js',
   'js/providers/index.js',
   'js/providers/itsLive.js',
+  // Accès commercial — Stratégie Live. Le module de règle est PUR : il doit
+  // être en cache comme les autres, sinon l'application hors ligne perdrait
+  // le filtrage du sélecteur de pilote.
+  'js/access/licenseCalc.js',
+  'js/access/licenses.js',
+  'js/access/accessAdmin.js',
+  'css/modules/access.css',
 ];
 
 // ── Installation : pre-cache des assets statiques ──

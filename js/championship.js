@@ -11,8 +11,19 @@ import { escHtml, dedupeParticipants } from './utils.js';
 import { calcInterimStandings, qfPoints, dfPoints, finPoints, calcStatusPoints } from './calc.js';
 import { getChampionshipConfig } from './settings.js';
 import { getActiveChampionship, getActiveChampionshipId } from './context.js';
+import {
+  buildWeekendEvolution, buildSeasonEvolution, defaultChartMeetingId, chartGeometry,
+  renderWeekendChartSvg, renderWeekendChartTable, PHASE_DEFS,
+} from './championshipChart.js';
 
 let _activeRegulation = null;
+
+// Dernier classement calculé (pour le graphique d'évolution, qui se
+// re-dessine sans recalculer quand on change de meeting ou de mode).
+let _lastStandings  = [];
+let _chartMeetingId = null;
+let _chartScope     = 'weekend';  // 'weekend' (un meeting) | 'season' (toute la saison)
+let _chartMode      = 'season';   // vue week-end : 'season' (cumul saison) | 'meeting' (week-end seul)
 
 // ─────────────────────────────────────────────────────────
 // ÉTAT LOCAL
@@ -231,10 +242,14 @@ async function calcChampionship() {
           firstName:  d.firstName,
           lastName:   d.lastName,
           meetingPts: {},
+          meetingDetail: {},   // meetingId → { interim, qf, df, fin, total } (graphique)
           grandTotal: 0,
         };
       }
       champMap[d.driverId].meetingPts[meeting.id] = d.total;
+      champMap[d.driverId].meetingDetail[meeting.id] = {
+        interim: d.interim, qf: d.qf, df: d.df, fin: d.fin, total: d.total,
+      };
       champMap[d.driverId].grandTotal += d.total;
     });
   }
@@ -400,7 +415,11 @@ async function renderChampionship() {
         <span>·</span>
         <span>${allMeetings.length} meeting${allMeetings.length > 1 ? 's' : ''} · ${standings.length} pilote${standings.length > 1 ? 's' : ''}</span>
       </div>
+      <div id="chp-evo" class="chp-evo"></div>
     `;
+
+    _lastStandings = standings;
+    renderEvolution();
 
     // Saisie inline des pénalités (régie) : enregistre puis recalcule le classement.
     content.querySelectorAll('.chp-pen-input').forEach(inp => {
@@ -423,6 +442,179 @@ async function renderChampionship() {
     console.error(err);
     content.innerHTML = `<div class="tim-placeholder"><div class="placeholder-icon">⚠️</div><div class="placeholder-title">Erreur de calcul</div></div>`;
   }
+}
+
+// ─────────────────────────────────────────────────────────
+// GRAPHIQUE — ÉVOLUTION DU TOP 5 SUR UN WEEK-END
+// Les données viennent de _lastStandings (déjà calculées) : changer de
+// meeting ou de mode ne déclenche aucune requête Firestore.
+// ─────────────────────────────────────────────────────────
+
+function renderEvolution() {
+  const box = document.getElementById('chp-evo');
+  if (!box) return;
+  if (!_lastStandings.length || !allMeetings.length) { box.innerHTML = ''; return; }
+
+  if (!_chartMeetingId || !allMeetings.some(m => m.id === _chartMeetingId)) {
+    _chartMeetingId = defaultChartMeetingId(_lastStandings, allMeetings);
+  }
+
+  const isSeason = _chartScope === 'season';
+  const data = isSeason
+    ? buildSeasonEvolution({
+        standings:  _lastStandings,
+        meetings:   allMeetings,
+        regulation: _activeRegulation,
+      })
+    : buildWeekendEvolution({
+        standings:  _lastStandings,
+        meetings:   allMeetings,
+        meetingId:  _chartMeetingId,
+        regulation: _activeRegulation,
+        mode:       _chartMode,
+      });
+
+  const meetingOptions = allMeetings.map(m => {
+    const d = m.date ? new Date(m.date).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' }) : '?';
+    return `<option value="${escHtml(m.id)}" ${m.id === _chartMeetingId ? 'selected' : ''}>${d} — ${escHtml(m.location || '?')}</option>`;
+  }).join('');
+
+  const phasesTxt = data?.phases ? data.phases.map(k => PHASE_DEFS[k].label).join(' → ') : '';
+  const hasData   = data && data.series.length > 0 && data.series.some(s => s.present);
+
+  const legend = isSeason
+    ? `<span>Une colonne par phase à points de chaque meeting (Int. = classement intermédiaire, ¼ / ½ = quarts / demi-finales, Fin. = finale)</span>
+       <span>·</span>
+       <span>Départ = 0, pénalités saison déduites · tableau résumé par meeting</span>`
+    : `<span>Phases à points (règlement actif) : ${escHtml(phasesTxt)}</span>
+       <span>·</span>
+       <span>${_chartMode === 'season'
+         ? 'Point de départ = total saison avant ce meeting, pénalités saison déduites'
+         : 'Point de départ = 0, seuls les points du week-end sont cumulés'}</span>`;
+
+  box.innerHTML = `
+    <div class="chp-evo-head">
+      <div class="chp-evo-title">📈 Évolution du top 5 ${isSeason ? 'sur la saison' : 'sur le week-end'}</div>
+      <div class="chp-evo-controls">
+        <div class="chp-evo-toggle" title="Période affichée">
+          <button class="chp-evo-toggle-btn ${!isSeason ? 'is-active' : ''}" data-scope="weekend">Week-end</button>
+          <button class="chp-evo-toggle-btn ${isSeason  ? 'is-active' : ''}" data-scope="season">Saison</button>
+        </div>
+        ${isSeason ? '' : `
+        <select class="toolbar-select chp-evo-select" id="chp-evo-meeting" title="Meeting à détailler">${meetingOptions}</select>
+        <div class="chp-evo-toggle" title="Point de départ des courbes">
+          <button class="chp-evo-toggle-btn ${_chartMode === 'season'  ? 'is-active' : ''}" data-mode="season">Cumul saison</button>
+          <button class="chp-evo-toggle-btn ${_chartMode === 'meeting' ? 'is-active' : ''}" data-mode="meeting">Week-end seul</button>
+        </div>`}
+      </div>
+    </div>
+    ${hasData ? `
+      <div class="chp-evo-chart-wrap" id="chp-evo-chart">
+        ${renderWeekendChartSvg(data)}
+        <div class="chp-evo-tooltip" id="chp-evo-tip" hidden></div>
+      </div>
+      ${renderWeekendChartTable(data)}
+      <div class="chp-legend">${legend}</div>`
+    : `<div class="tim-placeholder chp-evo-empty"><div class="placeholder-icon">📈</div><div class="placeholder-title">Pas encore de points ${isSeason ? 'cette saison' : 'sur ce meeting'}</div></div>`}
+  `;
+
+  box.querySelector('#chp-evo-meeting')?.addEventListener('change', e => {
+    _chartMeetingId = e.target.value;
+    renderEvolution();
+  });
+  box.querySelectorAll('.chp-evo-toggle-btn[data-scope]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (btn.dataset.scope === _chartScope) return;
+      _chartScope = btn.dataset.scope;
+      renderEvolution();
+    });
+  });
+  box.querySelectorAll('.chp-evo-toggle-btn[data-mode]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (btn.dataset.mode === _chartMode) return;
+      _chartMode = btn.dataset.mode;
+      renderEvolution();
+    });
+  });
+
+  if (hasData) bindEvolutionHover(data);
+}
+
+/**
+ * Couche de survol : un curseur vertical s'aligne sur la phase la plus
+ * proche du pointeur et une infobulle liste les 5 pilotes à cette phase
+ * (valeur cumulée, puis gain de la phase). Tout est aussi lisible dans
+ * le tableau sous le graphique : l'infobulle n'est qu'un raccourci.
+ */
+function bindEvolutionHover(data) {
+  const wrap = document.getElementById('chp-evo-chart');
+  const svg  = wrap?.querySelector('svg');
+  const tip  = document.getElementById('chp-evo-tip');
+  const cursor = svg?.querySelector('.chp-evo-cursor');
+  if (!wrap || !svg || !tip || !cursor) return;
+
+  const geo = chartGeometry(data);
+
+  const hide = () => { tip.hidden = true; cursor.style.display = 'none'; };
+
+  const show = (evt) => {
+    const rect  = svg.getBoundingClientRect();
+    if (!rect.width) return;
+    // viewBox → pixels : preserveAspectRatio meet, ratio commun aux 2 axes
+    const scale = Math.min(rect.width / svg.viewBox.baseVal.width, rect.height / svg.viewBox.baseVal.height);
+    const offX  = (rect.width - svg.viewBox.baseVal.width * scale) / 2;
+    const vx    = (evt.clientX - rect.left - offX) / scale;
+
+    let idx = 0, best = Infinity;
+    geo.xs.forEach((x, i) => { const d = Math.abs(x - vx); if (d < best) { best = d; idx = i; } });
+
+    cursor.setAttribute('x1', geo.xs[idx]);
+    cursor.setAttribute('x2', geo.xs[idx]);
+    cursor.style.display = '';
+
+    // Contenu construit en textContent (jamais innerHTML sur des noms)
+    tip.textContent = '';
+    const title = document.createElement('div');
+    title.className = 'chp-evo-tip-title';
+    title.textContent = data.columns?.[idx]?.title ?? data.labels[idx];
+    tip.appendChild(title);
+
+    [...data.series].sort((a, b) => b.values[idx] - a.values[idx]).forEach(s => {
+      const row = document.createElement('div');
+      row.className = 'chp-evo-tip-row';
+      const sw = document.createElement('span');
+      sw.className = 'chp-evo-swatch';
+      sw.style.background = `var(--chp-s${s.slot})`;
+      const val = document.createElement('strong');
+      val.textContent = String(s.values[idx]);
+      const name = document.createElement('span');
+      name.className = 'chp-evo-tip-name';
+      name.textContent = (s.carNumber ? `#${s.carNumber} ` : '') + s.lastName;
+      row.append(sw, val, name);
+      if (idx > 0) {
+        const gain = document.createElement('span');
+        const g = s.gains[idx - 1];
+        gain.className = 'chp-evo-gain' + (g > 0 ? ' is-pos' : '');
+        gain.textContent = (g > 0 ? '+' : '') + g;
+        row.appendChild(gain);
+      }
+      tip.appendChild(row);
+    });
+
+    tip.hidden = false;
+    // Position dans le conteneur (qui peut défiler horizontalement sur
+    // téléphone) : à droite du curseur, sauf sur la moitié droite du tracé
+    const wrapRect = wrap.getBoundingClientRect();
+    const svgLeft  = rect.left - wrapRect.left + wrap.scrollLeft;
+    const px       = svgLeft + offX + geo.xs[idx] * scale;
+    const onRight  = geo.xs[idx] > (geo.pad.left + geo.pw / 2);
+    tip.style.left = `${onRight ? px - 12 - tip.offsetWidth : px + 12}px`;
+    tip.style.top  = `${Math.max(0, evt.clientY - rect.top - 10)}px`;
+  };
+
+  svg.addEventListener('pointermove', show);
+  svg.addEventListener('pointerdown', show);
+  svg.addEventListener('pointerleave', hide);
 }
 
 // ─────────────────────────────────────────────────────────

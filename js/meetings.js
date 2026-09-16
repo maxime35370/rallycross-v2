@@ -10,21 +10,13 @@ import { logAudit } from './audit.js';
 import { requireAuth } from './auth.js';
 import { generateQrHtml, getSpectatorMeetingUrl } from './qrcode.js';
 import { getActiveChampionshipId, getActiveChampionship } from './context.js';
+import { buildSessionTemplates, planSessionSync, describeSessionDataLoss } from './meetingSessionsSync.js';
 
 // ─────────────────────────────────────────────────────────
 // CONSTANTES
 // ─────────────────────────────────────────────────────────
 
-const SESSION_TEMPLATES = [
-  { type: 'EC',  label: 'Essais chronométrés',    tours: 1, order: 0 },
-  { type: 'MQ',  label: 'Manche qualificative 1', tours: 4, order: 1, num: 1 },
-  { type: 'MQ',  label: 'Manche qualificative 2', tours: 4, order: 2, num: 2 },
-  { type: 'MQ',  label: 'Manche qualificative 3', tours: 4, order: 3, num: 3 },
-  { type: 'MQ',  label: 'Manche qualificative 4', tours: 4, order: 4, num: 4 },
-  { type: 'DF',  label: 'Demi-finale 1',          tours: 6, order: 5, num: 1 },
-  { type: 'DF',  label: 'Demi-finale 2',          tours: 6, order: 6, num: 2 },
-  { type: 'FIN', label: 'Finale',                 tours: 7, order: 7 },
-];
+// Les gabarits de sessions vivent dans meetingSessionsSync.js (règlement + nbMQ).
 
 const NB_MQ_OPTIONS = [1, 2, 3, 4];
 
@@ -103,20 +95,32 @@ async function saveMeeting(data) {
 
   try {
     if (editingId) {
-      // Mise à jour uniquement les champs du meeting
-      // (les sessions ne sont pas régénérées à l'édition,
-      //  sauf si nbMQ change — géré séparément)
       const ref = doc(db, 'meetings', editingId);
       const existing = allMeetings.find(m => m.id === editingId);
+
+      // Les sessions du meeting doivent suivre le formulaire : une MQ en
+      // moins disparaît de l'onglet Sessions, une catégorie ajoutée reçoit
+      // ses sessions. Demande confirmation si des données seraient perdues ;
+      // un refus annule TOUTE la modification (rien n'est écrit).
+      const sync = await syncMeetingSessions(editingId, { ...existing, ...data });
+      if (sync === null) return null;
+
       await updateDoc(ref, {
         date:       data.date,
         location:   data.location,
         year:       data.year,
         categories: data.categories,
         nbMQ:       data.nbMQ,
+        poleSide:   data.poleSide,
       });
-      logAudit('update', 'meeting', editingId, { label: `${data.location} ${data.date}` });
-      toast('Meeting modifié ✓', 'success');
+      logAudit('update', 'meeting', editingId, {
+        label: `${data.location} ${data.date}`,
+        sessionsCreated: sync.created, sessionsDeleted: sync.deleted,
+      });
+      const detail = [];
+      if (sync.created) detail.push(`${sync.created} session${sync.created > 1 ? 's' : ''} créée${sync.created > 1 ? 's' : ''}`);
+      if (sync.deleted) detail.push(`${sync.deleted} supprimée${sync.deleted > 1 ? 's' : ''}`);
+      toast(`Meeting modifié ✓${detail.length ? ' — ' + detail.join(', ') : ''}`, 'success');
       return editingId;
 
     } else {
@@ -161,59 +165,91 @@ async function generateSessions(meetingId, meetingData) {
   const batch = writeBatch(db);
   const sessionsCol = collection(db, 'sessions');
 
-  // Construire les templates dynamiquement selon le reglement
-  const templates = [];
-  let order = 0;
-
-  // EC
-  if (sc.EC?.enabled !== false) {
-    templates.push({ type: 'EC', label: 'Essais chronom\u00e9tr\u00e9s', tours: sc.EC?.laps || 1, order: order++, num: null });
-  }
-
-  // MQ
-  const nbMQ = meetingData.nbMQ || sc.MQ?.count || 4;
-  for (let i = 1; i <= nbMQ; i++) {
-    templates.push({ type: 'MQ', label: 'Manche qualificative ' + i, tours: sc.MQ?.laps || 4, order: order++, num: i });
-  }
-
-  // QF
-  if (sc.QF?.enabled) {
-    const nbQF = sc.QF?.count || 4;
-    for (let i = 1; i <= nbQF; i++) {
-      templates.push({ type: 'QF', label: 'Quart de finale ' + i, tours: sc.QF?.laps || 4, order: order++, num: i });
-    }
-  }
-
-  // DF
-  const nbDF = sc.DF?.count || 2;
-  for (let i = 1; i <= nbDF; i++) {
-    templates.push({ type: 'DF', label: 'Demi-finale ' + i, tours: sc.DF?.laps || 6, order: order++, num: i });
-  }
-
-  // FIN
-  templates.push({ type: 'FIN', label: 'Finale', tours: sc.FIN?.laps || 7, order: order++, num: null });
+  // Gabarits selon le règlement (EC / MQ / QF / DF / FIN) — partagés avec
+  // la synchronisation à l'édition, pour que les deux chemins produisent
+  // exactement les mêmes sessions.
+  const templates = buildSessionTemplates(sc, meetingData.nbMQ);
 
   // Creer une session par template x categorie
   meetingData.categories.forEach(category => {
     templates.forEach(tpl => {
-      const ref = doc(sessionsCol);
-      batch.set(ref, {
-        meetingId,
-        championshipId: meetingData.championshipId || null,
-        category,
-        type:      tpl.type,
-        label:     tpl.label,
-        tours:     tpl.tours,
-        order:     tpl.order,
-        num:       tpl.num,
-        year:      meetingData.year,
-        status:    'pending',
-        createdAt: new Date(),
-      });
+      batch.set(doc(sessionsCol), newSessionDoc(meetingId, meetingData, category, tpl));
     });
   });
 
   await batch.commit();
+}
+
+function newSessionDoc(meetingId, meetingData, category, tpl) {
+  return {
+    meetingId,
+    championshipId: meetingData.championshipId || null,
+    category,
+    type:      tpl.type,
+    label:     tpl.label,
+    tours:     tpl.tours,
+    order:     tpl.order,
+    num:       tpl.num,
+    year:      meetingData.year,
+    status:    'pending',
+    createdAt: new Date(),
+  };
+}
+
+/**
+ * Aligne les sessions Firestore d'un meeting sur son formulaire (nombre de
+ * MQ, catégories). Voir planSessionSync() pour les règles.
+ *
+ * @returns {Promise<{ created: number, deleted: number }|null>}
+ *          null si l'utilisateur a refusé une suppression avec données
+ */
+async function syncMeetingSessions(meetingId, meetingData) {
+  const { collection, query, where, getDocs, writeBatch, doc } = await import(
+    'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
+  );
+
+  const snap = await getDocs(query(collection(db, 'sessions'), where('meetingId', '==', meetingId)));
+  const existing = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+  const sc   = getActiveChampionship()?.sessionConfig || {};
+  const plan = planSessionSync({
+    existing,
+    templates:  buildSessionTemplates(sc, meetingData.nbMQ),
+    categories: meetingData.categories || [],
+  });
+
+  // Données portées par les sessions à supprimer → confirmation explicite
+  const orphans = [];   // refs participants + résultats à effacer avec la session
+  if (plan.toDelete.length) {
+    const rows = [];
+    for (const s of plan.toDelete) {
+      const [parts, res] = await Promise.all([
+        getDocs(query(collection(db, 'sessionParticipants'), where('sessionId', '==', s.id))),
+        getDocs(query(collection(db, 'results'),             where('sessionId', '==', s.id))),
+      ]);
+      parts.docs.forEach(d => orphans.push(d.ref));
+      res.docs.forEach(d => orphans.push(d.ref));
+      rows.push({ label: s.label || `${s.type}${s.num ?? ''}`, category: s.category, participants: parts.size, results: res.size });
+    }
+    const warning = describeSessionDataLoss(rows);
+    if (warning && !window.confirm(warning)) return null;
+  }
+
+  if (!plan.toCreate.length && !plan.toDelete.length && !plan.toReorder.length) {
+    return { created: 0, deleted: 0 };
+  }
+
+  // Un batch Firestore accepte 500 écritures ; un meeting en est très loin.
+  const batch = writeBatch(db);
+  plan.toDelete.forEach(s => batch.delete(doc(db, 'sessions', s.id)));
+  orphans.forEach(ref => batch.delete(ref));
+  plan.toReorder.forEach(({ id, order }) => batch.update(doc(db, 'sessions', id), { order }));
+  plan.toCreate.forEach(({ category, tpl }) => {
+    batch.set(doc(collection(db, 'sessions')), newSessionDoc(meetingId, meetingData, category, tpl));
+  });
+  await batch.commit();
+
+  return { created: plan.toCreate.length, deleted: plan.toDelete.length };
 }
 
 async function deleteMeeting(id) {
@@ -415,9 +451,8 @@ function renderTable() {
   const activeChampId = getActiveChampionshipId();
   tbody.innerHTML = allMeetings.map(m => {
     const cats = (m.categories || []).map(c => categoryBadgeSmall(c)).join(' ');
-    const nbSessions = SESSION_TEMPLATES.filter(t =>
-      t.type !== 'MQ' || (t.num <= (m.nbMQ || 4))
-    ).length * (m.categories || []).length;
+    const nbSessions = buildSessionTemplates(getActiveChampionship()?.sessionConfig, m.nbMQ).length
+                     * (m.categories || []).length;
     const isLinked = m.championshipId && m.championshipId === activeChampId;
     const linkBadge = isLinked
       ? '<span title="Lie au championnat actif" style="color:var(--clr-success);font-size:0.75rem">🔗</span>'
@@ -697,6 +732,10 @@ function openEdit(id) {
   });
 
   setNbMQ(m.nbMQ || 4);
+
+  // Côté pole position enregistré (sinon le bouton garde l'état précédent)
+  const side = m.poleSide || 'droite';
+  document.querySelectorAll('.mtg-pole-btn').forEach(b => b.classList.toggle('is-active', b.dataset.side === side));
 
   // Masquer le preview en édition (les sessions existent déjà)
   const preview = document.getElementById('mtg-sessions-preview');

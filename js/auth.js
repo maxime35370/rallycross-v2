@@ -15,6 +15,7 @@ let currentUser = null;
 const PROTECTED_VIEWS = [
   'persons', 'drivers', 'meetings', 'engagements', 'sessions', 'timing',
   'audit', 'config', 'settings',
+  'access',   // écran d'attribution des licences — régie uniquement
 ];
 
 // ⚠️ DOIT correspondre à l'allowlist des RÈGLES FIRESTORE (fonction isRegie()).
@@ -45,6 +46,23 @@ export function isProtectedView(viewId) {
   return PROTECTED_VIEWS.includes(viewId);
 }
 
+/** Compte réel — connecté ET non anonyme. L'auth anonyme des pronostics
+ *  ne doit jamais être confondue avec un compte team. */
+export function isRealUser() {
+  return !!currentUser && !currentUser.isAnonymous;
+}
+
+/** Compte réel dont l'adresse est vérifiée. C'est la condition que les
+ *  règles Firestore exigent pour CONSOMMER une licence : sans elle, la
+ *  lecture de `licenses` est refusée côté serveur. L'interface s'aligne
+ *  pour pouvoir l'expliquer au lieu d'afficher une erreur brute. */
+export function isVerifiedUser() {
+  return isRealUser() && currentUser.emailVerified === true;
+}
+
+/** 'login' | 'signup' — le formulaire du menu bascule entre les deux. */
+let _authMode = 'login';
+
 /**
  * Verifie que l'utilisateur est connecte avant une action d'ecriture.
  * Affiche un toast d'erreur si non connecte.
@@ -64,68 +82,236 @@ function renderAuthUI() {
   const container = document.getElementById('menu-auth');
   if (!container) return;
 
+  // ── Connecté ────────────────────────────────────────────
   if (currentUser && !currentUser.isAnonymous) {
+    // L'adresse non vérifiée n'est pas une erreur : c'est une étape. On le
+    // dit ici, une fois, plutôt que de laisser Stratégie Live afficher un
+    // refus dont l'utilisateur ne comprendrait pas la cause.
+    const nonVerifie = currentUser.emailVerified !== true;
     container.innerHTML = `
       <div class="auth-logged">
         <span class="auth-user-icon">👤</span>
-        <span class="auth-user-email">${currentUser.email}</span>
-        <button class="btn btn-sm btn-danger" id="auth-logout-btn">Deconnexion</button>
+        <span class="auth-user-email">${escapeAttr(currentUser.email || '')}</span>
+        <button class="btn btn-sm btn-danger" id="auth-logout-btn">Déconnexion</button>
       </div>
+      ${nonVerifie ? `
+        <div class="auth-notice">
+          <span>✉️ Adresse non vérifiée — l'accès Stratégie Live la demande.</span>
+          <button class="btn btn-sm btn-secondary" id="auth-verify-btn">Renvoyer l'e-mail</button>
+          <button class="btn btn-sm btn-primary" id="auth-refresh-btn">J'ai vérifié</button>
+        </div>` : ''}
+      <div class="auth-error" id="auth-error"></div>
     `;
-    document.getElementById('auth-logout-btn')
-      ?.addEventListener('click', logout);
-  } else {
-    container.innerHTML = `
-      <div class="auth-login-form">
-        <input class="form-input form-input-sm" type="email"    id="auth-email" placeholder="Email" autocomplete="email">
-        <input class="form-input form-input-sm" type="password" id="auth-pass"  placeholder="Mot de passe" autocomplete="current-password">
-        <button class="btn btn-sm btn-primary" id="auth-login-btn">Connexion</button>
-        <div class="auth-error" id="auth-error"></div>
-      </div>
-    `;
-    document.getElementById('auth-login-btn')
-      ?.addEventListener('click', onLoginClick);
-
-    // Enter key to login
-    document.getElementById('auth-pass')
-      ?.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') onLoginClick();
-      });
+    document.getElementById('auth-logout-btn')?.addEventListener('click', logout);
+    document.getElementById('auth-verify-btn')?.addEventListener('click', onSendVerification);
+    document.getElementById('auth-refresh-btn')?.addEventListener('click', onRefreshClaims);
+    return;
   }
+
+  // ── Anonyme ou déconnecté ───────────────────────────────
+  const signup = _authMode === 'signup';
+  container.innerHTML = `
+    <div class="auth-login-form">
+      <div class="auth-form-title">${signup ? 'Créer un compte' : 'Connexion team'}</div>
+      <input class="form-input form-input-sm" type="email" id="auth-email"
+             placeholder="Adresse e-mail" autocomplete="email">
+      <input class="form-input form-input-sm" type="password" id="auth-pass"
+             placeholder="Mot de passe" autocomplete="${signup ? 'new-password' : 'current-password'}">
+      <button class="btn btn-sm btn-primary" id="auth-submit-btn">
+        ${signup ? 'Créer mon compte' : 'Connexion'}
+      </button>
+      <div class="auth-links">
+        <button class="btn-link" id="auth-toggle-btn">
+          ${signup ? "J'ai déjà un compte" : 'Créer un compte'}
+        </button>
+        ${signup ? '' : '<button class="btn-link" id="auth-reset-btn">Mot de passe oublié</button>'}
+      </div>
+      <div class="auth-error" id="auth-error"></div>
+    </div>
+  `;
+
+  document.getElementById('auth-submit-btn')
+    ?.addEventListener('click', () => (signup ? onSignupClick() : onLoginClick()));
+  document.getElementById('auth-toggle-btn')?.addEventListener('click', () => {
+    _authMode = signup ? 'login' : 'signup';
+    renderAuthUI();
+  });
+  document.getElementById('auth-reset-btn')?.addEventListener('click', onResetClick);
+  document.getElementById('auth-pass')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') (signup ? onSignupClick() : onLoginClick());
+  });
+}
+
+/** Échappement minimal pour une insertion en texte — l'adresse vient du
+ *  fournisseur d'identité, mais elle traverse une interpolation HTML. */
+function escapeAttr(s) {
+  return String(s).replace(/[&<>"']/g,
+    c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function setAuthError(msg, kind = 'error') {
+  const el = document.getElementById('auth-error');
+  if (!el) return;
+  el.textContent = msg || '';
+  el.className = 'auth-error' + (kind === 'ok' ? ' auth-error--ok' : '');
 }
 
 // ─────────────────────────────────────────────────────────
 // LOGIN / LOGOUT
 // ─────────────────────────────────────────────────────────
 
+const AUTH_SDK = 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
+
+const AUTH_MESSAGES = {
+  'auth/user-not-found':          'Utilisateur introuvable.',
+  'auth/wrong-password':          'Mot de passe incorrect.',
+  'auth/invalid-email':           'Adresse e-mail invalide.',
+  'auth/too-many-requests':       'Trop de tentatives. Réessayez plus tard.',
+  'auth/invalid-credential':      'Identifiants invalides.',
+  'auth/email-already-in-use':    'Un compte existe déjà avec cette adresse.',
+  'auth/weak-password':           'Mot de passe trop court (6 caractères minimum).',
+  'auth/missing-email':           'Adresse e-mail requise.',
+  'auth/operation-not-allowed':   "La création de compte n'est pas activée sur ce projet Firebase.",
+};
+
+function lire() {
+  return {
+    email: document.getElementById('auth-email')?.value?.trim() || '',
+    pass:  document.getElementById('auth-pass')?.value || '',
+  };
+}
+
 async function onLoginClick() {
-  const email = document.getElementById('auth-email')?.value?.trim();
-  const pass  = document.getElementById('auth-pass')?.value;
-  const errEl = document.getElementById('auth-error');
-
-  if (!email || !pass) {
-    if (errEl) errEl.textContent = 'Email et mot de passe requis.';
-    return;
-  }
-
+  const { email, pass } = lire();
+  if (!email || !pass) { setAuthError('Adresse et mot de passe requis.'); return; }
   try {
-    if (errEl) errEl.textContent = '';
-    const { signInWithEmailAndPassword } = await import(
-      'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js'
-    );
+    setAuthError('');
+    const { signInWithEmailAndPassword } = await import(AUTH_SDK);
     await signInWithEmailAndPassword(auth, email, pass);
-    // onAuthStateChanged will handle the rest
+    // onAuthStateChanged prend le relais.
   } catch (err) {
     console.error('Login error:', err);
-    const messages = {
-      'auth/user-not-found':      'Utilisateur introuvable.',
-      'auth/wrong-password':      'Mot de passe incorrect.',
-      'auth/invalid-email':       'Email invalide.',
-      'auth/too-many-requests':   'Trop de tentatives. Reessayez plus tard.',
-      'auth/invalid-credential':  'Identifiants invalides.',
-    };
-    const msg = messages[err.code] || 'Erreur de connexion.';
-    if (errEl) errEl.textContent = msg;
+    setAuthError(AUTH_MESSAGES[err.code] || 'Erreur de connexion.');
+  }
+}
+
+/**
+ * Création de compte.
+ *
+ * L'e-mail de vérification part immédiatement : les règles Firestore
+ * exigent une adresse vérifiée pour lire une licence, donc un compte non
+ * vérifié ne verrait jamais son accès. Autant le demander tout de suite
+ * plutôt qu'au moment où l'utilisateur cherche à s'en servir.
+ *
+ * Le document `users/{uid}` est créé dans la foulée, avec l'adresse du
+ * jeton — c'est ce qui permet à l'administrateur de retrouver le compte
+ * pour le rattacher à un team. Sans lui, un client tout juste inscrit
+ * serait invisible.
+ */
+async function onSignupClick() {
+  const { email, pass } = lire();
+  if (!email || !pass) { setAuthError('Adresse et mot de passe requis.'); return; }
+  try {
+    setAuthError('');
+    const { createUserWithEmailAndPassword, sendEmailVerification } = await import(AUTH_SDK);
+    const cred = await createUserWithEmailAndPassword(auth, email, pass);
+    try { await sendEmailVerification(cred.user); } catch (e) { console.warn('Verification mail:', e); }
+    await ensureUserDoc(cred.user);
+    _authMode = 'login';
+    toast('Compte créé. Vérifiez votre boîte e-mail.', 'success', 6000);
+  } catch (err) {
+    console.error('Signup error:', err);
+    setAuthError(AUTH_MESSAGES[err.code] || 'Erreur à la création du compte.');
+  }
+}
+
+async function onResetClick() {
+  const { email } = lire();
+  if (!email) { setAuthError('Saisissez votre adresse, puis relancez.'); return; }
+  try {
+    const { sendPasswordResetEmail } = await import(AUTH_SDK);
+    await sendPasswordResetEmail(auth, email);
+    setAuthError('E-mail de réinitialisation envoyé.', 'ok');
+  } catch (err) {
+    console.error('Reset error:', err);
+    setAuthError(AUTH_MESSAGES[err.code] || "Erreur d'envoi.");
+  }
+}
+
+/**
+ * Reprend en compte une adresse qui vient d'être vérifiée.
+ *
+ * ── Le piège, et il est certain sans ce bouton ─────────────────────────
+ * Les règles Firestore lisent `request.auth.token.email_verified`, une
+ * valeur figée dans le JETON. Cliquer le lien reçu par e-mail met à jour le
+ * COMPTE, pas le jeton déjà en main : l'onglet ouvert continue de présenter
+ * `email_verified: false` jusqu'au renouvellement automatique, soit une
+ * heure. Pendant ce temps, l'utilisateur a fait ce qu'on lui demandait et
+ * l'accès reste fermé — la pire des situations.
+ *
+ * `reload()` relit le compte, `getIdToken(true)` force un jeton neuf, et
+ * l'application se réaligne aussitôt.
+ */
+async function onRefreshClaims() {
+  if (!currentUser) return;
+  try {
+    await currentUser.reload();
+    await currentUser.getIdToken(true);
+    renderAuthUI();
+    applyAdminVisibility();
+    if (currentUser.emailVerified) {
+      toast('Adresse vérifiée ✓', 'success');
+      // Les droits se relisent avec le nouveau jeton : sans cela, la
+      // souscription précédente reste sur un refus des règles.
+      import('./access/licenses.js')
+        .then(m => m.subscribeMyAccess(currentUser))
+        .catch(e => console.error('Accès commercial :', e));
+      document.dispatchEvent(new CustomEvent('authchange', { detail: { user: currentUser } }));
+    } else {
+      setAuthError("Adresse toujours pas vérifiée. Ouvrez le lien reçu par e-mail, puis réessayez.");
+    }
+  } catch (err) {
+    console.error('Refresh error:', err);
+    setAuthError('Impossible de rafraîchir la session.');
+  }
+}
+
+async function onSendVerification() {
+  if (!currentUser) return;
+  try {
+    const { sendEmailVerification } = await import(AUTH_SDK);
+    await sendEmailVerification(currentUser);
+    setAuthError('E-mail de vérification renvoyé.', 'ok');
+  } catch (err) {
+    console.error('Verification error:', err);
+    setAuthError(AUTH_MESSAGES[err.code] || "Erreur d'envoi.");
+  }
+}
+
+/**
+ * Crée `users/{uid}` s'il n'existe pas.
+ *
+ * Volontairement silencieux en cas d'échec : ce document sert au confort
+ * de l'administrateur, pas à l'authentification. Un échec ne doit pas
+ * empêcher quelqu'un de se connecter.
+ */
+async function ensureUserDoc(user) {
+  if (!user || user.isAnonymous) return;
+  try {
+    const { db } = await import('./firebase.js');
+    if (!db) return;
+    const { doc, getDoc, setDoc, serverTimestamp } = await import(
+      'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
+    );
+    const ref = doc(db, 'users', user.uid);
+    if ((await getDoc(ref)).exists()) return;
+    await setDoc(ref, {
+      email: user.email || '',
+      displayName: user.displayName || '',
+      createdAt: serverTimestamp(),
+    });
+  } catch (e) {
+    console.warn('users/{uid} non créé :', e?.code || e?.message);
   }
 }
 
@@ -180,13 +366,13 @@ function applyAdminVisibility() {
   document.body.classList.toggle('is-admin', isAdmin());
 }
 
-/** Le formulaire de connexion est masqué au public. Il n'apparaît que si l'URL
- *  contient `?login` (URL « secrète » à garder pour l'admin) — évite d'inviter
- *  n'importe qui à tenter de se connecter. Une fois connecté, l'UI « Déconnexion »
- *  s'affiche normalement (sans le paramètre). */
+/** Le formulaire de connexion était masqué derrière `?login`, pour ne pas
+ *  inviter le public à se connecter à un outil qui n'était qu'administratif.
+ *  Il devient visible : un team qui achète un accès doit pouvoir se connecter
+ *  sans URL secrète. Les vues d'édition restent masquées par `.is-admin`, et
+ *  la protection réelle reste dans les règles Firestore. */
 function applyLoginVisibility() {
-  const show = /[?&]login(=|&|$)/.test(window.location.search);
-  document.body.classList.toggle('show-login', show);
+  document.body.classList.add('show-login');
 }
 
 // ─────────────────────────────────────────────────────────
@@ -225,6 +411,19 @@ export async function initAuth() {
       if (isAdmin()) {
         toast(`Connecté : ${user.email}`, 'success');
       }
+
+      // Droits commerciaux : abonnement en temps réel, pour qu'une
+      // révocation prenne effet sans que le team ait à recharger.
+      // Import dynamique volontaire : licenses.js lit getUser() et
+      // isAdmin() d'ici, un import statique croiserait les deux modules.
+      import('./access/licenses.js')
+        .then(m => m.subscribeMyAccess(user))
+        .catch(e => console.error('Accès commercial :', e));
+
+      // Le document `users/{uid}` peut manquer pour un compte créé avant
+      // cette version, ou si sa création avait échoué. On rattrape ici :
+      // sans lui, l'administrateur ne verrait pas le compte à rattacher.
+      if (user && !user.isAnonymous) ensureUserDoc(user);
 
       document.dispatchEvent(
         new CustomEvent('authchange', { detail: { user } })

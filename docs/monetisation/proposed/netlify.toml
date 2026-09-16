@@ -1,0 +1,52 @@
+# ═══════════════════════════════════════════════════════════
+#  FICHIER PRÉPARÉ — NON ACTIF
+#
+#  Rangé dans docs/monetisation/proposed/ et NON à la racine : tant qu'il
+#  n'est pas déplacé, Netlify l'ignore totalement.
+#
+#  Pour l'activer :
+#      git mv docs/monetisation/proposed/netlify.toml netlify.toml
+#
+#  ⚠️ AVANT : relever « Publish directory » dans l'interface Netlify et le
+#     reporter dans `publish` ci-dessous. Un netlify.toml PREND LE PAS sur
+#     les réglages de l'interface.
+# ═══════════════════════════════════════════════════════════
+
+[build]
+  # Exécuté dans le conteneur de build JETABLE de Netlify. Le dépôt et la
+  # machine locale ne sont pas touchés — seule la copie de build l'est.
+  #
+  # ── Vérifié le 2026-08-21, avant activation ────────────────────────────
+  #   • sw.js : 71 chemins déclarés dans ASSET_PATHS, AUCUN sous docs/,
+  #     tests/, tools/ ni overlay/demo/*.png ;
+  #   • aucun fichier servi (index.html, js/, css/, overlay/*.html,
+  #     overlay/_lib/, manifest.json) ne référence ces répertoires ;
+  #   • les 20 PNG de overlay/demo/ ne sont référencés par AUCUN fichier —
+  #     ce sont des captures d'archive, pas des ressources ;
+  #   • overlay/index.html pointe vers demo/showcase.html par six liens :
+  #     c'est pourquoi on exclut `overlay/demo/*.png` et NON `overlay/demo`.
+  #     Les huit fichiers .html/.mjs/.cjs du dossier restent servis ;
+  #   • OBS : live.html, control.html et _lib/ sont hors périmètre
+  #     d'exclusion, les sources navigateur ne bougent pas.
+  #
+  # Gain : ~6,6 Mo de déploiement en moins, et la méthode n'est plus servie
+  # à côté du produit.
+  #
+  # `-f` garantit qu'un chemin déjà absent ne fait pas échouer le déploiement.
+  command = "rm -rf docs tests tools overlay/demo/*.png"
+
+  publish = "."
+
+# ── À CONSIDÉRER, mais non inclus sans ton accord ──────────────────────────
+#
+# Ces fichiers restent publiés avec la commande ci-dessus. Aucun n'est un
+# secret — la clé API Firebase est publique par nature et les règles sont
+# de toute façon appliquées côté serveur. Mais publier ses règles de
+# sécurité à côté d'un produit payant, c'est offrir la carte à qui cherche
+# une faille, et le reste n'a simplement rien à faire sur un site.
+#
+#     command = "rm -rf docs tests tools overlay/demo/*.png \
+#                firestore.rules firebase.json .firebaserc \
+#                package.json package-lock.json vitest.config.js vitest.rules.config.js"
+#
+# Vérifié : aucun de ces fichiers n'est lu par l'application à l'exécution.

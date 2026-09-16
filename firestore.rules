@@ -5,9 +5,61 @@ service cloud.firestore {
     function hasFields(data, fields) { return data.keys().hasAll(fields); }
     function validString(val, maxLen) { return val is string && val.size() > 0 && val.size() <= maxLen; }
     function inRange(val, min, max) { return val is int && val >= min && val <= max; }
+    // ATTENTION AUX PROPRIETES ABSENTES : en langage de regles, lire une
+    // cle qui n'existe pas ne rend pas null, cela leve une ERREUR
+    // D'EVALUATION — et une erreur dans un membre de `||` interrompt toute
+    // l'expression au lieu de passer au membre suivant.
+    //
+    // Or une session ANONYME (votes de pronostics) n'a AUCUN claim `email`.
+    // Ecrit `request.auth.token.email`, isRegie() levait donc une erreur
+    // pour tout spectateur ayant vote. Le refus etait juste, mais accidentel
+    // — et il masquait le vrai motif dans les journaux de l'emulateur.
+    // `get(cle, defaut)` rend un refus DECIDE.
     function isRegie() {
       return request.auth != null
-          && request.auth.token.email in ['maxime.theard@gmail.com'];
+          && request.auth.token.get('email', '') in ['maxime.theard@gmail.com'];
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    //  IDENTITE — ACCES COMMERCIAL « STRATEGIE LIVE »
+    //
+    //  PIEGE PROPRE A CE PROJET : l'authentification ANONYME est deja en
+    //  service pour les votes de pronostics (voir match /pronostics plus
+    //  bas). Tout spectateur ayant vote une fois possede donc une session
+    //  authentifiee. `request.auth != null` ne signifie RIEN ici, et
+    //  l'utiliser comme condition d'acces ouvrirait le produit payant a
+    //  n'importe quel spectateur.
+    //
+    //  Toute regle commerciale part donc de isSignedIn(), jamais de
+    //  request.auth != null.
+    // ═══════════════════════════════════════════════════════════════
+
+    // Compte reel : connecte ET non anonyme.
+    function isSignedIn() {
+      return request.auth != null
+          && request.auth.token.get('firebase', {}).get('sign_in_provider', '') != 'anonymous';
+    }
+
+    // Compte reel dont l'adresse a ete verifiee. Exige pour CONSOMMER une
+    // licence, jamais pour creer son compte : sinon un compte tout juste
+    // cree serait invisible pour l'administrateur, qui ne pourrait pas le
+    // rattacher a un team.
+    function isVerified() {
+      return isSignedIn() && request.auth.token.get('email_verified', false) == true;
+    }
+
+    // L'appartenance a un team est portee par un document a identifiant
+    // deterministe : personne ne peut la deduire ni la contourner.
+    // exists() est une lecture privilegiee : elle ne re-evalue pas les
+    // regles de /teamMembers, donc aucune recursion.
+    function isTeamMember(teamId) {
+      return isVerified()
+          && exists(/databases/$(database)/documents/teamMembers/$(teamId + '_' + request.auth.uid));
+    }
+
+    // Chaine non vide, bornee.
+    function nonEmpty(val, maxLen) {
+      return val is string && val.size() > 0 && val.size() <= maxLen;
     }
 
     match /drivers/{docId} {
@@ -19,11 +71,18 @@ service cloud.firestore {
         validString(request.resource.data.lastName, 50) &&
         request.resource.data.carNumber is int && request.resource.data.carNumber >= 1 &&
         validString(request.resource.data.category, 50) &&
-        inRange(request.resource.data.year, 2020, 2030);
+        inRange(request.resource.data.year, 2020, 2030) &&
+        nonEmpty(request.resource.data.get('personId', ''), 200);
       allow update: if isRegie() &&
         validString(request.resource.data.firstName, 50) &&
         validString(request.resource.data.lastName, 50) &&
-        request.resource.data.carNumber is int && request.resource.data.carNumber >= 1;
+        request.resource.data.carNumber is int && request.resource.data.carNumber >= 1 &&
+        // Le rattachement a une fiche pilote conditionne desormais un DROIT
+        // COMMERCIAL : une inscription sans personId echapperait a toute
+        // verification de licence. Les 284 inscriptions en base en ont deja
+        // une, et js/drivers.js en calcule toujours une (findOrCreatePerson),
+        // donc cette contrainte ne bloque aucun parcours existant.
+        nonEmpty(request.resource.data.get('personId', ''), 200);
     }
 
     match /meetings/{docId} {
@@ -120,10 +179,24 @@ service cloud.firestore {
       allow create: if isRegie() &&
         hasFields(request.resource.data, ['firstName','lastName']) &&
         validString(request.resource.data.firstName, 50) &&
-        validString(request.resource.data.lastName, 50);
+        validString(request.resource.data.lastName, 50) &&
+        validReviewFlag();
       allow update: if isRegie() &&
         validString(request.resource.data.firstName, 50) &&
-        validString(request.resource.data.lastName, 50);
+        validString(request.resource.data.lastName, 50) &&
+        validReviewFlag();
+    }
+
+    // Marquage d'une fiche a verifier — JAMAIS une fusion automatique.
+    // L'audit du 2026-08-21 a releve un doublon exact (probable jeu d'essai)
+    // et un quasi-doublon serieux, mais aussi un FAUX positif : deux prenoms
+    // differents pour un meme patronyme. Un rapprochement automatique se
+    // tromperait ; seul un humain tranche. La regle se contente donc de
+    // borner les valeurs admises.
+    function validReviewFlag() {
+      return !('reviewFlag' in request.resource.data)
+          || request.resource.data.reviewFlag == null
+          || request.resource.data.reviewFlag in ['duplicate_candidate', 'test_record'];
     }
 
     match /auditLog/{docId} {
@@ -213,6 +286,207 @@ service cloud.firestore {
     match /circuits/{docId} {
       allow read:  if true;
       allow write: if isRegie();
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    //  ACCES COMMERCIAL « STRATEGIE LIVE » — PLAN A0
+    //
+    //  Ce que ces regles protegent REELLEMENT :
+    //    • personne ne peut se fabriquer, modifier ou prolonger une licence ;
+    //    • personne ne peut s'ajouter a un team ;
+    //    • personne ne peut lire les licences ou les membres d'un autre team ;
+    //    • personne ne peut se declarer sous l'adresse d'un autre ;
+    //    • une session anonyme (pronostics) n'obtient jamais rien ;
+    //    • un compte non verifie n'obtient jamais rien.
+    //
+    //  Ce qu'elles NE protegent PAS, et il faut le savoir : le moteur de
+    //  calcul est toujours servi au navigateur. Le filtrage du selecteur de
+    //  pilote est un confort d'interface, pas une barriere. Voir
+    //  docs/monetisation/PLAN-A0-ET-POC-VIDEO.md §1.6.
+    //
+    //  Doctrine : DENY BY DEFAULT. Un champ absent, un statut inconnu, une
+    //  portee inconnue refusent. Une valeur inattendue en base ne doit
+    //  jamais se traduire par un acces accorde.
+    // ═══════════════════════════════════════════════════════════════
+
+    // ── COMPTES ────────────────────────────────────────────────────
+    // Cree par l'utilisateur lui-meme a sa premiere connexion, pour que
+    // l'administrateur puisse ensuite le retrouver et le rattacher a un
+    // team. C'est pourquoi la creation n'exige PAS l'e-mail verifie.
+    match /users/{uid} {
+      allow read: if isRegie()
+                  || (isSignedIn() && request.auth.uid == uid);
+
+      // L'adresse doit etre celle du jeton : sinon on se declare sous
+      // l'adresse d'un autre et l'ecran d'administration devient mensonger.
+      allow create: if isSignedIn()
+        && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['email','displayName','createdAt'])
+        && hasFields(request.resource.data, ['email','createdAt'])
+        && request.resource.data.email == request.auth.token.email
+        && (!('displayName' in request.resource.data)
+            || request.resource.data.displayName is string);
+
+      // L'adresse est IMMUABLE apres coup, pour la meme raison.
+      // Comparaisons par get(cle, defaut) et non par acces direct : lors d'un
+      // `set()` sur un document INEXISTANT, le moteur evalue AUSSI la regle
+      // d'update, avec un `resource.data` vide. Un acces direct y leve une
+      // erreur d'evaluation. L'issue reste correcte — c'est la regle de
+      // create qui tranche — mais l'erreur masque le vrai motif dans les
+      // journaux de l'emulateur, ce qui rend le prochain diagnostic penible.
+      // Le sentinel garantit en outre que deux absences ne se comparent
+      // jamais comme egales a une valeur reelle.
+      allow update: if resource != null && (isRegie()
+        || (isSignedIn()
+            && request.auth.uid == uid
+            && request.resource.data.keys().hasOnly(['email','displayName','createdAt'])
+            && request.resource.data.get('email', '#')     == resource.data.get('email', '!')
+            && request.resource.data.get('createdAt', '#') == resource.data.get('createdAt', '!')));
+
+      allow delete: if isRegie();
+    }
+
+    // ── TEAMS ──────────────────────────────────────────────────────
+    // Crees et geres par la regie uniquement. A l'echelle visee (1 a 3
+    // teams), l'auto-inscription n'apporte rien et couterait cher : sans
+    // backend, rattacher un membre depuis le navigateur supposerait de
+    // rendre la collection `users` interrogeable, donc d'exposer la liste
+    // des clients.
+    match /teams/{teamId} {
+      allow read: if isRegie() || isTeamMember(teamId);
+      allow create, update: if isRegie()
+        && nonEmpty(request.resource.data.name, 120)
+        && (!('contactEmail' in request.resource.data)
+            || request.resource.data.contactEmail is string)
+        && (!('note' in request.resource.data)
+            || request.resource.data.note is string);
+      allow delete: if isRegie();
+    }
+
+    // ── MEMBRES D'UN TEAM ──────────────────────────────────────────
+    // ANTI-DOUBLON par identifiant deterministe `${teamId}_${uid}`, meme
+    // convention que sessionParticipants et results : deux ajouts
+    // concurrents visent le meme document au lieu d'en creer deux.
+    //
+    // Un membre voit les membres de SON team (l'interface affiche « vous et
+    // 2 autres »), jamais ceux d'un autre.
+    match /teamMembers/{docId} {
+      // ── get ET list SEPARES, et ce n'est pas cosmetique ─────────────
+      //
+      // Pour une REQUETE, Firestore exige que la regle soit prouvable a
+      // partir des CONTRAINTES DE LA REQUETE, pas seulement vraie pour
+      // chaque document rendu. Une regle en `resource.data.teamId` est
+      // verifiable sur une lecture unitaire, mais pas sur une requete
+      // filtree sur `uid` : le moteur n'a alors aucun document a inspecter
+      // et repond « Property teamId is undefined ».
+      //
+      // Or la toute premiere requete de l'application est exactement
+      // celle-la : « quels sont MES teams ? », filtree sur uid. Symptome
+      // observe en navigateur avant correction : aucun team trouve, aucune
+      // licence lue, et un « analyse non incluse » affiche a un client qui
+      // avait bel et bien un acces.
+      //
+      // La regle de `list` porte donc sur `uid`, exactement ce que le client
+      // contraint. Lister les appartenances d'un autre reste refuse.
+      allow get:  if isRegie() || isTeamMember(resource.data.teamId);
+      allow list: if isRegie()
+                  || (isVerified() && resource.data.uid == request.auth.uid);
+
+      allow create, update: if isRegie()
+        && hasFields(request.resource.data, ['teamId','uid','role'])
+        && nonEmpty(request.resource.data.teamId, 200)
+        && nonEmpty(request.resource.data.uid, 200)
+        && request.resource.data.role in ['owner', 'member']
+        && docId == request.resource.data.teamId + '_' + request.resource.data.uid;
+
+      allow delete: if isRegie();
+    }
+
+    // ── LICENCES ───────────────────────────────────────────────────
+    //
+    //  LA REGLE QUI PORTE TOUT LE PLAN A0 : `write` est reserve a la regie,
+    //  sans exception. Elle restera identique quand le paiement arrivera —
+    //  le webhook ecrira via l'Admin SDK, qui ne passe pas par les regles.
+    //
+    //  Lecture : les membres du team detenteur, et eux seuls. Une licence
+    //  suspendue ou expiree reste LISIBLE par son team, pour que
+    //  l'interface puisse dire pourquoi l'acces ne fonctionne plus au lieu
+    //  d'afficher un ecran vide. La verification de validite dans le temps
+    //  vit dans js/access/licenseCalc.js, testee separement.
+    //
+    //  Note sur les requetes : une regle de lecture qui depend de
+    //  `resource.data.teamId` impose au client de contraindre sa requete
+    //  (where teamId in [...]). Une liste non contrainte est refusee, ce
+    //  qui est le comportement voulu.
+    match /licenses/{licenseId} {
+      allow read: if isRegie() || isTeamMember(resource.data.teamId);
+
+      allow create: if isRegie() && validLicense()
+        // A la creation seulement : le couple portee/meetingId doit etre
+        // coherent des le depart. Un pass meeting sans meeting n'aurait
+        // aucune borne ; un pass saison portant un meeting laisserait croire
+        // a une restriction qui n'existe pas.
+        && (request.resource.data.scope != 'meeting'
+            || nonEmpty(meetingIdOf(request.resource.data), 200))
+        && (request.resource.data.scope != 'season'
+            || meetingIdOf(request.resource.data) == null);
+
+      // Le PERIMETRE est immuable : reorienter une licence vers une autre
+      // personne, un autre championnat ou un autre meeting reviendrait a
+      // revendre le meme droit sans trace. Pour changer de perimetre, on
+      // revoque et on recree — l'historique reste lisible.
+      // Restent modifiables : status, validFrom, validUntil, note, et les
+      // champs de revocation.
+      // Comparaisons par get(cle, defaut) : voir la note sur /users. Les
+      // sentinels different volontairement ('#' contre '!') pour que deux
+      // ABSENCES ne se comparent pas comme egales — sans quoi un document
+      // amoncele sans l'un de ces champs deviendrait librement modifiable.
+      allow update: if resource != null && isRegie() && validLicense()
+        && request.resource.data.get('teamId', '#')         == resource.data.get('teamId', '!')
+        && request.resource.data.get('personId', '#')       == resource.data.get('personId', '!')
+        && request.resource.data.get('scope', '#')          == resource.data.get('scope', '!')
+        && request.resource.data.get('championshipId', '#') == resource.data.get('championshipId', '!')
+        && request.resource.data.get('year', -1)            == resource.data.get('year', -2)
+        && meetingIdOf(request.resource.data)               == meetingIdOf(resource.data);
+
+      allow delete: if isRegie();
+    }
+
+    // Lecture SURE de `meetingId`, absent ou null selon la portee.
+    //
+    // Pourquoi une fonction plutot qu'un acces direct : en langage de regles,
+    // lire une propriete absente ne rend pas null, cela leve une ERREUR
+    // D'EVALUATION. La regle refuse alors, mais par accident et non par
+    // decision — et surtout, elle refuserait AUSSI une operation legitime.
+    // Cas concret rencontre pendant l'ecriture de ces regles : une licence
+    // saison creee sans la cle `meetingId` devenait impossible a suspendre,
+    // parce que la comparaison d'immuabilite levait une erreur au lieu de
+    // comparer deux absences. `get(cle, defaut)` traite « absent » et
+    // « null » de la meme facon, ce qui est bien la semantique voulue.
+    function meetingIdOf(data) {
+      return data.get('meetingId', null);
+    }
+
+    // Forme d'une licence. DENY BY DEFAULT : tout ce qui n'est pas
+    // explicitement reconnu est refuse.
+    function validLicense() {
+      return hasFields(request.resource.data,
+               ['teamId','personId','scope','championshipId','year','status','origin'])
+          // hasFields garantit deja la presence, mais on lit par get(cle,
+          // defaut) partout dans ce fichier : une lecture directe est la
+          // seule facon d'y lever une erreur d'evaluation, et une regle qui
+          // leve une erreur est une regle dont on ne sait plus pourquoi elle
+          // refuse. Le defaut choisi echoue toujours la validation qui suit.
+          && nonEmpty(request.resource.data.get('teamId', ''), 200)
+          && nonEmpty(request.resource.data.get('personId', ''), 200)
+          && nonEmpty(request.resource.data.get('championshipId', ''), 200)
+          && request.resource.data.get('scope', '')  in ['meeting', 'season']
+          && request.resource.data.get('status', '') in ['active', 'suspended', 'revoked']
+          && request.resource.data.get('origin', '') in ['admin_grant', 'trial', 'purchase']
+          && inRange(request.resource.data.get('year', -1), 2020, 2030)
+          && (meetingIdOf(request.resource.data) == null
+              || nonEmpty(meetingIdOf(request.resource.data), 200))
+          && (request.resource.data.get('note', '') is string);
     }
 
     match /{document=**} { allow read, write: if false; }
