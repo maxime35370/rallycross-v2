@@ -155,6 +155,7 @@ describe('modules purs — restent testables hors navigateur', () => {
     join('js', 'startAnalysisCalc.js'), join('js', 'startStatsCalc.js'),
     join('js', 'turn1AnalysisCalc.js'),
     join('js', 'videoPlayerCalc.js'),
+    join('js', 'championshipChart.js'), join('js', 'championshipTitle.js'),
     // Module « projection de qualification » : tout le dossier est pur sauf
     // qualificationData.js, seul autorisé à parler à Firestore.
     join('js', 'projection', 'projectionConfig.js'),

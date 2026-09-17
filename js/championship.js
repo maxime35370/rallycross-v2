@@ -15,6 +15,7 @@ import {
   buildWeekendEvolution, buildSeasonEvolution, defaultChartMeetingId, chartGeometry,
   renderWeekendChartSvg, renderWeekendChartTable, PHASE_DEFS,
 } from './championshipChart.js';
+import { buildTitleScenarios, renderTitleScenarios } from './championshipTitle.js';
 
 let _activeRegulation = null;
 
@@ -415,10 +416,12 @@ async function renderChampionship() {
         <span>·</span>
         <span>${allMeetings.length} meeting${allMeetings.length > 1 ? 's' : ''} · ${standings.length} pilote${standings.length > 1 ? 's' : ''}</span>
       </div>
+      <div id="chp-title-box"></div>
       <div id="chp-evo" class="chp-evo"></div>
     `;
 
     _lastStandings = standings;
+    renderTitle();
     renderEvolution();
 
     // Saisie inline des pénalités (régie) : enregistre puis recalcule le classement.
@@ -441,6 +444,26 @@ async function renderChampionship() {
   } catch (err) {
     console.error(err);
     content.innerHTML = `<div class="tim-placeholder"><div class="placeholder-icon">⚠️</div><div class="placeholder-title">Erreur de calcul</div></div>`;
+  }
+}
+
+// ─────────────────────────────────────────────────────────
+// SCÉNARIOS DE TITRE
+// Calcul pur (championshipTitle.js) depuis _lastStandings, le barème actif
+// et les meetings de la saison : aucune requête Firestore supplémentaire.
+// ─────────────────────────────────────────────────────────
+
+function renderTitle() {
+  const box = document.getElementById('chp-title-box');
+  if (!box) return;
+  try {
+    const scenarios = buildTitleScenarios({
+      standings: _lastStandings, meetings: allMeetings, regulation: _activeRegulation,
+    });
+    box.innerHTML = renderTitleScenarios(scenarios);
+  } catch (e) {
+    console.error(e);
+    box.innerHTML = '';
   }
 }
 
