@@ -56,7 +56,7 @@ function standingsWithTotals(totals, playedMeetings = ['m1', 'm2']) {
     // mais la finale du dernier meeting doit avoir marqué (meeting terminé).
     const per = {};
     playedMeetings.forEach((mid, i) => {
-      per[mid] = i === playedMeetings.length - 1 ? { fin: total } : { interim: 0 };
+      per[mid] = i === playedMeetings.length - 1 ? { fin: total } : { fin: 1 };
     });
     const d = driver(id, per);
     d.grandTotal = total;
@@ -166,7 +166,7 @@ describe('idealScenario — les places d\'un meeting se partagent entre prétend
   });
 
   it('quatre prétendants : un seul vainqueur de finale, deux vainqueurs de ½ finale', () => {
-    const sc = idealScenario(0, C, PM, 2);
+    const sc = idealScenario(0, C, PM, 1);
     const pts = Object.fromEntries(sc.rows.map(r => [r.driverId, r.meetingPts]));
     // a : 16 + 10 + 15 ; b : P2 interm. 15, gagne l'autre ½ 10, P2 finale 12 ;
     // c : 14 + 8 (2e de ½) + 9 ; d : 13 + 8 + 7.
@@ -177,7 +177,7 @@ describe('idealScenario — les places d\'un meeting se partagent entre prétend
   });
 
   it('le scénario idéal du 3e : il gagne tout, le leader prend les places suivantes', () => {
-    const sc = idealScenario(2, C, PM, 2);
+    const sc = idealScenario(2, C, PM, 1);
     expect(sc.rows.map(r => r.driverId)).toEqual(['c', 'a', 'b', 'd']);
     // c : 80 + 41 = 121 ; a : 100 + 37 = 137 → toujours 2e après le meeting, à −16.
     expect(sc.next).toEqual({ total: 121, rank: 2, gap: -16, clinched: false });
@@ -190,17 +190,50 @@ describe('idealScenario — les places d\'un meeting se partagent entre prétend
 
   it('le scénario idéal du leader : sacré au prochain meeting s\'il repart avec plus que le reste', () => {
     // a 100 → 141, b 90 → 127 : +14 pour 41 encore en jeu ensuite → pas sacré.
-    expect(idealScenario(0, C, PM, 2).next.clinched).toBe(false);
+    expect(idealScenario(0, C, PM, 1).next.clinched).toBe(false);
     // Dernier meeting : +14 > 0 → sacré, champion.
-    const last = idealScenario(0, C, PM, 1);
+    const last = idealScenario(0, C, PM, 0);
     expect(last.next.clinched).toBe(true);
     expect(last.season.champion).toBe(true);
     expect(last.season.gap).toBe(14);
   });
 
   it('seul prétendant : rang 1 sans écart', () => {
-    const sc = idealScenario(0, [C[0]], PM, 3);
+    const sc = idealScenario(0, [C[0]], PM, 2);
     expect(sc.next).toEqual({ total: 141, rank: 1, gap: null, clinched: true });
+  });
+
+  it('seul le top 4 d\'une ½ finale marque en finale : au-delà de 8 prétendants, pas de place en finale', () => {
+    const many = Array.from({ length: 10 }, (_, i) => ({ driverId: 'd' + i, firstName: 'P', lastName: 'D' + i, points: 100 - i }));
+    const sc = idealScenario(0, many, PM, 0);
+    // 9e pilote (index 8) : 5e de sa ½ finale → non qualifié, finale sans place ni point.
+    expect(sc.rows[8].places.map(pl => pl.pos)).toEqual([9, 5, null]);
+    expect(sc.rows[8].meetingPts).toBe(8 + 4);
+    // 8e pilote (index 7) : 4e de sa ½ → qualifié, 8e de la finale.
+    expect(sc.rows[7].places.map(pl => pl.pos)).toEqual([8, 4, 8]);
+  });
+
+  it('meeting en cours après les ½ finales : un pilote non qualifié n\'a pas de place en finale', () => {
+    const finOnly = PM.phases.filter(ph => ph.key === 'fin');
+    const cs = [
+      { ...C[0], stepKeys: ['fin'] },
+      { ...C[1], stepKeys: [] },        // éliminé en ½ finale
+      { ...C[2], stepKeys: ['fin'] },
+    ];
+    const sc = idealScenario(2, cs, PM, 0, finOnly);
+    expect(sc.rows.map(r => [r.driverId, r.places[0].pos, r.meetingPts])).toEqual([['c', 1, 15], ['a', 2, 12], ['b', null, 0]]);
+  });
+
+  it('meeting en cours : seules les phases restantes se partagent, puis les meetings complets', () => {
+    const dfFin = PM.phases.filter(ph => ph.key !== 'interim');
+    const sc = idealScenario(0, C, PM, 1, dfFin);
+    // a gagne sa ½ (10) et la finale (15) ; b gagne l'autre ½ (10), 2e de finale (12).
+    expect(sc.rows[0].meetingPts).toBe(25);
+    expect(sc.rows[1].meetingPts).toBe(22);
+    expect(sc.next.total).toBe(125);
+    // Puis un meeting complet : a +41, b +37.
+    expect(sc.season.total).toBe(166);
+    expect(sc.season.gap).toBe(166 - (90 + 22 + 37));
   });
 });
 
@@ -213,6 +246,7 @@ describe('splitMeetings — restants, en cours, terminés', () => {
     const r = splitMeetings(standings, MEETINGS);
     expect(r.played.map(m => m.id)).toEqual(['m1']);
     expect(r.inProgress.map(m => m.id)).toEqual(['m2']);
+    expect(r.inProgress[0].scoredPhases).toEqual(['interim']);
     expect(r.remaining.map(m => m.id)).toEqual(['m3', 'm4']);
   });
 });
@@ -326,7 +360,111 @@ describe('buildTitleScenarios — seuils exacts (FFSA, 41 pts par meeting)', () 
     const s = buildTitleScenarios({ standings, meetings: MEETINGS, regulation: FFSA });
     expect(s.inProgress.map(m => m.id)).toEqual(['m2']);
     expect(s.remaining.map(m => m.id)).toEqual(['m3', 'm4']);
-    expect(s.pointsLeft).toBe(82);
+    // 2 meetings complets (82) + ½ finale et finale du meeting en cours (25).
+    expect(s.pointsLeft).toBe(107);
+    expect(s.current.id).toBe('m2');
+    expect(s.currentPhases.map(ph => ph.key)).toEqual(['df', 'fin']);
+    expect(s.currentLeft).toBe(25);
+    // Le prochain pas est la fin de ce meeting, pas m3.
+    expect(s.next.inProgress).toBe(true);
+    expect(s.next.meeting.id).toBe('m2');
+    expect(s.next.stake).toBe(25);
+    expect(s.next.leftAfter).toBe(82);
+    expect(s.drivers[0].ideal.next.total).toBe(41 + 16 + 25);
+  });
+
+  it('après les manches et l\'intermédiaire du dernier meeting, un champion peut déjà être déclaré', () => {
+    // Deux meetings au calendrier, le second en cours : intermédiaire marqué,
+    // ½ finale et finale à venir (25 pts). a : 41 + 16 = 57.
+    const two = MEETINGS.slice(0, 2);
+    const at = bM1 => buildTitleScenarios({
+      standings: [
+        driver('a', { m1: { interim: 16, df: 10, fin: 15 }, m2: { interim: 16 } }),
+        driver('b', { m1: { interim: bM1 }, m2: { interim: 15 } }),
+      ].map((d, i) => ({ ...d, position: i + 1 })),
+      meetings: two, regulation: FFSA,
+    });
+    // b = 15 + 15 = 30 → 27 d'avance pour 25 en jeu : champion avant même la ½ finale.
+    expect(at(15).pointsLeft).toBe(25);
+    expect(at(15).status).toBe('clinched');
+    // b = 32 → 25 d'avance : ne peut plus être dépassé, seulement égalé.
+    expect(at(17).status).toBe('clinched_tie');
+    // b = 33 → 24 d'avance : titre ouvert, il se joue sur ½ finale + finale.
+    const open = at(18);
+    expect(open.status).toBe('open');
+    expect(open.next.inProgress).toBe(true);
+    expect(open.next.requiredGapAfter).toBe(1);
+    expect(open.next.need).toBe(1 - 24);
+    // Sacré en marquant 2 pts sur les 25 restants (b en prend 25 au pire).
+    expect(open.next.tiers).toEqual([{ wins: [], score: 2, winsSuffice: false }]);
+    expect(open.earliest).toEqual({ index: 1, of: 1, meeting: open.current, inProgress: true });
+    const html = renderTitleScenarios(open);
+    expect(html).toContain('Meeting en cours');
+    expect(html).toContain('½ finale + finale');
+    expect(html).toContain('25 pts');
+  });
+
+  it('après les ½ finales : un 2e non qualifié pour la finale ne peut plus marquer, le leader est sacré', () => {
+    // Dernier meeting, ½ finales courues. a : 41 + 16 + 10 = 67 ; b : 30 + 15 + 4 (5e de ½) = 49.
+    // Sans qualification, b pourrait encore prendre 15 en finale → 64 < 67 de toute
+    // façon ; on serre : b à 55 avant la finale → 70 > 67 s'il marquait, mais il ne
+    // peut plus.
+    const two = MEETINGS.slice(0, 2);
+    const mk = (bDf) => buildTitleScenarios({
+      standings: [
+        driver('a', { m1: { interim: 16, df: 10, fin: 15 }, m2: { interim: 16, df: 10 } }),
+        driver('b', { m1: { interim: 15, df: 8,  fin: 12 }, m2: { interim: 15, df: bDf } }),
+      ].map((d, i) => ({ ...d, position: i + 1 })),
+      meetings: two, regulation: FFSA,
+    });
+    // b 5e de sa ½ (4 pts) : 54 pts, ne peut plus marquer → a (67) champion avant la finale.
+    const out = mk(4);
+    expect(out.currentPhases.map(ph => ph.key)).toEqual(['fin']);
+    expect(out.drivers[1].stepKeys).toEqual([]);
+    expect(out.drivers[1].maxReachable).toBe(54);
+    expect(out.status).toBe('clinched');
+    // b 4e de sa ½ (5 pts) : 55 pts, qualifié → peut encore atteindre 70 : titre ouvert.
+    const inn = mk(5);
+    expect(inn.drivers[1].stepKeys).toEqual(['fin']);
+    expect(inn.drivers[1].maxReachable).toBe(70);
+    expect(inn.status).toBe('open');
+    expect(inn.next.leaderStake).toBe(15);
+    expect(inn.next.rivalStake).toBe(15);
+  });
+
+  it('après les ½ finales : le leader non qualifié ne peut plus marquer, seul le 2e décide', () => {
+    // a 5e de sa ½ (4 pts) : 41 + 16 + 4 = 61 ; b qualifié : 30 + 15 + 10 = 55 → b peut atteindre 70.
+    const s = buildTitleScenarios({
+      standings: [
+        driver('a', { m1: { interim: 16, df: 10, fin: 15 }, m2: { interim: 16, df: 4 } }),
+        driver('b', { m1: { interim: 15, df: 3,  fin: 12 }, m2: { interim: 15, df: 10 } }),
+      ].map((d, i) => ({ ...d, position: i + 1 })),
+      meetings: MEETINGS.slice(0, 2), regulation: FFSA,
+    });
+    expect(s.status).toBe('open');
+    expect(s.next.leaderStake).toBe(0);
+    expect(s.next.rivalStake).toBe(15);
+    expect(s.next.need).toBe(1 - 6);
+    expect(s.next.tiers).toEqual([]);             // le leader ne peut rien garantir
+    expect(s.next.rivalMaxIfLeaderMax).toBe(5);   // b doit marquer au plus 5 (P6 ou moins)
+    const html = renderTitleScenarios(s);
+    expect(html).toContain('Le leader ne peut plus marquer sur ce meeting');
+    // Scénario idéal de b : il gagne la finale, a n'y a pas de place.
+    expect(s.drivers[1].ideal.rows.map(r => [r.driverId, r.places[0].pos])).toEqual([['b', 1], ['a', null]]);
+    expect(s.drivers[1].ideal.season.champion).toBe(true);
+  });
+
+  it('meeting en cours sans rien de marqué en finale : le titre ne peut pas être annoncé sur les seuls points intermédiaires', () => {
+    // Même avance de 27 mais un meeting complet reste après : 27 < 25 + 41.
+    const s = buildTitleScenarios({
+      standings: [
+        driver('a', { m1: { interim: 16, df: 10, fin: 15 }, m2: { interim: 16 } }),
+        driver('b', { m1: { interim: 15 }, m2: { interim: 15 } }),
+      ].map((d, i) => ({ ...d, position: i + 1 })),
+      meetings: MEETINGS.slice(0, 3), regulation: FFSA,
+    });
+    expect(s.pointsLeft).toBe(66);
+    expect(s.status).toBe('open');
   });
 
   it('classement vide → null ; règlement avec décompte → signalé', () => {
