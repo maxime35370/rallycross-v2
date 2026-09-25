@@ -15,6 +15,7 @@ import { describe, it, expect } from 'vitest';
 import {
   maxMeetingPoints, guaranteeTiers, slotPosition, idealScenario, splitMeetings,
   buildTitleScenarios, renderTitleScenarios,
+  finalPositionOf, finalCountback, withWins, compareCountback,
 } from '../js/championshipTitle.js';
 
 const FFSA = { interimPointsEnabled: true, sessionConfig: { QF: { enabled: false } } };
@@ -49,14 +50,20 @@ function driver(id, perMeeting, penalty = 0) {
   return { driverId: id, carNumber: id.length, firstName: 'P', lastName: id.toUpperCase(), meetingPts, meetingDetail, penalty, grandTotal };
 }
 
-/** Classement trié et positionné, avec un total saison imposé par pilote. */
-function standingsWithTotals(totals, playedMeetings = ['m1', 'm2']) {
+/**
+ * Classement trié et positionné, avec un total saison imposé par pilote.
+ * `finals[id]` fixe les points de finale par meeting joué (départage) ; sans
+ * cela, les points de finale placés ne correspondent à aucune position du
+ * barème, donc aucun pilote n'a de place de finale au décompte.
+ */
+function standingsWithTotals(totals, playedMeetings = ['m1', 'm2'], finals = {}) {
   const rows = Object.entries(totals).map(([id, total]) => {
     // Répartit le total sur les meetings joués : seul le total compte ici,
     // mais la finale du dernier meeting doit avoir marqué (meeting terminé).
     const per = {};
     playedMeetings.forEach((mid, i) => {
-      per[mid] = i === playedMeetings.length - 1 ? { fin: total } : { fin: 1 };
+      const fin = finals[id]?.[i] ?? (i === playedMeetings.length - 1 ? total : 1);
+      per[mid] = { fin };
     });
     const d = driver(id, per);
     d.grandTotal = total;
@@ -261,7 +268,9 @@ describe('buildTitleScenarios — seuils exacts (FFSA, 41 pts par meeting)', () 
   });
 
   it('avance de 83 pour 82 en jeu : champion ; 82 : peut seulement être égalé ; 81 : ouvert', () => {
-    const at = gap => buildTitleScenarios({ standings: standingsWithTotals({ a: 100 + gap, b: 100 }), meetings: MEETINGS, regulation: FFSA }).status;
+    // Départage neutre : a a gagné les 2 finales jouées, b aucune → en gagnant
+    // les 2 restantes, b égale exactement le décompte de a.
+    const at = gap => buildTitleScenarios({ standings: standingsWithTotals({ a: 100 + gap, b: 100 }, ['m1', 'm2'], { a: [15, 15] }), meetings: MEETINGS, regulation: FFSA }).status;
     expect(at(83)).toBe('clinched');
     expect(at(82)).toBe('clinched_tie');
     expect(at(81)).toBe('open');
@@ -269,7 +278,7 @@ describe('buildTitleScenarios — seuils exacts (FFSA, 41 pts par meeting)', () 
 
   it('un poursuivant est éliminé dès que son maximum est sous le total du leader', () => {
     // 82 en jeu : c (17) plafonne à 99 < 100 → éliminé ; d (18) peut égaler ; e (19) peut dépasser.
-    const s = buildTitleScenarios({ standings: standingsWithTotals({ a: 100, b: 90, c: 17, d: 18, e: 19 }), meetings: MEETINGS, regulation: FFSA });
+    const s = buildTitleScenarios({ standings: standingsWithTotals({ a: 100, b: 90, c: 17, d: 18, e: 19 }, ['m1', 'm2'], { a: [15, 15] }), meetings: MEETINGS, regulation: FFSA });
     const by = id => s.drivers.find(d => d.driverId === id);
     expect(by('c').state).toBe('eliminated');
     expect(by('c').maxReachable).toBe(99);
@@ -519,5 +528,171 @@ describe('renderTitleScenarios — le HTML dit la même chose que le calcul', ()
 
   it('null → chaîne vide', () => {
     expect(renderTitleScenarios(null)).toBe('');
+  });
+});
+
+// ─────────────────────────────────────────────────────────
+// DÉPARTAGE AUX PLACES DE FINALE
+// ─────────────────────────────────────────────────────────
+
+describe('départage — décompte des places de finale', () => {
+  const FIN = maxMeetingPoints(FFSA).phases.find(ph => ph.key === 'fin');
+
+  it('la position vient du classement (finPos) ou, à défaut, des points de finale', () => {
+    expect(finalPositionOf({ fin: 15 }, FIN)).toBe(1);
+    expect(finalPositionOf({ fin: 12 }, FIN)).toBe(2);
+    expect(finalPositionOf({ fin: 3 }, FIN)).toBe(8);
+    expect(finalPositionOf({ fin: 0 }, FIN)).toBeNull();
+    expect(finalPositionOf({ fin: 100 }, FIN)).toBeNull();          // hors barème
+    expect(finalPositionOf({ fin: 3, finPos: 6 }, FIN)).toBe(6);     // finPos prime (statut, DNF classé…)
+  });
+
+  it('compte les victoires, 2e places, etc.', () => {
+    const d = driver('a', { m1: { fin: 15 }, m2: { fin: 12 }, m3: { fin: 15 }, m4: { fin: 12 } });
+    const cb = finalCountback(d, FIN);
+    expect(cb[1]).toBe(2);
+    expect(cb[2]).toBe(2);
+    expect(cb[3]).toBe(0);
+    expect(withWins(cb, 1)[1]).toBe(3);
+    expect(cb[1]).toBe(2);                                           // sans effet de bord
+  });
+
+  it('compare victoires d\'abord, puis 2e places, et ainsi de suite', () => {
+    expect(compareCountback([0, 2, 0], [0, 1, 5])).toBe(1);
+    expect(compareCountback([0, 2, 1], [0, 2, 2])).toBe(-1);
+    expect(compareCountback([0, 2, 2], [0, 2, 2])).toBe(0);
+    expect(compareCountback([0, 0, 0, 1], [0, 0, 0])).toBe(1);
+    expect(compareCountback([], [])).toBe(0);
+  });
+});
+
+describe('départage — scénarios de titre', () => {
+  const MEETINGS5 = [...MEETINGS, { id: 'm5', date: '2026-09-20', location: 'Mayenne' }];
+
+  /** Saison de 5 meetings, 4 joués, 41 pts d'écart avant le dernier. */
+  const season = (leaderFinals, rivalFinals, extra = {}) => {
+    const mk = (id, finals, base) => {
+      const per = {};
+      finals.forEach((f, i) => { per['m' + (i + 1)] = { interim: base, df: 0, fin: f }; });
+      return driver(id, per);
+    };
+    const a = mk('a', leaderFinals, 16), b = mk('b', rivalFinals, 16);
+    // Totaux imposés : 41 d'écart, seul le décompte des finales diffère.
+    a.grandTotal = 141; b.grandTotal = 100;
+    Object.assign(b, extra);
+    return buildTitleScenarios({
+      standings: [a, b].map((d, i) => ({ ...d, position: i + 1 })), meetings: MEETINGS5, regulation: FFSA,
+    });
+  };
+
+  it('exemple : 41 pts d\'écart, un meeting restant, le leader gagne le départage → champion', () => {
+    // Leader : 2 victoires + 2 × P2 ; rival : 1 victoire + 1 × P2. Au week-end
+    // parfait le rival égalise aux points avec 2 victoires chacun, puis 2e places : 2 contre 1.
+    const s = season([15, 15, 12, 12], [15, 12, 9, 9]);
+    expect(s.pointsLeft).toBe(41);
+    expect(s.gap).toBe(41);
+    expect(s.drivers[1].tiebreak).toBe(1);
+    expect(s.drivers[1].state).toBe('eliminated');
+    expect(s.drivers[1].viaCountback).toBe(true);
+    expect(s.status).toBe('clinched');
+    expect(s.clinchedByCountback).toBe(true);
+    const html = renderTitleScenarios(s);
+    expect(html).toContain('mathématiquement champion');
+    expect(html).toContain('perdrait le départage');
+    expect(html).toContain('Éliminé au départage');        // le rival reste listé, avec la raison
+    expect(html).toContain('2 · 2 · 0');                    // décompte du leader : 2 victoires, 2 × P2
+  });
+
+  it('même écart, mais le rival gagnerait le départage → titre ouvert, l\'égalité lui suffit', () => {
+    // Leader 12 ×4 (0 victoire) ; rival 15, 9, 9, 9 (1 victoire) → au week-end parfait : 2 victoires contre 0.
+    const s = season([12, 12, 12, 12], [15, 9, 9, 9]);
+    expect(s.drivers[1].tiebreak).toBe(-1);
+    expect(s.drivers[1].state).toBe('contender');
+    expect(s.drivers[1].viaCountback).toBe(true);
+    expect(s.status).toBe('open');
+    // Le leader doit finir avec plus que 0 d'avance : l'égalité ne lui suffit pas.
+    expect(s.next.requiredGapAfter).toBe(1);
+    expect(s.next.tieSafe).toBe(false);
+    expect(renderTitleScenarios(s)).toContain('il l\'emporterait au départage');
+  });
+
+  it('rien ne les sépare → ne peut plus être dépassé, départage indécis', () => {
+    // Leader 15, 15, 12, 9 ; rival 15, 12, 9, — → au week-end parfait : 2 victoires, 1 × P2, 1 × P3 chacun.
+    const s = season([15, 15, 12, 9], [15, 12, 9, 0]);
+    expect(s.drivers[1].tiebreak).toBe(0);
+    expect(s.drivers[1].state).toBe('tie_only');
+    expect(s.status).toBe('clinched_tie');
+    expect(renderTitleScenarios(s)).toContain('resterait indécis');
+  });
+
+  it('avance requise au prochain meeting : l\'égalité suffit quand le départage est acquis', () => {
+    // 3 joués, 2 restants, 40 d'écart : ouvert. Leader 15, 15, 12 ; rival 9, 9, 9 → même
+    // en gagnant les 2 finales restantes le rival n'a que 2 victoires, et 0 × P2 contre 1.
+    const a = driver('a', { m1: { fin: 15 }, m2: { fin: 15 }, m3: { fin: 12 } });
+    const b = driver('b', { m1: { fin: 9 },  m2: { fin: 9 },  m3: { fin: 9 } });
+    a.grandTotal = 140; b.grandTotal = 100;
+    const s = buildTitleScenarios({ standings: [a, b].map((d, i) => ({ ...d, position: i + 1 })), meetings: MEETINGS5, regulation: FFSA });
+    expect(s.status).toBe('open');
+    // Sans départage il faudrait 42 d'avance après m3 ; ici 41 suffisent (égalité gagnante).
+    expect(s.drivers[1].tiebreak).toBe(1);
+    expect(s.next.tieSafe).toBe(true);
+    expect(s.next.requiredGapAfter).toBe(41);
+    expect(s.next.need).toBe(1);
+    expect(s.drivers[1].leaderNeedNext).toBe(1);
+    expect(renderTitleScenarios(s)).toContain('l\'égalité lui suffirait');
+  });
+
+  it('saison terminée à égalité de points : le départage désigne le champion, même le 2e du tableau', () => {
+    const mk = (id, finals) => {
+      const per = {};
+      finals.forEach((f, i) => { per['m' + (i + 1)] = { fin: f }; });
+      const d = driver(id, per); d.grandTotal = 100; return d;
+    };
+    const a = mk('a', [12, 12, 12, 12]), b = mk('b', [15, 9, 9, 9]);
+    const s = buildTitleScenarios({ standings: [a, b].map(d => ({ ...d, position: 1 })), meetings: MEETINGS, regulation: FFSA });
+    expect(s.status).toBe('season_over');
+    expect(s.seasonWinner.driverId).toBe('b');
+    const html = renderTitleScenarios(s);
+    expect(html).toContain('<strong>B</strong> est champion au départage');
+    // Décomptes identiques → indécis.
+    const s2 = buildTitleScenarios({ standings: [mk('a', [15, 12]), mk('b', [15, 12])].map(d => ({ ...d, position: 1 })), meetings: MEETINGS.slice(0, 2), regulation: FFSA });
+    expect(s2.seasonWinner).toBeNull();
+    expect(renderTitleScenarios(s2)).toContain('ne les sépare pas');
+  });
+
+  it('meeting en cours : la finale à venir compte comme une victoire possible seulement pour un qualifié', () => {
+    // Dernier meeting, ½ finales courues. a 57 + 10 = 67, b 30 + 15 + 10 = 55 → b peut atteindre 70 : ouvert.
+    // Si b est ÉLIMINÉ en ½ (4 pts) : 49, ne marque plus → éliminé aux points, pas au départage.
+    const mk = bDf => buildTitleScenarios({
+      standings: [
+        driver('a', { m1: { interim: 16, df: 10, fin: 15 }, m2: { interim: 16, df: 10 } }),
+        driver('b', { m1: { interim: 15, df: 8,  fin: 12 }, m2: { interim: 15, df: bDf } }),
+      ].map((d, i) => ({ ...d, position: i + 1 })),
+      meetings: MEETINGS.slice(0, 2), regulation: FFSA,
+    });
+    expect(mk(10).drivers[1].finalsLeft).toBe(1);
+    expect(mk(4).drivers[1].finalsLeft).toBe(0);
+    expect(mk(4).drivers[1].viaCountback).toBe(false);
+  });
+
+  it('scénario idéal : une égalité de points du scénario est tranchée aux places de finale', () => {
+    const PM = maxMeetingPoints(FFSA);
+    // b rejoint a exactement (100 + 41 = 141 contre 104 + 37) : b a gagné la finale du scénario, a a 2 × P2 en stock.
+    const C = [
+      { driverId: 'a', firstName: 'P', lastName: 'A', points: 104, countback: [0, 1, 2] },
+      { driverId: 'b', firstName: 'P', lastName: 'B', points: 100, countback: [0, 1, 0] },
+    ];
+    const sc = idealScenario(1, C, PM, 0);
+    expect(sc.season.gap).toBe(0);
+    // b : 2 victoires, 0 × P2 ; a : 1 victoire + 1 × P2 (scénario) = 1 victoire → b champion.
+    expect(sc.season.champion).toBe(true);
+    expect(sc.season.rank).toBe(1);
+    // Inversement, si a avait déjà 2 victoires : 2 partout, puis P2 : a 3 contre 0 → b battu.
+    C[0].countback = [0, 2, 2];
+    const sc2 = idealScenario(1, C, PM, 0);
+    expect(sc2.season.champion).toBe(false);
+    expect(sc2.season.beaten).toBe(true);
+    expect(sc2.season.tie).toBe(false);
+    expect(sc2.season.rank).toBe(2);
   });
 });
