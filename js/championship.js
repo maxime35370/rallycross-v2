@@ -123,12 +123,13 @@ async function calcPhasePoints(session) {
   const finished = rows.filter(r => r.ms && !r.status).sort((a, b) => a.ms - b.ms);
 
   const out = {};
+  const positions = {};   // driverId → position classée (finale : sert au départage)
   let pos = 1;
-  finished.forEach(r => { out[r.driverId] = ptsFn(pos++); });
+  finished.forEach(r => { positions[r.driverId] = pos; out[r.driverId] = ptsFn(pos++); });
 
   // DNF avec position assignée → points de la position
   rows.filter(r => r.status === 'DNF' && r.manualPosition)
-      .forEach(r => { out[r.driverId] = ptsFn(r.manualPosition); });
+      .forEach(r => { positions[r.driverId] = r.manualPosition; out[r.driverId] = ptsFn(r.manualPosition); });
 
   // Pilotes avec statut spécial → calcStatusPoints (respecte
   // regulation.statusRules : DSQ_RACE, DNS, DSQ, DNF-no-pos)
@@ -141,7 +142,10 @@ async function calcPhasePoints(session) {
       : 0;
   });
 
-  return out; // { driverId → points }
+  // Positions exposées à côté des points, sans casser les appelants qui ne
+  // lisent que les points (propriété non énumérable).
+  Object.defineProperty(out, 'positions', { value: positions, enumerable: false });
+  return out; // { driverId → points }, + .positions { driverId → position }
 }
 
 // ─────────────────────────────────────────────────────────
@@ -172,6 +176,7 @@ async function getMeetingPoints(meetingId) {
       qf:        0,
       df:        0,
       fin:       0,
+      finPos:    null,   // position de finale (départage du championnat)
     };
   });
 
@@ -180,7 +185,7 @@ async function getMeetingPoints(meetingId) {
     carNumber: p.carNumber,
     firstName: p.firstName,
     lastName:  p.lastName,
-    interim: 0, qf: 0, df: 0, fin: 0,
+    interim: 0, qf: 0, df: 0, fin: 0, finPos: null,
   });
 
   // 3. Points QF (¼ de finale) — championnats de type FIA uniquement.
@@ -213,7 +218,8 @@ async function getMeetingPoints(meetingId) {
     const parts  = await fsGetParticipants(finSession.id);
     parts.forEach(p => {
       if (!driverMap[p.driverId]) driverMap[p.driverId] = blankRow(p);
-      driverMap[p.driverId].fin = ptsMap[p.driverId] ?? 0;
+      driverMap[p.driverId].fin    = ptsMap[p.driverId] ?? 0;
+      driverMap[p.driverId].finPos = ptsMap.positions[p.driverId] ?? null;
     });
   }
 
@@ -249,7 +255,7 @@ async function calcChampionship() {
       }
       champMap[d.driverId].meetingPts[meeting.id] = d.total;
       champMap[d.driverId].meetingDetail[meeting.id] = {
-        interim: d.interim, qf: d.qf, df: d.df, fin: d.fin, total: d.total,
+        interim: d.interim, qf: d.qf, df: d.df, fin: d.fin, finPos: d.finPos ?? null, total: d.total,
       };
       champMap[d.driverId].grandTotal += d.total;
     });

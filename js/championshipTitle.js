@@ -20,6 +20,16 @@
    marque le maximum, le leader ne marque rien). Il ignore le décompte du
    plus mauvais résultat (worstResultDrop), comme le classement lui-même.
 
+   ÉGALITÉ DE POINTS — départage FFSA aux places de finale : le plus grand
+   nombre de victoires en finale, puis de 2e places, et ainsi de suite. Un
+   poursuivant ne peut égaler le leader qu'en marquant le maximum, donc en
+   GAGNANT chaque finale restante : on le compare au leader en lui créditant
+   ces victoires. S'il perd quand même le départage, il est éliminé alors
+   même que l'écart de points ne le dit pas encore ; s'il le gagne, l'égalité
+   lui suffit. Avec 41 pts d'écart et un meeting restant, un leader qui a
+   deux victoires et deux 2e places contre une victoire et une 2e place ne
+   peut plus être rattrapé.
+
    Les résultats de deux pilotes ne sont pas indépendants : dans une phase
    COUPLÉE (classement intermédiaire, finale — une seule course pour tout le
    monde), si le leader est premier, son rival est au mieux deuxième. Les
@@ -161,6 +171,67 @@ export function guaranteeTiers(need, leaderScale, rivalScale = leaderScale) {
 }
 
 // ─────────────────────────────────────────────────────────
+// DÉPARTAGE AUX PLACES DE FINALE
+// ─────────────────────────────────────────────────────────
+
+/** Nombre de places de finale qui rapportent des points (taille de la grille). */
+function finalGridSize(finPhase) {
+  if (!finPhase) return 0;
+  let n = 0;
+  for (let pos = 1; pos <= SCAN_POSITIONS; pos++) if ((Number(finPhase.fn(pos)) || 0) > 0) n = pos;
+  return n;
+}
+
+/**
+ * Position de finale d'un meeting pour un pilote : la position enregistrée
+ * (`finPos`) si le classement la fournit, sinon celle que ses points de
+ * finale désignent sans ambiguïté dans le barème (15 → 1er, 12 → 2e…).
+ */
+export function finalPositionOf(row, finPhase) {
+  if (!row || !finPhase) return null;
+  if (Number(row.finPos) > 0) return Number(row.finPos);
+  const pts = Number(row.fin) || 0;
+  if (pts <= 0) return null;
+  const size = finalGridSize(finPhase);
+  for (let pos = 1; pos <= size; pos++) if ((Number(finPhase.fn(pos)) || 0) === pts) return pos;
+  return null;
+}
+
+/**
+ * Décompte des places de finale d'un pilote sur la saison : `counts[p]` =
+ * nombre de finales terminées à la place p (index 0 inutilisé).
+ */
+export function finalCountback(driver, finPhase) {
+  const size = finalGridSize(finPhase);
+  const counts = new Array(size + 1).fill(0);
+  Object.values(driver?.meetingDetail || {}).forEach(row => {
+    const pos = finalPositionOf(row, finPhase);
+    if (pos && pos <= size) counts[pos]++;
+  });
+  return counts;
+}
+
+/** Décompte augmenté de `n` victoires (finales restantes gagnées). */
+export function withWins(counts, n) {
+  const out = counts.length ? [...counts] : [0, 0];
+  out[1] = (out[1] || 0) + n;
+  return out;
+}
+
+/**
+ * Compare deux décomptes : > 0 si `a` l'emporte (plus de victoires, puis
+ * de 2e places, etc.), < 0 si `b` l'emporte, 0 si rien ne les sépare.
+ */
+export function compareCountback(a, b) {
+  const len = Math.max(a?.length || 0, b?.length || 0);
+  for (let pos = 1; pos < len; pos++) {
+    const diff = (a?.[pos] || 0) - (b?.[pos] || 0);
+    if (diff) return Math.sign(diff);
+  }
+  return 0;
+}
+
+// ─────────────────────────────────────────────────────────
 // SCÉNARIO IDÉAL D'UN PRÉTENDANT (places partagées entre prétendants)
 // ─────────────────────────────────────────────────────────
 
@@ -189,6 +260,9 @@ export function slotPosition(k, races) {
  * @param {number} focusIndex — index du prétendant dans `contenders`
  * @param {Array}  contenders — [{ driverId, points, … }] triés par points décroissants
  * @param {{ phases:Array, total:number }} perMeeting — sortie de maxMeetingPoints()
+ * Les égalités de points du scénario sont départagées aux places de finale
+ * quand les prétendants portent leur décompte (`countback`).
+ *
  * Une place n'est attribuée que si le pilote peut la disputer : seuls les
  * qualifiés d'une ½ finale (les `qualifiedPerRace` premiers) courent la
  * finale, les autres n'y marquent rien. Sur un meeting en cours, un pilote
@@ -228,34 +302,65 @@ export function idealScenario(focusIndex, contenders, perMeeting, meetingsAfter,
   const nextPlaces = assign(nextPhases, true);
   const fullPlaces = meetingsAfter > 0 ? assign(perMeeting.phases, false) : null;
 
+  // Décompte de places de finale après le scénario.
+  const addFinal = (counts, places, times = 1) => {
+    const pos = places.find(pl => pl.key === 'fin')?.pos;
+    if (!pos) return counts;
+    const out = [...counts];
+    while (out.length <= pos) out.push(0);
+    out[pos] += times;
+    return out;
+  };
+
   const rows = order.map((d, i) => {
     const places = nextPlaces[i];
     const meetingPts = sum(places);
     const fullPts = fullPlaces ? sum(fullPlaces[i]) : 0;
+    const cb = d.countback || [];
+    const cbNext = addFinal(cb, places);
     return {
       driverId: d.driverId, firstName: d.firstName, lastName: d.lastName,
       places, meetingPts,
       afterNext:   d.points + meetingPts,
       afterSeason: d.points + meetingPts + fullPts * meetingsAfter,
+      cbNext,
+      cbSeason: fullPlaces ? addFinal(cbNext, fullPlaces[i], meetingsAfter) : cbNext,
     };
   });
   const me = rows[0], others = rows.slice(1);
   const leftAfterNext = meetingsAfter * perMeeting.total;
   const bestOther = key => others.length ? Math.max(...others.map(r => r[key])) : -Infinity;
-  const rankOf = key => 1 + others.filter(r => r[key] > me[key]).length;
+  // Rang : devancé par ceux qui ont plus de points, ou autant et un meilleur départage.
+  const rankOf = (key, cbKey) => 1 + others.filter(r =>
+    r[key] > me[key] || (r[key] === me[key] && compareCountback(r[cbKey], me[cbKey]) > 0)).length;
   const gapNext   = others.length ? me.afterNext   - bestOther('afterNext')   : null;
   const gapSeason = others.length ? me.afterSeason - bestOther('afterSeason') : null;
+
+  // Sacré à l'issue du pas si l'avance dépasse ce qui reste, ou l'égale en
+  // gagnant le départage contre chaque rival qui pourrait revenir (il lui
+  // faudrait alors gagner toutes les finales restantes).
+  const clinchedNext = gapNext == null ? true
+    : gapNext > leftAfterNext
+    || (gapNext === leftAfterNext && others.every(r =>
+        r.afterNext + leftAfterNext < me.afterNext
+        || compareCountback(me.cbNext, withWins(r.cbNext, meetingsAfter)) > 0));
+  const tiedSeason = others.filter(r => r.afterSeason === me.afterSeason);
+  const champion = gapSeason == null ? true
+    : gapSeason > 0 || (gapSeason === 0 && tiedSeason.every(r => compareCountback(me.cbSeason, r.cbSeason) > 0));
+  const beaten = gapSeason === 0 && tiedSeason.some(r => compareCountback(r.cbSeason, me.cbSeason) > 0);
   return {
     rows,
     next: {
-      total: me.afterNext, rank: rankOf('afterNext'), gap: gapNext,
-      // Sacré à l'issue du prochain meeting dans ce scénario.
-      clinched: gapNext == null ? true : gapNext > leftAfterNext,
+      total: me.afterNext, rank: rankOf('afterNext', 'cbNext'), gap: gapNext,
+      clinched: clinchedNext,
     },
     season: {
-      total: me.afterSeason, rank: rankOf('afterSeason'), gap: gapSeason,
-      champion: gapSeason == null ? true : gapSeason > 0,
-      tie: gapSeason === 0,
+      total: me.afterSeason, rank: rankOf('afterSeason', 'cbSeason'), gap: gapSeason,
+      champion,
+      // Égalité de points que le départage ne tranche pas.
+      tie: gapSeason === 0 && !champion && !beaten,
+      // Égalité de points perdue au départage.
+      beaten,
     },
   };
 }
@@ -343,6 +448,12 @@ export function buildTitleScenarios({ standings = [], meetings = [], regulation 
   const second = standings[1] || null;
   const gap = second ? pL - (Number(second.grandTotal) || 0) : null;
 
+  // Départage : décompte des places de finale, et finales que chaque pilote
+  // peut encore gagner (meetings complets + la finale du meeting en cours
+  // s'il y est qualifié).
+  const finPhase = perMeeting.phases.find(ph => ph.key === 'fin') || null;
+  const leaderCountback = finalCountback(leader, finPhase);
+
   // Situation de chaque pilote face au leader.
   const drivers = standings.map((d, i) => {
     const pts = Number(d.grandTotal) || 0;
@@ -352,14 +463,23 @@ export function buildTitleScenarios({ standings = [], meetings = [], regulation 
     // Ce que ce pilote peut encore marquer d'ici la fin de saison.
     const pointsLeftFor = pointsLeft - currentLeft + stepStake;
     const maxReachable = pts + pointsLeftFor;
-    let state;
+    const countback = finalCountback(d, finPhase);
+    const finalsLeft = N + (stepPhases.some(ph => ph.key === 'fin') ? 1 : 0);
+    // Départage si ce pilote revenait à égalité (il aurait alors gagné
+    // toutes ses finales restantes) : > 0 le leader l'emporte, < 0 le
+    // poursuivant, 0 indécis.
+    const tiebreak = i === 0 ? 0 : compareCountback(leaderCountback, withWins(countback, finalsLeft));
+    let state, viaCountback = false;
     if (i === 0)                       state = 'leader';
     else if (maxReachable < pL)        state = 'eliminated';
-    else if (maxReachable === pL)      state = 'tie_only';
-    else                               state = 'contender';
+    else if (maxReachable > pL)        state = 'contender';
+    else if (tiebreak > 0)           { state = 'eliminated'; viaCountback = true; }
+    else if (tiebreak < 0)           { state = 'contender';  viaCountback = true; }
+    else                               state = 'tie_only';
     return {
       driverId: d.driverId, carNumber: d.carNumber, firstName: d.firstName, lastName: d.lastName,
       position: d.position ?? i + 1, points: pts, deficit, maxReachable, state,
+      countback, finalsLeft, tiebreak, viaCountback,
       // Phases du meeting en cours où il peut encore marquer (null : pas de
       // meeting en cours, le prochain pas est un meeting entier).
       stepKeys: current ? stepPhases.map(ph => ph.key) : null,
@@ -374,14 +494,28 @@ export function buildTitleScenarios({ standings = [], meetings = [], regulation 
 
   // Statut global.
   // Le leader est sacré si aucun poursuivant ne peut plus atteindre son
-  // total (chacun avec ses propres phases restantes).
-  const rivalMax = drivers.length > 1 ? Math.max(...drivers.slice(1).map(d => d.maxReachable)) : null;
+  // total (chacun avec ses propres phases restantes), ou si ceux qui
+  // peuvent l'égaler perdraient le départage.
+  const rivals = drivers.slice(1);
   let status;
-  if (pointsLeft === 0)        status = 'season_over';
-  else if (rivalMax == null)   status = 'clinched';          // seul pilote classé
-  else if (rivalMax < pL)      status = 'clinched';
-  else if (rivalMax === pL)    status = 'clinched_tie';
-  else                         status = 'open';
+  if (pointsLeft === 0)                                status = 'season_over';
+  else if (rivals.some(d => d.state === 'contender'))  status = 'open';
+  else if (rivals.some(d => d.state === 'tie_only'))   status = 'clinched_tie';
+  else                                                 status = 'clinched';
+  // Sacre acquis grâce au départage (un poursuivant pouvait encore égaler).
+  const clinchedByCountback = status === 'clinched' && rivals.some(d => d.viaCountback);
+  // Saison terminée à égalité de points : le départage désigne le champion
+  // (null si rien ne les sépare).
+  let seasonWinner = null;
+  if (status === 'season_over') {
+    const tied = rivals.filter(d => d.points === pL);
+    if (!tied.length) seasonWinner = drivers[0];
+    else {
+      const best = [drivers[0], ...tied].reduce((a, b) => compareCountback(b.countback, a.countback) > 0 ? b : a);
+      const undecided = [drivers[0], ...tied].some(d => d !== best && compareCountback(d.countback, best.countback) === 0);
+      seasonWinner = undecided ? null : best;
+    }
+  }
 
   // Prochain pas : la fin du meeting en cours (phases restantes) ou, sinon,
   // le prochain meeting entier. Ensuite restent `meetingsAfter` meetings
@@ -397,11 +531,14 @@ export function buildTitleScenarios({ standings = [], meetings = [], regulation 
   let next = null;
   if (step && status === 'open') {
     const leftAfter = pointsLeft - step.stake;
-    const requiredGapAfter = leftAfter + 1;
+    // Avance requise face à un poursuivant : strictement plus que le reste,
+    // ou autant si le leader gagnerait le départage en cas d'égalité.
+    const requiredFor = c => leftAfter + (c.tiebreak > 0 ? 0 : 1);
     drivers.forEach(c => {
       if (c.state === 'leader' || c.state === 'eliminated') return;
-      c.leaderNeedNext = requiredGapAfter - c.deficit;
+      c.leaderNeedNext = requiredFor(c) - c.deficit;
     });
+    const requiredGapAfter = requiredFor(drivers[1]);
     // Écart à créer sur le 2e pendant ce pas (négatif : marge cessible).
     const need = requiredGapAfter - gap;
     // Phases où leader et 2e peuvent encore marquer sur ce pas.
@@ -416,6 +553,8 @@ export function buildTitleScenarios({ standings = [], meetings = [], regulation 
       ...step,
       leftAfter,
       requiredGapAfter,
+      // L'égalité suffit face au 2e (départage en faveur du leader).
+      tieSafe: drivers[1].tiebreak > 0,
       need,
       gainVsSecond: Math.max(0, need),
       concedable:   Math.max(0, -need),
@@ -442,7 +581,8 @@ export function buildTitleScenarios({ standings = [], meetings = [], regulation 
     let gained = 0;
     for (let k = 0; k < steps.length; k++) {
       gained += steps[k].stake;
-      if (gap + gained > pointsLeft - gained) {
+      const lead = gap + gained, left = pointsLeft - gained;
+      if (lead > left || (lead === left && drivers[1].tiebreak > 0)) {
         earliest = { index: k + 1, of: steps.length, meeting: steps[k].meeting, inProgress: steps[k].inProgress };
         break;
       }
@@ -463,6 +603,7 @@ export function buildTitleScenarios({ standings = [], meetings = [], regulation 
     perMeeting, remaining, inProgress, played, pointsLeft,
     current, currentPhases, currentLeft,
     leader: drivers[0], second: drivers[1] || null, gap, status,
+    clinchedByCountback, seasonWinner, finalGridSize: finalGridSize(finPhase),
     next, earliest, drivers, contenders, eliminated,
     ignoresDrop: (Number(regulation?.worstResultDrop) || 0) > 0,
   };
@@ -508,14 +649,32 @@ function needCell(need) {
   return `<span class="chp-title-need">0</span>`;
 }
 
+/** Décompte de places de finale, lisible : « 2 · 2 · 0 » (P1 · P2 · P3). */
+function countbackCell(d, size) {
+  const shown = Math.min(3, size);
+  if (!shown) return '—';
+  const cells = [];
+  for (let pos = 1; pos <= shown; pos++) cells.push(d.countback[pos] || 0);
+  return `<span title="Finales : ${cells.map((n, i) => `${n} × P${i + 1}`).join(', ')}">${cells.join(' · ')}</span>`;
+}
+
 function situationOf(d, s) {
+  const horizon = s.current ? 'd\'ici la fin de saison' : `sur ${s.remaining.length} meeting${s.remaining.length > 1 ? 's' : ''}`;
   switch (d.state) {
     case 'leader':     return `<span class="chp-title-tag is-leader">Leader</span>`;
-    case 'eliminated': return `<span class="chp-title-tag is-out">Éliminé</span>`;
-    case 'tie_only':   return `<span class="chp-title-tag is-tie">Peut seulement égaler le leader</span>`;
+    case 'eliminated':
+      return d.viaCountback
+        ? `<span class="chp-title-tag is-out">Éliminé au départage</span>`
+        + `<span class="chp-title-hint">peut encore égaler le leader, mais perdrait aux places de finale</span>`
+        : `<span class="chp-title-tag is-out">Éliminé</span>`;
+    case 'tie_only':
+      return `<span class="chp-title-tag is-tie">Peut seulement égaler le leader</span>`
+           + `<span class="chp-title-hint">départage aux places de finale indécis</span>`;
     default:
       return `<span class="chp-title-tag is-alive">En course</span>`
-           + `<span class="chp-title-hint">doit reprendre ${pts(d.toOvertake)} ${s.current ? 'd\'ici la fin de saison' : `sur ${s.remaining.length} meeting${s.remaining.length > 1 ? 's' : ''}`}</span>`;
+           + (d.viaCountback
+              ? `<span class="chp-title-hint">doit égaler le leader en gagnant chaque finale : il l'emporterait au départage</span>`
+              : `<span class="chp-title-hint">doit reprendre ${pts(d.toOvertake)} ${horizon}</span>`);
   }
 }
 
@@ -540,16 +699,26 @@ export function renderTitleScenarios(s) {
   let verdict = '';
   if (s.status === 'season_over') {
     const tied = s.second && s.gap === 0;
-    verdict = tied
-      ? `<div class="chp-title-verdict is-tie">🏁 Saison terminée — ${name(s.leader)} et ${name(s.second)} à égalité de points en tête.</div>`
-      : `<div class="chp-title-verdict is-clinched">🏆 Saison terminée — ${name(s.leader)} est champion${s.second ? ` avec ${pts(s.gap)} d'avance` : ''}.</div>`;
+    if (!tied) {
+      verdict = `<div class="chp-title-verdict is-clinched">🏆 Saison terminée — ${name(s.leader)} est champion${s.second ? ` avec ${pts(s.gap)} d'avance` : ''}.</div>`;
+    } else if (s.seasonWinner) {
+      verdict = `<div class="chp-title-verdict is-clinched">🏆 Saison terminée — ${name(s.seasonWinner)} est champion au départage, `
+              + `à égalité de points avec ${name(s.seasonWinner === s.leader ? s.second : s.leader)} (places de finale).</div>`;
+    } else {
+      verdict = `<div class="chp-title-verdict is-tie">🏁 Saison terminée — ${name(s.leader)} et ${name(s.second)} à égalité de points en tête, `
+              + `et le départage aux places de finale ne les sépare pas.</div>`;
+    }
   } else if (s.status === 'clinched') {
     verdict = `<div class="chp-title-verdict is-clinched">🏆 ${name(s.leader)} est mathématiquement champion`
             + (s.second ? ` : ${pts(s.gap)} d'avance sur ${name(s.second)} pour ${pts(s.pointsLeft)} encore en jeu.` : '.')
+            + (s.clinchedByCountback
+                ? ` Un poursuivant peut encore l'égaler aux points, mais perdrait le départage aux places de finale.`
+                : '')
             + `</div>`;
   } else if (s.status === 'clinched_tie') {
     verdict = `<div class="chp-title-verdict is-tie">🥇 ${name(s.leader)} ne peut plus être dépassé : `
-            + `${pts(s.gap)} d'avance pour ${pts(s.pointsLeft)} en jeu. ${name(s.second)} peut au mieux l'égaler.</div>`;
+            + `${pts(s.gap)} d'avance pour ${pts(s.pointsLeft)} en jeu. ${name(s.second)} peut au mieux l'égaler, `
+            + `et le départage aux places de finale resterait indécis.</div>`;
   } else {
     const nb = s.contenders.length;
     verdict = `<div class="chp-title-verdict is-open">⚔️ Titre ouvert — ${name(s.leader)} mène avec ${pts(s.gap)} d'avance sur ${name(s.second)}. `
@@ -573,7 +742,8 @@ export function renderTitleScenarios(s) {
         : `${name(s.second)} ne peut plus marquer que ${pts(n.rivalStake)} sur ce meeting.`);
     }
     lines.push(`Pour être sacré à l'issue de <strong>${label}</strong>, le leader doit en repartir avec au moins `
-             + `<strong>${pts(n.requiredGapAfter)}</strong> d'avance (${pts(n.leftAfter)} resteront en jeu).`);
+             + `<strong>${pts(n.requiredGapAfter)}</strong> d'avance (${pts(n.leftAfter)} resteront en jeu`
+             + (n.tieSafe ? `, et l'égalité lui suffirait : départage aux places de finale en sa faveur` : '') + `).`);
     if (n.possible) {
       if (n.need > 0) {
         lines.push(`Il doit donc reprendre au moins <strong>${pts(n.need)}</strong> à ${name(s.second)} d'ici la fin du meeting — et l'équivalent à chaque poursuivant, voir la colonne « À reprendre ».`);
@@ -607,11 +777,12 @@ export function renderTitleScenarios(s) {
   }
 
   // ── Tableau des pilotes encore concernés ──
-  const rows = s.drivers.filter(d => d.state !== 'eliminated').map(d => `
+  const rows = s.drivers.filter(d => d.state !== 'eliminated' || d.viaCountback).map(d => `
     <tr class="chp-title-row is-${d.state}">
       <td class="center"><span class="chp-pos">${d.position}</span></td>
       <td>${name(d)}${d.carNumber ? ` <span class="tim-num">${escHtml(d.carNumber)}</span>` : ''}</td>
       <td class="center"><strong>${d.points}</strong></td>
+      <td class="center">${countbackCell(d, s.finalGridSize)}</td>
       <td class="center">${d.state === 'leader' ? '—' : `−${d.deficit}`}</td>
       <td class="center">${d.maxReachable}</td>
       <td class="center">${needCell(d.leaderNeedNext)}</td>
@@ -625,6 +796,7 @@ export function renderTitleScenarios(s) {
         <th class="center" style="width:46px">Pos.</th>
         <th>Pilote</th>
         <th class="center">Pts</th>
+        <th class="center" title="Places de finale sur la saison : victoires · 2e places · 3e places (départage des égalités)">Finales</th>
         <th class="center" title="Retard sur le leader">Retard</th>
         <th class="center" title="Total maximal atteignable en marquant ${M} à chaque meeting restant">Max possible</th>
         <th class="center" title="Points que le leader doit reprendre à ce pilote au prochain meeting pour être sacré à son issue (négatif : marge qu'il peut lui céder)">À reprendre</th>
@@ -638,7 +810,8 @@ export function renderTitleScenarios(s) {
 
   // ── Notes ──
   const notes = [];
-  if (s.eliminated.length) notes.push(`${s.eliminated.length} pilote${s.eliminated.length > 1 ? 's' : ''} mathématiquement éliminé${s.eliminated.length > 1 ? 's' : ''} de la course au titre (non listé${s.eliminated.length > 1 ? 's' : ''}).`);
+  const hidden = s.eliminated.filter(d => !d.viaCountback).length;
+  if (hidden) notes.push(`${hidden} pilote${hidden > 1 ? 's' : ''} mathématiquement éliminé${hidden > 1 ? 's' : ''} de la course au titre (non listé${hidden > 1 ? 's' : ''}).`);
   if (s.current) notes.push(`Meeting en cours (${escHtml(meetingShortLabel(s.current))}) : les phases déjà courues sont comptées dans les totaux ; `
                           + `${phaseList(s.currentPhases).toLowerCase()} (${pts(s.currentLeft)}) restent en jeu, pour les seuls pilotes engagés et qualifiés `
                           + `(top ${s.perMeeting.phases.find(ph => ph.key === 'df')?.qualifiedPerRace ?? 4} d'une ½ finale pour la finale).`);
@@ -647,7 +820,8 @@ export function renderTitleScenarios(s) {
                      + `dans l'ordre du classement, une seule place par pilote (deux ½ finales : deux vainqueurs possibles). Survolez la cellule pour le détail des places.`);
   notes.push(`Scénarios garantis dans le pire des cas : un poursuivant peut reprendre jusqu'à ${M} pts par meeting si le leader ne marque rien ; `
            + `à l'inverse, le leader ne peut garantir que ${pts(s.perMeeting.guaranteedSwing)} par meeting en gagnant tout, son rival étant alors au mieux deuxième. `
-           + `Les égalités de points ne sont pas départagées.`);
+           + `Égalité de points : départage au nombre de victoires en finale, puis de 2e places, et ainsi de suite ; `
+           + `un poursuivant qui ne peut qu'égaler le leader est comparé en lui créditant une victoire par finale restante, puisque égaler exige de tout gagner.`);
 
   return `<div class="chp-title">
     <div class="chp-title-head">
