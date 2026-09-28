@@ -496,3 +496,4 @@
   display: inline-flex; align-items: center; gap: 6px; margin-top: 2px;
   color: #d5c1ff; font-size: 0.95rem;
 }
+.spc-pseudo .ps-twitch-err { color: #ffb37a; margin-top: 8px; }

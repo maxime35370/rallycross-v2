@@ -441,12 +441,16 @@ async function renderPseudoEditor() {
 
   const current = pseudoFor(_pronoUid);
   const custom  = (typeof _pseudos[_pronoUid] === 'string' && _pseudos[_pronoUid]) ? _pseudos[_pronoUid] : '';
+  const errBanner = _twitchLinkError
+    ? `<div class="ps-hint ps-twitch-err">⚠️ ${escName(_twitchLinkError)}</div>` : '';
+  _twitchLinkError = null;   // affiché une fois, jusqu'à la prochaine tentative
   el.innerHTML = `<div class="ps-lbl">Ton pseudo au classement</div>`
     + `<div class="ps-row"><input id="spc-pseudo-in" maxlength="20" placeholder="${escName(current)}" value="${escName(custom)}">`
     + `<button id="spc-pseudo-save">OK</button></div>`
     + `<div class="ps-hint">Laisse vide pour garder ton pseudo auto (${escName(autoPseudo(_pronoUid))}).</div>`
     + `<div class="ps-twitch"><button id="spc-twitch-link" class="ps-twitch-btn">🎮 Se connecter avec Twitch</button></div>`
-    + `<div class="ps-hint">Optionnel — garde tes points si tu changes d'appareil, et rejoins le classement saison Twitch.</div>`;
+    + `<div class="ps-hint">Optionnel — garde tes points si tu changes d'appareil, et rejoins le classement saison Twitch.</div>`
+    + errBanner;
   document.getElementById('spc-pseudo-save').onclick = async () => {
     const v = document.getElementById('spc-pseudo-in').value;
     const btn = document.getElementById('spc-pseudo-save');
@@ -462,10 +466,21 @@ async function renderPseudoEditor() {
   _pseudoEditorDone = true;
 }
 
-/** Message bref selon le résultat du dernier aller-retour Twitch (posé par la page pont). */
+/** Message affiché à l'utilisateur selon la raison de l'échec (reason après "error:"). */
+const TWITCH_ERROR_MSG = {
+  not_anonymous: "Ce navigateur est connecté à l'espace régie (email) — la connexion Twitch est réservée aux comptes spectateurs. Teste en navigation privée, ou déconnecte-toi de la régie d'abord.",
+  state: 'La connexion a expiré ou a été interrompue — réessaie.',
+  'no-session': 'Session de pronostics indisponible — recharge la page et réessaie.',
+  access_denied: 'Connexion annulée.',
+};
+
+/** Résultat du dernier aller-retour Twitch (posé par la page pont) : affiché dans le bloc pseudo au prochain rendu. */
+let _twitchLinkError = null;
 function twitchLinkResultHint(result) {
   if (!result) return;
   if (result === 'ok') return; // pas de bandeau : renderPseudoEditor affichera l'état "connecté" directement
+  const reason = result.replace(/^error:/, '');
+  _twitchLinkError = TWITCH_ERROR_MSG[reason] || 'Connexion Twitch impossible pour le moment — réessaie plus tard.';
   console.warn('[twitch] connexion échouée :', result);
 }
 
