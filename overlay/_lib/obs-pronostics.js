@@ -339,12 +339,16 @@ export async function castVote(id, uid, driverId, nowMs) {
 }
 
 // ─────────────────────────────────────────────────────────
-// COMPTE TWITCH LIÉ (option, spectateur)
+// COMPTE TWITCH LIÉ (option, spectateur OU compte réel régie/client)
 //
 // Un compte anonyme peut se relier à un compte Twitch pour retrouver ses
-// points sur n'importe quel appareil, et apparaître au classement saison
-// (réservé aux comptes Twitch — voir updateSeasonTwitchScores). Le lien
-// passe par netlify/functions/twitch-auth.js (Client Secret côté serveur
+// points sur n'importe quel appareil ; un compte réel (régie, ou futur
+// client "Stratégie Live") peut faire de même sans jamais changer
+// d'identité, Twitch n'étant alors qu'un ajout à son profil déjà stable
+// (voir netlify/functions/twitch-auth.js pour le détail des deux cas).
+// Dans les deux cas, apparaître au classement saison (réservé aux comptes
+// Twitch — voir updateSeasonTwitchScores) devient possible. Le lien passe
+// par netlify/functions/twitch-auth.js (Client Secret côté serveur
 // uniquement) ; ce module ne fait que déclencher le flux et lire le
 // résultat, jamais l'échange lui-même.
 //

@@ -468,7 +468,6 @@ async function renderPseudoEditor() {
 
 /** Message affiché à l'utilisateur selon la raison de l'échec (reason après "error:"). */
 const TWITCH_ERROR_MSG = {
-  not_anonymous: "Ce navigateur est connecté à l'espace régie (email) — la connexion Twitch est réservée aux comptes spectateurs. Teste en navigation privée, ou déconnecte-toi de la régie d'abord.",
   state: 'La connexion a expiré ou a été interrompue — réessaie.',
   'no-session': 'Session de pronostics indisponible — recharge la page et réessaie.',
   access_denied: 'Connexion annulée.',
