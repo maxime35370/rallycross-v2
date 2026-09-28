@@ -395,6 +395,7 @@ let _scoresMeetingId = null;
 let _unsubScores     = null;
 let _pseudos         = {};     // uid -> pseudo perso résolu ('' = aucun / déjà cherché)
 let _pseudoEditorDone = false;
+let _pseudoEditorShowsConnected = false;   // état Twitch tel qu'affiché lors du dernier build de l'éditeur
 let _twitchByUid      = {};    // uid -> profil Twitch ({login,displayName,...}) | null (pas lié, déjà cherché)
 let _seasonScores     = {};    // classement saison (Twitch uniquement) : uid -> points
 let _seasonChampId    = null;
@@ -436,6 +437,7 @@ async function renderPseudoEditor() {
       + `<div class="ps-twitch-linked">✅ <b>${escName(twitch.displayName)}</b></div>`
       + `<div class="ps-hint">Tes points te suivent désormais sur tous tes appareils.</div>`;
     _pseudoEditorDone = true;
+    _pseudoEditorShowsConnected = true;
     return;
   }
 
@@ -463,6 +465,7 @@ async function renderPseudoEditor() {
     try { await beginTwitchLink(window.location.hash); }
     catch { btn.disabled = false; btn.textContent = '⚠️ Indisponible — réessaie plus tard'; }
   };
+  _pseudoEditorShowsConnected = false;
   _pseudoEditorDone = true;
 }
 
@@ -592,7 +595,13 @@ function renderMyScore() {
   el.innerHTML = `<div class="ms-head">🏆 Classement pronostics<span class="ms-sub">${sub}</span></div>`
     + `<div class="ms-mine">${mineLine}</div><div class="ms-top">${top}</div>`;
   ensurePseudos([...shown.map(e => e[0]), uid].filter(Boolean));
-  if (pe && uid) { if (!_pseudoEditorDone) renderPseudoEditor(); pe.style.display = ''; }
+  // Reconstruit aussi si un rendu précédent (fait AVANT que le statut Twitch
+  // soit connu, ex. pendant que ensureTwitchProfiles était encore en vol)
+  // avait figé l'éditeur sur "pas connecté" — sans ce rattrapage, le vrai
+  // statut "connecté" pouvait ne jamais s'afficher, l'éditeur ne se
+  // reconstruisant plus jamais une fois _pseudoEditorDone posé.
+  const justLearnedConnected = !_pseudoEditorShowsConnected && !!_twitchByUid[uid];
+  if (pe && uid) { if (!_pseudoEditorDone || justLearnedConnected) renderPseudoEditor(); pe.style.display = ''; }
   else if (pe) pe.style.display = 'none';
 }
 
