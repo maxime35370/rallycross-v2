@@ -489,3 +489,10 @@
 }
 .spc-pseudo .ps-twitch-btn:hover:not(:disabled) { background: #772CE8; }
 .spc-pseudo .ps-twitch-btn:disabled { opacity: 0.65; cursor: default; }
+
+/* Confirmation "connecté" — même famille visuelle que le bouton (violet
+   Twitch), pour que le lien entre les deux états soit immédiat. */
+.spc-pseudo .ps-twitch-linked {
+  display: inline-flex; align-items: center; gap: 6px; margin-top: 2px;
+  color: #d5c1ff; font-size: 0.95rem;
+}

@@ -432,8 +432,9 @@ async function renderPseudoEditor() {
   const twitch = _twitchByUid[_pronoUid];
 
   if (twitch) {
-    el.innerHTML = `<div class="ps-lbl">🟣 Connecté via Twitch</div>`
-      + `<div class="ps-hint">Ton nom au classement : <b>${escName(twitch.displayName)}</b> — tes points te suivent sur tous tes appareils.</div>`;
+    el.innerHTML = `<div class="ps-lbl">🟢 Connecté avec Twitch</div>`
+      + `<div class="ps-twitch-linked">✅ <b>${escName(twitch.displayName)}</b></div>`
+      + `<div class="ps-hint">Tes points te suivent désormais sur tous tes appareils.</div>`;
     _pseudoEditorDone = true;
     return;
   }
