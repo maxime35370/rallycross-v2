@@ -186,14 +186,37 @@ export async function updateMeetingScores(meetingId, strengthByCat = {}) {
     const pts = cotePoints(pos);
     if (!pts) continue;
     const vsnap = await getDocs(collection(db, PRONO_COL, pdoc.id, 'votes'));
+    // DÉDUPLICATION PAR QUESTION : si la même personne a voté juste sous
+    // DEUX uid différents pour CETTE question (ex. une fois en anonyme,
+    // une fois après connexion Twitch), les deux votes résolvent au même
+    // uid canonique — un Set garantit qu'elle ne marque qu'UNE fois les
+    // points de cette question, jamais deux.
+    const correctCanonicalUids = new Set();
     vsnap.forEach(v => {
       if (v.data().driverId !== p.correctDriverId) return;
-      const uid = canonicalOf[v.id] || v.id;
-      scores[uid] = (scores[uid] || 0) + pts;
+      correctCanonicalUids.add(resolveCanonicalUid(canonicalOf, v.id));
     });
+    correctCanonicalUids.forEach(uid => { scores[uid] = (scores[uid] || 0) + pts; });
   }
   await setDoc(doc(db, SCORES_COL, meetingId), { meetingId, scores, updatedAt: Date.now() });
   return scores;
+}
+
+/**
+ * Résout un uid jusqu'à son identité canonique finale, en suivant TOUTE la
+ * chaîne de uidLinks (pas un seul niveau) : un ancien uid anonyme peut
+ * pointer vers un uid Twitch synthétique, qui peut lui-même avoir été
+ * rattaché plus tard à un compte réel. Le cap à 5 sauts est une garde-fou
+ * contre une boucle si des données étaient corrompues — la chaîne normale
+ * ne dépasse jamais 2 niveaux.
+ */
+function resolveCanonicalUid(canonicalOf, uid) {
+  let current = uid, hops = 0;
+  while (canonicalOf[current] && canonicalOf[current] !== current && hops < 5) {
+    current = canonicalOf[current];
+    hops++;
+  }
+  return current;
 }
 
 /** Abonnement au tableau des points d'une épreuve (lecture PUBLIQUE). cb reçoit la map uid->points. */
@@ -448,7 +471,7 @@ export async function updateSeasonTwitchScores(championshipId) {
     if (!s.exists()) continue;
     const meetingScores = s.data().scores || {};
     for (const [uid, pts] of Object.entries(meetingScores)) {
-      const canonical = canonicalOf[uid] || uid;
+      const canonical = resolveCanonicalUid(canonicalOf, uid);
       if (!twitchUids.has(canonical)) continue;   // pas (encore) un compte Twitch → hors classement saison
       scores[canonical] = (scores[canonical] || 0) + pts;
     }
