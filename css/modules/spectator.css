@@ -477,3 +477,15 @@
 }
 .spc-pseudo .ps-row button:hover { filter: brightness(1.08); }
 .spc-pseudo .ps-hint { margin-top: 6px; font-size: 0.72rem; color: #8b95a4; }
+
+/* Bouton de connexion Twitch — couleurs de marque officielles, pour que le
+   bouton soit reconnaissable au premier coup d'œil (violet Twitch #9146FF). */
+.spc-pseudo .ps-twitch { margin-top: 10px; }
+.spc-pseudo .ps-twitch-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: #9146FF; color: #fff; border: none; border-radius: 8px;
+  padding: 8px 14px; font-family: inherit; font-weight: 700; font-size: 0.85rem;
+  cursor: pointer; letter-spacing: 0;
+}
+.spc-pseudo .ps-twitch-btn:hover:not(:disabled) { background: #772CE8; }
+.spc-pseudo .ps-twitch-btn:disabled { opacity: 0.65; cursor: default; }

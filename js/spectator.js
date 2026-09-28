@@ -444,7 +444,7 @@ async function renderPseudoEditor() {
     + `<div class="ps-row"><input id="spc-pseudo-in" maxlength="20" placeholder="${escName(current)}" value="${escName(custom)}">`
     + `<button id="spc-pseudo-save">OK</button></div>`
     + `<div class="ps-hint">Laisse vide pour garder ton pseudo auto (${escName(autoPseudo(_pronoUid))}).</div>`
-    + `<div class="ps-row" style="margin-top:8px"><button id="spc-twitch-link" class="btn btn-ghost btn-sm">🎮 Se connecter avec Twitch</button></div>`
+    + `<div class="ps-twitch"><button id="spc-twitch-link" class="ps-twitch-btn">🎮 Se connecter avec Twitch</button></div>`
     + `<div class="ps-hint">Optionnel — garde tes points si tu changes d'appareil, et rejoins le classement saison Twitch.</div>`;
   document.getElementById('spc-pseudo-save').onclick = async () => {
     const v = document.getElementById('spc-pseudo-in').value;
