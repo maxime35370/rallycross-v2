@@ -444,10 +444,12 @@ export function consumeTwitchLinkResult() {
  * Recalcule le classement saison (Twitch uniquement) d'un championnat depuis
  * pronoScores + uidLinks, et l'écrit dans pronoSeasonScores/{championshipId}.
  * À n'appeler QUE côté régie.
- * @returns {Promise<Object>} map uidTwitch -> points cumulés saison
+ * @returns {Promise<{scores:Object, breakdown:Object}>} scores : uidTwitch -> points cumulés saison ;
+ *   breakdown : uidTwitch -> { meetingId: points } (détail par épreuve, jamais stocké — recalculé à la demande,
+ *   pour vérifier d'où viennent les points d'un compte, ex. un meeting de test oublié).
  */
 export async function updateSeasonTwitchScores(championshipId) {
-  if (!championshipId) return {};
+  if (!championshipId) return { scores: {}, breakdown: {} };
   await initFirebase();
   const { collection, getDocs, query, where, doc, getDoc, setDoc } = await fs();
 
@@ -464,8 +466,12 @@ export async function updateSeasonTwitchScores(championshipId) {
   const pronoSnap = await getDocs(query(collection(db, PRONO_COL), where('championshipId', '==', championshipId)));
   const meetingIds = new Set(pronoSnap.docs.map(d => d.data().meetingId).filter(Boolean));
 
-  // 4) cumul, uid résolu au compte Twitch canonique.
+  // 4) cumul, uid résolu au compte Twitch canonique — additionné sur TOUTES les
+  // épreuves du championnat, pas seulement celle qu'on regarde (d'où le détail
+  // par épreuve ci-dessous : un total saison peut sembler élevé si des points
+  // dorment sur d'autres meetings, y compris d'anciens tests oubliés).
   const scores = {};
+  const breakdown = {};
   for (const meetingId of meetingIds) {
     const s = await getDoc(doc(db, SCORES_COL, meetingId));
     if (!s.exists()) continue;
@@ -474,11 +480,13 @@ export async function updateSeasonTwitchScores(championshipId) {
       const canonical = resolveCanonicalUid(canonicalOf, uid);
       if (!twitchUids.has(canonical)) continue;   // pas (encore) un compte Twitch → hors classement saison
       scores[canonical] = (scores[canonical] || 0) + pts;
+      if (!breakdown[canonical]) breakdown[canonical] = {};
+      breakdown[canonical][meetingId] = (breakdown[canonical][meetingId] || 0) + pts;
     }
   }
 
   await setDoc(doc(db, SEASON_SCORES_COL, championshipId), { championshipId, scores, updatedAt: Date.now() });
-  return scores;
+  return { scores, breakdown };
 }
 
 /** Abonnement au classement saison Twitch d'un championnat (lecture PUBLIQUE). cb reçoit la map uidTwitch->points. */

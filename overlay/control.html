@@ -752,13 +752,24 @@
     try {
       const champId = state.championshipId;
       if (!champId) { box.innerHTML = '<div class="pempty">Sélectionne un championnat en haut.</div>'; return; }
-      const scores = await updateSeasonTwitchScores(champId);
+      const { scores, breakdown } = await updateSeasonTwitchScores(champId);
       const entries = Object.entries(scores).filter(([, p]) => p > 0).sort((a, b) => b[1] - a[1]);
       if (!entries.length) { box.innerHTML = '<div class="pempty">Aucun compte Twitch classé pour ce championnat.</div>'; return; }
+      const meetingLabel = (mid) => {
+        const m = meetings.find(x => x.id === mid);
+        return m ? `${m.date || ''} — ${m.location || mid}`.trim() : mid;
+      };
       const rows = await Promise.all(entries.map(async ([uid, pts], i) => {
         const profile = await getTwitchProfile(uid).catch(() => null);
         const name = profile?.displayName || uid;
-        return `<div class="pmrow"><span class="mn">${i + 1}</span><span class="mnm">${pEsc(name)}</span><span class="pmpct">${pts} pt${pts > 1 ? 's' : ''}</span></div>`;
+        // Détail par épreuve : additionné sur TOUT le championnat, donc utile
+        // pour vérifier d'où viennent les points (ex. un meeting de test oublié).
+        const perMeeting = Object.entries(breakdown[uid] || {}).sort((a, b) => b[1] - a[1]);
+        const detail = perMeeting.map(([mid, p]) =>
+          `<div class="pmrow" style="opacity:.7;font-size:.85em;padding-left:22px">`
+          + `<span class="mnm">${pEsc(meetingLabel(mid))}</span><span class="pmpct">${p} pt${p > 1 ? 's' : ''}</span></div>`
+        ).join('');
+        return `<div class="pmrow"><span class="mn">${i + 1}</span><span class="mnm">${pEsc(name)}</span><span class="pmpct">${pts} pt${pts > 1 ? 's' : ''}</span></div>${detail}`;
       }));
       box.innerHTML = `<div class="pmini">${rows.join('')}</div>`;
     } catch (e) {
