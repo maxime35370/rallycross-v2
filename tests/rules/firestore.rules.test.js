@@ -255,6 +255,54 @@ describe('identité — request.auth != null ne suffit jamais', () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════
+// 2c · COMPTES TWITCH LIÉS (pronostics) — écriture réservée au serveur
+//
+// twitchProfiles et uidLinks ne sont JAMAIS écrits depuis un client, régie
+// comprise : seule netlify/functions/twitch-auth.js les écrit, via l'Admin
+// SDK (hors règles), après avoir vérifié le code Twitch et le jeton anonyme
+// côté serveur. Un client qui pourrait les écrire pourrait se prétendre
+// « connecté Twitch » sous n'importe quel pseudo et fausser les classements.
+// ═══════════════════════════════════════════════════════════════════════
+describe('pronostics — comptes Twitch (écriture serveur uniquement)', () => {
+  beforeEach(async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      const db = ctx.firestore();
+      await setDoc(doc(db, 'twitchProfiles', 'twitch_1'), { login: 'streamer1', displayName: 'Streamer1' });
+      await setDoc(doc(db, 'uidLinks', SPECT), { canonicalUid: 'twitch_1' });
+      await setDoc(doc(db, 'pronoSeasonScores', FFSA), { championshipId: FFSA, scores: { twitch_1: 5 } });
+    });
+  });
+
+  it('twitchProfiles : lecture publique, écriture TOUJOURS refusée (même à la régie)', async () => {
+    await assertSucceeds(getDoc(doc(anonyme(), 'twitchProfiles', 'twitch_1')));
+    await assertFails(setDoc(doc(anonyme(), 'twitchProfiles', 'twitch_2'), { login: 'x' }));
+    await assertFails(setDoc(doc(spectateur(), 'twitchProfiles', 'twitch_2'), { login: 'x' }));
+    await assertFails(setDoc(doc(regie(), 'twitchProfiles', 'twitch_2'), { login: 'x' }));
+  });
+
+  it('uidLinks : le propriétaire de l\'ancien uid lit son propre lien, jamais celui d\'un autre', async () => {
+    await assertSucceeds(getDoc(doc(spectateur(), 'uidLinks', SPECT)));
+    await assertFails(getDoc(doc(diane(), 'uidLinks', SPECT)));
+  });
+
+  it('uidLinks : la régie peut lister tous les liens (calcul des classements), un client non', async () => {
+    await assertSucceeds(getDocs(collection(regie(), 'uidLinks')));
+    await assertFails(getDocs(collection(spectateur(), 'uidLinks')));
+  });
+
+  it('uidLinks : écriture TOUJOURS refusée depuis un client, même la régie', async () => {
+    await assertFails(setDoc(doc(spectateur(), 'uidLinks', 'uid_x'), { canonicalUid: 'twitch_9' }));
+    await assertFails(setDoc(doc(regie(), 'uidLinks', 'uid_x'), { canonicalUid: 'twitch_9' }));
+  });
+
+  it('pronoSeasonScores : lecture publique, écriture régie uniquement (jamais anonyme)', async () => {
+    await assertSucceeds(getDoc(doc(anonyme(), 'pronoSeasonScores', FFSA)));
+    await assertFails(setDoc(doc(spectateur(), 'pronoSeasonScores', FFSA), { scores: {} }));
+    await assertSucceeds(setDoc(doc(regie(), 'pronoSeasonScores', FFSA), { championshipId: FFSA, scores: { twitch_1: 6 } }));
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════
 // 3 · COMPTES
 // ═══════════════════════════════════════════════════════════════════════
 describe('comptes — on ne se déclare pas sous l\'adresse d\'un autre', () => {

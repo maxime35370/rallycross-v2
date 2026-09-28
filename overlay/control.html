@@ -223,6 +223,9 @@
         <div class="actions"><button class="ghost primary" id="pronoCreate">＋ Créer le pronostic (brouillon)</button></div>
         <div class="pdiv"></div>
         <div class="plist" id="pronoList"><div class="pempty">Aucun pronostic pour le moment.</div></div>
+        <div class="pdiv"></div>
+        <div class="actions"><button class="ghost" id="seasonTwitchBtn">🎮 Classement saison Twitch</button></div>
+        <div class="plist" id="seasonTwitchList" style="display:none"></div>
       </div>
     </div>
 
@@ -348,7 +351,7 @@
   import { initFirebase, fsQuery, watchQuery } from './_lib/obs-firebase.js';
   import { watchControl, setControl, sessionKey, DEFAULT_CONTROL } from './_lib/obs-control.js';
   import { getSessions, findSession, getGridOrder, getInterim, getParticipants, computePronoWinner, pronoWatchSessionIds, getQualifCutoff, getEcRank, getMqRank, getPhaseRank, getDriverStrength } from './_lib/obs-data.js';
-  import { watchPronostics, watchVotes, createPronostic, updatePronostic, openPronostic, closePronostic, revealPronostic, deletePronostic, meetingVoteBilan, updateMeetingScores } from './_lib/obs-pronostics.js';
+  import { watchPronostics, watchVotes, createPronostic, updatePronostic, openPronostic, closePronostic, revealPronostic, deletePronostic, meetingVoteBilan, updateMeetingScores, updateSeasonTwitchScores, getTwitchProfile } from './_lib/obs-pronostics.js';
   import { qrDataUrl, spectatorUrl } from './_lib/obs-qr.js';
 
   const SDK = 'https://www.gstatic.com/firebasejs/10.12.0/';
@@ -734,8 +737,35 @@
         catch { byCat[cat] = {}; }
       }
       await updateMeetingScores(meetingId, byCat);
+      // Classement saison (Twitch uniquement) : recalculé aux côtés du classement
+      // de l'épreuve, depuis le même événement (révélation / pénalité).
+      const champIdForMeeting = pronoDocs.find(p => p.meetingId === meetingId)?.championshipId || state.championshipId;
+      if (champIdForMeeting) await updateSeasonTwitchScores(champIdForMeeting);
     } catch {}
   }
+
+  async function renderSeasonTwitchPanel() {
+    const box = document.getElementById('seasonTwitchList');
+    if (!box) return;
+    box.style.display = '';
+    box.innerHTML = '<div class="pempty">Calcul…</div>';
+    try {
+      const champId = state.championshipId;
+      if (!champId) { box.innerHTML = '<div class="pempty">Sélectionne un championnat en haut.</div>'; return; }
+      const scores = await updateSeasonTwitchScores(champId);
+      const entries = Object.entries(scores).filter(([, p]) => p > 0).sort((a, b) => b[1] - a[1]);
+      if (!entries.length) { box.innerHTML = '<div class="pempty">Aucun compte Twitch classé pour ce championnat.</div>'; return; }
+      const rows = await Promise.all(entries.map(async ([uid, pts], i) => {
+        const profile = await getTwitchProfile(uid).catch(() => null);
+        const name = profile?.displayName || uid;
+        return `<div class="pmrow"><span class="mn">${i + 1}</span><span class="mnm">${pEsc(name)}</span><span class="pmpct">${pts} pt${pts > 1 ? 's' : ''}</span></div>`;
+      }));
+      box.innerHTML = `<div class="pmini">${rows.join('')}</div>`;
+    } catch (e) {
+      box.innerHTML = `<div class="pempty">Erreur : ${(e && (e.code || e.message)) || 'inconnue'}</div>`;
+    }
+  }
+  document.getElementById('seasonTwitchBtn').onclick = renderSeasonTwitchPanel;
   document.getElementById('nextBtn').onclick = () => push({ nextText: document.getElementById('nextTxt').value });
   document.querySelectorAll('[data-cd]').forEach(b => b.onclick = () => {
     const m = +b.dataset.cd;

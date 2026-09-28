@@ -247,6 +247,50 @@ service cloud.firestore {
           && request.resource.data.keys().hasOnly(['pseudo']);
     }
     
+    // ── COMPTES TWITCH LIÉS (pronostics) ────────────────────────────
+    // Un profil = un compte Twitch relié à des pronostics. Id déterministe
+    // "twitch_<id Twitch>" : une reconnexion depuis un autre appareil retombe
+    // TOUJOURS sur le même document, jamais un doublon.
+    //
+    // Écriture entièrement refusée côté client : si un spectateur pouvait
+    // écrire ici, n'importe qui pourrait se prétendre "connecté Twitch" avec
+    // le pseudo de son choix et fausser les classements. Seule
+    // netlify/functions/twitch-auth.js écrit ce document, via l'Admin SDK
+    // (hors règles), après avoir vérifié le code Twitch côté serveur.
+    match /twitchProfiles/{uid} {
+      allow read:  if true;
+      allow write: if false;
+    }
+
+    // ── LIENS COMPTE ANONYME → COMPTE TWITCH ────────────────────────
+    // Table de correspondance : un ancien uid anonyme (pronostics votés
+    // avant la connexion Twitch) pointe vers le uid Twitch canonique qui
+    // hérite de son historique. Les votes et pronoScores existants ne sont
+    // JAMAIS réécrits (delete est d'ailleurs refusé sur /votes) — c'est ce
+    // pointeur qui permet de les rattacher au bon compte au moment de
+    // calculer un classement (par épreuve ou saison).
+    //
+    // Même raison qu'au-dessus : écriture refusée côté client, seule la
+    // fonction serveur (Admin SDK, jeton anonyme vérifié) peut créer ce lien.
+    // Lecture : la régie (calcul des classements) et le propriétaire de
+    // l'ancien uid (savoir si CE navigateur est déjà lié).
+    match /uidLinks/{anonUid} {
+      allow get:   if isRegie() || (request.auth != null && request.auth.uid == anonUid);
+      allow list:  if isRegie();
+      allow write: if false;
+    }
+
+    // Classement SAISON des pronostiqueurs — TWITCH UNIQUEMENT. Un compte
+    // anonyme n'a pas d'identité stable d'un meeting à l'autre (cf.
+    // uidLinks) : l'inclure fausserait le classement saison, donc il n'y
+    // figure jamais, par construction (la régie ne calcule ce document
+    // qu'à partir des uid présents dans twitchProfiles). Écrit par la
+    // régie après chaque révélation, lu par tous.
+    match /pronoSeasonScores/{championshipId} {
+      allow read:  if true;
+      allow write: if isRegie();
+    }
+
     // Pénalités « points championnat » (niveau saison) — écrit régie, lu par tous
     match /championshipPenalties/{docId} {
       allow read:  if true;

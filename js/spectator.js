@@ -7,7 +7,10 @@
 import { db } from './firebase.js';
 import { msToDisplay, escHtml } from './utils.js';
 import { getActiveChampionship, getActiveChampionshipId } from './context.js';
-import { watchPronostics, myVote, castVote, ensureAnon, watchMeetingScores, autoPseudo, getPlayerPseudo, setPlayerPseudo } from '../overlay/_lib/obs-pronostics.js';
+import {
+  watchPronostics, myVote, castVote, ensureAnon, watchMeetingScores, autoPseudo, getPlayerPseudo, setPlayerPseudo,
+  getTwitchProfile, beginTwitchLink, consumeTwitchLinkResult, watchSeasonScores,
+} from '../overlay/_lib/obs-pronostics.js';
 
 // ─────────────────────────────────────────────────────────
 // ÉTAT LOCAL
@@ -187,6 +190,7 @@ function renderView() {
 
     <div id="spc-myscore" class="spc-myscore" style="display:none"></div>
     <div id="spc-pseudo" class="spc-pseudo" style="display:none"></div>
+    <div id="spc-season-twitch" class="spc-myscore" style="display:none"></div>
     <div id="spc-pronostics" class="spc-pronostics" style="display:none"></div>
 
     <div id="spc-content">
@@ -391,9 +395,15 @@ let _scoresMeetingId = null;
 let _unsubScores     = null;
 let _pseudos         = {};     // uid -> pseudo perso résolu ('' = aucun / déjà cherché)
 let _pseudoEditorDone = false;
+let _twitchByUid      = {};    // uid -> profil Twitch ({login,displayName,...}) | null (pas lié, déjà cherché)
+let _seasonScores     = {};    // classement saison (Twitch uniquement) : uid -> points
+let _seasonChampId    = null;
+let _unsubSeason      = null;
 
 const escName = s => String(s).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
-const pseudoFor = uid => (typeof _pseudos[uid] === 'string' && _pseudos[uid]) ? _pseudos[uid] : autoPseudo(uid);
+/** Pseudo affiché : compte Twitch lié en priorité, sinon pseudo perso, sinon pseudo auto. */
+const pseudoFor = uid => _twitchByUid[uid]?.displayName
+  || ((typeof _pseudos[uid] === 'string' && _pseudos[uid]) ? _pseudos[uid] : autoPseudo(uid));
 
 /** Résout les pseudos perso des UID affichés (une fois chacun), puis re-render si trouvé. */
 function ensurePseudos(uids) {
@@ -404,24 +414,58 @@ function ensurePseudos(uids) {
     .then(() => renderMyScore());
 }
 
-/** Éditeur « ton pseudo » (option B) — construit une seule fois pour ne pas réinitialiser la saisie. */
+/** Résout le statut Twitch (lié ou non) des UID affichés (une fois chacun), puis re-render si trouvé. */
+function ensureTwitchProfiles(uids) {
+  const todo = uids.filter(u => u && !(u in _twitchByUid));
+  if (!todo.length) return;
+  todo.forEach(u => { _twitchByUid[u] = null; });   // marque « cherché »
+  Promise.all(todo.map(async u => { try { const p = await getTwitchProfile(u); if (p) _twitchByUid[u] = p; } catch {} }))
+    .then(() => renderMyScore());
+}
+
+/** Éditeur « ton pseudo » (option B) + connexion Twitch — construit une seule fois pour ne pas réinitialiser la saisie. */
 async function renderPseudoEditor() {
   const el = document.getElementById('spc-pseudo');
   if (!el || !_pronoUid) return;
   if (!(_pronoUid in _pseudos)) { try { _pseudos[_pronoUid] = (await getPlayerPseudo(_pronoUid)) || ''; } catch { _pseudos[_pronoUid] = ''; } }
+  if (!(_pronoUid in _twitchByUid)) { try { _twitchByUid[_pronoUid] = await getTwitchProfile(_pronoUid); } catch { _twitchByUid[_pronoUid] = null; } }
+  const twitch = _twitchByUid[_pronoUid];
+
+  if (twitch) {
+    el.innerHTML = `<div class="ps-lbl">🟣 Connecté via Twitch</div>`
+      + `<div class="ps-hint">Ton nom au classement : <b>${escName(twitch.displayName)}</b> — tes points te suivent sur tous tes appareils.</div>`;
+    _pseudoEditorDone = true;
+    return;
+  }
+
   const current = pseudoFor(_pronoUid);
   const custom  = (typeof _pseudos[_pronoUid] === 'string' && _pseudos[_pronoUid]) ? _pseudos[_pronoUid] : '';
   el.innerHTML = `<div class="ps-lbl">Ton pseudo au classement</div>`
     + `<div class="ps-row"><input id="spc-pseudo-in" maxlength="20" placeholder="${escName(current)}" value="${escName(custom)}">`
     + `<button id="spc-pseudo-save">OK</button></div>`
-    + `<div class="ps-hint">Laisse vide pour garder ton pseudo auto (${escName(autoPseudo(_pronoUid))}).</div>`;
+    + `<div class="ps-hint">Laisse vide pour garder ton pseudo auto (${escName(autoPseudo(_pronoUid))}).</div>`
+    + `<div class="ps-row" style="margin-top:8px"><button id="spc-twitch-link" class="btn btn-ghost btn-sm">🎮 Se connecter avec Twitch</button></div>`
+    + `<div class="ps-hint">Optionnel — garde tes points si tu changes d'appareil, et rejoins le classement saison Twitch.</div>`;
   document.getElementById('spc-pseudo-save').onclick = async () => {
     const v = document.getElementById('spc-pseudo-in').value;
     const btn = document.getElementById('spc-pseudo-save');
     try { _pseudos[_pronoUid] = await setPlayerPseudo(_pronoUid, v); btn.textContent = '✓'; setTimeout(() => { btn.textContent = 'OK'; }, 1200); renderMyScore(); }
     catch { btn.textContent = '⚠'; setTimeout(() => { btn.textContent = 'OK'; }, 1200); }
   };
+  document.getElementById('spc-twitch-link').onclick = async () => {
+    const btn = document.getElementById('spc-twitch-link');
+    btn.disabled = true; btn.textContent = 'Redirection…';
+    try { await beginTwitchLink(window.location.hash); }
+    catch { btn.disabled = false; btn.textContent = '⚠️ Indisponible — réessaie plus tard'; }
+  };
   _pseudoEditorDone = true;
+}
+
+/** Message bref selon le résultat du dernier aller-retour Twitch (posé par la page pont). */
+function twitchLinkResultHint(result) {
+  if (!result) return;
+  if (result === 'ok') return; // pas de bandeau : renderPseudoEditor affichera l'état "connecté" directement
+  console.warn('[twitch] connexion échouée :', result);
 }
 
 const PRONO_ICON      = { manche_winner: '🏆', interim_m2: '📊', interim_final: '📊', ec_best: '⏱️', serie_winner: '🏁', df_winner: '🥈', final_winner: '🏆', custom: '🎯' };
@@ -430,6 +474,10 @@ const PRONO_STATUS_FR = { open: 'Ouvert', closed: 'Votes clos', revealed: 'Résu
 async function initPronostics() {
   if (_unsubPronostics) return;                       // déjà abonné
   if (!_pronoClickBound) { document.addEventListener('click', onPronoClick); _pronoClickBound = true; }
+
+  // 0) Retour éventuel de la page pont Twitch (voir netlify/functions/twitch-auth.js) :
+  //    la session anonyme a potentiellement basculé sur un uid Twitch stable.
+  twitchLinkResultHint(consumeTwitchLinkResult());
 
   // 1) AFFICHAGE : lecture PUBLIQUE, indépendante de l'auth anonyme. On s'abonne
   //    immédiatement pour que les pronostics apparaissent même si la connexion
@@ -461,7 +509,21 @@ function watchScoresFor(meetingId) {
     .catch(() => {});
 }
 
-/** Affiche « tes points » + un petit Top 5 anonymisé du meeting (côté spectateur). */
+// Seuils de mélange demandés : en dessous, classement mixte (Twitch + non
+// connectés) ; à partir de WEEKEND_SPLIT_MIN participants ET
+// WEEKEND_SPLIT_MIN_TWITCH comptes Twitch parmi eux, classement Twitch
+// séparé + meilleur non connecté affiché à côté.
+const WEEKEND_TOP_N            = 15;
+const WEEKEND_SPLIT_MIN         = 20;
+const WEEKEND_SPLIT_MIN_TWITCH  = 10;
+
+function scoreRowHtml(u, p, i, uid) {
+  return `<div class="ms-row${u === uid ? ' me' : ''}"><span class="ms-pos">${i + 1}</span>`
+    + `<span class="ms-name">${escName(pseudoFor(u))}${u === uid ? ' <span class="ms-you">(toi)</span>' : ''}</span>`
+    + `<span class="ms-v">${p} pt${p > 1 ? 's' : ''}</span></div>`;
+}
+
+/** Affiche « tes points » + le classement du meeting (mixte, ou Twitch séparé selon les seuils). */
 function renderMyScore() {
   const el = document.getElementById('spc-myscore');
   const pe = document.getElementById('spc-pseudo');
@@ -470,22 +532,85 @@ function renderMyScore() {
   const entries = Object.entries(_scores || {}).filter(([, p]) => p > 0);
   if (!entries.length) { el.style.display = 'none'; el.innerHTML = ''; if (pe) pe.style.display = 'none'; return; }
   entries.sort((a, b) => b[1] - a[1]);
+  // Il faut connaître le statut Twitch de TOUS les participants (pas
+  // seulement le top affiché) pour appliquer correctement les seuils.
+  ensureTwitchProfiles(entries.map(e => e[0]));
+
   const mine = uid ? (_scores[uid] || 0) : 0;
-  const rank = entries.filter(([, p]) => p > mine).length + 1;
-  const top = entries.slice(0, 5).map(([u, p], i) =>
-    `<div class="ms-row${u === uid ? ' me' : ''}"><span class="ms-pos">${i + 1}</span>`
-    + `<span class="ms-name">${escName(pseudoFor(u))}${u === uid ? ' <span class="ms-you">(toi)</span>' : ''}</span>`
-    + `<span class="ms-v">${p} pt${p > 1 ? 's' : ''}</span></div>`).join('');
-  const mineLine = uid
-    ? (mine > 0 ? `Tes points : <b>${mine}</b> · ${rank}ᵉ sur ${entries.length}`
-                : `Tes points : <b>0</b> — trouve les gagnants pour marquer !`)
-    : `${entries.length} joueur${entries.length > 1 ? 's' : ''} en lice`;
+  const twitchEntries = entries.filter(([u]) => _twitchByUid[u]);
+  const splitTwitch = entries.length >= WEEKEND_SPLIT_MIN && twitchEntries.length >= WEEKEND_SPLIT_MIN_TWITCH;
+
+  let top, sub, shown;
+  if (splitTwitch) {
+    shown = twitchEntries.slice(0, WEEKEND_TOP_N);
+    top = shown.map(([u, p], i) => scoreRowHtml(u, p, i, uid)).join('');
+    const bestOther = entries.find(([u]) => !_twitchByUid[u]);
+    sub = 'ce meeting · comptes Twitch';
+    if (bestOther) {
+      const [bu, bp] = bestOther;
+      top += `<div class="ms-row${bu === uid ? ' me' : ''}" style="margin-top:6px;opacity:.85">`
+        + `<span class="ms-pos">—</span><span class="ms-name">Meilleur non connecté : ${escName(pseudoFor(bu))}${bu === uid ? ' <span class="ms-you">(toi)</span>' : ''}</span>`
+        + `<span class="ms-v">${bp} pt${bp > 1 ? 's' : ''}</span></div>`;
+    }
+  } else {
+    shown = entries.slice(0, WEEKEND_TOP_N);
+    top = shown.map(([u, p], i) => scoreRowHtml(u, p, i, uid)).join('');
+    sub = 'ce meeting';
+  }
+
+  let mineLine;
+  if (uid && mine > 0) {
+    if (splitTwitch) {
+      mineLine = _twitchByUid[uid]
+        ? `Tes points : <b>${mine}</b> · ${twitchEntries.filter(([, p]) => p > mine).length + 1}ᵉ sur ${twitchEntries.length} (classement Twitch)`
+        : `Tes points : <b>${mine}</b> — connecte-toi via Twitch pour apparaître au classement affiché.`;
+    } else {
+      mineLine = `Tes points : <b>${mine}</b> · ${entries.filter(([, p]) => p > mine).length + 1}ᵉ sur ${entries.length}`;
+    }
+  } else if (uid) {
+    mineLine = `Tes points : <b>0</b> — trouve les gagnants pour marquer !`;
+  } else {
+    mineLine = `${entries.length} joueur${entries.length > 1 ? 's' : ''} en lice`;
+  }
+
   el.style.display = '';
-  el.innerHTML = `<div class="ms-head">🏆 Classement pronostics<span class="ms-sub">ce meeting</span></div>`
+  el.innerHTML = `<div class="ms-head">🏆 Classement pronostics<span class="ms-sub">${sub}</span></div>`
     + `<div class="ms-mine">${mineLine}</div><div class="ms-top">${top}</div>`;
-  ensurePseudos([...entries.slice(0, 5).map(e => e[0]), uid].filter(Boolean));
+  ensurePseudos([...shown.map(e => e[0]), uid].filter(Boolean));
   if (pe && uid) { if (!_pseudoEditorDone) renderPseudoEditor(); pe.style.display = ''; }
   else if (pe) pe.style.display = 'none';
+}
+
+/** (Ré)abonne au classement saison (Twitch uniquement) du championnat courant. */
+function watchSeasonFor(championshipId) {
+  if (championshipId === _seasonChampId) return;
+  if (_unsubSeason) { try { _unsubSeason(); } catch {} _unsubSeason = null; }
+  _seasonChampId = championshipId || null;
+  _seasonScores = {};
+  renderSeasonTwitch();
+  if (!championshipId) return;
+  watchSeasonScores(championshipId, map => { _seasonScores = map || {}; renderSeasonTwitch(); }, () => {})
+    .then(unsub => { if (_seasonChampId === championshipId) _unsubSeason = unsub; else { try { unsub(); } catch {} } })
+    .catch(() => {});
+}
+
+/** Classement saison — comptes Twitch uniquement (jamais de compte anonyme, cf. updateSeasonTwitchScores). */
+function renderSeasonTwitch() {
+  const el = document.getElementById('spc-season-twitch');
+  if (!el) return;
+  const uid = _pronoUid;
+  const entries = Object.entries(_seasonScores || {}).filter(([, p]) => p > 0).sort((a, b) => b[1] - a[1]);
+  if (!entries.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
+  ensureTwitchProfiles(entries.map(e => e[0]));
+  const mine = uid ? (_seasonScores[uid] || 0) : 0;
+  const top = entries.slice(0, WEEKEND_TOP_N).map(([u, p], i) => scoreRowHtml(u, p, i, uid)).join('');
+  const mineLine = (uid && mine > 0)
+    ? `Tes points saison : <b>${mine}</b> · ${entries.filter(([, p]) => p > mine).length + 1}ᵉ sur ${entries.length}`
+    : `${entries.length} compte${entries.length > 1 ? 's' : ''} Twitch classé${entries.length > 1 ? 's' : ''} cette saison`;
+  el.style.display = '';
+  el.innerHTML = `<div class="ms-head">🎮 Classement saison<span class="ms-sub">comptes Twitch</span></div>`
+    + `<div class="ms-mine">${mineLine}</div><div class="ms-top">${top}</div>`;
+  ensurePseudos(entries.slice(0, WEEKEND_TOP_N).map(e => e[0]));
 }
 
 /** Charge le vote déjà émis par ce spectateur pour chaque pronostic ouvert (si session prête). */
@@ -575,6 +700,7 @@ function renderPronostics() {
   const pastBox = document.getElementById('spc-pronostics-past');   // bas  : résultats RÉVÉLÉS
   if (!box) return;
   watchScoresFor(selectedMeetingId);   // suit le classement pronostiqueurs de l'épreuve affichée
+  watchSeasonFor((allMeetings.find(m => m.id === selectedMeetingId) || {}).championshipId || getActiveChampionshipId());
   // Cycle de vie côté spectateur (identique avec ou sans catégorie) :
   //  • OUVERT   → visible EN HAUT, on peut voter (appel à voter dès l'arrivée) ;
   //  • VOTES CLOS → MASQUÉ (la session est en cours, résultat pas encore révélé)

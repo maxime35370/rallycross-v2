@@ -169,6 +169,15 @@ export async function updateMeetingScores(meetingId, strengthByCat = {}) {
   await initFirebase();
   const { collection, getDocs, query, where, doc, setDoc } = await fs();
   const psnap = await getDocs(query(collection(db, PRONO_COL), where('meetingId', '==', meetingId)));
+  // uid anonyme -> uid Twitch canonique (lien créé au moment d'une connexion Twitch,
+  // voir netlify/functions/twitch-auth.js). Un spectateur qui s'est connecté à Twitch
+  // PENDANT le meeting a pu voter sous deux uid différents (l'ancien anonyme, puis le
+  // nouveau uid Twitch) : sans cette résolution, ses points se répartiraient entre les
+  // deux au lieu de compter pour le même joueur.
+  const linksSnap = await getDocs(collection(db, 'uidLinks'));
+  const canonicalOf = {};
+  linksSnap.forEach(d => { canonicalOf[d.id] = d.data().canonicalUid; });
+
   const scores = {};
   for (const pdoc of psnap.docs) {
     const p = pdoc.data();
@@ -177,7 +186,11 @@ export async function updateMeetingScores(meetingId, strengthByCat = {}) {
     const pts = cotePoints(pos);
     if (!pts) continue;
     const vsnap = await getDocs(collection(db, PRONO_COL, pdoc.id, 'votes'));
-    vsnap.forEach(v => { if (v.data().driverId === p.correctDriverId) scores[v.id] = (scores[v.id] || 0) + pts; });
+    vsnap.forEach(v => {
+      if (v.data().driverId !== p.correctDriverId) return;
+      const uid = canonicalOf[v.id] || v.id;
+      scores[uid] = (scores[uid] || 0) + pts;
+    });
   }
   await setDoc(doc(db, SCORES_COL, meetingId), { meetingId, scores, updatedAt: Date.now() });
   return scores;
@@ -323,4 +336,129 @@ export async function castVote(id, uid, driverId, nowMs) {
   await initFirebase();
   const { doc, setDoc } = await fs();
   await setDoc(doc(db, PRONO_COL, id, 'votes', uid), { driverId, at: nowMs || Date.now() }, { merge: true });
+}
+
+// ─────────────────────────────────────────────────────────
+// COMPTE TWITCH LIÉ (option, spectateur)
+//
+// Un compte anonyme peut se relier à un compte Twitch pour retrouver ses
+// points sur n'importe quel appareil, et apparaître au classement saison
+// (réservé aux comptes Twitch — voir updateSeasonTwitchScores). Le lien
+// passe par netlify/functions/twitch-auth.js (Client Secret côté serveur
+// uniquement) ; ce module ne fait que déclencher le flux et lire le
+// résultat, jamais l'échange lui-même.
+//
+// Les documents twitchProfiles/{uid} et uidLinks/{uid} sont écrits QUE côté
+// serveur (Admin SDK) — voir firestore.rules — donc rien ici ne les écrit.
+// ─────────────────────────────────────────────────────────
+
+const TWITCH_PROFILES_COL = 'twitchProfiles';
+const UID_LINKS_COL       = 'uidLinks';
+const SEASON_SCORES_COL   = 'pronoSeasonScores';
+
+/** Profil Twitch lié à ce uid (ou null si ce compte n'est pas connecté via Twitch). Lecture publique. */
+export async function getTwitchProfile(uid) {
+  await initFirebase();
+  const { doc, getDoc } = await fs();
+  try { const s = await getDoc(doc(db, TWITCH_PROFILES_COL, uid)); return s.exists() ? s.data() : null; }
+  catch { return null; }
+}
+
+/**
+ * Démarre la connexion Twitch : pose un nonce anti-CSRF + le hash de retour
+ * en sessionStorage, puis quitte la page vers Twitch. La suite se passe dans
+ * la page pont de netlify/functions/twitch-auth.js (retour GET Twitch), qui
+ * revient ensuite sur `returnHash` avec le résultat en sessionStorage
+ * (voir consumeTwitchLinkResult).
+ */
+export async function beginTwitchLink(returnHash) {
+  const r = await fetch('/.netlify/functions/twitch-config');
+  const { clientId } = await r.json();
+  if (!clientId) throw new Error('twitch_not_configured');
+  const nonce = (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2));
+  sessionStorage.setItem('rxTwitchNonce', nonce);
+  sessionStorage.setItem('rxTwitchReturnHash', returnHash || '#spectator');
+  const params = new URLSearchParams({
+    client_id: clientId,
+    redirect_uri: 'https://rxchrono.netlify.app/.netlify/functions/twitch-auth',
+    response_type: 'code',
+    scope: '',
+    state: nonce,
+  });
+  location.href = `https://id.twitch.tv/oauth2/authorize?${params}`;
+}
+
+/**
+ * Lit (et efface) le résultat du dernier aller-retour Twitch, déposé en
+ * sessionStorage par la page pont. 'ok' | 'error:<raison>' | null (aucun
+ * retour Twitch récent — cas normal la plupart du temps).
+ */
+export function consumeTwitchLinkResult() {
+  const v = sessionStorage.getItem('rxTwitchResult');
+  if (v != null) sessionStorage.removeItem('rxTwitchResult');
+  return v;
+}
+
+// ─────────────────────────────────────────────────────────
+// CLASSEMENT SAISON — TWITCH UNIQUEMENT
+//
+// Un compte anonyme n'a pas d'identité stable d'un meeting à l'autre (il
+// peut changer à tout moment de navigateur/appareil), donc il n'a pas sa
+// place dans un classement qui doit tenir toute la saison. Seuls les uid
+// présents dans twitchProfiles (donc reliés à un compte Twitch réel) sont
+// retenus ici — par construction, jamais de nom généré dans ce classement.
+//
+// Calcul PAR LA RÉGIE (list sur uidLinks réservé régie), recalculé après
+// chaque révélation aux côtés de updateMeetingScores. Idempotent : relit
+// tout depuis pronoScores à chaque appel.
+// ─────────────────────────────────────────────────────────
+
+/**
+ * Recalcule le classement saison (Twitch uniquement) d'un championnat depuis
+ * pronoScores + uidLinks, et l'écrit dans pronoSeasonScores/{championshipId}.
+ * À n'appeler QUE côté régie.
+ * @returns {Promise<Object>} map uidTwitch -> points cumulés saison
+ */
+export async function updateSeasonTwitchScores(championshipId) {
+  if (!championshipId) return {};
+  await initFirebase();
+  const { collection, getDocs, query, where, doc, getDoc, setDoc } = await fs();
+
+  // 1) uid anonyme -> uid Twitch canonique.
+  const linksSnap = await getDocs(collection(db, UID_LINKS_COL));
+  const canonicalOf = {};
+  linksSnap.forEach(d => { canonicalOf[d.id] = d.data().canonicalUid; });
+
+  // 2) uid Twitch valides (le classement saison n'en contient QUE ceux-là).
+  const profilesSnap = await getDocs(collection(db, TWITCH_PROFILES_COL));
+  const twitchUids = new Set(profilesSnap.docs.map(d => d.id));
+
+  // 3) toutes les épreuves de ce championnat (via les pronostics qui le portent).
+  const pronoSnap = await getDocs(query(collection(db, PRONO_COL), where('championshipId', '==', championshipId)));
+  const meetingIds = new Set(pronoSnap.docs.map(d => d.data().meetingId).filter(Boolean));
+
+  // 4) cumul, uid résolu au compte Twitch canonique.
+  const scores = {};
+  for (const meetingId of meetingIds) {
+    const s = await getDoc(doc(db, SCORES_COL, meetingId));
+    if (!s.exists()) continue;
+    const meetingScores = s.data().scores || {};
+    for (const [uid, pts] of Object.entries(meetingScores)) {
+      const canonical = canonicalOf[uid] || uid;
+      if (!twitchUids.has(canonical)) continue;   // pas (encore) un compte Twitch → hors classement saison
+      scores[canonical] = (scores[canonical] || 0) + pts;
+    }
+  }
+
+  await setDoc(doc(db, SEASON_SCORES_COL, championshipId), { championshipId, scores, updatedAt: Date.now() });
+  return scores;
+}
+
+/** Abonnement au classement saison Twitch d'un championnat (lecture PUBLIQUE). cb reçoit la map uidTwitch->points. */
+export async function watchSeasonScores(championshipId, cb, onErr) {
+  await initFirebase();
+  const { doc, onSnapshot } = await fs();
+  return onSnapshot(doc(db, SEASON_SCORES_COL, championshipId),
+    snap => cb(snap.exists() ? (snap.data().scores || {}) : {}),
+    err => onErr && onErr(err));
 }

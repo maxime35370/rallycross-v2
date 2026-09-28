@@ -1,0 +1,6 @@
+# Ce fichier ne définit QUE l'emplacement des fonctions serverless. Il ne
+# touche pas au build/publish du site (configurés côté tableau de bord
+# Netlify) : ajouter une section [build] ici les écraserait sans qu'on
+# le veuille — ce fichier s'en abstient volontairement.
+[functions]
+  directory = "netlify/functions"
