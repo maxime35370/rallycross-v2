@@ -240,8 +240,12 @@
           <button class="ghost" id="seasonTwitchBtn">🎮 Classement saison Twitch</button>
           <button class="ghost" id="seasonTwitchDetailToggle" style="display:none">🔎 Détail par meeting</button>
           <button class="ghost" id="seasonTwitchViewToggle" style="display:none">📊 Vue tableau</button>
+          <button class="sbtn air" id="seasonTwitchAirBtn">→ Antenne</button>
+          <button class="ghost" id="seasonTwitchArchiveBtn">🏁 Archiver cette saison</button>
+          <button class="ghost" id="seasonArchivesBtn">📜 Palmarès</button>
         </div>
         <div class="plist" id="seasonTwitchList" style="display:none"></div>
+        <div class="plist" id="seasonArchivesList" style="display:none"></div>
       </div>
     </div>
 
@@ -367,7 +371,7 @@
   import { initFirebase, fsQuery, watchQuery, getDocById } from './_lib/obs-firebase.js';
   import { watchControl, setControl, sessionKey, DEFAULT_CONTROL } from './_lib/obs-control.js';
   import { getSessions, findSession, getGridOrder, getInterim, getParticipants, computePronoWinner, pronoWatchSessionIds, getQualifCutoff, getEcRank, getMqRank, getPhaseRank, getDriverStrength } from './_lib/obs-data.js';
-  import { watchPronostics, watchVotes, createPronostic, updatePronostic, openPronostic, closePronostic, revealPronostic, deletePronostic, meetingVoteBilan, updateMeetingScores, updateSeasonTwitchScores, getTwitchProfile } from './_lib/obs-pronostics.js';
+  import { watchPronostics, watchVotes, createPronostic, updatePronostic, openPronostic, closePronostic, revealPronostic, deletePronostic, meetingVoteBilan, updateMeetingScores, updateSeasonTwitchScores, getTwitchProfile, archiveSeasonTwitchScores, listSeasonArchives } from './_lib/obs-pronostics.js';
   import { qrDataUrl, spectatorUrl } from './_lib/obs-qr.js';
 
   const SDK = 'https://www.gstatic.com/firebasejs/10.12.0/';
@@ -465,8 +469,14 @@
     document.getElementById('phN').textContent = phases.find(p => p.t === state.sessionType && p.n === state.sessionNum)?.l || '—';
     document.getElementById('gridN').textContent = `${catName()} · ${document.getElementById('phN').textContent}`;
     if (meetSel.value !== state.meetingId) meetSel.value = state.meetingId;
+    const seasonTwitchAirBtn = document.getElementById('seasonTwitchAirBtn');
+    if (seasonTwitchAirBtn) {
+      const onAir = state.scene === 'twitch-leaderboard';
+      seasonTwitchAirBtn.textContent = onAir ? "● À l'antenne" : '→ Antenne';
+      seasonTwitchAirBtn.classList.toggle('on', onAir);
+    }
     document.getElementById('status').innerHTML =
-      `À l'antenne : <span class="chip">${({dashboard:'📊 Dashboard',grid:'🏁 Grille',fiche:'👤 Fiche / Duel',pronostic:'🎯 Pronostic','next-heat':'⏭️ À suivre',intermission:'⏸️ Attente',ending:'🔚 Fin de stream'})[state.scene]||state.scene}</span>
+      `À l'antenne : <span class="chip">${({dashboard:'📊 Dashboard',grid:'🏁 Grille',fiche:'👤 Fiche / Duel',pronostic:'🎯 Pronostic','twitch-leaderboard':'🎮 Classement Twitch','next-heat':'⏭️ À suivre',intermission:'⏸️ Attente',ending:'🔚 Fin de stream'})[state.scene]||state.scene}</span>
        <span class="chip o">${catName()}</span>
        <span class="chip">${document.getElementById('phN').textContent}</span>
        · <b style="color:${state.visible?'var(--green)':'#888'}">${state.visible?'visible':'masqué'}</b>`;
@@ -762,6 +772,8 @@
 
   // Calcul (régie, écrit pronoSeasonScores) et affichage sont séparés : basculer
   // le détail ou la vue tableau ne doit pas redéclencher un recalcul complet.
+  const SEASON_RANK_BADGE = ['🏆', '🥈', '🥉'];
+  const seasonRank = (i) => SEASON_RANK_BADGE[i] || (i + 1);
   let seasonTwitchData = null;      // dernier { scores, breakdown } calculé
   let seasonTwitchChampId = null;   // championnat pour lequel seasonTwitchData est valide
   let seasonTwitchShowDetail = false;
@@ -840,7 +852,7 @@
       box.innerHTML = `<div class="season-table-wrap"><table class="season-table">
         <thead><tr><th>#</th><th>Joueur</th>${cols.map(c => `<th title="${pEsc(c.full)}">${pEsc(c.short)}</th>`).join('')}<th>Total</th></tr></thead>
         <tbody>${entries.map(([uid, total], i) => `<tr>
-          <td>${i + 1}</td><td><span class="season-name" title="${pEsc(names[i])}">${pEsc(names[i])}</span></td>
+          <td>${seasonRank(i)}</td><td><span class="season-name" title="${pEsc(names[i])}">${pEsc(names[i])}</span></td>
           ${cols.map(c => { const p = (breakdown[uid] || {})[c.mid]; return `<td>${p != null ? p : '—'}</td>`; }).join('')}
           <td class="season-total">${total}</td>
         </tr>`).join('')}</tbody>
@@ -860,12 +872,57 @@
         ));
         detail = detailRows.join('');
       }
-      return `<div class="pmrow"><span class="mn">${i + 1}</span><span class="mnm season-name" title="${pEsc(names[i])}">${pEsc(names[i])}</span><span class="pmpct">${pts} pt${pts > 1 ? 's' : ''}</span></div>${detail}`;
+      return `<div class="pmrow"><span class="mn">${seasonRank(i)}</span><span class="mnm season-name" title="${pEsc(names[i])}">${pEsc(names[i])}</span><span class="pmpct">${pts} pt${pts > 1 ? 's' : ''}</span></div>${detail}`;
     }));
     box.innerHTML = `<div class="pmini">${rows.join('')}</div>`;
   }
 
+  async function archiveCurrentSeason() {
+    const champId = state.championshipId;
+    if (!champId) { flashErr('Sélectionne un championnat en haut.'); return; }
+    const label = champ?.name || champId;
+    if (!confirm(`Clôturer la saison « ${label} » ?\n\nLe classement Twitch actuel sera figé dans le palmarès. Refaire cette action plus tard écrasera cet instantané (utile pour corriger une erreur, sans risque sinon).`)) return;
+    const btn = document.getElementById('seasonTwitchArchiveBtn');
+    btn.disabled = true; const prevTxt = btn.textContent; btn.textContent = 'Archivage…';
+    try {
+      await archiveSeasonTwitchScores(champId, label);
+      btn.textContent = '✅ Saison archivée';
+    } catch (e) {
+      flashErr('Archivage refusé : ' + (e.code || e.message));
+      btn.textContent = prevTxt;
+    } finally {
+      btn.disabled = false;
+      setTimeout(() => { btn.textContent = prevTxt; }, 2500);
+    }
+  }
+
+  async function renderSeasonArchivesPanel() {
+    const box = document.getElementById('seasonArchivesList');
+    if (!box) return;
+    box.style.display = '';
+    box.innerHTML = '<div class="pempty">Chargement…</div>';
+    try {
+      const archives = await listSeasonArchives();
+      if (!archives.length) { box.innerHTML = '<div class="pempty">Aucune saison archivée pour le moment.</div>'; return; }
+      const html = await Promise.all(archives.map(async (a) => {
+        const entries = Object.entries(a.scores || {}).filter(([, p]) => p > 0).sort((x, y) => y[1] - x[1]);
+        const rows = await Promise.all(entries.slice(0, 5).map(async ([uid, pts], i) => {
+          const profile = await getTwitchProfile(uid).catch(() => null);
+          const name = profile?.displayName || uid;
+          return `<div class="pmrow"><span class="mn">${seasonRank(i)}</span><span class="mnm season-name" title="${pEsc(name)}">${pEsc(name)}</span><span class="pmpct">${pts} pt${pts > 1 ? 's' : ''}</span></div>`;
+        }));
+        const when = a.archivedAt ? new Date(a.archivedAt).toLocaleDateString('fr-FR') : '';
+        return `<div class="pit"><div class="pit-top"><span class="pit-q">${pEsc(a.label || a.championshipId)}</span><span class="pit-sub">${pEsc(when)}</span></div>${rows.join('') || '<div class="pempty">Aucun compte Twitch classé.</div>'}</div>`;
+      }));
+      box.innerHTML = html.join('');
+    } catch (e) {
+      box.innerHTML = `<div class="pempty">Erreur : ${(e && (e.code || e.message)) || 'inconnue'}</div>`;
+    }
+  }
+
   document.getElementById('seasonTwitchBtn').onclick = renderSeasonTwitchPanel;
+  document.getElementById('seasonTwitchArchiveBtn').onclick = archiveCurrentSeason;
+  document.getElementById('seasonArchivesBtn').onclick = renderSeasonArchivesPanel;
   document.getElementById('seasonTwitchDetailToggle').onclick = (e) => {
     seasonTwitchShowDetail = !seasonTwitchShowDetail;
     e.target.textContent = seasonTwitchShowDetail ? '🔎 Masquer le détail' : '🔎 Détail par meeting';
@@ -875,6 +932,11 @@
     seasonTwitchTableView = !seasonTwitchTableView;
     e.target.textContent = seasonTwitchTableView ? '📋 Vue liste' : '📊 Vue tableau';
     paintSeasonTwitch();
+  };
+  document.getElementById('seasonTwitchAirBtn').onclick = () => {
+    const onAir = state.scene === 'twitch-leaderboard';
+    push(onAir ? { scene: 'dashboard' } : { scene: 'twitch-leaderboard' });
+    paint();
   };
   document.getElementById('nextBtn').onclick = () => push({ nextText: document.getElementById('nextTxt').value });
   document.querySelectorAll('[data-cd]').forEach(b => b.onclick = () => {

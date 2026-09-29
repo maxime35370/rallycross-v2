@@ -12,7 +12,7 @@ export const CTRL_ID  = 'live';
 
 /** État par défaut (si le doc n'existe pas encore). */
 export const DEFAULT_CONTROL = {
-  scene:         'dashboard',   // 'dashboard' | 'grid' | 'next-heat' | 'intermission' | 'fiche' | 'pronostic' | 'outro'
+  scene:         'dashboard',   // 'dashboard' | 'grid' | 'next-heat' | 'intermission' | 'fiche' | 'pronostic' | 'twitch-leaderboard' | 'outro'
   visible:       true,          // afficher / masquer l'overlay
   championshipId:'',
   meetingId:     '',

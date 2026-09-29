@@ -21,7 +21,7 @@
   } from './_lib/obs-data.js';
   import { renderScene, countdownText } from './_lib/obs-scenes.js';
   import { buildPrediction } from './_lib/obs-predict.js';
-  import { watchPronostic } from './_lib/obs-pronostics.js';
+  import { watchPronostic, watchSeasonScores, getTwitchProfile } from './_lib/obs-pronostics.js';
   import { qrDataUrl, spectatorUrl } from './_lib/obs-qr.js';
 
   const root = document.getElementById('root');
@@ -46,6 +46,7 @@
   let reloadGen = 0;          // jeton anti-course : seul le reload le plus récent peut peindre / s'abonner
   let unsubResults = null;    // listener live des résultats de la session courante
   let pronoUnsub = null;      // listener live du doc pronostic (scène « pronostic »)
+  let twitchBoardUnsub = null;   // listener live du classement saison Twitch (scène « twitch-leaderboard »)
   let champTimer = null;
   let cdTimer = null;         // ticker du compte à rebours (écran d'attente)
   let sessTimer = null;       // effacement différé de la surbrillance (dernier de la manche)
@@ -350,6 +351,7 @@
     if (sessTimer)    { clearTimeout(sessTimer); sessTimer = null; }
     if (renderTimer)  { clearTimeout(renderTimer); renderTimer = null; }   // annule un recalcul de saisie en attente
     if (pronoUnsub)   { pronoUnsub(); pronoUnsub = null; }
+    if (twitchBoardUnsub) { twitchBoardUnsub(); twitchBoardUnsub = null; }
 
     // Écran d'attente / Fin de stream : indépendants du meeting/catégorie + compte à rebours
     if (ctrl.scene === 'intermission' || ctrl.scene === 'ending') {
@@ -388,6 +390,34 @@
       const pu = await watchPronostic(pid, paint, () => paint(null));
       if (!alive()) { pu(); return; }           // périmé → jette l'abonnement
       pronoUnsub = pu;
+      return;
+    }
+
+    // Scène "Classement Twitch" : top des pronostiqueurs connectés à Twitch,
+    // saison en cours. Indépendante du meeting/catégorie sélectionnés — suit
+    // pronoSeasonScores/{championshipId} en direct (calculé côté régie).
+    if (ctrl.scene === 'twitch-leaderboard') {
+      const champId = ctrl.championshipId || '';
+      const url = spectatorUrl(ctrl.spectatorBaseUrl, ctrl.meetingId);
+      const paint = async (map) => {
+        if (!alive()) return;
+        const entries = Object.entries(map || {}).filter(([, p]) => p > 0).sort((a, b) => b[1] - a[1]).slice(0, 8);
+        const rows = await Promise.all(entries.map(async ([uid, pts]) => {
+          const profile = await getTwitchProfile(uid).catch(() => null);
+          return { uid, pts, name: profile?.displayName || uid, avatarUrl: profile?.avatarUrl || '' };
+        }));
+        if (!alive()) return;                     // reload superseded pendant la résolution des profils
+        root.innerHTML = renderScene('twitch-leaderboard', {
+          headerText: ctrl.headerText || 'Classement saison · comptes Twitch',
+          voteUrl: url.replace(/^https?:\/\//, ''),
+          qrDataUrl: qrDataUrl(url, { cell: 6, margin: 2 }),
+          rows,
+        });
+      };
+      if (!champId) { paint({}); return; }
+      const wu = await watchSeasonScores(champId, paint, () => paint({}));
+      if (!alive()) { wu(); return; }
+      twitchBoardUnsub = wu;
       return;
     }
 

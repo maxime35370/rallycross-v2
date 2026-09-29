@@ -291,6 +291,16 @@ service cloud.firestore {
       allow write: if isRegie();
     }
 
+    // Palmarès : instantané FIGÉ du classement saison d'un championnat
+    // terminé (voir archiveSeasonTwitchScores). Contrairement à
+    // pronoSeasonScores (recalculé en continu), ce document ne change plus
+    // une fois la saison close — sauf réécriture volontaire par la régie
+    // pour corriger une erreur avant publication.
+    match /pronoSeasonArchives/{championshipId} {
+      allow read:  if true;
+      allow write: if isRegie();
+    }
+
     // Pénalités « points championnat » (niveau saison) — écrit régie, lu par tous
     match /championshipPenalties/{docId} {
       allow read:  if true;

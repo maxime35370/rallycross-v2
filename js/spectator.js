@@ -568,8 +568,11 @@ const WEEKEND_TOP_N            = 15;
 const WEEKEND_SPLIT_MIN         = 20;
 const WEEKEND_SPLIT_MIN_TWITCH  = 10;
 
-function scoreRowHtml(u, p, i, uid) {
-  return `<div class="ms-row${u === uid ? ' me' : ''}"><span class="ms-pos">${i + 1}</span>`
+const RANK_BADGE = ['🏆', '🥈', '🥉'];
+
+function scoreRowHtml(u, p, i, uid, withMedal) {
+  const pos = withMedal ? (RANK_BADGE[i] || (i + 1)) : (i + 1);
+  return `<div class="ms-row${u === uid ? ' me' : ''}"><span class="ms-pos">${pos}</span>`
     + `<span class="ms-name">${escName(pseudoFor(u))}${u === uid ? ' <span class="ms-you">(toi)</span>' : ''}</span>`
     + `<span class="ms-v">${p} pt${p > 1 ? 's' : ''}</span></div>`;
 }
@@ -671,7 +674,7 @@ function renderSeasonTwitch() {
   if (!entries.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
   ensureTwitchProfiles(entries.map(e => e[0]));
   const mine = uid ? (_seasonScores[uid] || 0) : 0;
-  const top = entries.slice(0, WEEKEND_TOP_N).map(([u, p], i) => scoreRowHtml(u, p, i, uid)).join('');
+  const top = entries.slice(0, WEEKEND_TOP_N).map(([u, p], i) => scoreRowHtml(u, p, i, uid, true)).join('');
   const mineLine = (uid && mine > 0)
     ? `Tes points saison : <b>${mine}</b> · ${entries.filter(([, p]) => p > mine).length + 1}ᵉ sur ${entries.length}`
     : `${entries.length} compte${entries.length > 1 ? 's' : ''} Twitch classé${entries.length > 1 ? 's' : ''} cette saison`;

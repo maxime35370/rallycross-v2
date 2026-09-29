@@ -300,6 +300,14 @@ describe('pronostics — comptes Twitch (écriture serveur uniquement)', () => {
     await assertFails(setDoc(doc(spectateur(), 'pronoSeasonScores', FFSA), { scores: {} }));
     await assertSucceeds(setDoc(doc(regie(), 'pronoSeasonScores', FFSA), { championshipId: FFSA, scores: { twitch_1: 6 } }));
   });
+
+  it('pronoSeasonArchives (palmarès) : lecture publique, écriture régie uniquement (jamais anonyme)', async () => {
+    await assertSucceeds(getDoc(doc(anonyme(), 'pronoSeasonArchives', FFSA)));
+    await assertFails(setDoc(doc(spectateur(), 'pronoSeasonArchives', FFSA), { scores: {} }));
+    await assertSucceeds(setDoc(doc(regie(), 'pronoSeasonArchives', FFSA), {
+      championshipId: FFSA, label: 'FFSA 2026', scores: { twitch_1: 70 }, archivedAt: NOW,
+    }));
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════════

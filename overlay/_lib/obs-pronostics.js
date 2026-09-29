@@ -512,3 +512,44 @@ export async function watchSeasonScores(championshipId, cb, onErr) {
     snap => cb(snap.exists() ? (snap.data().scores || {}) : {}),
     err => onErr && onErr(err));
 }
+
+// ─────────────────────────────────────────────────────────
+// ARCHIVES DE SAISON (palmarès)
+//
+// pronoSeasonScores/{championshipId} est un instantané VIVANT, recalculé à
+// chaque fois (voir updateSeasonTwitchScores) — rien n'y distingue "saison
+// en cours" de "saison terminée". Clôturer une saison fige son classement
+// final dans pronoSeasonArchives/{championshipId}, pour qu'un futur calcul
+// (nouveaux liens de comptes, données corrigées) ne puisse plus réécrire
+// discrètement l'Histoire une fois la saison officiellement close.
+// ─────────────────────────────────────────────────────────
+
+const SEASON_ARCHIVES_COL = 'pronoSeasonArchives';
+
+/**
+ * Fige le classement saison ACTUEL (recalculé au préalable pour être à jour)
+ * dans pronoSeasonArchives/{championshipId}. À n'appeler QUE côté régie, une
+ * fois la saison terminée. Idempotent : ré-archiver la même saison remplace
+ * l'instantané précédent (utile pour corriger une erreur avant publication).
+ * @param {string} championshipId
+ * @param {string} label  intitulé affiché (ex. "FFSA Rallycross 2026")
+ * @returns {Promise<Object>} le classement figé (uidTwitch -> points)
+ */
+export async function archiveSeasonTwitchScores(championshipId, label) {
+  if (!championshipId) return {};
+  const { scores } = await updateSeasonTwitchScores(championshipId);
+  await initFirebase();
+  const { doc, setDoc } = await fs();
+  await setDoc(doc(db, SEASON_ARCHIVES_COL, championshipId), {
+    championshipId, label: label || championshipId, scores, archivedAt: Date.now(),
+  });
+  return scores;
+}
+
+/** Liste toutes les saisons archivées (lecture PUBLIQUE), plus récentes d'abord. */
+export async function listSeasonArchives() {
+  await initFirebase();
+  const { collection, getDocs, query, orderBy } = await fs();
+  const snap = await getDocs(query(collection(db, SEASON_ARCHIVES_COL), orderBy('archivedAt', 'desc')));
+  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+}

@@ -607,6 +607,33 @@ export function renderPronostic(d) {
   </div></div>`;
 }
 
+/** Médaille des 3 premiers, numéro sinon — même esprit que le podium des classements pilotes. */
+const RANK_BADGE = ['🏆', '🥈', '🥉'];
+
+export function renderTwitchLeaderboard(d) {
+  const header = ficheHead(d.headerText || 'Classement saison · comptes Twitch');
+  const rows = Array.isArray(d.rows) ? d.rows : [];
+  const kick = `<div class="po-kick"><span class="po-vt">TWITCH</span><span>Classement des pronostiqueurs</span></div>`;
+  const q = `<div class="po-q">Qui truste le classement saison ?</div>`;
+  if (!rows.length) {
+    return `<div class="dash">${header}<div class="po-body">${kick}${q}<div class="empty">Aucun compte Twitch classé pour le moment…</div></div></div>`;
+  }
+  const maxPts = rows[0].pts || 1;
+  const bars = rows.map((r, i) => {
+    const pct = Math.round((r.pts / maxPts) * 100);
+    return `<div class="po-bar ${i === 0 ? 'win' : ''}"><span class="po-f" style="width:${pct}%"></span>
+      <span class="po-num">${RANK_BADGE[i] || (i + 1)}</span>
+      <span class="po-nm">${escHtml(r.name)}</span>
+      <span class="po-pct">${r.pts} pt${r.pts > 1 ? 's' : ''}</span></div>`;
+  }).join('');
+  return `<div class="dash">${header}<div class="po-body">
+    ${kick}${q}
+    <div class="po-bars">${bars}</div>
+    <div class="po-foot"><span class="po-tot">🎮 <b>${rows.length}</b> compte${rows.length > 1 ? 's' : ''} classé${rows.length > 1 ? 's' : ''}</span>
+      ${d.qrDataUrl ? `<span class="po-footqr"><img src="${escHtml(d.qrDataUrl)}" alt="QR"><span>Scanne&nbsp;&amp;&nbsp;joue</span></span>` : ''}</div>
+  </div></div>`;
+}
+
 // ─────────────────────────────────────────────────────────
 // AIGUILLAGE
 // ─────────────────────────────────────────────────────────
@@ -620,6 +647,7 @@ export function renderScene(scene, data) {
     case 'ending':       return renderEnding(data);
     case 'fiche':        return renderFiche(data);
     case 'pronostic':    return renderPronostic(data);
+    case 'twitch-leaderboard': return renderTwitchLeaderboard(data);
     case 'dashboard':
     default:             return renderDashboard(data);
   }
