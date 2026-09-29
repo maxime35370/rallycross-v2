@@ -413,13 +413,16 @@ const escName = s => String(s).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt
 const pseudoFor = uid => _twitchByUid[uid]?.displayName
   || ((typeof _pseudos[uid] === 'string' && _pseudos[uid]) ? _pseudos[uid] : autoPseudo(uid));
 
+/** Re-render commun : les deux classements (meeting + saison) affichent des pseudos, tous deux doivent suivre. */
+function rerenderScoreBoards() { renderMyScore(); renderSeasonTwitch(); }
+
 /** Résout les pseudos perso des UID affichés (une fois chacun), puis re-render si trouvé. */
 function ensurePseudos(uids) {
   const todo = uids.filter(u => u && !(u in _pseudos));
   if (!todo.length) return;
   todo.forEach(u => { _pseudos[u] = ''; });   // marque « cherché » pour éviter les re-fetch en boucle
   Promise.all(todo.map(async u => { try { const p = await getPlayerPseudo(u); if (p) _pseudos[u] = p; } catch {} }))
-    .then(() => renderMyScore());
+    .then(rerenderScoreBoards);
 }
 
 /** Résout le statut Twitch (lié ou non) des UID affichés (une fois chacun), puis re-render si trouvé. */
@@ -428,7 +431,7 @@ function ensureTwitchProfiles(uids) {
   if (!todo.length) return;
   todo.forEach(u => { _twitchByUid[u] = null; });   // marque « cherché »
   Promise.all(todo.map(async u => { try { const p = await getTwitchProfile(u); if (p) _twitchByUid[u] = p; } catch {} }))
-    .then(() => renderMyScore());
+    .then(() => { rerenderScoreBoards(); refreshIdentityBox(); });
 }
 
 /** Petit badge « connecté Twitch » à côté du dot LIVE (voir renderPseudoEditor). */
@@ -480,7 +483,7 @@ async function renderPseudoEditor() {
   document.getElementById('spc-pseudo-save').onclick = async () => {
     const v = document.getElementById('spc-pseudo-in').value;
     const btn = document.getElementById('spc-pseudo-save');
-    try { _pseudos[_pronoUid] = await setPlayerPseudo(_pronoUid, v); btn.textContent = '✓'; setTimeout(() => { btn.textContent = 'OK'; }, 1200); renderMyScore(); }
+    try { _pseudos[_pronoUid] = await setPlayerPseudo(_pronoUid, v); btn.textContent = '✓'; setTimeout(() => { btn.textContent = 'OK'; }, 1200); rerenderScoreBoards(); }
     catch { btn.textContent = '⚠'; setTimeout(() => { btn.textContent = 'OK'; }, 1200); }
   };
   document.getElementById('spc-twitch-link').onclick = async () => {
@@ -534,7 +537,13 @@ async function initPronostics() {
 
   // 2) VOTE : session anonyme en tâche de fond (n'empêche jamais l'affichage).
   ensureAnon()
-    .then(async uid => { _pronoUid = uid; await refreshMyVotes(); renderPronostics(); renderMyScore(); })
+    .then(async uid => {
+      _pronoUid = uid;
+      await refreshMyVotes();
+      renderPronostics();
+      renderMyScore();
+      refreshIdentityBox();   // indépendant du meeting sélectionné (voir sa doc)
+    })
     .catch(() => { _pronoUid = null; });
 }
 
@@ -568,11 +577,10 @@ function scoreRowHtml(u, p, i, uid) {
 /** Affiche « tes points » + le classement du meeting (mixte, ou Twitch séparé selon les seuils). */
 function renderMyScore() {
   const el = document.getElementById('spc-myscore');
-  const pe = document.getElementById('spc-pseudo');
   if (!el) return;
   const uid = _pronoUid;
   const entries = Object.entries(_scores || {}).filter(([, p]) => p > 0);
-  if (!entries.length) { el.style.display = 'none'; el.innerHTML = ''; if (pe) pe.style.display = 'none'; return; }
+  if (!entries.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
   entries.sort((a, b) => b[1] - a[1]);
   // Il faut connaître le statut Twitch de TOUS les participants (pas
   // seulement le top affiché) pour appliquer correctement les seuils.
@@ -619,17 +627,26 @@ function renderMyScore() {
   el.innerHTML = `<div class="ms-head">🏆 Classement pronostics<span class="ms-sub">${sub}</span></div>`
     + `<div class="ms-mine">${mineLine}</div><div class="ms-top">${top}</div>`;
   ensurePseudos([...shown.map(e => e[0]), uid].filter(Boolean));
+}
+
+/**
+ * Affiche/actualise le bloc "ton pseudo / connexion Twitch" — INDÉPENDANT du
+ * meeting sélectionné et de ses scores (c'est une propriété du compte, pas
+ * de l'épreuve affichée). Sans ce découplage, tant qu'aucun meeting n'a de
+ * points à afficher, ce bloc — et le seul moyen de se (re)connecter à
+ * Twitch — disparaissait complètement.
+ */
+function refreshIdentityBox() {
+  const pe = document.getElementById('spc-pseudo');
+  if (!pe) return;
+  if (!_pronoUid) { pe.style.display = 'none'; hideTwitchBadge(); return; }
   // Reconstruit aussi si un rendu précédent (fait AVANT que le statut Twitch
   // soit connu, ex. pendant que ensureTwitchProfiles était encore en vol)
   // avait figé l'éditeur sur "pas connecté" — sans ce rattrapage, le vrai
   // statut "connecté" pouvait ne jamais s'afficher, l'éditeur ne se
   // reconstruisant plus jamais une fois _pseudoEditorDone posé.
-  // L'affichage de #spc-pseudo (visible/masqué) est désormais décidé DANS
-  // renderPseudoEditor elle-même (masqué une fois connecté, le badge d'en-tête
-  // suffit) — on ne le force plus ici, sous peine d'écraser ce choix.
-  const justLearnedConnected = !_pseudoEditorShowsConnected && !!_twitchByUid[uid];
-  if (pe && uid) { if (!_pseudoEditorDone || justLearnedConnected) renderPseudoEditor(); }
-  else if (pe) { pe.style.display = 'none'; hideTwitchBadge(); }
+  const justLearnedConnected = !_pseudoEditorShowsConnected && !!_twitchByUid[_pronoUid];
+  if (!_pseudoEditorDone || justLearnedConnected) renderPseudoEditor();
 }
 
 /** (Ré)abonne au classement saison (Twitch uniquement) du championnat courant. */
