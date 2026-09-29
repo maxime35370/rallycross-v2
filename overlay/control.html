@@ -133,6 +133,11 @@
   .season-table th:nth-child(2),.season-table td:nth-child(2){text-align:left;font-weight:600}
   .season-table th{color:#9aa6b6;font-weight:600;font-size:12px}
   .season-table .season-total{font-family:'Orbitron';font-weight:700;color:#eef2f7}
+  /* Pseudo Twitch potentiellement long (jusqu'à ~25 caractères) : tronqué avec
+     "…", nom complet dispo au survol (title) — ne casse ni la ligne (vue liste)
+     ni la largeur des colonnes (vue tableau). */
+  .season-name{max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:inline-block;vertical-align:middle}
+  .season-table .season-name{max-width:130px}
   .pit-auto{font-family:'Barlow Condensed';font-weight:600;font-size:15px;color:#9fb4d8;background:rgba(56,160,255,.1);
     border:1px solid rgba(56,160,255,.28);border-radius:8px;padding:8px 11px;margin-bottom:9px}
   .pit-auto b{color:#dbe8f8}
@@ -835,7 +840,7 @@
       box.innerHTML = `<div class="season-table-wrap"><table class="season-table">
         <thead><tr><th>#</th><th>Joueur</th>${cols.map(c => `<th title="${pEsc(c.full)}">${pEsc(c.short)}</th>`).join('')}<th>Total</th></tr></thead>
         <tbody>${entries.map(([uid, total], i) => `<tr>
-          <td>${i + 1}</td><td>${pEsc(names[i])}</td>
+          <td>${i + 1}</td><td><span class="season-name" title="${pEsc(names[i])}">${pEsc(names[i])}</span></td>
           ${cols.map(c => { const p = (breakdown[uid] || {})[c.mid]; return `<td>${p != null ? p : '—'}</td>`; }).join('')}
           <td class="season-total">${total}</td>
         </tr>`).join('')}</tbody>
@@ -855,7 +860,7 @@
         ));
         detail = detailRows.join('');
       }
-      return `<div class="pmrow"><span class="mn">${i + 1}</span><span class="mnm">${pEsc(names[i])}</span><span class="pmpct">${pts} pt${pts > 1 ? 's' : ''}</span></div>${detail}`;
+      return `<div class="pmrow"><span class="mn">${i + 1}</span><span class="mnm season-name" title="${pEsc(names[i])}">${pEsc(names[i])}</span><span class="pmpct">${pts} pt${pts > 1 ? 's' : ''}</span></div>${detail}`;
     }));
     box.innerHTML = `<div class="pmini">${rows.join('')}</div>`;
   }
