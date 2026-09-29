@@ -464,7 +464,22 @@ export async function updateSeasonTwitchScores(championshipId) {
 
   // 3) toutes les épreuves de ce championnat (via les pronostics qui le portent).
   const pronoSnap = await getDocs(query(collection(db, PRONO_COL), where('championshipId', '==', championshipId)));
-  const meetingIds = new Set(pronoSnap.docs.map(d => d.data().meetingId).filter(Boolean));
+  const candidateMeetingIds = new Set(pronoSnap.docs.map(d => d.data().meetingId).filter(Boolean));
+
+  // 3b) le championshipId d'un pronostic n'est qu'une ÉTIQUETTE posée à sa
+  // création : rien n'empêche qu'elle diverge du championnat RÉEL de son
+  // propre meeting (rattachement erroné, meeting déplacé depuis). On ne
+  // retient donc que les meetings dont le championnat déclaré CORRESPOND
+  // vraiment — un meeting absent (supprimé) est écarté aussi, faute de
+  // pouvoir vérifier. Un meeting sans championshipId (données anciennes)
+  // reste accepté, même convention que côté site (js/spectator.js).
+  const meetingIds = new Set();
+  for (const meetingId of candidateMeetingIds) {
+    const m = await getDoc(doc(db, 'meetings', meetingId));
+    if (!m.exists()) continue;
+    const mChamp = m.data().championshipId;
+    if (!mChamp || mChamp === championshipId) meetingIds.add(meetingId);
+  }
 
   // 4) cumul, uid résolu au compte Twitch canonique — additionné sur TOUTES les
   // épreuves du championnat, pas seulement celle qu'on regarde (d'où le détail
