@@ -126,6 +126,13 @@
   .pmfill{display:block;height:100%;background:linear-gradient(90deg,var(--orange),#ff8a3d);border-radius:20px;transition:width .5s;box-shadow:0 0 12px rgba(255,85,0,.4)}
   .pmrow.win .pmfill{background:linear-gradient(90deg,#ffcc33,#e0a800);box-shadow:0 0 12px rgba(255,204,51,.4)}
   .pmpct{min-width:66px;text-align:right;font-family:'Orbitron';font-weight:700;font-size:13px;color:#eef2f7}
+  .season-table-wrap{overflow-x:auto;margin:8px 0 4px}
+  .season-table{border-collapse:collapse;width:100%;font-family:'Barlow Condensed';font-size:14px;white-space:nowrap}
+  .season-table th,.season-table td{padding:6px 10px;text-align:right;border-bottom:1px solid var(--line)}
+  .season-table th:first-child,.season-table td:first-child{text-align:left;font-family:'Orbitron';color:var(--orange);font-weight:700}
+  .season-table th:nth-child(2),.season-table td:nth-child(2){text-align:left;font-weight:600}
+  .season-table th{color:#9aa6b6;font-weight:600;font-size:12px}
+  .season-table .season-total{font-family:'Orbitron';font-weight:700;color:#eef2f7}
   .pit-auto{font-family:'Barlow Condensed';font-weight:600;font-size:15px;color:#9fb4d8;background:rgba(56,160,255,.1);
     border:1px solid rgba(56,160,255,.28);border-radius:8px;padding:8px 11px;margin-bottom:9px}
   .pit-auto b{color:#dbe8f8}
@@ -224,7 +231,11 @@
         <div class="pdiv"></div>
         <div class="plist" id="pronoList"><div class="pempty">Aucun pronostic pour le moment.</div></div>
         <div class="pdiv"></div>
-        <div class="actions"><button class="ghost" id="seasonTwitchBtn">🎮 Classement saison Twitch</button></div>
+        <div class="actions">
+          <button class="ghost" id="seasonTwitchBtn">🎮 Classement saison Twitch</button>
+          <button class="ghost" id="seasonTwitchDetailToggle" style="display:none">🔎 Détail par meeting</button>
+          <button class="ghost" id="seasonTwitchViewToggle" style="display:none">📊 Vue tableau</button>
+        </div>
         <div class="plist" id="seasonTwitchList" style="display:none"></div>
       </div>
     </div>
@@ -744,53 +755,122 @@
     } catch {}
   }
 
+  // Calcul (régie, écrit pronoSeasonScores) et affichage sont séparés : basculer
+  // le détail ou la vue tableau ne doit pas redéclencher un recalcul complet.
+  let seasonTwitchData = null;      // dernier { scores, breakdown } calculé
+  let seasonTwitchChampId = null;   // championnat pour lequel seasonTwitchData est valide
+  let seasonTwitchShowDetail = false;
+  let seasonTwitchTableView = false;
+
+  // Un pronostic peut porter un championshipId différent de celui de SON
+  // propre meeting (rattachement erroné, ou meeting déplacé depuis) — le
+  // classement saison se base sur le championshipId du pronostic (seule
+  // source fiable pour "qui doit compter dans cette saison"), mais on va
+  // chercher le VRAI document meeting (même hors du championnat actif,
+  // meetings[] ne charge que celui-ci) pour donner un libellé lisible et
+  // signaler l'éventuel décalage. Caché entre les rendus (via closure).
+  const seasonMeetingCache = {};
+  async function seasonMeeting(mid) {
+    if (mid in seasonMeetingCache) return seasonMeetingCache[mid];
+    let m = meetings.find(x => x.id === mid);
+    if (!m) { try { m = await getDocById('meetings', mid); } catch { m = null; } }
+    seasonMeetingCache[mid] = m || null;
+    return seasonMeetingCache[mid];
+  }
+  async function seasonMeetingLabel(mid, champId) {
+    const m = await seasonMeeting(mid);
+    return m
+      ? `${m.date || ''} — ${m.location || mid}`.trim() + (m.championshipId && m.championshipId !== champId ? ' ⚠️ autre championnat' : '')
+      : `${mid} ⚠️ meeting introuvable (supprimé ?)`;
+  }
+  async function seasonMeetingShortLabel(mid) {
+    const m = await seasonMeeting(mid);
+    return m ? (m.location || mid) : mid;
+  }
+
   async function renderSeasonTwitchPanel() {
     const box = document.getElementById('seasonTwitchList');
+    const detailBtn = document.getElementById('seasonTwitchDetailToggle');
+    const viewBtn = document.getElementById('seasonTwitchViewToggle');
     if (!box) return;
     box.style.display = '';
     box.innerHTML = '<div class="pempty">Calcul…</div>';
+    if (detailBtn) detailBtn.style.display = 'none';
+    if (viewBtn) viewBtn.style.display = 'none';
     try {
       const champId = state.championshipId;
       if (!champId) { box.innerHTML = '<div class="pempty">Sélectionne un championnat en haut.</div>'; return; }
-      const { scores, breakdown } = await updateSeasonTwitchScores(champId);
-      const entries = Object.entries(scores).filter(([, p]) => p > 0).sort((a, b) => b[1] - a[1]);
-      if (!entries.length) { box.innerHTML = '<div class="pempty">Aucun compte Twitch classé pour ce championnat.</div>'; return; }
-      // Un pronostic peut porter un championshipId différent de celui de SON
-      // propre meeting (rattachement erroné, ou meeting déplacé depuis) — le
-      // classement saison se base sur le championshipId du pronostic (seule
-      // source fiable pour "qui doit compter dans cette saison"), mais on va
-      // chercher le VRAI document meeting (même hors du championnat actif,
-      // meetings[] ne charge que celui-ci) pour donner un libellé lisible et
-      // signaler l'éventuel décalage.
-      const meetingCache = {};
-      const meetingLabel = async (mid) => {
-        if (mid in meetingCache) return meetingCache[mid];
-        let m = meetings.find(x => x.id === mid);
-        if (!m) { try { m = await getDocById('meetings', mid); } catch { m = null; } }
-        const label = m
-          ? `${m.date || ''} — ${m.location || mid}`.trim() + (m.championshipId && m.championshipId !== champId ? ' ⚠️ autre championnat' : '')
-          : `${mid} ⚠️ meeting introuvable (supprimé ?)`;
-        meetingCache[mid] = label;
-        return label;
-      };
-      const rows = await Promise.all(entries.map(async ([uid, pts], i) => {
-        const profile = await getTwitchProfile(uid).catch(() => null);
-        const name = profile?.displayName || uid;
-        // Détail par épreuve : additionné sur TOUT le championnat, donc utile
-        // pour vérifier d'où viennent les points (ex. un meeting de test oublié).
-        const perMeeting = Object.entries(breakdown[uid] || {}).sort((a, b) => b[1] - a[1]);
-        const detailRows = await Promise.all(perMeeting.map(async ([mid, p]) =>
-          `<div class="pmrow" style="opacity:.7;font-size:.85em;padding-left:22px">`
-          + `<span class="mnm">${pEsc(await meetingLabel(mid))}</span><span class="pmpct">${p} pt${p > 1 ? 's' : ''}</span></div>`
-        ));
-        return `<div class="pmrow"><span class="mn">${i + 1}</span><span class="mnm">${pEsc(name)}</span><span class="pmpct">${pts} pt${pts > 1 ? 's' : ''}</span></div>${detailRows.join('')}`;
-      }));
-      box.innerHTML = `<div class="pmini">${rows.join('')}</div>`;
+      seasonTwitchData = await updateSeasonTwitchScores(champId);
+      seasonTwitchChampId = champId;
+      if (detailBtn) detailBtn.style.display = '';
+      if (viewBtn) viewBtn.style.display = '';
+      await paintSeasonTwitch();
     } catch (e) {
       box.innerHTML = `<div class="pempty">Erreur : ${(e && (e.code || e.message)) || 'inconnue'}</div>`;
     }
   }
+
+  /** Repeint depuis seasonTwitchData déjà calculé — aucun accès Firestore, juste de l'affichage. */
+  async function paintSeasonTwitch() {
+    const box = document.getElementById('seasonTwitchList');
+    if (!box || !seasonTwitchData) return;
+    const { scores, breakdown } = seasonTwitchData;
+    const champId = seasonTwitchChampId;
+    const entries = Object.entries(scores).filter(([, p]) => p > 0).sort((a, b) => b[1] - a[1]);
+    if (!entries.length) { box.innerHTML = '<div class="pempty">Aucun compte Twitch classé pour ce championnat.</div>'; return; }
+
+    const names = await Promise.all(entries.map(async ([uid]) => {
+      const profile = await getTwitchProfile(uid).catch(() => null);
+      return profile?.displayName || uid;
+    }));
+
+    if (seasonTwitchTableView) {
+      // Colonnes = tous les meetings apparaissant chez AU MOINS un joueur, triées par date.
+      const allMeetingIds = [...new Set(entries.flatMap(([uid]) => Object.keys(breakdown[uid] || {})))];
+      const cols = await Promise.all(allMeetingIds.map(async mid => ({
+        mid, short: await seasonMeetingShortLabel(mid), full: await seasonMeetingLabel(mid, champId),
+        date: (await seasonMeeting(mid))?.date || '',
+      })));
+      cols.sort((a, b) => String(a.date).localeCompare(String(b.date)));
+      box.innerHTML = `<div class="season-table-wrap"><table class="season-table">
+        <thead><tr><th>#</th><th>Joueur</th>${cols.map(c => `<th title="${pEsc(c.full)}">${pEsc(c.short)}</th>`).join('')}<th>Total</th></tr></thead>
+        <tbody>${entries.map(([uid, total], i) => `<tr>
+          <td>${i + 1}</td><td>${pEsc(names[i])}</td>
+          ${cols.map(c => { const p = (breakdown[uid] || {})[c.mid]; return `<td>${p != null ? p : '—'}</td>`; }).join('')}
+          <td class="season-total">${total}</td>
+        </tr>`).join('')}</tbody>
+      </table></div>`;
+      return;
+    }
+
+    // Vue liste, détail par meeting optionnel (bouton) : évite l'illisible dès
+    // que plusieurs joueurs ont chacun plusieurs meetings dépliés en même temps.
+    const rows = await Promise.all(entries.map(async ([uid, pts], i) => {
+      let detail = '';
+      if (seasonTwitchShowDetail) {
+        const perMeeting = Object.entries(breakdown[uid] || {}).sort((a, b) => b[1] - a[1]);
+        const detailRows = await Promise.all(perMeeting.map(async ([mid, p]) =>
+          `<div class="pmrow" style="opacity:.7;font-size:.85em;padding-left:22px">`
+          + `<span class="mnm">${pEsc(await seasonMeetingLabel(mid, champId))}</span><span class="pmpct">${p} pt${p > 1 ? 's' : ''}</span></div>`
+        ));
+        detail = detailRows.join('');
+      }
+      return `<div class="pmrow"><span class="mn">${i + 1}</span><span class="mnm">${pEsc(names[i])}</span><span class="pmpct">${pts} pt${pts > 1 ? 's' : ''}</span></div>${detail}`;
+    }));
+    box.innerHTML = `<div class="pmini">${rows.join('')}</div>`;
+  }
+
   document.getElementById('seasonTwitchBtn').onclick = renderSeasonTwitchPanel;
+  document.getElementById('seasonTwitchDetailToggle').onclick = (e) => {
+    seasonTwitchShowDetail = !seasonTwitchShowDetail;
+    e.target.textContent = seasonTwitchShowDetail ? '🔎 Masquer le détail' : '🔎 Détail par meeting';
+    paintSeasonTwitch();
+  };
+  document.getElementById('seasonTwitchViewToggle').onclick = (e) => {
+    seasonTwitchTableView = !seasonTwitchTableView;
+    e.target.textContent = seasonTwitchTableView ? '📋 Vue liste' : '📊 Vue tableau';
+    paintSeasonTwitch();
+  };
   document.getElementById('nextBtn').onclick = () => push({ nextText: document.getElementById('nextTxt').value });
   document.querySelectorAll('[data-cd]').forEach(b => b.onclick = () => {
     const m = +b.dataset.cd;
