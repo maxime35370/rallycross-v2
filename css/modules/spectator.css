@@ -518,3 +518,12 @@
   color: #d5c1ff; font-size: 0.95rem;
 }
 .spc-pseudo .ps-twitch-err { color: #ffb37a; margin-top: 8px; }
+
+/* Historique personnel des pronostics ("Mes pronostics") */
+.spc-pseudo .ps-hist-row { display: flex; gap: 8px; align-items: flex-start; padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.06); }
+.spc-pseudo .ps-hist-row:last-child { border-bottom: none; }
+.spc-pseudo .ps-hist-ic { flex: 0 0 auto; font-size: 0.95rem; margin-top: 1px; }
+.spc-pseudo .ps-hist-txt { min-width: 0; }
+.spc-pseudo .ps-hist-q { font-weight: 600; font-size: 0.88rem; color: #e8edf4; }
+.spc-pseudo .ps-hist-pick { font-size: 0.78rem; color: #9aa6b6; margin-top: 2px; }
+.spc-pseudo .ps-hist-correct { color: #ffb37a; }

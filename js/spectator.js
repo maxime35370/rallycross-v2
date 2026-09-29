@@ -10,6 +10,7 @@ import { getActiveChampionship, getActiveChampionshipId } from './context.js';
 import {
   watchPronostics, myVote, castVote, ensureAnon, watchMeetingScores, autoPseudo, getPlayerPseudo, setPlayerPseudo,
   getTwitchProfile, beginTwitchLink, consumeTwitchLinkResult, watchSeasonScores,
+  watchSeasonAccuracy, getMyPredictionHistory,
 } from '../overlay/_lib/obs-pronostics.js';
 
 // ─────────────────────────────────────────────────────────
@@ -196,8 +197,14 @@ function renderView() {
     <div class="spc-score-row">
       <div id="spc-myscore" class="spc-myscore" style="display:none"></div>
       <div id="spc-season-twitch" class="spc-myscore" style="display:none"></div>
+      <div id="spc-season-ratio" class="spc-myscore" style="display:none"></div>
+      <div id="spc-season-bold" class="spc-myscore" style="display:none"></div>
     </div>
     <div id="spc-pseudo" class="spc-pseudo" style="display:none"></div>
+    <div id="spc-history-wrap" style="display:none;margin-bottom:var(--sp-md,16px)">
+      <button id="spc-history-toggle" class="btn btn-ghost btn-sm">📜 Mes pronostics</button>
+      <div id="spc-history-list" class="spc-pseudo" style="display:none;margin-top:8px"></div>
+    </div>
     <div id="spc-pronostics" class="spc-pronostics" style="display:none"></div>
 
     <div id="spc-content">
@@ -407,6 +414,9 @@ let _twitchByUid      = {};    // uid -> profil Twitch ({login,displayName,...})
 let _seasonScores     = {};    // classement saison (Twitch uniquement) : uid -> points
 let _seasonChampId    = null;
 let _unsubSeason      = null;
+let _seasonAccuracy   = {};    // taux de réussite saison (Twitch uniquement) : uid -> { correct, total }
+let _accuracyChampId  = null;
+let _unsubAccuracy    = null;
 
 const escName = s => String(s).replace(/[<>&"]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' }[c]));
 /** Pseudo affiché : compte Twitch lié en priorité, sinon pseudo perso, sinon pseudo auto. */
@@ -414,7 +424,7 @@ const pseudoFor = uid => _twitchByUid[uid]?.displayName
   || ((typeof _pseudos[uid] === 'string' && _pseudos[uid]) ? _pseudos[uid] : autoPseudo(uid));
 
 /** Re-render commun : les deux classements (meeting + saison) affichent des pseudos, tous deux doivent suivre. */
-function rerenderScoreBoards() { renderMyScore(); renderSeasonTwitch(); }
+function rerenderScoreBoards() { renderMyScore(); renderSeasonTwitch(); renderSeasonRatio(); renderSeasonBold(); }
 
 /** Résout les pseudos perso des UID affichés (une fois chacun), puis re-render si trouvé. */
 function ensurePseudos(uids) {
@@ -543,6 +553,7 @@ async function initPronostics() {
       renderPronostics();
       renderMyScore();
       refreshIdentityBox();   // indépendant du meeting sélectionné (voir sa doc)
+      refreshHistoryToggle();
     })
     .catch(() => { _pronoUid = null; });
 }
@@ -632,6 +643,37 @@ function renderMyScore() {
   ensurePseudos([...shown.map(e => e[0]), uid].filter(Boolean));
 }
 
+/** Affiche/masque le bouton "Mes pronostics" selon qu'une session existe ou non. */
+function refreshHistoryToggle() {
+  const wrap = document.getElementById('spc-history-wrap');
+  if (wrap) wrap.style.display = _pronoUid ? '' : 'none';
+}
+
+/**
+ * Historique personnel : pronostics révélés sur lesquels CE uid a voté (ne
+ * remonte pas un éventuel historique antérieur à une connexion Twitch, cf.
+ * doc de getMyPredictionHistory). Chargé à la demande (clic), pas en continu.
+ */
+async function renderMyHistory() {
+  const box = document.getElementById('spc-history-list');
+  if (!box || !_pronoUid) return;
+  box.style.display = '';
+  box.innerHTML = `<div class="ps-hint">Chargement…</div>`;
+  try {
+    const items = await getMyPredictionHistory(_pronoUid);
+    if (!items.length) { box.innerHTML = `<div class="ps-hint">Aucun pronostic révélé pour l'instant.</div>`; return; }
+    box.innerHTML = items.map(it => {
+      const icon = it.correct ? '✅' : '❌';
+      const miss = it.correct ? '' : ` <span class="ps-hist-correct">(bon choix : ${escName(it.correctName)})</span>`;
+      return `<div class="ps-hist-row"><span class="ps-hist-ic">${icon}</span>`
+        + `<div class="ps-hist-txt"><div class="ps-hist-q">${escName(it.question)}</div>`
+        + `<div class="ps-hist-pick">Ton choix : ${escName(it.myPickName)}${miss}</div></div></div>`;
+    }).join('');
+  } catch {
+    box.innerHTML = `<div class="ps-hint">Impossible de charger ton historique pour l'instant.</div>`;
+  }
+}
+
 /**
  * Affiche/actualise le bloc "ton pseudo / connexion Twitch" — INDÉPENDANT du
  * meeting sélectionné et de ses scores (c'est une propriété du compte, pas
@@ -680,6 +722,95 @@ function renderSeasonTwitch() {
     : `${entries.length} compte${entries.length > 1 ? 's' : ''} Twitch classé${entries.length > 1 ? 's' : ''} cette saison`;
   el.style.display = '';
   el.innerHTML = `<div class="ms-head">🎮 Classement saison<span class="ms-sub">comptes Twitch</span></div>`
+    + `<div class="ms-mine">${mineLine}</div><div class="ms-top">${top}</div>`;
+  ensurePseudos(entries.slice(0, WEEKEND_TOP_N).map(e => e[0]));
+}
+
+// En dessous de ce nombre de pronostics faits, un ratio n'a aucun sens
+// (un seul pronostic juste = 100%) — voir renderSeasonRatio.
+const RATIO_MIN_TOTAL = 10;
+
+/** (Ré)abonne au taux de réussite saison (Twitch uniquement) du championnat courant. */
+function watchAccuracyFor(championshipId) {
+  if (championshipId === _accuracyChampId) return;
+  if (_unsubAccuracy) { try { _unsubAccuracy(); } catch {} _unsubAccuracy = null; }
+  _accuracyChampId = championshipId || null;
+  _seasonAccuracy = {};
+  renderSeasonRatio();
+  renderSeasonBold();
+  if (!championshipId) return;
+  watchSeasonAccuracy(championshipId, map => { _seasonAccuracy = map || {}; renderSeasonRatio(); renderSeasonBold(); }, () => {})
+    .then(unsub => { if (_accuracyChampId === championshipId) _unsubAccuracy = unsub; else { try { unsub(); } catch {} } })
+    .catch(() => {});
+}
+
+/** Classement « meilleur ratio » saison — comptes Twitch uniquement, minimum RATIO_MIN_TOTAL pronostics faits. */
+function renderSeasonRatio() {
+  const el = document.getElementById('spc-season-ratio');
+  if (!el) return;
+  const uid = _pronoUid;
+  const entries = Object.entries(_seasonAccuracy || {})
+    .map(([u, st]) => [u, st.correct || 0, st.total || 0])
+    .filter(([, , total]) => total >= RATIO_MIN_TOTAL)
+    .map(([u, correct, total]) => [u, correct, total, correct / total])
+    // À % de réussite égal, celui qui a le PLUS de pronostics bons passe
+    // devant (rester à 90% sur 45 pronostics vaut mieux que sur 10).
+    .sort((a, b) => b[3] - a[3] || b[1] - a[1]);
+  if (!entries.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
+  ensureTwitchProfiles(entries.map(e => e[0]));
+  const mineIdx = entries.findIndex(([u]) => u === uid);
+  const mineEntry = mineIdx >= 0 ? entries[mineIdx] : null;
+  const mineLine = mineEntry
+    ? `Ton ratio : <b>${Math.round(mineEntry[3] * 100)}%</b> (${mineEntry[1]}/${mineEntry[2]}) · ${mineIdx + 1}ᵉ sur ${entries.length}`
+    : `${entries.length} compte${entries.length > 1 ? 's' : ''} classé${entries.length > 1 ? 's' : ''} (min. ${RATIO_MIN_TOTAL} pronostics faits)`;
+  const top = entries.slice(0, WEEKEND_TOP_N).map(([u, correct, total, ratio], i) =>
+    `<div class="ms-row${u === uid ? ' me' : ''}"><span class="ms-pos">${RANK_BADGE[i] || (i + 1)}</span>`
+    + `<span class="ms-name">${escName(pseudoFor(u))}${u === uid ? ' <span class="ms-you">(toi)</span>' : ''}</span>`
+    + `<span class="ms-v">${Math.round(ratio * 100)}%<span style="opacity:.6;font-size:.8em"> (${correct}/${total})</span></span></div>`
+  ).join('');
+  el.style.display = '';
+  el.innerHTML = `<div class="ms-head">🎯 Meilleur ratio<span class="ms-sub">min. ${RATIO_MIN_TOTAL} pronos</span></div>`
+    + `<div class="ms-mine">${mineLine}</div><div class="ms-top">${top}</div>`;
+  ensurePseudos(entries.slice(0, WEEKEND_TOP_N).map(e => e[0]));
+}
+
+// Sous ce nombre de bons pronostics, une moyenne d'audace n'a pas de sens
+// (un seul coup risqué réussi = 100% audacieux). Volontairement plus bas
+// que RATIO_MIN_TOTAL : ce n'est pas le même dénominateur (bons pronostics
+// uniquement, pas tous les pronostics faits).
+const BOLD_MIN_CORRECT = 5;
+
+/**
+ * Classement « plus audacieux » saison — comptes Twitch uniquement. Mesure,
+ * PARMI ses bons pronostics, à quel point le public s'est en moyenne trompé
+ * en même temps (cf. boldSum/boldCount, calculés dans updateMeetingScores à
+ * partir de tally/totalVotes — le vote de TOUT LE PUBLIC, pas seulement les
+ * comptes Twitch). Un score élevé = des bons pronostics que peu de monde
+ * partageait, pas juste des favoris évidents.
+ */
+function renderSeasonBold() {
+  const el = document.getElementById('spc-season-bold');
+  if (!el) return;
+  const uid = _pronoUid;
+  const entries = Object.entries(_seasonAccuracy || {})
+    .map(([u, st]) => [u, st.boldCount || 0, st.boldSum || 0])
+    .filter(([, boldCount]) => boldCount >= BOLD_MIN_CORRECT)
+    .map(([u, boldCount, boldSum]) => [u, boldCount, boldSum / boldCount])
+    .sort((a, b) => b[2] - a[2] || b[1] - a[1]);
+  if (!entries.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
+  ensureTwitchProfiles(entries.map(e => e[0]));
+  const mineIdx = entries.findIndex(([u]) => u === uid);
+  const mineEntry = mineIdx >= 0 ? entries[mineIdx] : null;
+  const mineLine = mineEntry
+    ? `Ton indice d'audace : <b>${Math.round(mineEntry[2] * 100)}%</b> · ${mineIdx + 1}ᵉ sur ${entries.length}`
+    : `${entries.length} compte${entries.length > 1 ? 's' : ''} classé${entries.length > 1 ? 's' : ''} (min. ${BOLD_MIN_CORRECT} bons pronostics)`;
+  const top = entries.slice(0, WEEKEND_TOP_N).map(([u, boldCount, avgBold], i) =>
+    `<div class="ms-row${u === uid ? ' me' : ''}"><span class="ms-pos">${RANK_BADGE[i] || (i + 1)}</span>`
+    + `<span class="ms-name">${escName(pseudoFor(u))}${u === uid ? ' <span class="ms-you">(toi)</span>' : ''}</span>`
+    + `<span class="ms-v">${Math.round(avgBold * 100)}%<span style="opacity:.6;font-size:.8em"> (${boldCount} bons)</span></span></div>`
+  ).join('');
+  el.style.display = '';
+  el.innerHTML = `<div class="ms-head">🎲 Plus audacieux<span class="ms-sub">min. ${BOLD_MIN_CORRECT} bons pronos</span></div>`
     + `<div class="ms-mine">${mineLine}</div><div class="ms-top">${top}</div>`;
   ensurePseudos(entries.slice(0, WEEKEND_TOP_N).map(e => e[0]));
 }
@@ -771,7 +902,9 @@ function renderPronostics() {
   const pastBox = document.getElementById('spc-pronostics-past');   // bas  : résultats RÉVÉLÉS
   if (!box) return;
   watchScoresFor(selectedMeetingId);   // suit le classement pronostiqueurs de l'épreuve affichée
-  watchSeasonFor((allMeetings.find(m => m.id === selectedMeetingId) || {}).championshipId || getActiveChampionshipId());
+  const currentChampId = (allMeetings.find(m => m.id === selectedMeetingId) || {}).championshipId || getActiveChampionshipId();
+  watchSeasonFor(currentChampId);
+  watchAccuracyFor(currentChampId);
   // Cycle de vie côté spectateur (identique avec ou sans catégorie) :
   //  • OUVERT   → visible EN HAUT, on peut voter (appel à voter dès l'arrivée) ;
   //  • VOTES CLOS → MASQUÉ (la session est en cours, résultat pas encore révélé)
@@ -828,6 +961,13 @@ function bindEvents() {
     selectedCategory = e.target.value;
     renderPronostics();             // focus catégorie (ou toutes si vide)
     await renderContent();
+  });
+
+  document.getElementById('spc-history-toggle')?.addEventListener('click', () => {
+    const box = document.getElementById('spc-history-list');
+    if (!box) return;
+    if (box.style.display !== 'none') { box.style.display = 'none'; return; }
+    renderMyHistory();
   });
 
   document.getElementById('spc-fullscreen-btn')?.addEventListener('click', () => {

@@ -179,26 +179,42 @@ export async function updateMeetingScores(meetingId, strengthByCat = {}) {
   linksSnap.forEach(d => { canonicalOf[d.id] = d.data().canonicalUid; });
 
   const scores = {};
+  const stats = {};   // uid canonique -> { correct, total } — sert au taux de réussite (voir updateSeasonTwitchScores)
   for (const pdoc of psnap.docs) {
     const p = pdoc.data();
     if (p.status !== PRONO_STATUS.REVEALED || !p.correctDriverId) continue;   // seuls les révélés comptent
     const pos = (strengthByCat[p.category] || {})[p.correctDriverId];         // cote du gagnant
     const pts = cotePoints(pos);
-    if (!pts) continue;
     const vsnap = await getDocs(collection(db, PRONO_COL, pdoc.id, 'votes'));
-    // DÉDUPLICATION PAR QUESTION : si la même personne a voté juste sous
-    // DEUX uid différents pour CETTE question (ex. une fois en anonyme,
-    // une fois après connexion Twitch), les deux votes résolvent au même
-    // uid canonique — un Set garantit qu'elle ne marque qu'UNE fois les
-    // points de cette question, jamais deux.
-    const correctCanonicalUids = new Set();
+    // DÉDUPLICATION PAR QUESTION : si la même personne a voté sous DEUX uid
+    // différents pour CETTE question (ex. une fois en anonyme, une fois
+    // après connexion Twitch), les deux votes résolvent au même uid
+    // canonique — un seul verdict par uid canonique, jamais compté deux fois
+    // (ni dans les points, ni dans le nombre de pronostics faits).
+    const verdictByCanonical = new Map();   // uid canonique -> a-t-il voté juste sur CETTE question ?
     vsnap.forEach(v => {
-      if (v.data().driverId !== p.correctDriverId) return;
-      correctCanonicalUids.add(resolveCanonicalUid(canonicalOf, v.id));
+      const canonical = resolveCanonicalUid(canonicalOf, v.id);
+      const correct = v.data().driverId === p.correctDriverId;
+      verdictByCanonical.set(canonical, verdictByCanonical.get(canonical) || correct);
     });
-    correctCanonicalUids.forEach(uid => { scores[uid] = (scores[uid] || 0) + pts; });
+    // « Audace » d'un bon pronostic : part du PUBLIC ENTIER (tally/totalVotes,
+    // figés à la révélation — tout le monde, pas seulement les comptes
+    // Twitch) qui s'est trompée sur cette question. Un bon pronostic que
+    // presque personne d'autre n'a trouvé pèse plus qu'un favori évident.
+    const correctShare = p.totalVotes ? (p.tally?.[p.correctDriverId] || 0) / p.totalVotes : 0;
+    const boldness = 1 - correctShare;
+    verdictByCanonical.forEach((correct, uid) => {
+      if (!stats[uid]) stats[uid] = { correct: 0, total: 0, boldSum: 0, boldCount: 0 };
+      stats[uid].total++;
+      if (correct) {
+        stats[uid].correct++;
+        scores[uid] = (scores[uid] || 0) + pts;
+        stats[uid].boldSum += boldness;
+        stats[uid].boldCount++;
+      }
+    });
   }
-  await setDoc(doc(db, SCORES_COL, meetingId), { meetingId, scores, updatedAt: Date.now() });
+  await setDoc(doc(db, SCORES_COL, meetingId), { meetingId, scores, stats, updatedAt: Date.now() });
   return scores;
 }
 
@@ -361,6 +377,42 @@ export async function castVote(id, uid, driverId, nowMs) {
   await setDoc(doc(db, PRONO_COL, id, 'votes', uid), { driverId, at: nowMs || Date.now() }, { merge: true });
 }
 
+/**
+ * Historique personnel : tous les pronostics RÉVÉLÉS sur lesquels `uid` a
+ * voté, plus récents d'abord, avec le nom du pilote choisi et du bon
+ * pilote (déjà présents dans `options` du pronostic — aucune jointure
+ * supplémentaire nécessaire). N'inclut QUE les votes sous ce uid précis :
+ * l'historique antérieur à une connexion Twitch (sous un ancien uid
+ * anonyme) n'est pas rapatrié ici (la table de correspondance uidLinks
+ * n'est lisible que par la régie, pas par le client).
+ * @returns {Promise<Array<{id,question,category,meetingId,myPick,correctDriverId,correct,revealedAt}>>}
+ */
+export async function getMyPredictionHistory(uid) {
+  if (!uid) return [];
+  await initFirebase();
+  const { collection, getDocs, query, where } = await fs();
+  const snap = await getDocs(query(collection(db, PRONO_COL), where('status', '==', PRONO_STATUS.REVEALED)));
+  const items = [];
+  for (const d of snap.docs) {
+    const p = d.data();
+    const pick = await myVote(d.id, uid);
+    if (!pick) continue;
+    const opts = Array.isArray(p.options) ? p.options : [];
+    items.push({
+      id: d.id,
+      question: p.question || '',
+      category: p.category || '',
+      meetingId: p.meetingId || '',
+      myPickName: opts.find(o => o.driverId === pick)?.name || pick,
+      correctName: opts.find(o => o.driverId === p.correctDriverId)?.name || p.correctDriverId,
+      correct: pick === p.correctDriverId,
+      revealedAt: p.revealedAt || 0,
+    });
+  }
+  items.sort((a, b) => b.revealedAt - a.revealedAt);
+  return items;
+}
+
 // ─────────────────────────────────────────────────────────
 // COMPTE TWITCH LIÉ (option, spectateur OU compte réel régie/client)
 //
@@ -444,9 +496,14 @@ export function consumeTwitchLinkResult() {
  * Recalcule le classement saison (Twitch uniquement) d'un championnat depuis
  * pronoScores + uidLinks, et l'écrit dans pronoSeasonScores/{championshipId}.
  * À n'appeler QUE côté régie.
- * @returns {Promise<{scores:Object, breakdown:Object}>} scores : uidTwitch -> points cumulés saison ;
+ * @returns {Promise<{scores:Object, breakdown:Object, accuracy:Object}>} scores : uidTwitch -> points cumulés saison ;
  *   breakdown : uidTwitch -> { meetingId: points } (détail par épreuve, jamais stocké — recalculé à la demande,
- *   pour vérifier d'où viennent les points d'un compte, ex. un meeting de test oublié).
+ *   pour vérifier d'où viennent les points d'un compte, ex. un meeting de test oublié) ;
+ *   accuracy : uidTwitch -> { correct, total, boldSum, boldCount } — correct/total sert au classement
+ *   "meilleur ratio" (filtré à un minimum de pronostics faits, pour qu'un unique pronostic juste ne
+ *   truste pas la tête à 100%) ; boldSum/boldCount sert au classement "plus audacieux" (moyenne de
+ *   boldSum/boldCount = à quel point ses bons pronostics étaient minoritaires dans le public, voir
+ *   js/spectator.js).
  */
 export async function updateSeasonTwitchScores(championshipId) {
   if (!championshipId) return { scores: {}, breakdown: {} };
@@ -487,6 +544,7 @@ export async function updateSeasonTwitchScores(championshipId) {
   // dorment sur d'autres meetings, y compris d'anciens tests oubliés).
   const scores = {};
   const breakdown = {};
+  const accuracy = {};   // uid Twitch -> { correct, total } cumulés sur toute la saison
   for (const meetingId of meetingIds) {
     const s = await getDoc(doc(db, SCORES_COL, meetingId));
     if (!s.exists()) continue;
@@ -498,10 +556,20 @@ export async function updateSeasonTwitchScores(championshipId) {
       if (!breakdown[canonical]) breakdown[canonical] = {};
       breakdown[canonical][meetingId] = (breakdown[canonical][meetingId] || 0) + pts;
     }
+    const meetingStats = s.data().stats || {};
+    for (const [uid, st] of Object.entries(meetingStats)) {
+      const canonical = resolveCanonicalUid(canonicalOf, uid);
+      if (!twitchUids.has(canonical)) continue;
+      if (!accuracy[canonical]) accuracy[canonical] = { correct: 0, total: 0, boldSum: 0, boldCount: 0 };
+      accuracy[canonical].correct += st.correct || 0;
+      accuracy[canonical].total += st.total || 0;
+      accuracy[canonical].boldSum += st.boldSum || 0;
+      accuracy[canonical].boldCount += st.boldCount || 0;
+    }
   }
 
-  await setDoc(doc(db, SEASON_SCORES_COL, championshipId), { championshipId, scores, updatedAt: Date.now() });
-  return { scores, breakdown };
+  await setDoc(doc(db, SEASON_SCORES_COL, championshipId), { championshipId, scores, accuracy, updatedAt: Date.now() });
+  return { scores, breakdown, accuracy };
 }
 
 /** Abonnement au classement saison Twitch d'un championnat (lecture PUBLIQUE). cb reçoit la map uidTwitch->points. */
@@ -510,6 +578,15 @@ export async function watchSeasonScores(championshipId, cb, onErr) {
   const { doc, onSnapshot } = await fs();
   return onSnapshot(doc(db, SEASON_SCORES_COL, championshipId),
     snap => cb(snap.exists() ? (snap.data().scores || {}) : {}),
+    err => onErr && onErr(err));
+}
+
+/** Abonnement au taux de réussite saison (lecture PUBLIQUE). cb reçoit la map uidTwitch -> {correct,total}. */
+export async function watchSeasonAccuracy(championshipId, cb, onErr) {
+  await initFirebase();
+  const { doc, onSnapshot } = await fs();
+  return onSnapshot(doc(db, SEASON_SCORES_COL, championshipId),
+    snap => cb(snap.exists() ? (snap.data().accuracy || {}) : {}),
     err => onErr && onErr(err));
 }
 
