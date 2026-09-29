@@ -168,9 +168,14 @@ function renderView() {
         <span class="spc-flag">🏁</span>
         <span>Mode Spectateur</span>
       </div>
-      <div class="spc-live-dot" id="spc-live-dot" title="Mise à jour automatique">
-        <span class="spc-dot"></span>
-        <span class="spc-live-label">LIVE</span>
+      <div class="spc-header-badges">
+        <span class="spc-twitch-badge" id="spc-twitch-badge" style="display:none" title="Connecté avec Twitch">
+          🎮 <span id="spc-twitch-badge-name"></span>
+        </span>
+        <div class="spc-live-dot" id="spc-live-dot" title="Mise à jour automatique">
+          <span class="spc-dot"></span>
+          <span class="spc-live-label">LIVE</span>
+        </div>
       </div>
     </div>
 
@@ -188,9 +193,11 @@ function renderView() {
       <button class="btn btn-ghost btn-sm" id="spc-fullscreen-btn" title="Plein ecran">⛶</button>
     </div>
 
-    <div id="spc-myscore" class="spc-myscore" style="display:none"></div>
+    <div class="spc-score-row">
+      <div id="spc-myscore" class="spc-myscore" style="display:none"></div>
+      <div id="spc-season-twitch" class="spc-myscore" style="display:none"></div>
+    </div>
     <div id="spc-pseudo" class="spc-pseudo" style="display:none"></div>
-    <div id="spc-season-twitch" class="spc-myscore" style="display:none"></div>
     <div id="spc-pronostics" class="spc-pronostics" style="display:none"></div>
 
     <div id="spc-content">
@@ -424,6 +431,19 @@ function ensureTwitchProfiles(uids) {
     .then(() => renderMyScore());
 }
 
+/** Petit badge « connecté Twitch » à côté du dot LIVE (voir renderPseudoEditor). */
+function showTwitchBadge(displayName) {
+  const b = document.getElementById('spc-twitch-badge');
+  const n = document.getElementById('spc-twitch-badge-name');
+  if (!b || !n) return;
+  n.textContent = displayName;
+  b.style.display = '';
+}
+function hideTwitchBadge() {
+  const b = document.getElementById('spc-twitch-badge');
+  if (b) b.style.display = 'none';
+}
+
 /** Éditeur « ton pseudo » (option B) + connexion Twitch — construit une seule fois pour ne pas réinitialiser la saisie. */
 async function renderPseudoEditor() {
   const el = document.getElementById('spc-pseudo');
@@ -433,14 +453,18 @@ async function renderPseudoEditor() {
   const twitch = _twitchByUid[_pronoUid];
 
   if (twitch) {
-    el.innerHTML = `<div class="ps-lbl">🟢 Connecté avec Twitch</div>`
-      + `<div class="ps-twitch-linked">✅ <b>${escName(twitch.displayName)}</b></div>`
-      + `<div class="ps-hint">Tes points te suivent désormais sur tous tes appareils.</div>`;
+    // Plus besoin d'un gros bloc une fois connecté : un petit badge à côté du
+    // dot LIVE suffit à le rappeler, sans continuer à prendre de la place.
+    el.innerHTML = '';
+    el.style.display = 'none';
+    showTwitchBadge(twitch.displayName);
     _pseudoEditorDone = true;
     _pseudoEditorShowsConnected = true;
     return;
   }
 
+  hideTwitchBadge();
+  el.style.display = '';
   const current = pseudoFor(_pronoUid);
   const custom  = (typeof _pseudos[_pronoUid] === 'string' && _pseudos[_pronoUid]) ? _pseudos[_pronoUid] : '';
   const errBanner = _twitchLinkError
@@ -600,9 +624,12 @@ function renderMyScore() {
   // avait figé l'éditeur sur "pas connecté" — sans ce rattrapage, le vrai
   // statut "connecté" pouvait ne jamais s'afficher, l'éditeur ne se
   // reconstruisant plus jamais une fois _pseudoEditorDone posé.
+  // L'affichage de #spc-pseudo (visible/masqué) est désormais décidé DANS
+  // renderPseudoEditor elle-même (masqué une fois connecté, le badge d'en-tête
+  // suffit) — on ne le force plus ici, sous peine d'écraser ce choix.
   const justLearnedConnected = !_pseudoEditorShowsConnected && !!_twitchByUid[uid];
-  if (pe && uid) { if (!_pseudoEditorDone || justLearnedConnected) renderPseudoEditor(); pe.style.display = ''; }
-  else if (pe) pe.style.display = 'none';
+  if (pe && uid) { if (!_pseudoEditorDone || justLearnedConnected) renderPseudoEditor(); }
+  else if (pe) { pe.style.display = 'none'; hideTwitchBadge(); }
 }
 
 /** (Ré)abonne au classement saison (Twitch uniquement) du championnat courant. */

@@ -20,6 +20,19 @@
 }
 .spc-flag { font-size: 1.3rem; }
 
+.spc-header-badges { display: flex; align-items: center; gap: 8px; }
+
+/* Petit indicateur "connecté Twitch" à côté du dot LIVE — remplace le gros
+   bloc de confirmation une fois la connexion établie, pour ne pas continuer
+   à occuper de la place une fois que c'est acquis. */
+.spc-twitch-badge {
+  display: flex; align-items: center; gap: 4px;
+  padding: 4px 10px; background: rgba(145,71,255,0.15); color: #d5c1ff;
+  border: 1px solid rgba(145,71,255,0.4); border-radius: 20px;
+  font-size: 0.8rem; font-weight: 600; max-width: 140px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
 /* ── Dot LIVE ── */
 .spc-live-dot {
   display: flex;
@@ -431,6 +444,14 @@
 .spc-verdict.ko { background: var(--clr-danger-dim); color: #ff9a9a; }
 
 /* Classement des pronostiqueurs (points par épreuve, barème à la cote de performance) */
+/* Classement du meeting + classement saison côte à côte sur assez de largeur
+   (tablette/desktop) ; repassent en pile automatiquement sous ~560px grâce
+   au flex-wrap, sans media query — chaque bloc garde sa propre marge basse
+   (.spc-myscore), donc rien à dupliquer ici. */
+.spc-score-row { display: flex; flex-wrap: wrap; gap: var(--sp-md, 16px); }
+.spc-score-row > .spc-myscore { flex: 1 1 260px; margin-bottom: 0; }
+.spc-score-row { margin-bottom: var(--sp-md, 16px); }
+
 .spc-myscore {
   background: linear-gradient(150deg, rgba(255,90,20,0.12), rgba(20,26,38,0.55));
   border: 1px solid rgba(255,255,255,0.08); border-radius: 14px;
