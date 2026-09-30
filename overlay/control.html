@@ -974,9 +974,17 @@
   // ---------- PRONOSTICS (régie) ----------
   const pEsc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   const catLabel = id => categories.find(c => c.id === id)?.name || id || '—';
-  function flashErr(msg) {
+  // `ok=true` : bandeau de confirmation (vert) au lieu d'erreur (rouge) — même
+  // bandeau, réutilisé pour ne pas dupliquer le mécanisme d'affichage/masquage.
+  function flashErr(msg, ok) {
     const bar = document.getElementById('errBar');
-    if (bar) { bar.textContent = '⚠️ ' + msg; bar.style.display = ''; clearTimeout(flashErr._t); flashErr._t = setTimeout(() => { bar.style.display = 'none'; }, 6000); }
+    if (bar) {
+      bar.textContent = ok ? msg : '⚠️ ' + msg;
+      bar.style.background  = ok ? 'rgba(57,217,138,.12)' : '#3a1012';
+      bar.style.borderColor = ok ? 'var(--green)' : '#e11d2a';
+      bar.style.color       = ok ? '#9af0c4' : '#ffb3b3';
+      bar.style.display = ''; clearTimeout(flashErr._t); flashErr._t = setTimeout(() => { bar.style.display = 'none'; }, 6000);
+    }
   }
 
   const pronoRemoved = new Set();     // driverId retirés du composer
@@ -1310,7 +1318,7 @@
 
   // ---------- BOT TWITCH (chat) ----------
   const twitchBotResult = consumeTwitchBotLinkResult();
-  if (twitchBotResult === 'ok') flashErr('✅ Bot Twitch connecté.');
+  if (twitchBotResult === 'ok') flashErr('✅ Bot Twitch connecté.', true);
   else if (twitchBotResult && twitchBotResult.startsWith('error:')) flashErr('Connexion du bot Twitch refusée (' + twitchBotResult.slice(6) + ').');
 
   function renderTwitchBotStatus(st) {
