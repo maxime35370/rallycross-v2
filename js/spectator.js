@@ -660,7 +660,7 @@ async function renderMyHistory() {
   box.style.display = '';
   box.innerHTML = `<div class="ps-hint">Chargement…</div>`;
   try {
-    const items = await getMyPredictionHistory(_pronoUid);
+    const items = await getMyPredictionHistory(_pronoUid, selectedMeetingId);
     if (!items.length) { box.innerHTML = `<div class="ps-hint">Aucun pronostic révélé pour l'instant.</div>`; return; }
     box.innerHTML = items.map(it => {
       const icon = it.correct ? '✅' : '❌';
@@ -956,6 +956,10 @@ function bindEvents() {
     selectedMeetingId = e.target.value;
     renderPronostics();             // re-filtre par event sélectionné
     await renderContent();
+    // Si "Mes pronostics" est déjà ouvert, le recharger pour le nouveau
+    // meeting — sinon il resterait affiché sur l'épreuve précédente.
+    const histBox = document.getElementById('spc-history-list');
+    if (histBox && histBox.style.display !== 'none') renderMyHistory();
   });
   document.getElementById('spc-category')?.addEventListener('change', async e => {
     selectedCategory = e.target.value;

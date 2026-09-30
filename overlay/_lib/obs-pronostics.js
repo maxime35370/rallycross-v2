@@ -498,11 +498,13 @@ export async function castVote(id, uid, driverId, nowMs) {
  * n'est lisible que par la régie, pas par le client).
  * @returns {Promise<Array<{id,question,category,meetingId,myPick,correctDriverId,correct,revealedAt}>>}
  */
-export async function getMyPredictionHistory(uid) {
+export async function getMyPredictionHistory(uid, meetingId) {
   if (!uid) return [];
   await initFirebase();
   const { collection, getDocs, query, where } = await fs();
-  const snap = await getDocs(query(collection(db, PRONO_COL), where('status', '==', PRONO_STATUS.REVEALED)));
+  const cons = [where('status', '==', PRONO_STATUS.REVEALED)];
+  if (meetingId) cons.push(where('meetingId', '==', meetingId));
+  const snap = await getDocs(query(collection(db, PRONO_COL), ...cons));
   const items = [];
   for (const d of snap.docs) {
     const p = d.data();
