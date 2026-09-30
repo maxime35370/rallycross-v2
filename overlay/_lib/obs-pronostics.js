@@ -159,6 +159,54 @@ export function cotePoints(pos) {
   return 5;
 }
 
+// ─────────────────────────────────────────────────────────
+// BONUS RAPIDITÉ — récompense les premiers votants d'UN pronostic, mais
+// SEULEMENT s'ils ont aussi trouvé le bon pilote (un bonus de rapidité sur
+// un pronostic faux n'aurait aucun sens compétitif).
+//
+// Les paliers sont VOLONTAIREMENT ADAPTATIFS plutôt que des pourcentages
+// fixes : sur une question à seulement EARLY_MIN_VOTERS (10) votants, "les
+// 5% premiers" ne désignerait quasiment personne. Le seuil du haut part
+// donc de 10% à 10 votants et se resserre progressivement vers son
+// asymptote (5%) à mesure que le nombre de votants augmente ; le second
+// palier garde toujours une largeur constante de 10 points juste en
+// dessous (10-20% à 10 votants, tendant vers 5-15%).
+// ─────────────────────────────────────────────────────────
+
+const EARLY_MIN_VOTERS       = 10;    // sous ce nombre de votants sur LA question, aucun bonus
+const EARLY_TOP_ASYMPTOTE    = 0.05;  // vers quoi tend le seuil du haut quand le nombre de votants grandit
+const EARLY_TOP_EXTRA_AT_MIN = 0.05;  // supplément à l'asymptote pile à EARLY_MIN_VOTERS (→ 10% au minimum)
+const EARLY_SECOND_WIDTH     = 0.10;  // largeur constante du 2e palier, juste sous le premier
+const EARLY_TOP_BONUS        = 2;
+const EARLY_SECOND_BONUS     = 1;
+
+/** Seuil (fraction 0-1) du palier du haut pour n votants sur cette question. */
+function earlyTopThreshold(n) {
+  return EARLY_TOP_ASYMPTOTE + EARLY_TOP_EXTRA_AT_MIN * (EARLY_MIN_VOTERS / n);
+}
+
+/**
+ * Bonus de rapidité (0, EARLY_TOP_BONUS ou EARLY_SECOND_BONUS) par uid canonique,
+ * à partir de son rang d'arrivée (par `at`) parmi TOUS les votants de cette
+ * question — corrects ou non, le classement de rapidité ne juge que la vitesse.
+ * @param {Map<string,{correct:boolean, at:number}>} verdictByCanonical
+ * @returns {Map<string, number>} uid -> bonus
+ */
+function computeEarlyBonuses(verdictByCanonical) {
+  const bonuses = new Map();
+  const n = verdictByCanonical.size;
+  if (n < EARLY_MIN_VOTERS) return bonuses;
+  const topT = earlyTopThreshold(n);
+  const secondT = topT + EARLY_SECOND_WIDTH;
+  const sorted = [...verdictByCanonical.entries()].sort((a, b) => a[1].at - b[1].at);
+  sorted.forEach(([uid], i) => {
+    const pct = i / n;
+    if (pct < topT) bonuses.set(uid, EARLY_TOP_BONUS);
+    else if (pct < secondT) bonuses.set(uid, EARLY_SECOND_BONUS);
+  });
+  return bonuses;
+}
+
 /**
  * Recalcule les points « pronostiqueurs » d'une épreuve depuis zéro (idempotent) et
  * les écrit dans pronoScores/{meetingId}. À n'appeler QUE côté régie (lecture des votes).
@@ -211,12 +259,13 @@ export async function updateMeetingScores(meetingId, strengthByCat = {}) {
     // presque personne d'autre n'a trouvé pèse plus qu'un favori évident.
     const correctShare = p.totalVotes ? (p.tally?.[p.correctDriverId] || 0) / p.totalVotes : 0;
     const boldness = 1 - correctShare;
+    const earlyBonuses = computeEarlyBonuses(verdictByCanonical);
     verdictByCanonical.forEach(({ correct }, uid) => {
       if (!stats[uid]) stats[uid] = { correct: 0, total: 0, boldSum: 0, boldCount: 0 };
       stats[uid].total++;
       if (correct) {
         stats[uid].correct++;
-        scores[uid] = (scores[uid] || 0) + pts;
+        scores[uid] = (scores[uid] || 0) + pts + (earlyBonuses.get(uid) || 0);
         stats[uid].boldSum += boldness;
         stats[uid].boldCount++;
       }
