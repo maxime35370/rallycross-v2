@@ -59,6 +59,13 @@ export default async (req) => {
     if ((decoded.email || '') !== REGIE_EMAIL) return jsonResponse({ error: 'not_regie' }, 403);
 
     const db = admin.firestore(app);
+
+    // Double-vérification côté serveur (le client filtre déjà avant d'appeler
+    // cette fonction) : évite un message posté malgré la coupure si un
+    // onglet régie tourne encore avec un ancien code client.
+    const statusSnap = await db.collection('twitchBotStatus').doc('main').get();
+    if (statusSnap.data()?.muted) return jsonResponse({ error: 'muted' }, 200);
+
     const ref = db.collection('twitchBotAuth').doc('main');
     let auth = (await ref.get()).data();
     if (!auth?.accessToken || !auth?.broadcasterId) return jsonResponse({ error: 'bot_not_connected' }, 400);

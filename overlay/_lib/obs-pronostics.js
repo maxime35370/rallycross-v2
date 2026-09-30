@@ -357,6 +357,9 @@ async function notifyTwitchChat(message) {
     const auth = getAuth();
     const user = auth.currentUser;
     if (!user || user.isAnonymous) return;   // seule la régie (compte réel) déclenche un post
+    const { doc, getDoc } = await fs();
+    const statusSnap = await getDoc(doc(db, 'twitchBotStatus', 'main'));
+    if (statusSnap.exists() && statusSnap.data().muted) return;   // coupé par la régie — bot toujours connecté, juste silencieux
     const idToken = await user.getIdToken();
     await fetch('/.netlify/functions/twitch-chat-post', {
       method: 'POST',

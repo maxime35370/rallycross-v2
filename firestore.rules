@@ -315,10 +315,16 @@ service cloud.firestore {
 
     // Statut PUBLIC-SAFE du bot (juste "connecté ?" + pseudo Twitch, jamais
     // de jeton) — pour afficher l'état dans le panneau régie sans exposer
-    // twitchBotAuth. Écrit uniquement par twitch-bot-auth.js (Admin SDK).
+    // twitchBotAuth. `connected`/`login`/`displayName` : écrits uniquement
+    // par twitch-bot-auth.js (Admin SDK). `muted` fait exception : la régie
+    // peut couper/réactiver les messages SANS se déconnecter de Twitch —
+    // seul ce champ (+ updatedAt) lui est ouvert, le reste du document
+    // reste hors de portée d'un client.
     match /twitchBotStatus/{docId} {
-      allow read:  if isRegie();
-      allow write: if false;
+      allow read:   if isRegie();
+      allow create, delete: if false;
+      allow update: if isRegie()
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['muted', 'updatedAt']);
     }
 
     // ── AUTOMATISATION DES PRONOSTICS (championnats suivis en direct, ex.

@@ -256,6 +256,9 @@
         <h3>🤖 Bot Twitch (chat) <span class="n" id="twitchBotN">—</span></h3>
         <div class="note">Poste automatiquement dans ton chat Twitch à l'ouverture, la fermeture et la révélation de chaque pronostic. Autorisation unique, distincte de la connexion Twitch des spectateurs.</div>
         <div id="twitchBotStatus" class="pit-sub" style="margin-bottom:10px">—</div>
+        <div class="row2" style="justify-content:flex-start;margin:0 0 12px" id="twitchBotMuteRow">
+          <div class="toggle" id="twitchBotMuteToggle"><span>Messages actifs</span><span class="pill"></span></div>
+        </div>
         <div class="actions"><button class="ghost" id="twitchBotConnectBtn">🔗 Connecter le bot Twitch</button></div>
       </div>
     </div>
@@ -385,7 +388,7 @@
   import { watchPronostics, watchVotes, createPronostic, updatePronostic, openPronostic, closePronostic, revealPronostic, deletePronostic, meetingVoteBilan, updateMeetingScores, updateSeasonTwitchScores, getTwitchProfile, archiveSeasonTwitchScores, listSeasonArchives } from './_lib/obs-pronostics.js';
   import { qrDataUrl, spectatorUrl } from './_lib/obs-qr.js';
   import { watchAutoStates, setAutoEnabled, forceAdvanceStep, runAutoTick } from './_lib/obs-prono-auto.js';
-  import { watchTwitchBotStatus, beginTwitchBotLink, consumeTwitchBotLinkResult } from './_lib/obs-twitch-bot.js';
+  import { watchTwitchBotStatus, beginTwitchBotLink, consumeTwitchBotLinkResult, setTwitchBotMuted } from './_lib/obs-twitch-bot.js';
   import { downloadRecapImage } from './_lib/obs-recap-image.js';
 
   const SDK = 'https://www.gstatic.com/firebasejs/10.12.0/';
@@ -1339,21 +1342,35 @@
   if (twitchBotResult === 'ok') flashErr('✅ Bot Twitch connecté.', true);
   else if (twitchBotResult && twitchBotResult.startsWith('error:')) flashErr('Connexion du bot Twitch refusée (' + twitchBotResult.slice(6) + ').');
 
+  let _twitchBotMuted = false;
   function renderTwitchBotStatus(st) {
     const n = document.getElementById('twitchBotN');
     const box = document.getElementById('twitchBotStatus');
     const btn = document.getElementById('twitchBotConnectBtn');
+    const muteRow = document.getElementById('twitchBotMuteRow');
+    const muteToggle = document.getElementById('twitchBotMuteToggle');
+    _twitchBotMuted = !!st?.muted;
     if (st?.connected) {
-      if (n) n.textContent = 'connecté';
+      if (n) n.textContent = _twitchBotMuted ? 'muet' : 'connecté';
       if (box) box.textContent = `✅ Connecté en tant que ${st.displayName || st.login}`;
       if (btn) btn.textContent = '🔗 Reconnecter le bot Twitch';
+      if (muteRow) muteRow.style.display = '';
+      if (muteToggle) {
+        muteToggle.classList.toggle('on', !_twitchBotMuted);
+        muteToggle.querySelector('span').textContent = _twitchBotMuted ? '🔇 Messages coupés' : '🔊 Messages actifs';
+      }
     } else {
       if (n) n.textContent = 'off';
       if (box) box.textContent = '⚪ Bot non connecté — aucun message ne sera posté dans le chat.';
       if (btn) btn.textContent = '🔗 Connecter le bot Twitch';
+      if (muteRow) muteRow.style.display = 'none';
     }
   }
   watchTwitchBotStatus(renderTwitchBotStatus, () => renderTwitchBotStatus(null));
+  document.getElementById('twitchBotMuteToggle').onclick = async () => {
+    try { await setTwitchBotMuted(!_twitchBotMuted); }
+    catch (err) { flashErr('Action refusée : ' + (err.code || err.message)); }
+  };
   document.getElementById('twitchBotConnectBtn').onclick = async () => {
     try { await beginTwitchBotLink(); }
     catch (err) { flashErr('Connexion Twitch impossible : ' + (err.message || err)); }

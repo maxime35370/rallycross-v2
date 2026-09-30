@@ -10,7 +10,7 @@
    (twitchBotStatus: connecté ? + pseudo) est exposé, à la régie seule.
 ═══════════════════════════════════════════════ */
 
-import { getDocById, watchDoc } from './obs-firebase.js';
+import { getDocById, watchDoc, setDocMerged } from './obs-firebase.js';
 
 const BOT_SCOPE = 'user:write:chat';
 const BOT_STATUS_COL = 'twitchBotStatus';
@@ -23,6 +23,14 @@ export function getTwitchBotStatus() {
 /** Abonnement temps réel au statut du bot. */
 export function watchTwitchBotStatus(cb, onErr) {
   return watchDoc(BOT_STATUS_COL, 'main', cb, onErr);
+}
+
+/**
+ * Coupe/réactive les messages SANS se déconnecter de Twitch (règles :
+ * seul ce champ est ouvert à la régie sur ce document, cf. firestore.rules).
+ */
+export function setTwitchBotMuted(muted) {
+  return setDocMerged(BOT_STATUS_COL, 'main', { muted: !!muted, updatedAt: Date.now() });
 }
 
 /**

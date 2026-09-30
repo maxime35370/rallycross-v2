@@ -325,11 +325,23 @@ describe('pronostics — comptes Twitch (écriture serveur uniquement)', () => {
     await assertFails(setDoc(doc(regie(), 'twitchBotAuth', 'main'), { accessToken: 'x' }));
   });
 
-  it('twitchBotStatus (statut public-safe du bot) : lecture régie uniquement, écriture toujours refusée', async () => {
+  it('twitchBotStatus (statut public-safe du bot) : lecture régie uniquement, création toujours refusée', async () => {
     await assertFails(getDoc(doc(anonyme(), 'twitchBotStatus', 'main')));
     await assertFails(getDoc(doc(spectateur(), 'twitchBotStatus', 'main')));
     await assertSucceeds(getDoc(doc(regie(), 'twitchBotStatus', 'main')));
     await assertFails(setDoc(doc(regie(), 'twitchBotStatus', 'main'), { connected: true }));
+  });
+
+  it('twitchBotStatus.muted : la régie peut couper/réactiver les messages sans se déconnecter, jamais toucher au reste', async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), 'twitchBotStatus', 'main'), {
+        connected: true, login: 'streamer1', displayName: 'Streamer1', muted: false, updatedAt: 1,
+      });
+    });
+    await assertSucceeds(updateDoc(doc(regie(), 'twitchBotStatus', 'main'), { muted: true, updatedAt: 2 }));
+    await assertFails(updateDoc(doc(regie(), 'twitchBotStatus', 'main'), { connected: false }));
+    await assertFails(updateDoc(doc(regie(), 'twitchBotStatus', 'main'), { login: 'imposteur' }));
+    await assertFails(setDoc(doc(regie(), 'twitchBotStatus', 'main'), { muted: true }));   // remplace tout le doc -> refusé
   });
 });
 
