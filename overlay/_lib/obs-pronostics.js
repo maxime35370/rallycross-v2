@@ -190,12 +190,20 @@ export async function updateMeetingScores(meetingId, strengthByCat = {}) {
     // différents pour CETTE question (ex. une fois en anonyme, une fois
     // après connexion Twitch), les deux votes résolvent au même uid
     // canonique — un seul verdict par uid canonique, jamais compté deux fois
-    // (ni dans les points, ni dans le nombre de pronostics faits).
-    const verdictByCanonical = new Map();   // uid canonique -> a-t-il voté juste sur CETTE question ?
+    // (ni dans les points, ni dans le nombre de pronostics faits). C'est le
+    // vote le plus RÉCENT (champ `at`) qui fait foi, cohérent avec le fait
+    // qu'un vote reste modifiable jusqu'à la fermeture : si la personne a
+    // changé d'avis après s'être connectée à Twitch, c'est ce choix-là qui
+    // doit compter, pas un ancien essai abandonné qui serait par chance juste.
+    const verdictByCanonical = new Map();   // uid canonique -> { correct, at } du vote le plus récent
     vsnap.forEach(v => {
       const canonical = resolveCanonicalUid(canonicalOf, v.id);
-      const correct = v.data().driverId === p.correctDriverId;
-      verdictByCanonical.set(canonical, verdictByCanonical.get(canonical) || correct);
+      const data = v.data();
+      const at = data.at || 0;
+      const prev = verdictByCanonical.get(canonical);
+      if (!prev || at >= prev.at) {
+        verdictByCanonical.set(canonical, { correct: data.driverId === p.correctDriverId, at });
+      }
     });
     // « Audace » d'un bon pronostic : part du PUBLIC ENTIER (tally/totalVotes,
     // figés à la révélation — tout le monde, pas seulement les comptes
@@ -203,7 +211,7 @@ export async function updateMeetingScores(meetingId, strengthByCat = {}) {
     // presque personne d'autre n'a trouvé pèse plus qu'un favori évident.
     const correctShare = p.totalVotes ? (p.tally?.[p.correctDriverId] || 0) / p.totalVotes : 0;
     const boldness = 1 - correctShare;
-    verdictByCanonical.forEach((correct, uid) => {
+    verdictByCanonical.forEach(({ correct }, uid) => {
       if (!stats[uid]) stats[uid] = { correct: 0, total: 0, boldSum: 0, boldCount: 0 };
       stats[uid].total++;
       if (correct) {
