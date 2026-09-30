@@ -1305,10 +1305,13 @@
       .then(u => { if (myToken === _pronoAutoWatchToken) unsubPronoAuto = u; else { try { u(); } catch {} } });
   }
 
-  // Boucle de tick régie : toutes les ~15s pour rester réactif au
+  // Boucle de tick régie : toutes les ~45s pour rester réactif au
   // déclencheur « engagés assignés » (purement Firestore, pas d'appel
-  // provider) — l'appel réel vers ITS reste lui-même throttlé à ~90s à
-  // l'intérieur de obs-prono-auto.js, quelle que soit cette fréquence.
+  // provider) sans solliciter Firestore en continu — obs-prono-auto.js met
+  // lui-même en cache sessions/engagés (30-60s) et throttle l'appel ITS à
+  // ~90s, mais c'est CETTE fréquence d'appel qui fixe le plancher réel de
+  // lectures Firestore : trop courte, elle épuise vite le quota gratuit
+  // (vécu en test : ~95k lectures en 2h avec un intervalle de 15s).
   setInterval(() => {
     if (!state.meetingId) return;
     categories.forEach(c => {
@@ -1317,7 +1320,7 @@
           .catch(() => {});
       }
     });
-  }, 15000);
+  }, 45000);
 
   // ---------- BOT TWITCH (chat) ----------
   const twitchBotResult = consumeTwitchBotLinkResult();

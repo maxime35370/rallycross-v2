@@ -48,6 +48,38 @@ const POLL_INTERVAL_MS = 90 * 1000;
 const REMOTE_SESSIONS_TTL_MS = 60 * 1000;
 const _remoteSessionsCache = new Map();   // key -> { at, sessions }
 
+// ─────────────────────────────────────────────────────────
+// CACHE LOCAL (Firestore) — runAutoTick() est appelée par le caller à un
+// rythme bien plus fréquent (cf. control.html) que ce dont la logique a
+// réellement besoin : `sessions` et `sessionParticipants` ne changent quasi
+// jamais en cours de meeting. Sans ce cache, chaque tick relisait
+// intégralement ces collections (des dizaines de documents), multiplié par
+// le nombre de catégories activées — largement suffisant pour épuiser le
+// quota Firestore gratuit en quelques heures. Un cache court (30-60s)
+// élimine l'essentiel de ce coût sans perdre en réactivité perceptible.
+// ─────────────────────────────────────────────────────────
+const SESSIONS_CACHE_TTL_MS = 60 * 1000;
+const _sessionsCache = new Map();         // `${meetingId}|${category}` -> { at, sessions }
+const PARTICIPANTS_CACHE_TTL_MS = 30 * 1000;
+const _participantsCache = new Map();     // sessionId -> { at, participants }
+
+async function cachedSessions(meetingId, category) {
+  const key = meetingId + '|' + category;
+  const hit = _sessionsCache.get(key);
+  if (hit && (Date.now() - hit.at) < SESSIONS_CACHE_TTL_MS) return hit.sessions;
+  const sessions = await getSessions(meetingId, category);
+  _sessionsCache.set(key, { at: Date.now(), sessions });
+  return sessions;
+}
+
+async function cachedParticipants(sessionId) {
+  const hit = _participantsCache.get(sessionId);
+  if (hit && (Date.now() - hit.at) < PARTICIPANTS_CACHE_TTL_MS) return hit.participants;
+  const participants = await getParticipants(sessionId);
+  _participantsCache.set(sessionId, { at: Date.now(), participants });
+  return participants;
+}
+
 export function autoDocId(meetingId, category) {
   return `${meetingId}_${category}`;
 }
@@ -260,7 +292,7 @@ export async function runAutoTick({ meetingId, category, championshipId, catName
   try { state = await getDocById(PRONO_AUTO_COL, id); } catch { return; }
   if (!state || !state.enabled) return;
 
-  const sessions = await getSessions(meetingId, category);
+  const sessions = await cachedSessions(meetingId, category);
   const chain = deriveChain(sessions);
   const stepIndex = state.stepIndex ?? 0;
 
@@ -279,7 +311,7 @@ export async function runAutoTick({ meetingId, category, championshipId, catName
       // (aucun appel provider nécessaire). Étapes suivantes : déjà
       // déclenchées par l'étape précédente (awaiting_complete → idle),
       // on ouvre donc dès que possible.
-      const participants = await getParticipants(step.id);
+      const participants = await cachedParticipants(step.id);
       const shouldOpen = stepIndex > 0 || participants.length > 0;
       if (!shouldOpen) return;
       if (participants.length < 2) {
@@ -343,7 +375,7 @@ export async function runAutoTick({ meetingId, category, championshipId, catName
       // phase === 'awaiting_complete' : session « complète » dès que le
       // NOMBRE de temps ITS égale le nombre d'engagés prévus (sans lire les
       // temps eux-mêmes) → ouverture de l'étape suivante.
-      const participants = await getParticipants(step.id);
+      const participants = await cachedParticipants(step.id);
       if (participants.length > 0 && rowCount >= participants.length) {
         const nextIndex = stepIndex + 1;
         patch.stepIndex = nextIndex;
