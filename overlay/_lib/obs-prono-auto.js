@@ -334,7 +334,7 @@ export async function runAutoTick({ meetingId, category, championshipId, catName
       if (participants.length < 2) {
         await setDocMerged(PRONO_AUTO_COL, id, {
           lastError: 'Moins de 2 engagés sur la session — ouverture manuelle nécessaire.',
-          updatedAt: Date.now(),
+          updatedAt: Date.now(), stepType: step.type, stepNum: step.num ?? null,
         });
         return;
       }
@@ -357,6 +357,7 @@ export async function runAutoTick({ meetingId, category, championshipId, catName
       }
       await setDocMerged(PRONO_AUTO_COL, id, {
         phase: 'open', pronoIds, lastError: null, updatedAt: Date.now(),
+        stepType: step.type, stepNum: step.num ?? null,
       });
       return;
     }
@@ -377,7 +378,10 @@ export async function runAutoTick({ meetingId, category, championshipId, catName
       }
 
       const rowCount = await fetchItsRowCount(timing.provider, timing.config, step, catName);
-      const patch = { lastPolledAt: Date.now(), lastRowCount: rowCount, lastError: null, updatedAt: Date.now() };
+      const patch = {
+        lastPolledAt: Date.now(), lastRowCount: rowCount, lastError: null, updatedAt: Date.now(),
+        stepType: step.type, stepNum: step.num ?? null,
+      };
 
       if (phase === 'open') {
         // Dès qu'AU MOINS UN temps existe (sans savoir lequel) → fermeture immédiate.
@@ -395,9 +399,12 @@ export async function runAutoTick({ meetingId, category, championshipId, catName
       const participants = await cachedParticipants(step.id);
       if (participants.length > 0 && rowCount >= participants.length) {
         const nextIndex = stepIndex + 1;
+        const nextStep = chain[nextIndex] || null;
         patch.stepIndex = nextIndex;
         patch.phase = nextIndex >= chain.length ? 'done' : 'idle';
         patch.pronoIds = [];
+        patch.stepType = nextStep ? nextStep.type : null;
+        patch.stepNum = nextStep ? (nextStep.num ?? null) : null;
       }
       await setDocMerged(PRONO_AUTO_COL, id, patch);
     }

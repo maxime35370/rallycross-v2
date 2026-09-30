@@ -1244,6 +1244,17 @@
     done: 'chaîne terminée',
   };
 
+  // Libellé lisible de l'étape suivie (persisté dans pronoAuto.stepType/stepNum
+  // par obs-prono-auto.js) — sans ça le panneau n'affichait qu'un numéro
+  // d'étape opaque ("Étape 1"), impossible à relier à une vraie session.
+  function autoStepLabel(type, num) {
+    if (type === 'EC')  return 'Essais chronométrés';
+    if (type === 'MQ')  return 'Manche ' + num;
+    if (type === 'QF')  return 'Quart ' + num;
+    if (type === 'DF')  return '½ finale ' + (num === 1 ? 'A' : 'B');
+    if (type === 'FIN') return 'Finale';
+    return type || '—';
+  }
   function renderPronoAutoList() {
     const box = document.getElementById('pronoAutoList'); if (!box) return;
     const nOn = categories.filter(c => pronoAutoStates[c.id]?.enabled).length;
@@ -1253,8 +1264,9 @@
       const st = pronoAutoStates[c.id];
       const on = !!st?.enabled;
       const stuck = on && st?.phase === 'awaiting_complete';
+      const stepLbl = st?.stepType ? autoStepLabel(st.stepType, st.stepNum) : `Étape ${(st?.stepIndex ?? 0) + 1}`;
       const status = on
-        ? `Étape ${(st.stepIndex ?? 0) + 1} · ${pEsc(AUTO_PHASE_LABEL[st.phase] || st.phase || '—')}${st.lastError ? ` · ⚠️ ${pEsc(st.lastError)}` : ''}`
+        ? `${pEsc(stepLbl)} · ${pEsc(AUTO_PHASE_LABEL[st.phase] || st.phase || '—')}${st.lastError ? ` · ⚠️ ${pEsc(st.lastError)}` : ''}`
         : 'désactivé';
       return `<div class="pit ${on ? 'open' : 'draft'}" data-auto-cat="${pEsc(c.id)}" style="cursor:pointer">
         <div class="pit-top">
