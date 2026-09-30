@@ -1256,10 +1256,10 @@
       const status = on
         ? `Étape ${(st.stepIndex ?? 0) + 1} · ${pEsc(AUTO_PHASE_LABEL[st.phase] || st.phase || '—')}${st.lastError ? ` · ⚠️ ${pEsc(st.lastError)}` : ''}`
         : 'désactivé';
-      return `<div class="pit ${on ? 'open' : 'draft'}">
+      return `<div class="pit ${on ? 'open' : 'draft'}" data-auto-cat="${pEsc(c.id)}" style="cursor:pointer">
         <div class="pit-top">
           <span class="pit-q">🤖 ${pEsc(c.name)}</span>
-          <div class="toggle ${on ? 'on' : ''}" data-auto-cat="${pEsc(c.id)}" style="padding:6px 12px"><span class="pill"></span></div>
+          <div class="toggle ${on ? 'on' : ''}" style="padding:6px 12px"><span class="pill"></span></div>
         </div>
         <div class="pit-sub">${status}</div>
         ${stuck ? `<div class="pit-btns"><button class="sbtn" data-force-cat="${pEsc(c.id)}">⏭️ Forcer l'étape suivante</button></div>` : ''}
@@ -1267,18 +1267,21 @@
     }).join('');
   }
   document.getElementById('pronoAutoList').addEventListener('click', async e => {
+    // Le bouton « forcer » est imbriqué DANS la carte cliquable (data-auto-cat) :
+    // il doit être détecté en premier, sinon un clic dessus bascule aussi le
+    // toggle (closest() remonterait jusqu'à la carte englobante).
+    const f = e.target.closest('[data-force-cat]');
+    if (f) {
+      try { await forceAdvanceStep(state.meetingId, f.dataset.forceCat); }
+      catch (err) { flashErr('Action refusée : ' + (err.code || err.message)); }
+      return;
+    }
     const t = e.target.closest('[data-auto-cat]');
     if (t) {
       const cat = t.dataset.autoCat;
       const on = !!pronoAutoStates[cat]?.enabled;
       try { await setAutoEnabled(state.meetingId, cat, state.championshipId, !on); }
       catch (err) { flashErr('Automatisation refusée : ' + (err.code || err.message)); }
-      return;
-    }
-    const f = e.target.closest('[data-force-cat]');
-    if (f) {
-      try { await forceAdvanceStep(state.meetingId, f.dataset.forceCat); }
-      catch (err) { flashErr('Action refusée : ' + (err.code || err.message)); }
     }
   });
 
