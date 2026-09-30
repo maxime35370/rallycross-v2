@@ -308,6 +308,16 @@ describe('pronostics — comptes Twitch (écriture serveur uniquement)', () => {
       championshipId: FFSA, label: 'FFSA 2026', scores: { twitch_1: 70 }, archivedAt: NOW,
     }));
   });
+
+  it('pronoAuto (automatisation ITS) : lecture publique, écriture régie uniquement (jamais anonyme)', async () => {
+    const id = 'meeting_1_D4';
+    await assertSucceeds(getDoc(doc(anonyme(), 'pronoAuto', id)));
+    await assertFails(setDoc(doc(spectateur(), 'pronoAuto', id), { enabled: true }));
+    await assertSucceeds(setDoc(doc(regie(), 'pronoAuto', id), {
+      meetingId: 'meeting_1', category: 'D4', championshipId: FFSA,
+      enabled: true, stepIndex: 0, phase: 'idle', pronoIds: [],
+    }));
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════════

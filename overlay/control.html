@@ -247,6 +247,11 @@
         <div class="plist" id="seasonTwitchList" style="display:none"></div>
         <div class="plist" id="seasonArchivesList" style="display:none"></div>
       </div>
+      <div class="card">
+        <h3>🤖 Automatisation ITS <span class="n" id="pronoAutoN">—</span></h3>
+        <div class="note">Championnat de France (chronométrage ITS Live) uniquement. Par catégorie : ouvre le 1ᵉʳ pronostic dès que des engagés sont assignés, ferme dès qu'un temps ITS apparaît, ouvre le suivant une fois la session au complet (sans jamais lire les temps eux-mêmes). La révélation reste 100% manuelle. Les boutons manuels ci-dessus restent disponibles à tout moment.</div>
+        <div class="plist" id="pronoAutoList"></div>
+      </div>
     </div>
 
     <div style="display:flex;flex-direction:column;gap:20px">
@@ -373,6 +378,7 @@
   import { getSessions, findSession, getGridOrder, getInterim, getParticipants, computePronoWinner, pronoWatchSessionIds, getQualifCutoff, getEcRank, getMqRank, getPhaseRank, getDriverStrength } from './_lib/obs-data.js';
   import { watchPronostics, watchVotes, createPronostic, updatePronostic, openPronostic, closePronostic, revealPronostic, deletePronostic, meetingVoteBilan, updateMeetingScores, updateSeasonTwitchScores, getTwitchProfile, archiveSeasonTwitchScores, listSeasonArchives } from './_lib/obs-pronostics.js';
   import { qrDataUrl, spectatorUrl } from './_lib/obs-qr.js';
+  import { watchAutoStates, setAutoEnabled, forceAdvanceStep, runAutoTick } from './_lib/obs-prono-auto.js';
 
   const SDK = 'https://www.gstatic.com/firebasejs/10.12.0/';
   await initFirebase();
@@ -600,7 +606,7 @@
   document.getElementById('pvFrame').src = 'live?preview=1';
   document.querySelectorAll('#scenes .b').forEach(b => b.onclick = () => { push({ scene: b.dataset.scene }); paint(); });
   // (boutons catégories/phases : liés dans renderCats()/renderPhases(), car re-rendus au changement de championnat)
-  meetSel.onchange = () => { push({ meetingId: meetSel.value }); paint(); renderPronoList(); loadPredictDrivers(); };
+  meetSel.onchange = () => { push({ meetingId: meetSel.value }); paint(); renderPronoList(); loadPredictDrivers(); watchPronoAuto(); };
   champSel.onchange = async () => {
     const c = champs.find(x => x.id === champSel.value) || null;
     await loadChampionship(c);
@@ -608,7 +614,7 @@
     const cat = categories.some(c => c.id === state.category) ? state.category : (categories[0]?.id || '');
     const mid = meetings.find(m => m.id === state.meetingId) ? state.meetingId : (meetings[0]?.id || '');
     push({ championshipId: c?.id || '', category: cat, meetingId: mid });
-    paint(); loadPredictDrivers();
+    paint(); loadPredictDrivers(); watchPronoAuto();
   };
   document.getElementById('visToggle').onclick = () => { push({ visible: !state.visible }); paint(); };
   document.querySelectorAll('#graphModes .b').forEach(b => b.onclick = () => { push({ graphMode: b.dataset.gm }); paint(); });
@@ -1206,6 +1212,91 @@
     renderPronoList();
   }, err => { flashErr('Lecture pronostics : ' + (err.code || err.message)); });
 
+  // ---------- AUTOMATISATION ITS (par catégorie, championnat de France) ----------
+  // Chaque catégorie tourne indépendamment (cf. overlay/_lib/obs-prono-auto.js).
+  // Les boutons manuels du panneau pronostics ci-dessus restent disponibles à
+  // tout moment, automatisation activée ou non (filet de sécurité).
+  let pronoAutoStates = {};      // category id -> doc pronoAuto
+  let unsubPronoAuto = null;
+  const AUTO_PHASE_LABEL = {
+    idle: "en attente d'ouverture",
+    open: "ouvert — en attente d'un 1ᵉʳ temps ITS",
+    awaiting_complete: 'fermé — en attente de la session complète',
+    done: 'chaîne terminée',
+  };
+
+  function renderPronoAutoList() {
+    const box = document.getElementById('pronoAutoList'); if (!box) return;
+    const nOn = categories.filter(c => pronoAutoStates[c.id]?.enabled).length;
+    document.getElementById('pronoAutoN').textContent = categories.length ? (nOn ? nOn + ' active' + (nOn > 1 ? 's' : '') : 'off') : '—';
+    if (!categories.length) { box.innerHTML = '<div class="pempty">Sélectionne un championnat.</div>'; return; }
+    box.innerHTML = categories.map(c => {
+      const st = pronoAutoStates[c.id];
+      const on = !!st?.enabled;
+      const stuck = on && st?.phase === 'awaiting_complete';
+      const status = on
+        ? `Étape ${(st.stepIndex ?? 0) + 1} · ${pEsc(AUTO_PHASE_LABEL[st.phase] || st.phase || '—')}${st.lastError ? ` · ⚠️ ${pEsc(st.lastError)}` : ''}`
+        : 'désactivé';
+      return `<div class="pit ${on ? 'open' : 'draft'}">
+        <div class="pit-top">
+          <span class="pit-q">🤖 ${pEsc(c.name)}</span>
+          <div class="toggle ${on ? 'on' : ''}" data-auto-cat="${pEsc(c.id)}" style="padding:6px 12px"><span class="pill"></span></div>
+        </div>
+        <div class="pit-sub">${status}</div>
+        ${stuck ? `<div class="pit-btns"><button class="sbtn" data-force-cat="${pEsc(c.id)}">⏭️ Forcer l'étape suivante</button></div>` : ''}
+      </div>`;
+    }).join('');
+  }
+  document.getElementById('pronoAutoList').addEventListener('click', async e => {
+    const t = e.target.closest('[data-auto-cat]');
+    if (t) {
+      const cat = t.dataset.autoCat;
+      const on = !!pronoAutoStates[cat]?.enabled;
+      try { await setAutoEnabled(state.meetingId, cat, state.championshipId, !on); }
+      catch (err) { flashErr('Automatisation refusée : ' + (err.code || err.message)); }
+      return;
+    }
+    const f = e.target.closest('[data-force-cat]');
+    if (f) {
+      try { await forceAdvanceStep(state.meetingId, f.dataset.forceCat); }
+      catch (err) { flashErr('Action refusée : ' + (err.code || err.message)); }
+    }
+  });
+
+  // (Re)abonnement à l'état d'automatisation du meeting affiché — appelé au
+  // changement de meeting/championnat et une fois au chargement initial.
+  // `token` protège contre un changement de meeting pendant que la 1re
+  // requête est encore en vol (résolution tardive d'un abonnement périmé).
+  let _pronoAutoWatchToken = 0;
+  function watchPronoAuto() {
+    if (unsubPronoAuto) { try { unsubPronoAuto(); } catch {} unsubPronoAuto = null; }
+    pronoAutoStates = {};
+    renderPronoAutoList();
+    if (!state.meetingId) return;
+    const myToken = ++_pronoAutoWatchToken;
+    watchAutoStates(state.meetingId, list => {
+      if (myToken !== _pronoAutoWatchToken) return;
+      pronoAutoStates = {};
+      list.forEach(s => { pronoAutoStates[s.category] = s; });
+      renderPronoAutoList();
+    }, err => flashErr('Lecture automatisation : ' + (err.code || err.message)))
+      .then(u => { if (myToken === _pronoAutoWatchToken) unsubPronoAuto = u; else { try { u(); } catch {} } });
+  }
+
+  // Boucle de tick régie : toutes les ~15s pour rester réactif au
+  // déclencheur « engagés assignés » (purement Firestore, pas d'appel
+  // provider) — l'appel réel vers ITS reste lui-même throttlé à ~90s à
+  // l'intérieur de obs-prono-auto.js, quelle que soit cette fréquence.
+  setInterval(() => {
+    if (!state.meetingId) return;
+    categories.forEach(c => {
+      if (pronoAutoStates[c.id]?.enabled) {
+        runAutoTick({ meetingId: state.meetingId, category: c.id, championshipId: state.championshipId, catName: c.name })
+          .catch(() => {});
+      }
+    });
+  }, 15000);
+
   // ---------- ACCÈS SPECTATEUR (QR) ----------
   let _lastSpecUrl = '';
   function renderSpectatorAccess() {
@@ -1305,6 +1396,7 @@
   if (!state.meetingId && meetings.length) state.meetingId = meetings[0].id;
   paint();
   loadPredictDrivers();
+  watchPronoAuto();
 </script>
 </body>
 </html>

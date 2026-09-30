@@ -301,6 +301,18 @@ service cloud.firestore {
       allow write: if isRegie();
     }
 
+    // ── AUTOMATISATION DES PRONOSTICS (championnats suivis en direct, ex.
+    // ITS Live / FFSA) ────────────────────────────────────────────────
+    // Un document = l'état d'avancement de l'automatisation d'UNE catégorie
+    // d'un meeting (id déterministe `${meetingId}_${category}`). N'écrit
+    // jamais le contenu des temps, seulement l'étape en cours (cf.
+    // overlay/_lib/obs-prono-auto.js). Écrit par la régie (page control.html,
+    // compte non-anonyme), lu par tous (même logique que pronoScores).
+    match /pronoAuto/{docId} {
+      allow read:  if true;
+      allow write: if isRegie();
+    }
+
     // Pénalités « points championnat » (niveau saison) — écrit régie, lu par tous
     match /championshipPenalties/{docId} {
       allow read:  if true;
