@@ -318,6 +318,19 @@ describe('pronostics — comptes Twitch (écriture serveur uniquement)', () => {
       enabled: true, stepIndex: 0, phase: 'idle', pronoIds: [],
     }));
   });
+
+  it('twitchBotAuth (jeton du bot chat) : lecture ET écriture TOUJOURS refusées côté client, même la régie', async () => {
+    await assertFails(getDoc(doc(regie(), 'twitchBotAuth', 'main')));
+    await assertFails(getDoc(doc(anonyme(), 'twitchBotAuth', 'main')));
+    await assertFails(setDoc(doc(regie(), 'twitchBotAuth', 'main'), { accessToken: 'x' }));
+  });
+
+  it('twitchBotStatus (statut public-safe du bot) : lecture régie uniquement, écriture toujours refusée', async () => {
+    await assertFails(getDoc(doc(anonyme(), 'twitchBotStatus', 'main')));
+    await assertFails(getDoc(doc(spectateur(), 'twitchBotStatus', 'main')));
+    await assertSucceeds(getDoc(doc(regie(), 'twitchBotStatus', 'main')));
+    await assertFails(setDoc(doc(regie(), 'twitchBotStatus', 'main'), { connected: true }));
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════════

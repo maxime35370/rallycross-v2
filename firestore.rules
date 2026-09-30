@@ -301,6 +301,26 @@ service cloud.firestore {
       allow write: if isRegie();
     }
 
+    // ── BOT TWITCH (chat) — pronostics ──────────────────────────────
+    // Jeton OAuth (access + refresh) du compte Twitch de la régie, avec le
+    // scope `user:write:chat` : permet de poster automatiquement dans le
+    // chat à l'ouverture/fermeture/révélation d'un pronostic (cf.
+    // netlify/functions/twitch-bot-auth.js et twitch-chat-post.js). Un jeton
+    // valide = pouvoir poster comme le streamer : AUCUNE lecture ni écriture
+    // client, même régie — seules les fonctions serveur (Admin SDK, jeton
+    // Firebase déjà vérifié côté serveur) y touchent.
+    match /twitchBotAuth/{docId} {
+      allow read, write: if false;
+    }
+
+    // Statut PUBLIC-SAFE du bot (juste "connecté ?" + pseudo Twitch, jamais
+    // de jeton) — pour afficher l'état dans le panneau régie sans exposer
+    // twitchBotAuth. Écrit uniquement par twitch-bot-auth.js (Admin SDK).
+    match /twitchBotStatus/{docId} {
+      allow read:  if isRegie();
+      allow write: if false;
+    }
+
     // ── AUTOMATISATION DES PRONOSTICS (championnats suivis en direct, ex.
     // ITS Live / FFSA) ────────────────────────────────────────────────
     // Un document = l'état d'avancement de l'automatisation d'UNE catégorie

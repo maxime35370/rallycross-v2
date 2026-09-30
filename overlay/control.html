@@ -252,6 +252,12 @@
         <div class="note">Championnat de France (chronométrage ITS Live) uniquement. Par catégorie : ouvre le 1ᵉʳ pronostic dès que des engagés sont assignés, ferme dès qu'un temps ITS apparaît, ouvre le suivant une fois la session au complet (sans jamais lire les temps eux-mêmes). La révélation reste 100% manuelle. Les boutons manuels ci-dessus restent disponibles à tout moment.</div>
         <div class="plist" id="pronoAutoList"></div>
       </div>
+      <div class="card">
+        <h3>🤖 Bot Twitch (chat) <span class="n" id="twitchBotN">—</span></h3>
+        <div class="note">Poste automatiquement dans ton chat Twitch à l'ouverture, la fermeture et la révélation de chaque pronostic. Autorisation unique, distincte de la connexion Twitch des spectateurs.</div>
+        <div id="twitchBotStatus" class="pit-sub" style="margin-bottom:10px">—</div>
+        <div class="actions"><button class="ghost" id="twitchBotConnectBtn">🔗 Connecter le bot Twitch</button></div>
+      </div>
     </div>
 
     <div style="display:flex;flex-direction:column;gap:20px">
@@ -373,12 +379,14 @@
 </div>
 
 <script type="module">
-  import { initFirebase, fsQuery, watchQuery, getDocById } from './_lib/obs-firebase.js';
+  import { initFirebase, fsQuery, watchQuery, getDocById, watchDoc } from './_lib/obs-firebase.js';
   import { watchControl, setControl, sessionKey, DEFAULT_CONTROL } from './_lib/obs-control.js';
   import { getSessions, findSession, getGridOrder, getInterim, getParticipants, computePronoWinner, pronoWatchSessionIds, getQualifCutoff, getEcRank, getMqRank, getPhaseRank, getDriverStrength } from './_lib/obs-data.js';
   import { watchPronostics, watchVotes, createPronostic, updatePronostic, openPronostic, closePronostic, revealPronostic, deletePronostic, meetingVoteBilan, updateMeetingScores, updateSeasonTwitchScores, getTwitchProfile, archiveSeasonTwitchScores, listSeasonArchives } from './_lib/obs-pronostics.js';
   import { qrDataUrl, spectatorUrl } from './_lib/obs-qr.js';
   import { watchAutoStates, setAutoEnabled, forceAdvanceStep, runAutoTick } from './_lib/obs-prono-auto.js';
+  import { watchTwitchBotStatus, beginTwitchBotLink, consumeTwitchBotLinkResult } from './_lib/obs-twitch-bot.js';
+  import { downloadRecapImage } from './_lib/obs-recap-image.js';
 
   const SDK = 'https://www.gstatic.com/firebasejs/10.12.0/';
   await initFirebase();
@@ -1100,7 +1108,7 @@
     }
     if (p.status === 'revealed') {
       const note = AUTO_KINDS.includes(p.resultTarget?.kind) ? `<div class="pit-auto">🔄 Résultat synchronisé avec les classements</div>` : '';
-      return `${note}${air}<button class="sbtn go" data-act="open" data-id="${p.id}">▶ Rouvrir</button><button class="sbtn" data-act="del" data-id="${p.id}">🗑️ Supprimer</button>`;
+      return `${note}${air}<button class="sbtn" data-act="recap" data-id="${p.id}">🖼️ Image récap</button><button class="sbtn go" data-act="open" data-id="${p.id}">▶ Rouvrir</button><button class="sbtn" data-act="del" data-id="${p.id}">🗑️ Supprimer</button>`;
     }
     return '';
   }
@@ -1150,6 +1158,9 @@
         }
         await revealPronostic(id, win);
         computeScores(state.meetingId);   // maj des points pronostiqueurs (cote)
+      } else if (act === 'recap') {
+        const p = pronoDocs.find(x => x.id === id);
+        if (p) await downloadRecapImage(p, `rxchrono-${(p.category || 'prono').toLowerCase()}-${id}.png`);
       }
     } catch (err) { flashErr('Action refusée : ' + (err.code || err.message)); }
   });
@@ -1296,6 +1307,31 @@
       }
     });
   }, 15000);
+
+  // ---------- BOT TWITCH (chat) ----------
+  const twitchBotResult = consumeTwitchBotLinkResult();
+  if (twitchBotResult === 'ok') flashErr('✅ Bot Twitch connecté.');
+  else if (twitchBotResult && twitchBotResult.startsWith('error:')) flashErr('Connexion du bot Twitch refusée (' + twitchBotResult.slice(6) + ').');
+
+  function renderTwitchBotStatus(st) {
+    const n = document.getElementById('twitchBotN');
+    const box = document.getElementById('twitchBotStatus');
+    const btn = document.getElementById('twitchBotConnectBtn');
+    if (st?.connected) {
+      if (n) n.textContent = 'connecté';
+      if (box) box.textContent = `✅ Connecté en tant que ${st.displayName || st.login}`;
+      if (btn) btn.textContent = '🔗 Reconnecter le bot Twitch';
+    } else {
+      if (n) n.textContent = 'off';
+      if (box) box.textContent = '⚪ Bot non connecté — aucun message ne sera posté dans le chat.';
+      if (btn) btn.textContent = '🔗 Connecter le bot Twitch';
+    }
+  }
+  watchTwitchBotStatus(renderTwitchBotStatus, () => renderTwitchBotStatus(null));
+  document.getElementById('twitchBotConnectBtn').onclick = async () => {
+    try { await beginTwitchBotLink(); }
+    catch (err) { flashErr('Connexion Twitch impossible : ' + (err.message || err)); }
+  };
 
   // ---------- ACCÈS SPECTATEUR (QR) ----------
   let _lastSpecUrl = '';

@@ -95,8 +95,9 @@ export async function deletePronostic(id) {
 }
 
 /** Ouvre les votes. */
-export function openPronostic(id, nowMs) {
-  return updatePronostic(id, { status: PRONO_STATUS.OPEN, openedAt: nowMs || Date.now(), correctDriverId: '' });
+export async function openPronostic(id, nowMs) {
+  await updatePronostic(id, { status: PRONO_STATUS.OPEN, openedAt: nowMs || Date.now(), correctDriverId: '' });
+  notifyPronoEvent(id, 'open');
 }
 
 /**
@@ -337,12 +338,64 @@ export async function setPlayerPseudo(uid, pseudo) {
   return clean;
 }
 
+// ─────────────────────────────────────────────────────────
+// BOT TWITCH (chat) — notifications ouverture/fermeture/révélation.
+// Best-effort et JAMAIS bloquant : un échec ici (bot non connecté, Twitch
+// indisponible, …) ne doit jamais empêcher l'action régie elle-même. Le
+// jeton Twitch ne transite jamais ici — seul le jeton Firebase de
+// l'appelant (régie, forcément : ces 3 fonctions sont réservées régie côté
+// règles) est transmis à la fonction serveur, qui vérifie que c'est bien
+// elle avant de poster (cf. netlify/functions/twitch-chat-post.js).
+// Déclenché aussi bien par les boutons manuels (control.html) que par
+// l'automatisation ITS (obs-prono-auto.js), puisque toutes deux passent
+// par ces mêmes fonctions.
+// ─────────────────────────────────────────────────────────
+
+async function notifyTwitchChat(message) {
+  try {
+    const { getAuth } = await authMod();
+    const auth = getAuth();
+    const user = auth.currentUser;
+    if (!user || user.isAnonymous) return;   // seule la régie (compte réel) déclenche un post
+    const idToken = await user.getIdToken();
+    await fetch('/.netlify/functions/twitch-chat-post', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ idToken, message }),
+    });
+  } catch { /* best-effort : bot non connecté, réseau, etc. — sans impact sur le pronostic */ }
+}
+
+async function notifyPronoEvent(id, kind) {
+  try {
+    await initFirebase();
+    const { doc, getDoc } = await fs();
+    const snap = await getDoc(doc(db, PRONO_COL, id));
+    if (!snap.exists()) return;
+    const p = snap.data();
+    const cat = p.category ? ` (${p.category})` : '';
+    let message = '';
+    if (kind === 'open') {
+      message = `🎯 Pronostic ouvert${cat} : ${p.question} — votez sur le site !`;
+    } else if (kind === 'close') {
+      message = `🔒 Votes clos${cat} : ${p.question}`;
+    } else if (kind === 'reveal') {
+      const w = (p.options || []).find(o => o.driverId === p.correctDriverId);
+      const who = w ? `${w.num ? 'N°' + w.num + ' ' : ''}${(w.name || '').toUpperCase()}` : null;
+      if (!who) return;   // pas de gagnant désigné (rare) → pas de message trompeur
+      message = `🏆 Résultat${cat} : ${p.question} → ${who} !`;
+    }
+    if (message) await notifyTwitchChat(message);
+  } catch { /* best-effort */ }
+}
+
 /** Ferme les votes et fige le décompte agrégé dans le doc (lisible par le public). */
 export async function closePronostic(id, nowMs) {
   const t = await tallyVotes(id);
   await updatePronostic(id, {
     status: PRONO_STATUS.CLOSED, tally: t.counts, totalVotes: t.total, closedAt: nowMs || Date.now(),
   });
+  notifyPronoEvent(id, 'close');
   return t;
 }
 
@@ -353,6 +406,7 @@ export async function revealPronostic(id, correctDriverId, nowMs) {
     status: PRONO_STATUS.REVEALED, correctDriverId: correctDriverId || '',
     tally: t.counts, totalVotes: t.total, revealedAt: nowMs || Date.now(),
   });
+  notifyPronoEvent(id, 'reveal');
   return t;
 }
 
