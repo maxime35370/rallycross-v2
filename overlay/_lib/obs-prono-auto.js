@@ -256,6 +256,23 @@ function fuzzyMatch(a, b) {
   return na === nb || na.includes(nb) || nb.includes(na);
 }
 
+// Cas réel rencontré : une catégorie RX Chrono abrégée ("D4") ne partage
+// aucune sous-chaîne avec le nom complet côté ITS ("Division 4") — le
+// simple fuzzyMatch (sous-chaîne) échoue alors qu'il s'agit bien de la
+// même catégorie. On isole le numéro de division quand le motif "D<n>" /
+// "Division <n>" est présent des deux côtés, pour les comparer sur cette
+// seule base plutôt que sur le texte brut.
+function normalizeCategoryKey(s) {
+  const raw = String(s || '').toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '');
+  const div = raw.match(/\bd(?:ivision)?\.?\s*(\d+)\b/);
+  return div ? 'div' + div[1] : raw.replace(/[^a-z0-9]/g, '');
+}
+function categoryMatches(a, b) {
+  if (!a || !b) return false;
+  return normalizeCategoryKey(a) === normalizeCategoryKey(b) || fuzzyMatch(a, b);
+}
+
 /**
  * Retrouve LA session distante correspondant à une étape (catégorie + type
  * + numéro). Contrairement à l'assistant d'import manuel (qui laisse
@@ -266,7 +283,7 @@ function fuzzyMatch(a, b) {
 async function matchRemoteSession(provider, config, step, catName) {
   const sessions = await loadRemoteSessions(provider, config);
   const matches = sessions.filter(s =>
-    (!s.category || fuzzyMatch(s.category, catName)) &&
+    (!s.category || categoryMatches(s.category, catName)) &&
     s.type === step.type &&
     (s.num == null || step.num == null || s.num === step.num)
   );
