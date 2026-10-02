@@ -5,6 +5,7 @@
 ═══════════════════════════════════════════════ */
 
 import { escHtml, msToDisplay } from '../../js/utils.js';
+import { BOARD_LABEL, densityClass, studioConfig } from './obs-studio.js';
 
 const STATUS_LABEL = { DNS: 'DNS', DNF: 'DNF', DSQ: 'DSQ HC', DSQ_RACE: 'DSQ EC' };
 
@@ -163,7 +164,7 @@ function gridMatrixHtml(d, colW = 248) {
     if (occ) {
       const col = (mirror ? (lanes - 1 - c) : c) + 1;
       cells += `<div class="car ${p === 1 ? 'p1' : ''} ${occ.edited ? 'edited' : ''} ${occ.state ? 'st-' + occ.state : ''}"
-        style="grid-column:${col};grid-row:${r + 1}">
+        style="grid-column:${col};grid-row:${r + 1};--i:${p}">
       <span class="gp">${p}</span><span class="gn">${escHtml(String(occ.carNumber ?? ''))}</span>
       <span class="gl">${escHtml((occ.lastName || '').toUpperCase())}</span>
       ${p === 1 ? '<span class="pole">POLE</span>' : ''}</div>`;
@@ -200,7 +201,7 @@ export function renderGrid(d) {
     // Essais / manches : ordre de départ en liste ordonnée (2 colonnes si gros plateau)
     const cols = slots.length > 10 ? 2 : 1;
     body = `<div class="grid-list" style="grid-template-columns:repeat(${cols},minmax(440px,1fr))">
-      ${slots.map(s => `<div class="g-li ${s.pos === 1 ? 'p1' : ''} ${s.edited ? 'edited' : ''}">
+      ${slots.map(s => `<div class="g-li ${s.pos === 1 ? 'p1' : ''} ${s.edited ? 'edited' : ''}" style="--i:${s.pos}">
         <span class="gp">${s.pos}</span>
         <span class="gn">${escHtml(String(s.carNumber ?? ''))}</span>
         <span class="gl">${escHtml((s.lastName || '').toUpperCase())}</span></div>`).join('')}
@@ -245,10 +246,10 @@ export function renderGridResults(d) {
     ? gridMatrixHtml({ ...d, slots }, 244)
     : '<div class="empty">Grille à venir…</div>';
 
-  const resRow = r => {
+  const resRow = (r, i) => {
     const st = r.status ? '' : phaseState(phase, r.position, qualify);
     // La barre bleue/podium sur le côté suffit à indiquer les qualifiés (pas de chip).
-    return `<div class="gr-row ${st} ${r.status ? 'out' : ''}">
+    return `<div class="gr-row ${st} ${r.status ? 'out' : ''}" style="--i:${i}">
       <span class="bar"></span>
       <span class="p">${r.status ? '—' : (r.position ?? '')}</span>
       <span class="n">${escHtml(String(r.carNumber ?? ''))}</span>
@@ -310,15 +311,62 @@ export function countdownText(end) {
   return String(Math.floor(t / 60)).padStart(2, '0') + ':' + String(t % 60).padStart(2, '0');
 }
 
+/** Fond animé commun aux scènes « plein cadre » (intro / attente / fin) : bandes chevron + traînées. */
+const daDecor = `<div class="da-chevrons"><i></i><i></i><i></i></div><div class="da-streaks"><i></i><i></i><i></i><i></i><i></i></div>`;
+
+/** Bandeau damier (drapeau à damier) animé. */
+const daChecker = (cls = '') => `<div class="da-checker ${cls}"></div>`;
+
+/** Compte à rebours : chiffres + anneau de progression (mis à jour par live.html via #ov-cd / #ov-ring). */
+function cdBlock(d) {
+  const hasCd = d.countdownEnd && d.countdownEnd > Date.now();
+  if (!hasCd) return '';
+  return `<div class="cd-wrap">
+      <svg class="cd-ring" viewBox="0 0 220 220" aria-hidden="true">
+        <circle class="rg-bg" cx="110" cy="110" r="100"/>
+        <circle class="rg-fg" id="ov-ring" cx="110" cy="110" r="100" pathLength="100" stroke-dasharray="100" stroke-dashoffset="0"/>
+      </svg>
+      <div class="cd-big" id="ov-cd">${countdownText(d.countdownEnd)}</div>
+      <div class="cd-zero">ÇA REPREND&nbsp;!</div>
+    </div>`;
+}
+
 export function renderIntermission(d) {
   const hasCd = d.countdownEnd && d.countdownEnd > Date.now();
   const next  = d.nextText || d.headerText || d.sessionLabel;
   return `
-  <div class="inter">
-    <div class="big">DE <b>RETOUR</b></div>
-    <div class="tagline">${hasCd ? 'dans' : 'dans un instant'}</div>
-    ${hasCd ? `<div class="cd-big" id="ov-cd">${countdownText(d.countdownEnd)}</div>` : ''}
-    ${next ? `<div class="next"><span class="k">À SUIVRE</span><span class="v">${escHtml(next)}</span></div>` : ''}
+  <div class="inter da-scene">
+    ${daDecor}
+    <div class="inter-core">
+      <div class="da-kick"><span class="d"></span>PAUSE · LE DIRECT CONTINUE</div>
+      <div class="big">DE <b>RETOUR</b></div>
+      <div class="tagline">${hasCd ? 'dans' : 'dans un instant'}</div>
+      ${cdBlock(d)}
+      ${next ? `<div class="next"><span class="k">À SUIVRE</span><span class="v">${escHtml(next)}</span></div>` : ''}
+    </div>
+    ${daChecker('bot')}
+    ${d.social ? `<div class="social">${escHtml(d.social)}</div>` : ''}
+  </div>`;
+}
+
+// ─────────────────────────────────────────────────────────
+// SCÈNE : INTRO DE LIVE (écran d'ouverture + compte à rebours « on démarre dans… »)
+// ─────────────────────────────────────────────────────────
+
+export function renderIntro(d) {
+  const hasCd = d.countdownEnd && d.countdownEnd > Date.now();
+  return `
+  <div class="inter intro da-scene">
+    ${daDecor}
+    ${daChecker('top')}
+    <div class="inter-core">
+      <div class="da-kick"><span class="d"></span>LIVE · RALLYCROSS</div>
+      <div class="intro-logo"><span class="a">RX</span><span class="b">CHRONO</span></div>
+      ${d.headerText ? `<div class="intro-title">${escHtml(d.headerText)}</div>` : ''}
+      ${d.nextText ? `<div class="intro-sub">${escHtml(d.nextText)}</div>` : ''}
+      ${hasCd ? `<div class="tagline">Le direct commence dans</div>${cdBlock(d)}` : '<div class="tagline">Le direct démarre dans un instant</div>'}
+    </div>
+    ${daChecker('bot')}
     ${d.social ? `<div class="social">${escHtml(d.social)}</div>` : ''}
   </div>`;
 }
@@ -330,12 +378,97 @@ export function renderIntermission(d) {
 export function renderEnding(d) {
   const hasCd = d.countdownEnd && d.countdownEnd > Date.now();
   return `
-  <div class="inter ending">
-    <div class="big">MERCI <b>À TOUS</b></div>
-    <div class="tagline">Fin du direct — à très vite</div>
-    ${hasCd ? `<div class="cd-big" id="ov-cd">${countdownText(d.countdownEnd)}</div>` : ''}
-    ${d.nextText ? `<div class="next"><span class="k">PROCHAINEMENT</span><span class="v">${escHtml(d.nextText)}</span></div>` : ''}
+  <div class="inter ending da-scene">
+    ${daDecor}
+    ${daChecker('top')}
+    <div class="inter-core">
+      <div class="da-kick"><span class="d"></span>FIN DU DIRECT</div>
+      <div class="big">MERCI <b>À TOUS</b></div>
+      <div class="tagline">À très vite sur RX Chrono</div>
+      ${hasCd ? cdBlock(d) : ''}
+      ${d.nextText ? `<div class="next"><span class="k">PROCHAINEMENT</span><span class="v">${escHtml(d.nextText)}</span></div>` : ''}
+    </div>
+    ${daChecker('bot')}
     ${d.social ? `<div class="social">${escHtml(d.social)}</div>` : ''}
+  </div>`;
+}
+
+// ─────────────────────────────────────────────────────────
+// SCÈNE : PLATEAU (1/3 gauche = classement · 2/3 droite = vidéo 16/9 + bandeau bas)
+//   La vidéo n'est PAS rendue ici (étage persistant #vid-stage, placement « st ») :
+//   on dessine seulement son cadre. Le classement est affiché EN ENTIER.
+//   data = { headerText, cfg, boards:{id:{title,sub,rows}}, cycle:[id], idx, animate,
+//            predict, nextText, countdownEnd, social }
+// ─────────────────────────────────────────────────────────
+
+const evoHtml = d => d === 'new' ? '<span class="evo nw">NEW</span>'
+  : typeof d === 'number' && d > 0 ? `<span class="evo up">▲${d}</span>`
+  : typeof d === 'number' && d < 0 ? `<span class="evo dn">▼${-d}</span>` : '<span class="evo"></span>';
+
+function studioRow(r, i) {
+  return `<div class="sr ${r.p1 ? 'p1' : ''} ${r.out ? 'out' : ''}" style="--i:${i}">
+    <span class="sp">${r.pos ?? '—'}</span>
+    <span class="sn">${escHtml(String(r.num ?? ''))}</span>
+    <span class="snm">${escHtml((r.name || '').toUpperCase())}</span>
+    ${evoHtml(r.delta)}
+    <span class="sv ${r.out ? 'st' : ''}">${escHtml(r.main)}${r.unit ? `<small>${escHtml(r.unit)}</small>` : ''}${r.sub ? `<em>${escHtml(r.sub)}</em>` : ''}</span>
+  </div>`;
+}
+
+/** Panneau de gauche (remplacé seul par live.html à chaque mise à jour de données / rotation). */
+export function studioBoardHtml(d) {
+  d = { ...d, cfg: d.cfg || studioConfig(null) };
+  const cycle = d.cycle && d.cycle.length ? d.cycle : [d.cfg.active];
+  const id = cycle[(d.idx || 0) % cycle.length];
+  const b = (d.boards && d.boards[id]) || { title: BOARD_LABEL[id] || '', sub: '', rows: [] };
+  const rows = b.rows || [];
+  const tabs = cycle.length > 1
+    ? `<div class="st-tabs">${cycle.map(c => `<span class="${c === id ? 'on' : ''}">${escHtml(BOARD_LABEL[c] || c)}</span>`).join('')}</div>` : '';
+  return `<div class="st-board ${densityClass(rows.length)} ${d.animate ? 'enter' : ''}" id="st-board" data-board="${id}">
+    <div class="st-head"><span class="d"></span><span class="t">${escHtml(b.title || BOARD_LABEL[id] || '')}</span>${b.sub ? `<span class="sub">${escHtml(b.sub)}</span>` : ''}</div>
+    <div class="st-rows">${rows.length ? rows.map(studioRow).join('') : '<div class="empty">En attente des résultats…</div>'}</div>
+    ${tabs}
+  </div>`;
+}
+
+/** Bandeau sous la vidéo : prédiction / attente (le bandeau sponsors est l'élément #info-band, positionné en CSS). */
+export function studioBandHtml(d) {
+  d = { ...d, cfg: d.cfg || studioConfig(null) };
+  const bottom = d.cfg.bottom;
+  let inner = '';
+  if (bottom === 'predict') {
+    inner = d.predict && d.predict.ok ? predictBanner(d.predict)
+      : '<div class="st-wait idle"><span class="k">SCÉNARIO</span><span class="v">Aucune prédiction disponible pour cette phase</span></div>';
+  } else if (bottom === 'wait') {
+    const hasCd = d.countdownEnd && d.countdownEnd > Date.now();
+    inner = `<div class="st-wait">
+      <span class="k">${hasCd ? 'REPRISE DANS' : 'À SUIVRE'}</span>
+      <span class="v">${escHtml(d.nextText || (hasCd ? '' : 'De retour dans un instant'))}</span>
+      ${hasCd ? `<span class="cd" id="ov-cd">${countdownText(d.countdownEnd)}</span>` : ''}</div>`;
+  }
+  return `<div class="st-band" id="st-band" data-bottom="${bottom}">${inner}</div>`;
+}
+
+export function renderStudio(d) {
+  d = { ...d, cfg: d.cfg || studioConfig(null) };
+  const showVideo = d.cfg.showVideo;
+  return `
+  <div class="studio">
+    <div class="st-left" style="--rot:${d.cfg.rotateSec}s">
+      ${studioBoardHtml(d)}
+      ${d.cfg.rotate && (d.cycle || []).length > 1 ? '<div class="st-prog"><i></i></div>' : ''}
+    </div>
+    ${showVideo
+      ? '<div class="st-vidframe"><span class="tag"><span class="d"></span>EN DIRECT</span></div>'
+      : '<div class="st-vidframe novideo"><div class="nv"><span class="a">RX</span><span class="b">CHRONO</span></div></div>'}
+    <div class="st-bottom">
+      <div class="st-top">
+        <span class="brand">RX<b>CHRONO</b></span><span class="sep"></span>
+        <span class="info"><span class="pin">📍</span><span>${escHtml(d.headerText || '')}</span></span>
+        <span class="live"><span class="d"></span>LIVE</span>
+      </div>
+      ${studioBandHtml(d)}
+    </div>
   </div>`;
 }
 
@@ -644,6 +777,8 @@ export function renderScene(scene, data) {
     case 'grid':         return renderGrid(data);
     case 'next-heat':    return renderNextHeat(data);
     case 'intermission': return renderIntermission(data);
+    case 'intro':        return renderIntro(data);
+    case 'studio':       return renderStudio(data);
     case 'ending':       return renderEnding(data);
     case 'fiche':        return renderFiche(data);
     case 'pronostic':    return renderPronostic(data);

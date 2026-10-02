@@ -3,6 +3,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;700;800;900&family=Barlow+Condensed:wght@400;500;600;700&family=Exo+2:wght@300;400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="../_lib/overlay.css">
+<link rel="stylesheet" href="../_lib/overlay-da.css">
 <style>body{background:#11151b}/* fond gris pour visualiser la transparence en test */</style>
 </head>
 <body>
@@ -11,6 +12,7 @@
 import { renderScene } from '../_lib/obs-scenes.js';
 import { predictManche, predictChampSession, predictChampGap } from '../_lib/obs-predict.js';
 import { qrDataUrl, spectatorUrl } from '../_lib/obs-qr.js';
+import { studioConfig, normalizeRows, normalizeBg } from '../_lib/obs-studio.js';
 
 const race = [
   {carNumber:11,lastName:'Grondin',ms:41892,status:null},{carNumber:2,lastName:'Boulbès',ms:42404,status:null},
@@ -280,8 +282,33 @@ data['duel'] = { headerText:'CIRCUIT DE LOHÉAC · SUPERCAR', category:'Supercar
   };
 }
 
+// ── Plateau 1/3 · 2/3 : classement EN ENTIER à gauche (test : ?scene=studio&board=interim|manche|champ|big&bottom=predict|wait|sponsors&rot=1)
+{
+  const names = ['Grondin','Boulbès','Lefebvre','Dubourg','Mailloux','André','Renard','Caillot','Morel','Picard','Rozier','Boulant','Bacheley','Gaignard','Lortie','Masset','Renaud','Thibault','Vasseur','Caron','Leclerc','Seignard','Hautbois','Guiziou','Aunay'];
+  const mk = n => names.slice(0, n).map((nm, i) => ({ carNumber: 400 + i, lastName: nm }));
+  const mancheRows = n => mk(n).map((r, i) => ({ ...r, position: i + 1, value: i === 0 ? '2:48.5' : '+' + (i * 0.7).toFixed(1), points: Math.max(1, 50 - i * 2) }))
+    .concat([{ carNumber: 9, lastName: 'Abandon', position: null, value: 'DNF', points: 0, status: 'DNF' }]);
+  const interRows = n => mk(n).map((r, i) => ({ ...r, position: i + 1, totalPoints: 185 - i * 6 }));
+  const champRows = n => mk(n).map((r, i) => ({ ...r, position: i + 1, grandTotal: 285 - i * 9, delta: i === 3 ? 'new' : i % 3 === 1 ? 1 : i % 3 === 2 ? -1 : 0, meetingPts: Math.max(0, 40 - i * 2) }));
+  const P = new URLSearchParams(location.search), n = P.get('board') === 'big' ? 25 : 10;
+  const boards = {
+    manche:  { title: 'Manche 2', sub: 'Supercar', rows: normalizeRows('manche', mancheRows(n)) },
+    interim: { title: 'Classement intermédiaire', sub: 'Supercar', rows: normalizeRows('interim', interRows(n)) },
+    meeting: { title: 'Classement du meeting', sub: 'Supercar', rows: normalizeRows('meeting', interRows(n).map(r => ({ ...r, total: r.totalPoints }))) },
+    champ:   { title: 'Championnat', sub: 'Supercar · 2026', rows: normalizeRows('champ', champRows(n)) },
+  };
+  const bsel = P.get('board'); const active = ['manche','interim','meeting','champ'].includes(bsel) ? bsel : 'manche';
+  const cfg = studioConfig({ boards: P.get('rot') ? ['manche','interim','champ'] : [active], active, rotate: !!P.get('rot'), rotateSec: 15, bottom: P.get('bottom') || 'none' });
+  data.studio = { headerText: 'CIRCUIT DE LOHÉAC · MANCHE 2 · ASPHALTE + TERRE', cfg, boards, cycle: P.get('rot') ? ['manche','interim','champ'] : [active], idx: 0, animate: true,
+    nextText: '½ FINALE 1 — SUPERCAR', countdownEnd: Date.now() + 4 * 60000 + 12000,
+    predict: predictManche(names.slice(0,10).map((nm,i)=>({driverId:'d'+(i?i:77),carNumber:400+i,lastName:nm,total:135-i*6})), 'd77', 1, undefined, 'p1') };
+}
+data['intro'] = { headerText: 'RALLYCROSS DE LOHÉAC · SUPERCAR · D4', nextText: 'Championnat de France 2026 · Manche 5', countdownEnd: Date.now() + 9 * 60000 + 30000, social: '📺 twitch.tv/mawrxime · #RallycrossFR' };
+
 const params = new URLSearchParams(location.search);
 const scene = params.get('scene')||'dashboard';
+// fond global (test : ?bg=paddock|asphalt|ember|nitro|forest|chroma|carbon)
+{ const l = document.createElement('div'); l.id = 'bg-layer'; l.className = 'bg-' + normalizeBg(params.get('bg')); l.innerHTML = '<i></i>'; document.body.classList.toggle('bg-chroma', normalizeBg(params.get('bg')) === 'chroma'); document.body.insertBefore(l, document.body.firstChild); }
 const vl = params.get('vl');   // test placement vidéo : hg|hd|bg|bd|full
 const type = (scene === 'ordre' || scene === 'df-combo' || scene === 'fin-combo') ? 'grid'
   : (scene === 'dash-fin' || scene === 'dash-df' || scene === 'dash-mq2' || scene === 'dash-predict' || scene === 'dash-fin-predict') ? 'dashboard'
@@ -292,6 +319,14 @@ const sceneData = data[scene] || data.dashboard;
 if (vl) sceneData.videoLayout = vl;
 document.getElementById('root').innerHTML = renderScene(type, sceneData);
 // placeholder d'étage vidéo (comme le fera live.html, hors de #root)
+if (scene === 'studio') {
+  document.body.classList.add('studio-on');
+  const s = document.createElement('div');
+  s.id = 'vid-stage'; s.className = 'on st';
+  s.style.cssText = 'background:linear-gradient(135deg,#1b2735,#0c1119)';
+  s.innerHTML = '<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-family:Orbitron;color:#9fb4d8;font-size:34px;letter-spacing:3px">▶ LIVE YOUTUBE 16/9</div>';
+  document.body.appendChild(s);
+}
 if (vl) {
   const s = document.createElement('div');
   s.id = 'vid-stage'; s.className = 'on ' + vl;

@@ -7,6 +7,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;700;800;900&family=Barlow+Condensed:wght@400;500;600;700&family=Exo+2:wght@300;400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="_lib/overlay.css">
+<link rel="stylesheet" href="_lib/overlay-da.css">
 </head>
 <body>
 <div class="overlay-root" id="root"></div>
@@ -23,6 +24,7 @@
   import { buildPrediction } from './_lib/obs-predict.js';
   import { watchPronostic, watchSeasonScores, getTwitchProfile } from './_lib/obs-pronostics.js';
   import { qrDataUrl, spectatorUrl } from './_lib/obs-qr.js';
+  import { studioConfig, boardCycle, normalizeRows, normalizeBg, BOARD_LABEL } from './_lib/obs-studio.js';
 
   const root = document.getElementById('root');
   const qs = new URLSearchParams(location.search);
@@ -49,6 +51,8 @@
   let twitchBoardUnsub = null;   // listener live du classement saison Twitch (scène « twitch-leaderboard »)
   let champTimer = null;
   let cdTimer = null;         // ticker du compte à rebours (écran d'attente)
+  let rotTimer = null;        // rotation des classements (scène plateau)
+  let freshTimer = null;      // fin de la fenêtre d'animation d'entrée (#root.fresh)
   let sessTimer = null;       // effacement différé de la surbrillance (dernier de la manche)
   let lastControl = null;
   let champRows = [];         // classement championnat (rafraîchi périodiquement)
@@ -86,6 +90,20 @@
 
   function applyVisibility(visible) {
     root.classList.toggle('hidden', !visible);
+  }
+
+  // Fond global (DA « Pit Lane ») : calque persistant sous les scènes. ?bg=<thème> l'emporte
+  // sur la régie (ex. ?bg=chroma → aplat vert pour incrustation par un mélangeur externe).
+  let bgLayer = null;
+  function applyBg(ctrl) {
+    if (!bgLayer) {
+      bgLayer = document.createElement('div'); bgLayer.id = 'bg-layer'; bgLayer.innerHTML = '<i></i>';
+      document.body.insertBefore(bgLayer, document.body.firstChild);
+    }
+    const theme = normalizeBg(qs.get('bg') || ctrl.bgTheme);
+    const cls = 'bg-' + theme;
+    if (bgLayer.dataset.theme !== cls) { bgLayer.className = cls; bgLayer.dataset.theme = cls; }
+    document.body.classList.toggle('bg-chroma', theme === 'chroma');   // coupe les effets colorés (détourage propre)
   }
 
   // ─────────────────────────────────────────────────────────
@@ -177,7 +195,10 @@
   // change la source/placement/volume de la vidéo sans re-render les tableaux.
   function applyVideo(ctrl) {
     ensureVidEls();
-    const layout = ctrl.videoLayout || 'none';
+    // scène Plateau : la vidéo occupe d'office les 2/3 droite (placement « st »), sauf si désactivée
+    const studioOn = ctrl.scene === 'studio';
+    document.body.classList.toggle('studio-on', studioOn);
+    const layout = studioOn ? (studioConfig(ctrl.studio).showVideo ? 'st' : 'none') : (ctrl.videoLayout || 'none');
     const src = ctrl.videoSource || { type: 'camera', value: '' };
     const off = layout === 'none' || !ctrl.visible;   // suit aussi le masquage global de l'overlay
     vidStage.className = off ? '' : ('on ' + layout);
@@ -205,7 +226,10 @@
   let _lastIbSig = '';
   function applyInfoBand(ctrl) {
     const ib = ctrl.infoBand || {};
-    const on = !!ib.enabled && ctrl.visible !== false;
+    // scène Plateau : le bandeau sponsors se pilote depuis la config plateau (zone sous la vidéo)
+    const on = ctrl.scene === 'studio'
+      ? (studioConfig(ctrl.studio).bottom === 'sponsors' && ctrl.visible !== false)
+      : (!!ib.enabled && ctrl.visible !== false);
     let el = document.getElementById('info-band');
     if (!on) { if (el) el.classList.remove('on'); _lastIbSig = ''; return; }
     if (!el) {
@@ -293,7 +317,7 @@
   async function computePredict(ctrl, reg, session, liveRank) {
     const p = ctrl.predict;
     if (!p || !p.enabled || !p.driverId) return null;
-    if (!['dashboard', 'grid'].includes(ctrl.scene)) return null;
+    if (!['dashboard', 'grid', 'studio'].includes(ctrl.scene)) return null;
     const obj = p.objective || 'p1';
 
     if (obj === 'p1' || obj === 'qualif') {
@@ -348,19 +372,29 @@
     if (unsubResults) { unsubResults(); unsubResults = null; }
     if (champTimer)   { clearInterval(champTimer); champTimer = null; }
     if (cdTimer)      { clearInterval(cdTimer); cdTimer = null; }
+    if (rotTimer)     { clearInterval(rotTimer); rotTimer = null; }
+    // animations d'entrée de la nouvelle scène (grille, duel…) : jouées pendant 3 s seulement
+    root.classList.add('fresh'); clearTimeout(freshTimer); freshTimer = setTimeout(() => root.classList.remove('fresh'), 3000);
     if (sessTimer)    { clearTimeout(sessTimer); sessTimer = null; }
     if (renderTimer)  { clearTimeout(renderTimer); renderTimer = null; }   // annule un recalcul de saisie en attente
     if (pronoUnsub)   { pronoUnsub(); pronoUnsub = null; }
     if (twitchBoardUnsub) { twitchBoardUnsub(); twitchBoardUnsub = null; }
 
-    // Écran d'attente / Fin de stream : indépendants du meeting/catégorie + compte à rebours
-    if (ctrl.scene === 'intermission' || ctrl.scene === 'ending') {
+    // Intro / Écran d'attente / Fin de stream : indépendants du meeting/catégorie + compte à rebours
+    if (ctrl.scene === 'intermission' || ctrl.scene === 'ending' || ctrl.scene === 'intro') {
       root.innerHTML = renderScene(ctrl.scene, {
         headerText: ctrl.headerText, nextText: ctrl.nextText,
         countdownEnd: ctrl.countdownEnd, social: ctrl.headerText,
       });
       if (ctrl.countdownEnd) {
-        const tick = () => { const el = document.getElementById('ov-cd'); if (el) el.textContent = countdownText(ctrl.countdownEnd); };
+        const total = ctrl.countdownStart ? Math.max(1, ctrl.countdownEnd - ctrl.countdownStart) : 0;
+        const tick = () => {
+          const el = document.getElementById('ov-cd'); if (el) el.textContent = countdownText(ctrl.countdownEnd);
+          const left = ctrl.countdownEnd - Date.now();
+          const ring = document.getElementById('ov-ring');
+          if (ring) ring.style.strokeDashoffset = total ? String(100 - Math.max(0, Math.min(100, left / total * 100))) : '0';
+          const wrap = document.querySelector('.cd-wrap'); if (wrap) wrap.classList.toggle('cd-zero-on', left <= 0);
+        };
         tick(); cdTimer = setInterval(tick, 1000);
       }
       return;
@@ -579,7 +613,7 @@
     // Championnat : référence AVANT l'épreuve (meeting exclu), calculée 1 fois (mise en cache) ;
     // puis on ajoute en direct les points du meeting en cours (léger) → total + flèches + (+meeting).
     let champBeforeTot = {}, champBeforePos = {}, drvInfo = {};
-    if (ctrl.scene === 'dashboard') {
+    if (ctrl.scene === 'dashboard' || ctrl.scene === 'studio') {
       const base = await championshipBaseline(reg, ctrl.meetingId, ctrl.category);
       champBeforeTot = base.tot; champBeforePos = base.pos;
       drvInfo = { ...base.info };   // copie : buildChamp ajoute les pilotes du meeting en cours (ne pas polluer le cache)
@@ -612,6 +646,83 @@
       });
       return rows;
     };
+
+    // ── Scène « Plateau » : tiers gauche = classement(s) EN ENTIER (rotation possible),
+    //    2/3 droite = vidéo 16/9 (étage #vid-stage, placement « st ») + bandeau bas. ──
+    if (ctrl.scene === 'studio') {
+      const cfg = studioConfig(ctrl.studio);
+      const need = new Set(cfg.rotate ? cfg.boards : [cfg.active]);
+      let data = {};           // id → { title, sub, rows } (lignes normalisées, non tronquées)
+      let idx = 0;             // classement affiché dans le cycle
+      let painted = false;
+      let predict = null;
+
+      const mancheRank = async () => {
+        if (!session) return [];
+        if (ctrl.sessionType === 'EC') return getEcRank(sessions, reg);
+        if (ctrl.sessionType === 'MQ') return getMqRank(session, reg);
+        return getPhaseRank(session, reg);
+      };
+      const compute = async () => {
+        const out = {};
+        const rank = (need.has('manche') || need.has('interim')) ? await mancheRank().catch(() => []) : [];
+        if (need.has('manche')) out.manche = { title: sLabel || 'Classement manche', sub: catName, rows: normalizeRows('manche', rank) };
+        if (need.has('interim')) {
+          const ir = await getInterimLive(ctrl.meetingId, ctrl.category, reg, session, ctrl.sessionType === 'MQ' ? rank : undefined).catch(() => []);
+          out.interim = { title: 'Classement intermédiaire', sub: catName, rows: normalizeRows('interim', ir) };
+        }
+        if (need.has('meeting')) {
+          const mr = await getMeetingStandings(ctrl.meetingId, ctrl.category, reg, session).catch(() => []);
+          out.meeting = { title: 'Classement du meeting', sub: catName, rows: normalizeRows('meeting', mr) };
+        }
+        if (need.has('champ')) {
+          out.champ = { title: 'Championnat', sub: `${catName} · ${reg.year}`, rows: normalizeRows('champ', await buildChamp().catch(() => [])) };
+        }
+        if (cfg.bottom === 'predict') predict = await computePredict(ctrl, reg, session, rank).catch(() => null);
+        return out;
+      };
+      const view = (animate) => ({
+        headerText, cfg, boards: data, cycle: boardCycle(cfg, data), idx, animate,
+        predict, nextText: ctrl.nextText, countdownEnd: ctrl.countdownEnd,
+      });
+      // 1er rendu : scène complète ; ensuite on ne remplace que le panneau + le bandeau
+      // (le reste, vidéo comprise, ne bouge pas ; l'entrée animée ne rejoue que sur changement de classement).
+      const paint = (animate) => {
+        if (!alive()) return;
+        const v = view(animate);
+        if (!painted || !root.querySelector('#st-board')) { root.innerHTML = renderScene('studio', v); painted = true; return; }
+        const tmp = document.createElement('div'); tmp.innerHTML = renderScene('studio', v);
+        root.querySelector('#st-board').replaceWith(tmp.querySelector('#st-board'));
+        root.querySelector('#st-band').replaceWith(tmp.querySelector('#st-band'));
+      };
+      const refresh = async () => { const d = await compute(); if (!alive()) return; data = d; paint(false); };
+
+      const startRotation = () => {
+        if (!cfg.rotate) return;
+        rotTimer = setInterval(() => {
+          const n = boardCycle(cfg, data).length;
+          if (n < 2) return;
+          idx = (idx + 1) % n;
+          paint(true);
+          const bar = root.querySelector('.st-prog i');   // relance la barre de progression
+          if (bar) { bar.style.animation = 'none'; void bar.offsetWidth; bar.style.animation = ''; }
+        }, cfg.rotateSec * 1000);
+      };
+      if (ctrl.countdownEnd && cfg.bottom === 'wait') {
+        cdTimer = setInterval(() => { const el = document.getElementById('ov-cd'); if (el) el.textContent = countdownText(ctrl.countdownEnd); }, 1000);
+      }
+
+      data = await compute();
+      if (!alive()) return;
+      paint(true);
+      startRotation();
+      if (session) {
+        const uSt = await watchQuery('results', [['sessionId', '==', session.id]], freshThenDebounce(() => refresh()));
+        if (!alive()) { uSt(); return; }
+        unsubResults = uSt;
+      }
+      return;
+    }
 
     // Fonction de rendu (recalcule intermédiaire + championnat à chaque tick résultats)
     const renderNow = async (raceResults) => {
@@ -661,11 +772,12 @@
     if (ctrlUnsub) { ctrlUnsub(); ctrlUnsub = null; }
     ctrlUnsub = await watchControl(async (ctrl) => {
       applyVisibility(ctrl.visible);
+      applyBg(ctrl);   // fond global : appliqué en direct (sans recharger la scène)
       applyVideo(ctrl);   // source/placement vidéo : appliqué en direct (sans recharger la scène)
       applyInfoBand(ctrl);   // bandeau info / sponsors : appliqué en direct, par-dessus la scène
       const key = [ctrl.scene, ctrl.championshipId, ctrl.meetingId, ctrl.category,
                    ctrl.sessionType, ctrl.sessionNum, JSON.stringify(ctrl.gridOverride),
-                   ctrl.headerText, ctrl.nextText, ctrl.countdownEnd, ctrl.graphMode,
+                   ctrl.headerText, ctrl.nextText, ctrl.countdownEnd, ctrl.countdownStart, ctrl.graphMode, JSON.stringify(ctrl.studio),
                    JSON.stringify(ctrl.predict), ctrl.videoLayout, JSON.stringify(ctrl.fiche), ctrl.pronosticId, ctrl.spectatorBaseUrl].join('|');
       if (key === cacheKey) return;   // rien de pertinent n'a changé
       cacheKey = key;

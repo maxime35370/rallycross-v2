@@ -61,7 +61,10 @@ match /obsControl/{doc} {
 
 ```js
 {
-  scene: 'dashboard'|'grid'|'next-heat'|'intermission',
+  scene: 'dashboard'|'studio'|'grid'|'next-heat'|'intro'|'intermission'|'ending'|'fiche',
+  bgTheme: 'carbon'|'paddock'|'asphalt'|'ember'|'nitro'|'forest'|'chroma',
+  studio: { boards:['manche'|'interim'|'meeting'|'champ'], rotate, rotateSec, active, bottom:'none'|'predict'|'wait'|'sponsors', showVideo },
+  countdownEnd, countdownStart,
   visible: true,
   championshipId, meetingId, category,        // sélection
   sessionType: 'EC'|'MQ'|'QF'|'DF'|'FIN', sessionNum,
@@ -72,8 +75,29 @@ match /obsControl/{doc} {
 }
 ```
 
+## Scènes, fond global et DA « Pit Lane »
+
+Scènes pilotables depuis `/control` : 🎬 Intro · 📊 Dashboard · 📺 **Plateau 1/3·2/3** · 🏁 Grille ·
+👤 Fiche / Duel · ⏭️ À suivre · ⏸️ Attente · 🔚 Fin de stream.
+
+- **Fond global** (`bgTheme`) : Carbone (rendu d'origine), Paddock, Asphalte, Braise, Nitro, Sous-bois,
+  ou **Fond vert #00FF00** (chroma). `?bg=<thème>` dans l'URL de la source l'emporte (ex. `?bg=chroma`).
+  Avec `?transparent=1` (OBS) le fond est désactivé.
+- **Plateau** (`studio`) : tiers gauche (592 px) = classement **affiché en entier** (aucune limite à 10 :
+  la densité des lignes s'adapte à l'effectif) ; 2/3 droite = vidéo 16/9 (1240×697 px, source « Source vidéo »,
+  ex. live YouTube) ; dessous, un bandeau au choix : Prédiction · Attente (message + compte à rebours) ·
+  Sponsors/info · Aucun.
+  - Classements : Manche (session sélectionnée) · Intermédiaire · Meeting · Championnat — mêmes calculs que le Dashboard,
+    catégorie/phase = celles de la régie.
+  - **Rotation** automatique entre les classements cochés (5 à 120 s, 15 s par défaut) ; les classements vides sont sautés.
+    Rotation off : un seul classement affiché (au choix parmi les cochés).
+- **Compte à rebours** (Intro, Attente, Fin, bandeau « Attente » du Plateau) : anneau de progression ; à 0 l'overlay
+  affiche « ÇA REPREND ! » et la **régie affiche une alerte** (bannière + bip + titre d'onglet) avec
+  « Compris », « +2 min » et « → Dashboard ».
+- Code : logique pure dans `_lib/obs-studio.js` (testée : `tests/obsStudio.test.js`), styles dans `_lib/overlay-da.css`.
+
 ## Prévisualiser sans Firestore
 
 - `overlay/demo/showcase.html?scene=dash|race|standings|grid|next|intermission` — maquettes.
-- `overlay/demo/_render-test.html?scene=dashboard|grid|next-heat|intermission` — **vrai** code
+- `overlay/demo/_render-test.html?scene=dashboard|grid|next-heat|intermission|intro|ending|studio` — **vrai** code
   de rendu alimenté en données fictives.
