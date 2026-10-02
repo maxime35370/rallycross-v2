@@ -12,7 +12,7 @@ export const CTRL_ID  = 'live';
 
 /** État par défaut (si le doc n'existe pas encore). */
 export const DEFAULT_CONTROL = {
-  scene:         'dashboard',   // 'dashboard' | 'grid' | 'next-heat' | 'intermission' | 'fiche' | 'pronostic' | 'twitch-leaderboard' | 'outro'
+  scene:         'dashboard',   // 'dashboard' | 'studio' | 'grid' | 'next-heat' | 'intro' | 'intermission' | 'ending' | 'fiche' | 'pronostic' | 'twitch-leaderboard'
   visible:       true,          // afficher / masquer l'overlay
   championshipId:'',
   meetingId:     '',
@@ -23,6 +23,12 @@ export const DEFAULT_CONTROL = {
   headerText:    '',            // texte d'en-tête éditable (infos circuit…)
   nextText:      '',            // "à suivre" affiché sur l'écran d'attente
   countdownEnd:  0,             // timestamp ms de fin du compte à rebours (0 = aucun)
+  countdownStart:0,             // timestamp ms de départ (sert à l'anneau de progression ; 0 = inconnu)
+  // fond global (DA « Pit Lane ») : voir BG_THEMES dans obs-studio.js ; ?bg=<id> dans l'URL l'emporte
+  bgTheme:       'carbon',
+  // scène « Plateau » : classement (1/3 gauche) + vidéo 16/9 (2/3 droite) + bandeau bas
+  studio:        { boards: ['manche'], rotate: false, rotateSec: 15, active: 'manche', bottom: 'none', showVideo: true },
+  // boards : 'manche' | 'interim' | 'meeting' | 'champ' · bottom : 'none' | 'predict' | 'wait' | 'sponsors'
   graphMode:     'places',      // graphique d'évolution (manche terminée) : 'places' | 'points'
   // bandeau prédiction (scénario d'objectif d'un pilote, bas d'écran) :
   predict:       { enabled: false, driverId: '', objective: 'p1', cutoff: 6 },
