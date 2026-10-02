@@ -292,11 +292,16 @@ export function renderNextHeat(d) {
     <div class="chip"><span class="n">${escHtml(String(s.carNumber ?? ''))}</span>
       <span class="nm">${escHtml((s.lastName || '').toUpperCase())}</span>
       <span class="pp">P${s.pos}</span></div>`).join('');
+  const hasCd = d.countdownEnd && d.countdownEnd > Date.now();
   return `
   <div class="lower">
-    <div class="lower-inner">
+    <div class="lower-inner ${d.nextText ? 'has-msg' : ''}">
       <div class="badge"><span class="k">À SUIVRE</span><span class="v">${escHtml(d.sessionLabel || '')}</span></div>
-      <div class="list">${list || '<span class="empty">Série à venir…</span>'}</div>
+      <div class="list-col">
+        ${d.nextText ? `<div class="lmsg">${escHtml(d.nextText)}</div>` : ''}
+        <div class="list">${list || '<span class="empty">Série à venir…</span>'}</div>
+      </div>
+      ${hasCd ? `<div class="lcd"><span class="k">DANS</span><span class="cd" id="ov-cd">${countdownText(d.countdownEnd)}</span></div>` : ''}
     </div>
   </div>`;
 }

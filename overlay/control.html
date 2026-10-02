@@ -300,7 +300,7 @@
       </div>
       <div class="card">
         <h3>⏱ Texte &amp; compte à rebours <span class="n" id="cdLeft">—</span></h3>
-        <div class="note">Utilisé par les scènes 🎬 Intro, ⏸️ Attente, 🔚 Fin de stream (et le bandeau « Attente » du Plateau). Quand le compte à rebours atteint 0, une <b>alerte</b> s'affiche tout en haut de cette page (bannière + bip) pour te prévenir que la reprise approche.</div>
+        <div class="note">Utilisé par les scènes 🎬 Intro, ⏭️ À suivre, ⏸️ Attente, 🔚 Fin de stream (et le bandeau « Attente » du Plateau). Quand le compte à rebours atteint 0, une <b>alerte</b> s'affiche tout en haut de cette page (bannière + bip) pour te prévenir que la reprise approche.</div>
         <div class="field"><input id="nextTxt" placeholder="À suivre… ex. ½ FINALE SUPERCAR"><button class="apply" id="nextBtn">OK</button></div>
         <div class="btns" style="margin-top:10px">
           <div class="b" data-cd="1">⏱ 1 min</div>
@@ -1014,7 +1014,7 @@
 
   // ---------- ALERTE : le compte à rebours est arrivé à 0 ----------
   // Prévient le régisseur (bannière en haut, bip, titre d'onglet clignotant) que la reprise approche.
-  const CD_SCENES = ['intro', 'intermission', 'ending'];
+  const CD_SCENES = ['intro', 'intermission', 'ending', 'next-heat'];
   const cdOnAir = () => CD_SCENES.includes(state.scene) || (state.scene === 'studio' && studioConfig(state.studio).bottom === 'wait');
   const baseTitle = document.title;
   let cdAck = 0, cdBeeped = 0, cdArmed = 0;
