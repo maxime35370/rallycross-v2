@@ -194,7 +194,7 @@
 
   <div class="cd-alert hidden" id="cdAlert" role="alert">
     <span class="ic">⏱</span>
-    <div class="tx"><b>Compte à rebours terminé</b><span>La reprise est imminente — prépare la scène suivante (le direct reprend « dans un instant »).</span></div>
+    <div class="tx"><b id="cdAlertTitle">Compte à rebours terminé</b><span id="cdAlertText">La reprise est imminente — prépare la scène suivante (le direct reprend « dans un instant »).</span></div>
     <button class="sbtn" id="cdAck">✔ Compris</button>
     <button class="sbtn" id="cdPlus">＋ 2 min</button>
     <button class="sbtn air" id="cdGo">→ Dashboard</button>
@@ -335,6 +335,10 @@
           <div class="b" data-cd="15">⏱ 15 min</div>
           <div class="b" data-cd="0">Effacer</div>
         </div>
+        <div class="row2" style="justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-top:12px">
+          <span style="font-family:'Barlow Condensed';font-weight:600;font-size:17px">🔔 Alerte régie</span>
+          <select class="sel" id="cdLead" style="padding:8px 10px"></select>
+        </div>
         <div class="field" style="margin-top:10px"><input id="cdCustom" type="number" min="1" max="180" placeholder="Durée libre (minutes)"><button class="apply" id="cdCustomBtn">Lancer</button></div>
       </div>
       <div class="card">
@@ -460,6 +464,7 @@
   import { watchAutoStates, setAutoEnabled, forceAdvanceStep, runAutoTick } from './_lib/obs-prono-auto.js';
   import { watchTwitchBotStatus, beginTwitchBotLink, consumeTwitchBotLinkResult, setTwitchBotMuted } from './_lib/obs-twitch-bot.js';
   import { downloadRecapImage } from './_lib/obs-recap-image.js';
+  import { LEAD_CHOICES, leadLabel, normalizeLead, alertState, mmss } from './_lib/obs-countdown.js';
   import { LIVE_ID, PREVIEW_ID, splitPatch, stageToLivePatch, liveToStagePatch, stageDiff, diffLabels, stageIsStale } from './_lib/obs-stage.js';
   import { BOARD_IDS, BOARD_LABEL, BOTTOM_IDS, BOTTOM_LABEL, BG_THEMES, studioConfig, normalizeBg } from './_lib/obs-studio.js';
 
@@ -1063,6 +1068,17 @@
   const cdOnAir = () => CD_SCENES.includes(liveRemote.scene) || (liveRemote.scene === 'studio' && studioConfig(liveRemote.studio).bottom === 'wait');
   const baseTitle = document.title;
   let cdAck = 0, cdBeeped = 0, cdArmed = 0;
+  // délai d'avance de l'alerte (mémorisé sur ce navigateur) : prévient X secondes AVANT la fin du chrono
+  let cdLead = 30;
+  try { cdLead = normalizeLead(localStorage.getItem('rxchrono.cdLead') ?? 30); } catch { /* stockage indisponible */ }
+  const leadSel = document.getElementById('cdLead');
+  leadSel.innerHTML = LEAD_CHOICES.map(v => `<option value="${v}">${leadLabel(v)}</option>`).join('');
+  leadSel.value = String(cdLead);
+  leadSel.onchange = () => {
+    cdLead = normalizeLead(leadSel.value);
+    try { localStorage.setItem('rxchrono.cdLead', String(cdLead)); } catch { /* ignore */ }
+    cdBeeped = 0; cdTick();
+  };
   function beep() {
     try {
       const ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -1078,12 +1094,17 @@
     const chip = document.getElementById('cdLeft');
     if (chip) chip.textContent = !end ? '—' : left > 0
       ? String(Math.floor(left / 60000)).padStart(2, '0') + ':' + String(Math.floor(left / 1000) % 60).padStart(2, '0') : 'terminé';
-    if (end && left > 0) cdArmed = end;   // on a vu ce décompte courir → son arrivée à 0 est « fraîche »
-    // pas d'alerte sur un vieux décompte déjà expiré à l'ouverture de la page
-    const show = end > 0 && left <= 0 && cdAck !== end && cdOnAir() && (cdArmed === end || left > -120000);
-    document.getElementById('cdAlert').classList.toggle('hidden', !show);
-    if (show && cdBeeped !== end) { cdBeeped = end; beep(); }
-    document.title = show ? '⏱ REPRISE IMMINENTE — Régie' : baseTitle;
+    if (end && left > 0) cdArmed = end;   // on a vu ce décompte courir → son alerte est « fraîche »
+    const a = alertState({ end, start: liveRemote.countdownStart || 0, now: Date.now(), leadSec: cdLead, acked: cdAck, armed: cdArmed, onAir: cdOnAir() });
+    document.getElementById('cdAlert').classList.toggle('hidden', !a.show);
+    if (a.show) {
+      document.getElementById('cdAlertTitle').textContent = a.phase === 'soon' ? 'Reprise dans ' + mmss(a.left) : 'Compte à rebours terminé';
+      document.getElementById('cdAlertText').textContent = a.phase === 'soon'
+        ? 'Le compte à rebours se termine bientôt — prépare la scène suivante.'
+        : 'La reprise est imminente — prépare la scène suivante (le direct reprend « dans un instant »).';
+    }
+    if (a.show && cdBeeped !== end) { cdBeeped = end; beep(); }
+    document.title = a.show ? (a.phase === 'soon' ? '⏱ REPRISE DANS ' + mmss(a.left) + ' — Régie' : '⏱ REPRISE IMMINENTE — Régie') : baseTitle;
   }
   setInterval(cdTick, 1000);
   document.getElementById('cdAck').onclick = () => { cdAck = liveRemote.countdownEnd || 0; cdTick(); };
