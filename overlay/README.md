@@ -114,7 +114,9 @@ Scènes pilotables depuis `/control` : 🎬 Intro · 📊 Dashboard · 📺 **Pl
     Rotation off : un seul classement affiché (au choix parmi les cochés).
 - **Compte à rebours** (Intro, Attente, Fin, bandeau « Attente » du Plateau) : anneau de progression ; à 0 l'overlay
   affiche « ÇA REPREND ! » et la **régie affiche une alerte** (bannière + bip + titre d'onglet) avec
-  « Compris », « +2 min » et « → Dashboard ».
+  « Compris », « +2 min » et « → Dashboard ». L'alerte se déclenche **avant la fin** : délai réglable
+  (à 0 · 15 s · 30 s par défaut · 1 min · 2 min, mémorisé sur le navigateur), plafonné à la moitié de la durée du chrono ;
+  la bannière indique « Reprise dans 0:28 » puis « Compte à rebours terminé ». Logique pure : `_lib/obs-countdown.js`.
 - Code : logique pure dans `_lib/obs-studio.js` (testée : `tests/obsStudio.test.js`), styles dans `_lib/overlay-da.css`.
 
 ## Prévisualiser sans Firestore
