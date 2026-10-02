@@ -446,9 +446,12 @@ export function studioBandHtml(d) {
       : '<div class="st-wait idle"><span class="k">SCÉNARIO</span><span class="v">Aucune prédiction disponible pour cette phase</span></div>';
   } else if (bottom === 'wait') {
     const hasCd = d.countdownEnd && d.countdownEnd > Date.now();
+    const msg = d.nextText || (hasCd ? '' : 'De retour dans un instant');
+    // le texte ne passe JAMAIS à la ligne : sa taille s'adapte à sa longueur (place disponible ≈ 650 px)
+    const fs = msg.length <= 32 ? 46 : msg.length <= 40 ? 38 : msg.length <= 50 ? 30 : 24;
     inner = `<div class="st-wait">
       <span class="k">${hasCd ? 'REPRISE DANS' : 'À SUIVRE'}</span>
-      <span class="v">${escHtml(d.nextText || (hasCd ? '' : 'De retour dans un instant'))}</span>
+      <span class="v" style="font-size:${fs}px">${escHtml(msg)}</span>
       ${hasCd ? `<span class="cd" id="ov-cd">${countdownText(d.countdownEnd)}</span>` : ''}</div>`;
   }
   return `<div class="st-band" id="st-band" data-bottom="${bottom}">${inner}</div>`;

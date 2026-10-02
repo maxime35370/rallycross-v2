@@ -239,14 +239,17 @@ body.studio-on #vid-stage.on.st{display:block}
 .st-top .info .pin{color:var(--orange)}
 .st-top .live{margin-left:auto;display:flex;align-items:center;gap:9px;background:#e11d2a;padding:7px 14px;border-radius:7px;font-family:'Orbitron',sans-serif;font-weight:800;font-size:15px;letter-spacing:2px}
 .st-top .live .d{width:10px;height:10px;border-radius:50%;background:#fff;animation:blink 1.2s infinite}
-.st-band{flex:1;min-height:0;display:flex;align-items:stretch}
+.st-band{flex:1;min-height:0;min-width:0;display:flex;align-items:stretch}
 .st-band[data-bottom="none"],.st-band[data-bottom="sponsors"]{visibility:hidden}
 .st-band .pred-bar{flex:1;margin:0;min-height:0}
-.st-wait{flex:1;display:flex;align-items:center;gap:30px;padding:0 34px;border-radius:14px;background:var(--panel);
+.st-wait{flex:1;min-width:0;display:flex;align-items:center;gap:30px;padding:0 34px;border-radius:14px;background:var(--panel);
   border-left:7px solid var(--orange);box-shadow:0 0 0 1px rgba(255,255,255,.07)}
-.st-wait .k{font-family:'Orbitron',sans-serif;font-weight:900;font-size:24px;letter-spacing:4px;color:var(--orange)}
-.st-wait .v{flex:1;font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:46px;letter-spacing:1px;text-transform:uppercase;line-height:1.05}
-.st-wait .cd{font-family:'Orbitron',sans-serif;font-weight:900;font-size:78px;color:var(--orange);text-shadow:0 0 36px rgba(255,85,0,.4)}
+.st-wait .k{flex:none;width:220px;font-family:'Orbitron',sans-serif;font-weight:900;font-size:22px;letter-spacing:3px;color:var(--orange)}
+.st-wait .v{flex:1;min-width:0;font-family:'Barlow Condensed',sans-serif;font-weight:600;letter-spacing:1px;text-transform:uppercase;line-height:1.05;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* chrono : largeur FIXE (les chiffres n'ont pas tous la même largeur) → le texte ne bouge plus d'une seconde à l'autre */
+.st-wait .cd{flex:none;width:240px;text-align:right;font-family:'Orbitron',sans-serif;font-weight:900;font-size:64px;color:var(--orange);
+  text-shadow:0 2px 10px rgba(0,0,0,.7),0 0 30px rgba(255,85,0,.35)}
 .st-wait.idle .v{font-size:30px;color:var(--mut)}
 
 /* bandeau sponsors : intégré à la zone basse de la scène Plateau (même élément persistant #info-band) */
