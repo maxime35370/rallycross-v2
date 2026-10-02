@@ -302,7 +302,14 @@ body.transparent{background:transparent}
   background:linear-gradient(120deg,var(--orange),#c23d00);min-width:330px}
 .lower .badge .k{font-family:'Barlow Condensed';font-weight:600;font-size:20px;letter-spacing:4px;opacity:.9}
 .lower .badge .v{font-family:'Orbitron';font-weight:900;font-size:38px;line-height:1.05;text-transform:uppercase}
-.lower .list{flex:1;display:flex;align-items:center;gap:30px;padding:0 36px;overflow:hidden}
+.lower .list-col{flex:1;min-width:0;display:flex;flex-direction:column;justify-content:center;gap:6px;padding:0 36px;overflow:hidden}
+.lower .list{display:flex;align-items:center;gap:30px;overflow:hidden;-webkit-mask-image:linear-gradient(90deg,#000 90%,transparent);mask-image:linear-gradient(90deg,#000 90%,transparent)}
+.lower .lmsg{font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:27px;letter-spacing:2px;text-transform:uppercase;color:#e7edf5;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lower .lcd{flex:none;display:flex;flex-direction:column;justify-content:center;align-items:center;padding:0 34px;min-width:230px;
+  background:rgba(255,255,255,.04);border-left:1px solid var(--line)}
+.lower .lcd .k{font-family:'Barlow Condensed',sans-serif;font-weight:600;font-size:18px;letter-spacing:5px;color:var(--mut)}
+.lower .lcd .cd{font-family:'Orbitron',sans-serif;font-weight:900;font-size:50px;line-height:1.05;color:var(--orange);text-shadow:0 2px 10px rgba(0,0,0,.7)}
 .lower .chip{display:flex;align-items:center;gap:12px}
 .lower .chip .n{display:inline-flex;align-items:center;justify-content:center;min-width:46px;height:40px;padding:0 8px;
   border-radius:8px;background:#1b2230;border:1px solid #2b3445;font-family:'Orbitron';font-weight:700;font-size:20px}

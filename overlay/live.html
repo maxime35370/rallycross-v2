@@ -379,6 +379,16 @@
     return buildPrediction({ objective: obj, standings, driverId: p.driverId, regulation: reg, sessionType: ctrl.sessionType, inSessionIds: movingIds });
   }
 
+  // Compte à rebours simple (scène « À suivre ») : met à jour #ov-cd chaque seconde
+  function startSimpleCd(ctrl) {
+    if (!ctrl.countdownEnd) return;
+    const tick = () => {
+      const el = document.getElementById('ov-cd'); if (el) el.textContent = countdownText(ctrl.countdownEnd);
+      const box = document.querySelector('.lcd'); if (box) box.classList.toggle('zero', ctrl.countdownEnd - Date.now() <= 0);
+    };
+    tick(); cdTimer = setInterval(tick, 1000);
+  }
+
   // Recharge complète sur changement de sélection
   async function reload(ctrl) {
     const gen = ++reloadGen;                 // ce reload supersede tout reload précédent encore en vol
@@ -472,7 +482,8 @@
     const reg = await resolveRegulation(ctrl.championshipId);
     if (!alive()) return;                       // 2e clic arrivé pendant l'attente → ce reload est périmé
     if (!reg || !ctrl.meetingId || !ctrl.category) {
-      root.innerHTML = renderScene(ctrl.scene, { headerText: ctrl.headerText, category: ctrl.category });
+      root.innerHTML = renderScene(ctrl.scene, { headerText: ctrl.headerText, category: ctrl.category, nextText: ctrl.nextText, countdownEnd: ctrl.countdownEnd });
+      if (ctrl.scene === 'next-heat') startSimpleCd(ctrl);
       return;
     }
 
@@ -745,6 +756,7 @@
         raceSub: `${catName} · ${sLabel}`, interimSub: '',
         champSub: `${catName} · ${reg.year}`, social: headerText,
         layout, slots, poleSide, videoLayout: ctrl.videoLayout,
+        nextText: ctrl.nextText, countdownEnd: ctrl.countdownEnd,   // scène « À suivre » : message + chrono
       };
       if (ctrl.scene === 'dashboard') {
         data.race    = sortRace(raceResults || []);
@@ -777,6 +789,7 @@
       unsubResults = uDash;
     } else {
       await renderNow(session ? await getResults(session.id) : []);
+      if (ctrl.scene === 'next-heat') startSimpleCd(ctrl);
     }
   }
 
