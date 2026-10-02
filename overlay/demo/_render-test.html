@@ -13,6 +13,7 @@ import { renderScene } from '../_lib/obs-scenes.js';
 import { predictManche, predictChampSession, predictChampGap } from '../_lib/obs-predict.js';
 import { qrDataUrl, spectatorUrl } from '../_lib/obs-qr.js';
 import { studioConfig, normalizeRows, normalizeBg } from '../_lib/obs-studio.js';
+import { applyFit } from '../_lib/obs-fit.js';
 
 const race = [
   {carNumber:11,lastName:'Grondin',ms:41892,status:null},{carNumber:2,lastName:'Boulbès',ms:42404,status:null},
@@ -306,6 +307,7 @@ data['duel'] = { headerText:'CIRCUIT DE LOHÉAC · SUPERCAR', category:'Supercar
 data['intro'] = { headerText: 'RALLYCROSS DE LOHÉAC · SUPERCAR · D4', nextText: 'Championnat de France 2026 · Manche 5', countdownEnd: Date.now() + 9 * 60000 + 30000, social: '📺 twitch.tv/mawrxime · #RallycrossFR' };
 
 const params = new URLSearchParams(location.search);
+if (params.get('fit')) { applyFit(); window.addEventListener('resize', applyFit); }   // test : ?fit=1 → toile adaptée à la fenêtre (comme live.html)
 const scene = params.get('scene')||'dashboard';
 // fond global (test : ?bg=paddock|asphalt|ember|nitro|forest|chroma|carbon)
 { const l = document.createElement('div'); l.id = 'bg-layer'; l.className = 'bg-' + normalizeBg(params.get('bg')); l.innerHTML = '<i></i>'; document.body.classList.toggle('bg-chroma', normalizeBg(params.get('bg')) === 'chroma'); document.body.insertBefore(l, document.body.firstChild); }
