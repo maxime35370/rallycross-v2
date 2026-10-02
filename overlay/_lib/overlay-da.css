@@ -48,6 +48,14 @@ body.transparent #bg-layer{display:none}
 #bg-layer.bg-chroma{background:#00ff00}
 #bg-layer.bg-chroma::before,#bg-layer.bg-chroma::after,#bg-layer.bg-chroma i{display:none}
 
+/* écrans de données : aucun mouvement en boucle (fond, reflets d'en-têtes, reflet de la pole) */
+body.calm #bg-layer::before,body.calm #bg-layer i,
+body.calm .dpanel .dhead::after,body.calm .col .ch::after,body.calm .gr-ch::after,body.calm .st-head::after,body.calm .dash-top::after,
+body.calm .car.p1::after,body.calm .fi-duel .fi-vs b{animation:none}
+body.calm .dpanel .dhead::after,body.calm .col .ch::after,body.calm .gr-ch::after,body.calm .st-head::after,body.calm .dash-top::after,
+body.calm .car.p1::after{display:none}
+body.calm #bg-layer i{opacity:.7}
+
 body.bg-chroma .da-chevrons,body.bg-chroma .da-streaks{display:none}
 
 /* ════════ 2. LANGAGE COMMUN ════════ */
