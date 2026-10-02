@@ -160,6 +160,21 @@
   .sub-l{font-family:'Barlow Condensed';font-weight:600;font-size:14px;letter-spacing:1px;color:var(--mut);text-transform:uppercase;margin:12px 0 8px}
   .sw{flex:1 1 120px;min-width:110px;display:flex;align-items:center;gap:10px;text-align:left;padding:9px 12px;font-size:16px}
   .sw i{width:30px;height:30px;border-radius:8px;flex:none;box-shadow:inset 0 0 0 1px rgba(255,255,255,.2)}
+  .previews{display:flex;gap:20px;flex-wrap:wrap;margin-bottom:14px}
+  .previews .preview{margin-bottom:0}
+  .pv-label.prep{background:rgba(56,160,255,.95)}
+  .preview.stage{border-color:rgba(56,160,255,.6);box-shadow:0 0 0 2px rgba(56,160,255,.25)}
+  .prep-bar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:20px;padding:12px 16px;border-radius:12px;
+    background:var(--card);border:1px solid var(--line)}
+  body.prep-on .prep-bar{background:rgba(56,160,255,.10);border-color:rgba(56,160,255,.55)}
+  .prep-info{flex:1;min-width:240px;font-family:'Barlow Condensed';font-weight:600;font-size:16px;color:var(--mut)}
+  body.prep-on .prep-info{color:#bcd9ff}
+  .prep-info b{color:#fff}
+  .prep-bar .ghost{flex:none;padding:11px 18px}
+  .prep-bar .take{background:linear-gradient(120deg,var(--orange),#c23d00);border-color:var(--orange);color:#fff;font-family:'Orbitron';font-weight:800;font-size:15px;letter-spacing:1px}
+  .prep-bar .take.nodiff{opacity:.55}
+  .status .chip.prep{color:#8cc4ff;border-color:rgba(56,160,255,.5)}
+  .vis-hint{font-family:'Barlow Condensed';font-size:14px;color:var(--mut);margin-top:6px;text-align:right}
   .ta{width:100%;background:var(--card2);border:1px solid var(--line);color:#fff;border-radius:10px;padding:12px 14px;
     font-family:'Exo 2',sans-serif;font-weight:400;font-size:16px;resize:vertical;min-height:58px}
 </style>
@@ -185,12 +200,21 @@
     <button class="sbtn air" id="cdGo">→ Dashboard</button>
   </div>
 
-  <div class="preview"><span class="pv-label"><span class="d"></span>APERÇU ANTENNE</span><iframe id="pvFrame" title="Aperçu antenne" loading="lazy"></iframe></div>
+  <div class="previews">
+    <div class="preview"><span class="pv-label"><span class="d"></span>ANTENNE</span><iframe id="pvFrame" title="Aperçu antenne" loading="lazy"></iframe></div>
+    <div class="preview stage hidden" id="pvStage"><span class="pv-label prep"><span class="d"></span>PRÉPARATION</span><iframe id="pvFrameStage" title="Aperçu préparation" loading="lazy"></iframe></div>
+  </div>
+  <div class="prep-bar" id="prepBar">
+    <div class="toggle" id="prepToggle"><span>Mode préparation</span><span class="pill"></span></div>
+    <div class="prep-info" id="prepInfo"></div>
+    <button class="ghost" id="prepReset" title="Repartir de ce qui est à l'antenne">↺ Recopier l'antenne</button>
+    <button class="ghost take" id="prepTake">▶ Mettre à l'antenne</button>
+  </div>
 
   <div class="grid" id="panel">
     <div style="display:flex;flex-direction:column;gap:20px">
       <div class="card">
-        <h3>Scène à l'antenne</h3>
+        <h3 id="sceneTitle">Scène à l'antenne</h3>
         <div class="btns" id="scenes">
           <div class="b scene" data-scene="intro">🎬 Intro</div>
           <div class="b scene" data-scene="dashboard">📊 Dashboard</div>
@@ -201,7 +225,8 @@
           <div class="b scene" data-scene="intermission">⏸️ Attente</div>
           <div class="b scene" data-scene="ending">🔚 Fin de stream</div>
         </div>
-        <div class="row2"><div class="toggle" id="visToggle"><span>Overlay visible</span><span class="pill"></span></div></div>
+        <div class="row2"><div class="toggle" id="visToggle"><span>Overlay visible à l'antenne</span><span class="pill"></span></div></div>
+        <div class="vis-hint">Coupe / rétablit TOUT l'overlay à l'antenne. Pour préparer la suite sans toucher à l'antenne : « Mode préparation » ci-dessus.</div>
         <div class="row2" style="justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
           <span>Graphique évolution</span>
           <div class="btns" id="graphModes" style="flex:1 1 190px">
@@ -435,12 +460,19 @@
   import { watchAutoStates, setAutoEnabled, forceAdvanceStep, runAutoTick } from './_lib/obs-prono-auto.js';
   import { watchTwitchBotStatus, beginTwitchBotLink, consumeTwitchBotLinkResult, setTwitchBotMuted } from './_lib/obs-twitch-bot.js';
   import { downloadRecapImage } from './_lib/obs-recap-image.js';
+  import { LIVE_ID, PREVIEW_ID, splitPatch, stageToLivePatch, liveToStagePatch, stageDiff, diffLabels, stageIsStale } from './_lib/obs-stage.js';
   import { BOARD_IDS, BOARD_LABEL, BOTTOM_IDS, BOTTOM_LABEL, BG_THEMES, studioConfig, normalizeBg } from './_lib/obs-studio.js';
 
   const SDK = 'https://www.gstatic.com/firebasejs/10.12.0/';
   await initFirebase();
 
-  let state = { ...DEFAULT_CONTROL };
+  let state = { ...DEFAULT_CONTROL };      // ce qu'on ÉDITE : l'antenne, ou la préparation en mode préparation
+  let liveRemote = { ...DEFAULT_CONTROL }; // document obsControl/live (ce qui est à l'antenne)
+  let stageRemote = null, stageExists = false;   // document obsControl/preview (préparation)
+  let liveSeen = false, stageSeen = false, stageInit = false;
+  let prep = false;                         // mode préparation (mémorisé sur ce navigateur)
+  try { prep = localStorage.getItem('rxchrono.prep') === '1'; } catch { /* stockage indisponible */ }
+  document.body.classList.toggle('prep-on', prep);
   let champ = null, meetings = [], categories = [], gridSlots = [], applyingRemote = false;
 
   // ---------- AUTH ----------
@@ -508,13 +540,19 @@
   await loadChampionship(initialChamp);
 
   // ---------- ÉCRITURE (le SEUL write : doc obsControl/live) ----------
+  // Mode normal : tout part à l'antenne (obsControl/live). Mode préparation : tout part dans la
+  // préparation (obsControl/preview), SAUF les réglages « toujours directs » (visible, chrono) — cf. obs-stage.js.
   function push(patch) {
     Object.assign(state, patch);
-    if (!applyingRemote) setControl(patch).catch(err => {
+    if (applyingRemote) return;
+    const fail = err => {
       console.error('[régie] écriture refusée', err.code, err.message);
       const bar = document.getElementById('errBar');
       if (bar) { bar.textContent = '⚠️ Écriture refusée (' + (err.code || err.message) + ') — vérifie la règle obsControl (write) et ta connexion.'; bar.style.display = ''; }
-    });
+    };
+    const { stage, live } = splitPatch(patch, prep);
+    if (stage) setControl(stage, PREVIEW_ID).catch(fail);
+    if (live) setControl(live, LIVE_ID).catch(fail);
   }
 
   // ---------- RENDU UI ----------
@@ -524,12 +562,13 @@
     document.querySelectorAll('#scenes .b').forEach(b => b.classList.toggle('on', b.dataset.scene === state.scene));
     document.querySelectorAll('#cats .b').forEach(b => b.classList.toggle('on', b.dataset.cat === state.category));
     document.querySelectorAll('#phases .b').forEach(b => b.classList.toggle('on', b.dataset.ph === `${state.sessionType}-${state.sessionNum}`));
-    document.getElementById('visToggle').classList.toggle('on', !!state.visible);
+    document.getElementById('visToggle').classList.toggle('on', !!liveRemote.visible);   // toujours l'état ANTENNE
     document.querySelectorAll('#graphModes .b').forEach(b => b.classList.toggle('on', b.dataset.gm === (state.graphMode || 'places')));
-    document.getElementById('liveBadge').classList.toggle('off', !state.visible);
-    document.getElementById('liveTxt').textContent = state.visible ? 'À L\'ANTENNE' : 'MASQUÉ';
+    document.getElementById('liveBadge').classList.toggle('off', !liveRemote.visible);
+    document.getElementById('liveTxt').textContent = liveRemote.visible ? 'À L\'ANTENNE' : 'MASQUÉ';
     document.getElementById('catN').textContent = catName();
     document.getElementById('phN').textContent = phases.find(p => p.t === state.sessionType && p.n === state.sessionNum)?.l || '—';
+    document.getElementById('sceneTitle').textContent = prep ? 'Scène · préparation' : "Scène à l'antenne";
     document.getElementById('gridN').textContent = `${catName()} · ${document.getElementById('phN').textContent}`;
     if (meetSel.value !== state.meetingId) meetSel.value = state.meetingId;
     const seasonTwitchAirBtn = document.getElementById('seasonTwitchAirBtn');
@@ -538,11 +577,17 @@
       seasonTwitchAirBtn.textContent = onAir ? "● À l'antenne" : '→ Antenne';
       seasonTwitchAirBtn.classList.toggle('on', onAir);
     }
+    const SCENE_NAME = { dashboard:'📊 Dashboard', studio:'📺 Plateau', intro:'🎬 Intro', grid:'🏁 Grille', fiche:'👤 Fiche / Duel', pronostic:'🎯 Pronostic',
+      'twitch-leaderboard':'🎮 Classement Twitch', 'next-heat':'⏭️ À suivre', intermission:'⏸️ Attente', ending:'🔚 Fin de stream' };
+    const catOf = id => categories.find(c => c.id === id)?.name || id || '—';
+    const phOf = (t, n) => phases.find(p => p.t === t && p.n === n)?.l || '—';
     document.getElementById('status').innerHTML =
-      `À l'antenne : <span class="chip">${({dashboard:'📊 Dashboard',studio:'📺 Plateau',intro:'🎬 Intro',grid:'🏁 Grille',fiche:'👤 Fiche / Duel',pronostic:'🎯 Pronostic','twitch-leaderboard':'🎮 Classement Twitch','next-heat':'⏭️ À suivre',intermission:'⏸️ Attente',ending:'🔚 Fin de stream'})[state.scene]||state.scene}</span>
-       <span class="chip o">${catName()}</span>
-       <span class="chip">${document.getElementById('phN').textContent}</span>
-       · <b style="color:${state.visible?'var(--green)':'#888'}">${state.visible?'visible':'masqué'}</b>`;
+      `À l'antenne : <span class="chip">${SCENE_NAME[liveRemote.scene] || liveRemote.scene}</span>
+       <span class="chip o">${catOf(liveRemote.category)}</span>
+       <span class="chip">${phOf(liveRemote.sessionType, liveRemote.sessionNum)}</span>
+       · <b style="color:${liveRemote.visible ? 'var(--green)' : '#888'}">${liveRemote.visible ? 'visible' : 'masqué'}</b>`
+      + (prep ? ` &nbsp;│&nbsp; Préparation : <span class="chip prep">${SCENE_NAME[state.scene] || state.scene}</span>
+       <span class="chip o">${catName()}</span> <span class="chip">${document.getElementById('phN').textContent}</span>` : '');
     // bandeau prédiction
     const pr = state.predict || {};
     document.getElementById('predToggle').classList.toggle('on', !!pr.enabled);
@@ -676,7 +721,7 @@
     push({ championshipId: c?.id || '', category: cat, meetingId: mid });
     paint(); loadPredictDrivers(); watchPronoAuto();
   };
-  document.getElementById('visToggle').onclick = () => { push({ visible: !state.visible }); paint(); };
+  document.getElementById('visToggle').onclick = () => { push({ visible: !liveRemote.visible }); paint(); };
   document.querySelectorAll('#graphModes .b').forEach(b => b.onclick = () => { push({ graphMode: b.dataset.gm }); paint(); });
   document.getElementById('hdrBtn').onclick = () => push({ headerText: document.getElementById('hdr').value });
   document.getElementById('bilanBtn').onclick = async () => {
@@ -1015,7 +1060,7 @@
   // ---------- ALERTE : le compte à rebours est arrivé à 0 ----------
   // Prévient le régisseur (bannière en haut, bip, titre d'onglet clignotant) que la reprise approche.
   const CD_SCENES = ['intro', 'intermission', 'ending', 'next-heat'];
-  const cdOnAir = () => CD_SCENES.includes(state.scene) || (state.scene === 'studio' && studioConfig(state.studio).bottom === 'wait');
+  const cdOnAir = () => CD_SCENES.includes(liveRemote.scene) || (liveRemote.scene === 'studio' && studioConfig(liveRemote.studio).bottom === 'wait');
   const baseTitle = document.title;
   let cdAck = 0, cdBeeped = 0, cdArmed = 0;
   function beep() {
@@ -1029,7 +1074,7 @@
     } catch { /* audio bloqué : la bannière suffit */ }
   }
   function cdTick() {
-    const end = state.countdownEnd || 0, left = end - Date.now();
+    const end = liveRemote.countdownEnd || 0, left = end - Date.now();
     const chip = document.getElementById('cdLeft');
     if (chip) chip.textContent = !end ? '—' : left > 0
       ? String(Math.floor(left / 60000)).padStart(2, '0') + ':' + String(Math.floor(left / 1000) % 60).padStart(2, '0') : 'terminé';
@@ -1041,9 +1086,9 @@
     document.title = show ? '⏱ REPRISE IMMINENTE — Régie' : baseTitle;
   }
   setInterval(cdTick, 1000);
-  document.getElementById('cdAck').onclick = () => { cdAck = state.countdownEnd || 0; cdTick(); };
+  document.getElementById('cdAck').onclick = () => { cdAck = liveRemote.countdownEnd || 0; cdTick(); };
   document.getElementById('cdPlus').onclick = () => { startCountdown(2); cdTick(); };
-  document.getElementById('cdGo').onclick = () => { cdAck = state.countdownEnd || 0; push({ scene: 'dashboard' }); paint(); };
+  document.getElementById('cdGo').onclick = () => { cdAck = liveRemote.countdownEnd || 0; setControl({ scene: 'dashboard' }, LIVE_ID); };   // direct à l'antenne, même en préparation
 
   // ---------- PLATEAU 1/3 · 2/3 + FOND GLOBAL ----------
   function pushStudio(patch) { push({ studio: { ...studioConfig(state.studio), ...patch } }); paint(); }
@@ -1584,18 +1629,69 @@
     const logos = [...(state.infoBand?.logos || [])]; logos.splice(+rm.dataset.iblogo, 1); pushInfoBand({ logos });
   });
 
-  // ---------- INIT DEPUIS LE DOC EXISTANT ----------
-  watchControl(c => {
+  // ---------- MODE PRÉPARATION ----------
+  const stageDoc = () => ({ ...DEFAULT_CONTROL, ...(stageRemote || {}) });
+  // la préparation telle qu'AFFICHÉE dans la régie (document + réglages locaux, ex. championnat courant)
+  const stageView = () => ({ ...stageDoc(), ...state });
+  // (re)part de l'antenne : la préparation devient une copie de ce qui est diffusé
+  function copyLiveToStage() {
+    const patch = liveToStagePatch(liveRemote);
+    stageRemote = { ...stageDoc(), ...patch, updatedAt: Date.now() };
+    setControl(patch, PREVIEW_ID).catch(e => flashErr('Préparation : écriture refusée (' + (e.code || e.message) + ')'));
+  }
+  // à l'activation (ou au chargement si le mode est mémorisé) : préparation absente ou ancienne → on repart de l'antenne
+  function ensureStage() {
+    if (!prep || stageInit || !liveSeen || !stageSeen) return;
+    stageInit = true;
+    if (stageIsStale(stageRemote, stageExists)) copyLiveToStage();
+  }
+  function renderPrep() {
+    document.body.classList.toggle('prep-on', prep);
+    document.getElementById('prepToggle').classList.toggle('on', prep);
+    document.getElementById('pvStage').classList.toggle('hidden', !prep);
+    ['prepReset', 'prepTake'].forEach(id => document.getElementById(id).classList.toggle('hidden', !prep));
+    const fr = document.getElementById('pvFrameStage');
+    if (prep && !fr.getAttribute('src')) fr.src = 'live?preview=1&doc=preview';   // chargé à la demande
+    const info = document.getElementById('prepInfo'), take = document.getElementById('prepTake');
+    if (!prep) { info.innerHTML = "Désactivé : tes réglages partent <b>directement à l'antenne</b>. Active-le pour préparer la suite et la tester avant de la diffuser."; return; }
+    const d = stageDiff(stageView(), liveRemote);
+    take.classList.toggle('nodiff', !d.length);
+    info.innerHTML = d.length
+      ? `Rien n'est diffusé tant que tu n'as pas cliqué <b>▶ Mettre à l'antenne</b>. À envoyer : <b>${diffLabels(d).join(', ')}</b>.`
+      : `Préparation identique à l'antenne. Change un réglage : il apparaît dans <b>PRÉPARATION</b> sans toucher à l'antenne.`;
+  }
+  function takeToAir() {
+    if (!prep) return;
+    const patch = stageToLivePatch(stageView());
+    setControl(patch, LIVE_ID).then(() => flashErr('✔ Préparation envoyée à l\'antenne', true))
+      .catch(e => flashErr('Envoi à l\'antenne refusé (' + (e.code || e.message) + ')'));
+  }
+  document.getElementById('prepToggle').onclick = () => {
+    prep = !prep;
+    try { localStorage.setItem('rxchrono.prep', prep ? '1' : '0'); } catch { /* ignore */ }
+    stageInit = false; ensureStage();
+    syncFromRemote();
+  };
+  document.getElementById('prepTake').onclick = takeToAir;
+  document.getElementById('prepReset').onclick = () => { copyLiveToStage(); syncFromRemote(); };
+
+  // ---------- INIT DEPUIS LES DOCS EXISTANTS ----------
+  // L'éditeur affiche l'antenne, ou la préparation en mode préparation.
+  function syncFromRemote() {
+    const c = prep ? stageDoc() : liveRemote;
     applyingRemote = true;
     state = { ...state, ...c, championshipId: champ?.id || c.championshipId };
     document.getElementById('hdr').value = state.headerText || '';
     document.getElementById('nextTxt').value = state.nextText || '';
     paint();
+    renderPrep();
     // recharge la liste pilotes si la session ciblée a changé (depuis une autre régie / au 1er chargement)
     const selKey = [state.meetingId, state.category, state.sessionType, state.sessionNum].join('|');
     if (selKey !== lastPredSelKey) loadPredictDrivers();
     applyingRemote = false;
-  });
+  }
+  watchControl(c => { liveRemote = c; liveSeen = true; ensureStage(); syncFromRemote(); });
+  watchControl((c, exists) => { stageRemote = c; stageExists = exists; stageSeen = true; ensureStage(); if (prep) syncFromRemote(); else renderPrep(); }, null, PREVIEW_ID);
 
   // valeurs initiales si le doc est vide
   if (!state.category && categories.length) state.category = categories[0].id;

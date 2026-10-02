@@ -43,6 +43,10 @@
   if (qs.get('transparent')) document.body.classList.add('transparent');
   // ?preview=1 → moniteur d'aperçu régie : on n'active PAS la caméra (pas de getUserMedia)
   const PREVIEW = !!qs.get('preview');
+  // ?doc=preview → moniteur « PRÉPARATION » de la régie : lit le document de préparation (obsControl/preview)
+  // au lieu de l'antenne. Toujours visible, sans lecteur vidéo ni caméra (pas de double son / double flux).
+  const DOC = qs.get('doc') === 'preview' ? 'preview' : 'live';
+  const STAGE = DOC !== 'live';
 
   function diag(msg, sub) {
     root.innerHTML = `<div class="ov-diag"><div class="t">🏁 RX CHRONO</div>
@@ -240,6 +244,14 @@
     vidStage.className = off ? '' : ('on ' + layout);
     vidCorner = off ? 'none' : layout; fitVideoToColumn();
     if (off) { showStart(false); vidErr(''); return; }
+    if (STAGE) {   // préparation : simple repère, aucun lecteur ni caméra
+      stopCamera(); showStart(false); vidErr('');
+      if (vidMode !== 'stage') {
+        vidStage.innerHTML = '<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:#7a8699;font-family:Orbitron,sans-serif;font-weight:800;font-size:20px;letter-spacing:2px">▶ VIDÉO</div>';
+        vidMode = 'stage'; vidUrl = '';
+      }
+      return;
+    }
     if (src.type === 'url' && src.value) {
       stopCamera(); showStart(false); vidErr('');
       const emb = embedUrl(src.value);
@@ -821,6 +833,7 @@
   async function startControl() {
     if (ctrlUnsub) { ctrlUnsub(); ctrlUnsub = null; }
     ctrlUnsub = await watchControl(async (ctrl) => {
+      if (STAGE) ctrl = { ...ctrl, visible: true };   // le moniteur de préparation montre toujours la scène
       applyVisibility(ctrl.visible);
       applyBg(ctrl);   // fond global : appliqué en direct (sans recharger la scène)
       applyVideo(ctrl);   // source/placement vidéo : appliqué en direct (sans recharger la scène)
@@ -840,7 +853,7 @@
         : (err.code || err.message));
       cacheKey = '';
       setTimeout(startControl, 5000);   // reconnexion auto (règle ajoutée, coupure réseau…)
-    });
+    }, DOC);
   }
   startControl();
 </script>
