@@ -205,6 +205,28 @@
     if (f) f.addEventListener('load', () => setTimeout(applyVolume, 400));   // volume dès que le lecteur est prêt
   }
 
+  // Vidéo en coin : on l'ajuste à la LARGEUR RÉELLE de la colonne qu'elle occupe, pour qu'elle ne
+  // passe jamais sous le panneau voisin (colonnes étroites : manche terminée + graphique, finale à 4 colonnes…).
+  // Le coin réserve sa hauteur via --vidh (voir overlay.css) ; 16/9 conservé.
+  let vidCorner = 'none';
+  function fitVideoToColumn() {
+    const st = document.documentElement.style;
+    const reset = () => { st.removeProperty('--vidw'); st.removeProperty('--vidh'); st.removeProperty('--vidx'); };
+    if (!['hg', 'hd', 'bg', 'bd'].includes(vidCorner)) { reset(); return; }
+    const body = root.querySelector('.dash-body, .sess-body');
+    const cols = body ? [...body.children] : [];
+    if (!cols.length) { reset(); return; }
+    const col = (vidCorner === 'hg' || vidCorner === 'bg') ? cols[0] : cols[cols.length - 1];
+    // offsetLeft/offsetWidth : px de mise en page (insensibles à la mise à l'échelle de la fenêtre)
+    const left = body.offsetLeft + col.offsetLeft, width = col.offsetWidth;
+    if (!width) { reset(); return; }
+    const w = Math.max(300, Math.min(width, 640));
+    st.setProperty('--vidw', w + 'px'); st.setProperty('--vidh', (w * 9 / 16) + 'px');
+    // aligné sur le bord extérieur de la colonne
+    st.setProperty('--vidx', (vidCorner === 'hg' || vidCorner === 'bg' ? left : 1920 - left - width) + 'px');
+  }
+  new MutationObserver(fitVideoToColumn).observe(root, { childList: true });   // à chaque changement de scène
+
   // Appliqué à CHAQUE mise à jour du contrôle (indépendant du rechargement de scène) :
   // change la source/placement/volume de la vidéo sans re-render les tableaux.
   function applyVideo(ctrl) {
@@ -216,6 +238,7 @@
     const src = ctrl.videoSource || { type: 'camera', value: '' };
     const off = layout === 'none' || !ctrl.visible;   // suit aussi le masquage global de l'overlay
     vidStage.className = off ? '' : ('on ' + layout);
+    vidCorner = off ? 'none' : layout; fitVideoToColumn();
     if (off) { showStart(false); vidErr(''); return; }
     if (src.type === 'url' && src.value) {
       stopCamera(); showStart(false); vidErr('');
