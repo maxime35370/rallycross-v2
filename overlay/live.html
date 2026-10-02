@@ -114,7 +114,10 @@
     const theme = normalizeBg(qs.get('bg') || ctrl.bgTheme);
     const cls = 'bg-' + theme;
     if (bgLayer.dataset.theme !== cls) { bgLayer.className = cls; bgLayer.dataset.theme = cls; }
-    document.body.classList.toggle('bg-chroma', theme === 'chroma');   // coupe les effets colorés (détourage propre)
+    document.body.classList.toggle('bg-chroma', theme === 'chroma');
+    // écrans de données (grille, classements, duel…) : fond et reflets FIXES, sans mouvement qui distrait.
+    // Le mouvement continu est réservé aux scènes d'ambiance (intro / attente / fin).
+    document.body.classList.toggle('calm', !['intro', 'intermission', 'ending'].includes(ctrl.scene));   // coupe les effets colorés (détourage propre)
   }
 
   // ─────────────────────────────────────────────────────────
