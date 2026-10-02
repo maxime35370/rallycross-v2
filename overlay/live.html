@@ -24,20 +24,14 @@
   import { buildPrediction } from './_lib/obs-predict.js';
   import { watchPronostic, watchSeasonScores, getTwitchProfile } from './_lib/obs-pronostics.js';
   import { qrDataUrl, spectatorUrl } from './_lib/obs-qr.js';
+  import { applyFit, canvasWidth } from './_lib/obs-fit.js';
   import { studioConfig, boardCycle, normalizeRows, normalizeBg, BOARD_LABEL } from './_lib/obs-studio.js';
 
   const root = document.getElementById('root');
 
-  // Ajustement à la fenêtre : l'overlay est dessiné en 1920×1080. Dans un onglet de navigateur
-  // plus petit (ou plus grand), on le met à l'échelle pour qu'il tienne en entier (rien de coupé).
-  // Dans OBS en 1920×1080 le facteur vaut 1 : aucun effet.
-  function fitToWindow() {
-    const k = Math.min(window.innerWidth / 1920, window.innerHeight / 1080);
-    const b = document.body.style;
-    if (!k || Math.abs(k - 1) < 0.002) { b.transform = ''; return; }
-    b.transformOrigin = '0 0'; b.transform = `scale(${k})`;
-  }
-  fitToWindow(); window.addEventListener('resize', fitToWindow);
+  // Toile adaptée à la fenêtre (échelle + extension dans l'autre dimension) : l'overlay remplit toute la
+  // fenêtre, quel que soit son format. À 1920×1080 (OBS) : aucun effet. Voir _lib/obs-fit.js.
+  applyFit(); window.addEventListener('resize', () => { applyFit(); fitVideoToColumn(); });
   const qs = new URLSearchParams(location.search);
   // fond sombre par défaut ; ?transparent=1 → fond transparent (superposition vidéo OBS)
   if (qs.get('transparent')) document.body.classList.add('transparent');
@@ -227,7 +221,7 @@
     const w = Math.max(300, Math.min(width, 640));
     st.setProperty('--vidw', w + 'px'); st.setProperty('--vidh', (w * 9 / 16) + 'px');
     // aligné sur le bord extérieur de la colonne
-    st.setProperty('--vidx', (vidCorner === 'hg' || vidCorner === 'bg' ? left : 1920 - left - width) + 'px');
+    st.setProperty('--vidx', (vidCorner === 'hg' || vidCorner === 'bg' ? left : canvasWidth() - left - width) + 'px');
   }
   new MutationObserver(fitVideoToColumn).observe(root, { childList: true });   // à chaque changement de scène
 

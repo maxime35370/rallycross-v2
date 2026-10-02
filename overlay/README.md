@@ -75,6 +75,13 @@ match /obsControl/{doc} {
 }
 ```
 
+## Adaptation à la taille de l'écran
+
+L'overlay est conçu sur une base 1920×1080 mais s'**adapte à la fenêtre**, quel que soit son format
+(`_lib/obs-fit.js`) : la page est mise à l'échelle sur la dimension la plus contraignante, puis la « toile »
+est agrandie dans l'autre dimension. Les tableaux et la scène Plateau (1/3 · 2/3, vidéo 16/9) se répartissent
+sur toute la fenêtre, sans bandes vides ni déformation. À 1920×1080 (source navigateur OBS) : rendu identique.
+
 ## Mode préparation (aperçu avant antenne)
 
 Deux documents Firestore : `obsControl/live` (**ANTENNE**) et `obsControl/preview` (**PRÉPARATION**).
