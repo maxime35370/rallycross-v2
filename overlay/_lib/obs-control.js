@@ -58,9 +58,9 @@ export const DEFAULT_CONTROL = {
  * @param {(state:object)=>void} cb
  * @returns {Promise<()=>void>} fonction d'arrêt
  */
-export function watchControl(cb, onErr) {
-  return watchDoc(CTRL_COL, CTRL_ID, doc => {
-    cb({ ...DEFAULT_CONTROL, ...(doc || {}) });
+export function watchControl(cb, onErr, docId = CTRL_ID) {
+  return watchDoc(CTRL_COL, docId, doc => {
+    cb({ ...DEFAULT_CONTROL, ...(doc || {}) }, !!doc);   // 2e argument : le document existe-t-il ?
   }, onErr);
 }
 
@@ -68,9 +68,10 @@ export function watchControl(cb, onErr) {
  * Met à jour (merge) l'état de contrôle. Nécessite d'être authentifié
  * (cf. règles de sécurité Firestore).
  * @param {object} patch
+ * @param {string} [docId] 'live' (antenne, défaut) ou 'preview' (préparation)
  */
-export function setControl(patch) {
-  return setDocMerged(CTRL_COL, CTRL_ID, { ...patch, updatedAt: Date.now() });
+export function setControl(patch, docId = CTRL_ID) {
+  return setDocMerged(CTRL_COL, docId, { ...patch, updatedAt: Date.now() });
 }
 
 /**

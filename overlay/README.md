@@ -75,6 +75,20 @@ match /obsControl/{doc} {
 }
 ```
 
+## Mode préparation (aperçu avant antenne)
+
+Deux documents Firestore : `obsControl/live` (**ANTENNE**) et `obsControl/preview` (**PRÉPARATION**).
+
+- **Désactivé** (défaut) : chaque réglage de la régie part directement à l'antenne.
+- **Activé** : les réglages (scène, catégorie, phase, plateau, textes, fond, vidéo…) s'écrivent dans la préparation ;
+  l'antenne ne bouge pas. Un 2ᵉ moniteur « PRÉPARATION » (`live.html?doc=preview`, toujours visible, sans lecteur
+  vidéo ni caméra) montre le résultat. **▶ Mettre à l'antenne** copie la préparation vers l'antenne ;
+  **↺ Recopier l'antenne** repart de l'antenne. L'indicateur liste ce qui sera envoyé.
+- Restent **toujours directs** : « Overlay visible à l'antenne » (coupe tout l'overlay) et le **chrono**
+  (instants absolus — un chrono préparé serait faux au moment de la prise d'antenne).
+- Au premier passage en préparation (ou si la préparation date de plus de 12 h), elle repart d'une copie de l'antenne.
+- Code : logique pure dans `_lib/obs-stage.js` (testée : `tests/obsStage.test.js`).
+
 ## Scènes, fond global et DA « Pit Lane »
 
 Scènes pilotables depuis `/control` : 🎬 Intro · 📊 Dashboard · 📺 **Plateau 1/3·2/3** · 🏁 Grille ·
