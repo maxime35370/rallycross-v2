@@ -75,6 +75,16 @@ match /obsControl/{doc} {
 }
 ```
 
+## Transitions douces
+
+Tout changement se fait en douceur (animations **à usage unique**, en `opacity` / `transform`, légères dans OBS) — `_lib/obs-motion.js` :
+- **Changement de scène, de catégorie ou de session** : l'ancienne scène s'efface (0,45 s) par-dessus la nouvelle, qui apparaît en fondu.
+  Aucun fondu si l'overlay est masqué (il ne révèle rien).
+- **Rotation des classements (Plateau)** : l'ancien panneau s'efface pendant que le nouveau entre.
+- **Classement qui change de rang** (nouveau chrono saisi) : les lignes **glissent** vers leur nouvelle place au lieu de sauter ;
+  une ligne nouvelle apparaît en fondu. Valable pour le Dashboard, les colonnes de manche, la grille combinée et le Plateau.
+- **Couleur de fond** (changement de catégorie) : la nouvelle couleur apparaît en fondu (0,9 s) par-dessus l'ancienne.
+
 ## Adaptation à la taille de l'écran
 
 L'overlay est conçu sur une base 1920×1080 mais s'**adapte à la fenêtre**, quel que soit son format

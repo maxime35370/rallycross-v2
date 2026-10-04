@@ -25,49 +25,65 @@
   --st-bandtop:calc(var(--st-vy) + var(--st-vh) + 94px);           /* haut de la zone bandeau (sous l'entête 64px) */
 }
 
+/* ════════ 0. TRANSITIONS (one-shot, jamais en boucle) ════════ */
+/* nouvelle scène : fondu d'entrée ; ancienne scène : copie qui s'efface par-dessus (voir obs-motion.js) */
+#root.scene-in{animation:sceneIn .5s ease}
+@keyframes sceneIn{from{opacity:0}}
+.ov-ghost{animation:ghostOut .45s ease forwards;pointer-events:none}
+.ov-ghost *{animation:none !important}
+@keyframes ghostOut{to{opacity:0}}
+/* classement qui change de rang : les lignes glissent (transition posée en ligne par obs-motion.js) ; nouvelle ligne : fondu */
+.row-new{animation:rowNew .55s ease both}
+@keyframes rowNew{from{opacity:0;transform:translateX(-18px)}}
+/* rotation des classements (Plateau) : l'ancien panneau s'efface pendant que le nouveau entre */
+.st-ghost{position:absolute;z-index:2;pointer-events:none;animation:ghostOut .45s ease forwards}
+.st-ghost *{animation:none !important}
+/* fond : fondu entre deux couleurs (changement de catégorie) */
+.bgl{transition:opacity .9s ease}
+
 /* ════════ 1. FONDS GLOBAUX ════════ */
-#bg-layer{position:fixed;inset:0;z-index:0;overflow:hidden;pointer-events:none;
+.bgl{position:fixed;inset:0;z-index:0;overflow:hidden;pointer-events:none;
   background:radial-gradient(1400px 820px at 50% -8%, #12161f, #0a0c11 55%, #070809)}
-body.transparent #bg-layer{display:none}
-#bg-layer::before{content:"";position:absolute;inset:-20% -40%;opacity:.55;
+body.transparent .bgl{display:none}
+.bgl::before{content:"";position:absolute;inset:-20% -40%;opacity:.55;
   background:repeating-linear-gradient(115deg,transparent 0 120px,rgba(255,255,255,.035) 120px 124px);
   animation:bgDrift 38s linear infinite;will-change:transform}
-#bg-layer::after{content:"";position:absolute;inset:0;
+.bgl::after{content:"";position:absolute;inset:0;
   background:radial-gradient(ellipse at 50% 50%,transparent 55%,rgba(0,0,0,.42) 100%)}
 @keyframes bgDrift{from{transform:translateX(0)}to{transform:translateX(124px)}}
 /* lueur orange qui respire (sous le contenu) */
-#bg-layer i{position:absolute;left:-10%;bottom:-30%;width:70%;height:70%;border-radius:50%;
+.bgl i{position:absolute;left:-10%;bottom:-30%;width:70%;height:70%;border-radius:50%;
   background:radial-gradient(closest-side,rgba(255,85,0,.22),transparent);animation:bgGlow 9s ease-in-out infinite;will-change:opacity,transform}
 @keyframes bgGlow{0%,100%{opacity:.5;transform:scale(1)}50%{opacity:1;transform:scale(1.08)}}
 
-#bg-layer.bg-carbon::before,#bg-layer.bg-carbon i{display:none}
-#bg-layer.bg-paddock{background:radial-gradient(1500px 900px at 20% 110%,#1d4a8c,#0f2347 45%,#070f22)}
-#bg-layer.bg-paddock i{background:radial-gradient(closest-side,rgba(255,120,40,.26),transparent)}
-#bg-layer.bg-asphalt{background:radial-gradient(1400px 900px at 70% -10%,#4a505c,#262a32 50%,#14161a)}
-#bg-layer.bg-asphalt::before{opacity:.9;background:repeating-linear-gradient(115deg,transparent 0 60px,rgba(255,255,255,.045) 60px 62px)}
-#bg-layer.bg-ember{background:radial-gradient(1500px 900px at 80% 115%,#a33a12,#4a1708 45%,#170706)}
-#bg-layer.bg-ember i{background:radial-gradient(closest-side,rgba(255,170,60,.3),transparent)}
-#bg-layer.bg-nitro{background:radial-gradient(1500px 900px at 15% -10%,#5a34a8,#2a1660 48%,#0d0720)}
-#bg-layer.bg-nitro i{background:radial-gradient(closest-side,rgba(255,60,200,.25),transparent)}
-#bg-layer.bg-forest{background:radial-gradient(1500px 900px at 85% 110%,#2a7a56,#124030 46%,#07140e)}
-#bg-layer.bg-forest i{background:radial-gradient(closest-side,rgba(255,200,60,.2),transparent)}
-#bg-layer.bg-ocean{background:radial-gradient(1500px 900px at 15% 110%,#17909c,#0b4a54 46%,#041418)}
-#bg-layer.bg-ocean i{background:radial-gradient(closest-side,rgba(255,150,70,.22),transparent)}
-#bg-layer.bg-gold{background:radial-gradient(1500px 900px at 80% -10%,#b88a22,#5a410c 48%,#1a1203)}
-#bg-layer.bg-gold i{background:radial-gradient(closest-side,rgba(255,85,0,.28),transparent)}
-#bg-layer.bg-crimson{background:radial-gradient(1500px 900px at 20% -10%,#b02244,#5a0f22 48%,#1a050a)}
-#bg-layer.bg-crimson i{background:radial-gradient(closest-side,rgba(255,120,60,.26),transparent)}
+.bgl.bg-carbon::before,.bgl.bg-carbon i{display:none}
+.bgl.bg-paddock{background:radial-gradient(1500px 900px at 20% 110%,#1d4a8c,#0f2347 45%,#070f22)}
+.bgl.bg-paddock i{background:radial-gradient(closest-side,rgba(255,120,40,.26),transparent)}
+.bgl.bg-asphalt{background:radial-gradient(1400px 900px at 70% -10%,#4a505c,#262a32 50%,#14161a)}
+.bgl.bg-asphalt::before{opacity:.9;background:repeating-linear-gradient(115deg,transparent 0 60px,rgba(255,255,255,.045) 60px 62px)}
+.bgl.bg-ember{background:radial-gradient(1500px 900px at 80% 115%,#a33a12,#4a1708 45%,#170706)}
+.bgl.bg-ember i{background:radial-gradient(closest-side,rgba(255,170,60,.3),transparent)}
+.bgl.bg-nitro{background:radial-gradient(1500px 900px at 15% -10%,#5a34a8,#2a1660 48%,#0d0720)}
+.bgl.bg-nitro i{background:radial-gradient(closest-side,rgba(255,60,200,.25),transparent)}
+.bgl.bg-forest{background:radial-gradient(1500px 900px at 85% 110%,#2a7a56,#124030 46%,#07140e)}
+.bgl.bg-forest i{background:radial-gradient(closest-side,rgba(255,200,60,.2),transparent)}
+.bgl.bg-ocean{background:radial-gradient(1500px 900px at 15% 110%,#17909c,#0b4a54 46%,#041418)}
+.bgl.bg-ocean i{background:radial-gradient(closest-side,rgba(255,150,70,.22),transparent)}
+.bgl.bg-gold{background:radial-gradient(1500px 900px at 80% -10%,#b88a22,#5a410c 48%,#1a1203)}
+.bgl.bg-gold i{background:radial-gradient(closest-side,rgba(255,85,0,.28),transparent)}
+.bgl.bg-crimson{background:radial-gradient(1500px 900px at 20% -10%,#b02244,#5a0f22 48%,#1a050a)}
+.bgl.bg-crimson i{background:radial-gradient(closest-side,rgba(255,120,60,.26),transparent)}
 /* chroma : aplat vert pur, aucun effet (incrustation par un mélangeur externe) */
-#bg-layer.bg-chroma{background:#00ff00}
-#bg-layer.bg-chroma::before,#bg-layer.bg-chroma::after,#bg-layer.bg-chroma i{display:none}
+.bgl.bg-chroma{background:#00ff00}
+.bgl.bg-chroma::before,.bgl.bg-chroma::after,.bgl.bg-chroma i{display:none}
 
 /* écrans de données : aucun mouvement en boucle (fond, reflets d'en-têtes, reflet de la pole) */
-body.calm #bg-layer::before,body.calm #bg-layer i,
+body.calm .bgl::before,body.calm .bgl i,
 body.calm .dpanel .dhead::after,body.calm .col .ch::after,body.calm .gr-ch::after,body.calm .st-head::after,body.calm .dash-top::after,
 body.calm .car.p1::after,body.calm .fi-duel .fi-vs b{animation:none}
 body.calm .dpanel .dhead::after,body.calm .col .ch::after,body.calm .gr-ch::after,body.calm .st-head::after,body.calm .dash-top::after,
 body.calm .car.p1::after{display:none}
-body.calm #bg-layer i{opacity:.7}
+body.calm .bgl i{opacity:.7}
 
 body.bg-chroma .da-chevrons,body.bg-chroma .da-streaks{display:none}
 
@@ -199,7 +215,7 @@ body.studio-on #vid-stage.on.st{display:block}
 .st-board{position:relative;flex:1;min-height:0;display:flex;flex-direction:column;background:var(--panel);border-radius:14px;overflow:hidden;
   box-shadow:0 0 0 1px rgba(255,255,255,.07),0 26px 70px rgba(0,0,0,.55)}
 .st-board.enter{animation:stBoardIn .6s both}
-@keyframes stBoardIn{from{opacity:0;transform:translateX(-40px)}to{opacity:1;transform:none}}
+@keyframes stBoardIn{from{opacity:0;transform:translateX(-24px)}to{opacity:1;transform:none}}
 .st-head{flex:none;display:flex;align-items:center;gap:12px;padding:16px 22px;
   background:linear-gradient(100deg,var(--orange),#c23d00 78%);font-family:'Orbitron',sans-serif;font-weight:800;font-size:22px;letter-spacing:.5px;text-transform:uppercase}
 .st-head .d{width:10px;height:10px;border-radius:50%;background:#fff;animation:blink 1.2s infinite;flex:none}

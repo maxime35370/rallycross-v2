@@ -310,7 +310,7 @@ const params = new URLSearchParams(location.search);
 if (params.get('fit')) { applyFit(); window.addEventListener('resize', applyFit); }   // test : ?fit=1 → toile adaptée à la fenêtre (comme live.html)
 const scene = params.get('scene')||'dashboard';
 // fond global (test : ?bg=paddock|asphalt|ember|nitro|forest|chroma|carbon)
-{ const l = document.createElement('div'); l.id = 'bg-layer'; l.className = 'bg-' + normalizeBg(params.get('bg')); l.innerHTML = '<i></i>'; document.body.classList.toggle('bg-chroma', normalizeBg(params.get('bg')) === 'chroma'); document.body.insertBefore(l, document.body.firstChild); }
+{ const l = document.createElement('div'); l.className = 'bgl bg-' + normalizeBg(params.get('bg')); l.innerHTML = '<i></i>'; document.body.classList.toggle('bg-chroma', normalizeBg(params.get('bg')) === 'chroma'); document.body.insertBefore(l, document.body.firstChild); }
 const vl = params.get('vl');   // test placement vidéo : hg|hd|bg|bd|full
 const type = (scene === 'ordre' || scene === 'df-combo' || scene === 'fin-combo') ? 'grid'
   : (scene === 'dash-fin' || scene === 'dash-df' || scene === 'dash-mq2' || scene === 'dash-predict' || scene === 'dash-fin-predict') ? 'dashboard'
