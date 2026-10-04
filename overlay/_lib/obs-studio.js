@@ -23,17 +23,57 @@ export const ROTATE_MIN = 5, ROTATE_MAX = 120, ROTATE_DEFAULT = 15;
 /** Fonds globaux (DA « Pit Lane »). `carbon` = rendu historique (sobre, sombre). */
 export const BG_THEMES = [
   { id: 'carbon',  label: 'Carbone',  swatch: 'linear-gradient(135deg,#12161f,#070809)' },
-  { id: 'paddock', label: 'Paddock',  swatch: 'linear-gradient(135deg,#16305c,#0a1428)' },
-  { id: 'asphalt', label: 'Asphalte', swatch: 'linear-gradient(135deg,#3a3f4a,#16181d)' },
-  { id: 'ember',   label: 'Braise',   swatch: 'linear-gradient(135deg,#7a2a10,#1d0a06)' },
-  { id: 'nitro',   label: 'Nitro',    swatch: 'linear-gradient(135deg,#4a2a8a,#120a26)' },
-  { id: 'forest',  label: 'Sous-bois', swatch: 'linear-gradient(135deg,#1f5a40,#08170f)' },
+  { id: 'paddock', label: 'Paddock (bleu)',  swatch: 'linear-gradient(135deg,#16305c,#0a1428)' },
+  { id: 'asphalt', label: 'Asphalte (gris)', swatch: 'linear-gradient(135deg,#3a3f4a,#16181d)' },
+  { id: 'ember',   label: 'Braise (orangé)', swatch: 'linear-gradient(135deg,#7a2a10,#1d0a06)' },
+  { id: 'nitro',   label: 'Nitro (violet)',  swatch: 'linear-gradient(135deg,#4a2a8a,#120a26)' },
+  { id: 'forest',  label: 'Sous-bois (vert)', swatch: 'linear-gradient(135deg,#1f5a40,#08170f)' },
+  { id: 'ocean',   label: 'Océan (turquoise)', swatch: 'linear-gradient(135deg,#0f6a74,#06191d)' },
+  { id: 'gold',    label: 'Ambre (doré)',    swatch: 'linear-gradient(135deg,#8a6314,#1f1604)' },
+  { id: 'crimson', label: 'Carmin (rouge)',  swatch: 'linear-gradient(135deg,#8a1630,#1f060c)' },
   { id: 'chroma',  label: 'Fond vert (chroma)', swatch: '#00ff00' },
 ];
 export const DEFAULT_BG = 'carbon';
 
 export function normalizeBg(id) {
   return BG_THEMES.some(t => t.id === id) ? id : DEFAULT_BG;
+}
+
+/** Couleurs attribuées automatiquement aux catégories (dans cet ordre, puis on repart du début :
+ *  si une compétition a plus de catégories que de couleurs, deux catégories partagent une couleur). */
+export const CATEGORY_PALETTE = ['paddock', 'ember', 'nitro', 'forest', 'ocean', 'gold', 'crimson', 'asphalt'];
+
+/**
+ * Complète l'association catégorie → couleur : les choix déjà faits sont conservés ; les catégories
+ * sans couleur reçoivent d'abord les couleurs encore libres, puis on réutilise la palette.
+ * @param {string[]} categoryIds  ids des catégories (ordre du règlement)
+ * @param {Object<string,string>} [existing]  association courante
+ * @returns {Object<string,string>} association complète pour ces catégories
+ */
+export function autoAssignThemes(categoryIds, existing = {}) {
+  const out = {};
+  const used = new Set();
+  (categoryIds || []).forEach(id => {
+    if (existing && BG_THEMES.some(t => t.id === existing[id]) && existing[id] !== 'chroma') { out[id] = existing[id]; used.add(existing[id]); }
+  });
+  let free = CATEGORY_PALETTE.filter(c => !used.has(c)), cycle = 0;
+  (categoryIds || []).forEach(id => {
+    if (out[id]) return;
+    if (free.length) out[id] = free.shift();
+    else out[id] = CATEGORY_PALETTE[cycle++ % CATEGORY_PALETTE.length];   // plus de catégories que de couleurs
+  });
+  return out;
+}
+
+/**
+ * Fond à afficher : la couleur de la catégorie sélectionnée ; à défaut le fond par défaut (`bgTheme`).
+ * Le fond vert « chroma » choisi comme fond par défaut s'applique à TOUTES les catégories (incrustation).
+ */
+export function themeForCategory(category, map, fallback) {
+  const def = normalizeBg(fallback);
+  if (def === 'chroma') return 'chroma';
+  const t = map && category ? map[category] : null;
+  return t && t !== 'chroma' && BG_THEMES.some(x => x.id === t) ? t : def;
 }
 
 /** Config « plateau » normalisée (valeurs par défaut + bornes). */

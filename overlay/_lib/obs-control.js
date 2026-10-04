@@ -25,7 +25,8 @@ export const DEFAULT_CONTROL = {
   countdownEnd:  0,             // timestamp ms de fin du compte à rebours (0 = aucun)
   countdownStart:0,             // timestamp ms de départ (sert à l'anneau de progression ; 0 = inconnu)
   // fond global (DA « Pit Lane ») : voir BG_THEMES dans obs-studio.js ; ?bg=<id> dans l'URL l'emporte
-  bgTheme:       'carbon',
+  bgTheme:       'carbon',        // fond par défaut (catégorie sans couleur) ; 'chroma' = aplat vert pour TOUTES les catégories
+  categoryThemes: {},             // { <categoryId>: <thème> } — le fond suit la catégorie sélectionnée
   // scène « Plateau » : classement (1/3 gauche) + vidéo 16/9 (2/3 droite) + bandeau bas
   studio:        { boards: ['manche'], rotate: false, rotateSec: 15, active: 'manche', bottom: 'none', showVideo: true },
   // boards : 'manche' | 'interim' | 'meeting' | 'champ' · bottom : 'none' | 'predict' | 'wait' | 'sponsors'

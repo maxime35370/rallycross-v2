@@ -101,9 +101,14 @@ Deux documents Firestore : `obsControl/live` (**ANTENNE**) et `obsControl/previe
 Scènes pilotables depuis `/control` : 🎬 Intro · 📊 Dashboard · 📺 **Plateau 1/3·2/3** · 🏁 Grille ·
 👤 Fiche / Duel · ⏭️ À suivre · ⏸️ Attente · 🔚 Fin de stream.
 
-- **Fond global** (`bgTheme`) : Carbone (rendu d'origine), Paddock, Asphalte, Braise, Nitro, Sous-bois,
-  ou **Fond vert #00FF00** (chroma). `?bg=<thème>` dans l'URL de la source l'emporte (ex. `?bg=chroma`).
-  Avec `?transparent=1` (OBS) le fond est désactivé.
+- **Fond par catégorie** (`categoryThemes`, `bgTheme`) : chaque catégorie a sa couleur ; le fond suit la **catégorie
+  sélectionnée** dans la régie. Couleurs : Carbone (rendu d'origine), Paddock, Asphalte, Braise, Nitro, Sous-bois, Océan,
+  Ambre, Carmin. Les couleurs sont attribuées automatiquement à la première utilisation (une couleur différente par catégorie ;
+  s'il y a plus de catégories que de couleurs, on réutilise la palette) puis modifiables à la main ; deux catégories peuvent
+  partager une couleur. `bgTheme` = fond des « autres cas » (sans catégorie / sans couleur). **Fond vert #00FF00** (chroma) :
+  interrupteur global qui s'applique à toutes les catégories. `?bg=<thème>` dans l'URL de la source l'emporte (ex. `?bg=chroma`).
+  Avec `?transparent=1` (OBS) le fond est désactivé. Le choix de couleurs est un réglage de configuration : il s'applique
+  toujours directement (même en mode préparation) ; la catégorie, elle, se prépare, et amène sa couleur avec elle.
 - **Plateau** (`studio`) : tiers gauche (592 px) = classement **affiché en entier** (aucune limite à 10 :
   la densité des lignes s'adapte à l'effectif) ; 2/3 droite = vidéo 16/9 (1240×697 px, source « Source vidéo »,
   ex. live YouTube) ; dessous, un bandeau au choix : Prédiction · Attente (message + compte à rebours) ·

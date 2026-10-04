@@ -11,10 +11,11 @@ export const PREVIEW_ID = 'preview';
 /**
  * Réglages qui s'appliquent TOUJOURS en direct (jamais préparés) :
  *  • visible : couper / rétablir tout l'overlay à l'antenne ;
+ *  • categoryThemes : réglage de configuration (couleur par catégorie) — la catégorie, elle, reste préparée ;
  *  • countdownEnd / countdownStart : instants ABSOLUS — un chrono « préparé » serait faux au moment de la prise d'antenne.
  * Ils sont aussi écrits dans la préparation pour que le moniteur de préparation les montre.
  */
-export const LIVE_KEYS = ['visible', 'countdownEnd', 'countdownStart'];
+export const LIVE_KEYS = ['visible', 'countdownEnd', 'countdownStart', 'categoryThemes'];
 
 /** Champs jamais copiés (métadonnées). */
 const META_KEYS = ['id', 'updatedAt'];
@@ -69,6 +70,6 @@ export const DIFF_LABEL = {
   sessionType: 'phase', sessionNum: 'n° de phase', standingsMode: 'classement', headerText: 'en-tête',
   nextText: 'texte « à suivre »', graphMode: 'graphique', predict: 'prédiction', videoLayout: 'placement vidéo',
   videoSource: 'source vidéo', videoVolume: 'volume', fiche: 'fiche / duel', pronosticId: 'pronostic',
-  spectatorBaseUrl: 'lien spectateur', infoBand: 'bandeau info', gridOverride: 'grille', bgTheme: 'fond', studio: 'plateau',
+  spectatorBaseUrl: 'lien spectateur', infoBand: 'bandeau info', gridOverride: 'grille', bgTheme: 'fond par défaut', studio: 'plateau',
 };
 export const diffLabels = keys => keys.map(k => DIFF_LABEL[k] || k);
