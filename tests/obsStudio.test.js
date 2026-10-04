@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   studioConfig, boardCycle, densityClass, normalizeRows, normalizeBg, BG_THEMES, ROTATE_MIN, ROTATE_MAX,
+  autoAssignThemes, themeForCategory, CATEGORY_PALETTE,
 } from '../overlay/_lib/obs-studio.js';
 
 describe('studioConfig', () => {
@@ -74,5 +75,43 @@ describe('thèmes de fond', () => {
     expect(normalizeBg(undefined)).toBe('carbon');
     expect(normalizeBg('chroma')).toBe('chroma');
     expect(BG_THEMES.find(t => t.id === 'chroma').swatch).toBe('#00ff00');
+  });
+});
+
+describe('couleur par catégorie', () => {
+  it('attribue une couleur différente à chaque catégorie tant qu\'il y en a assez', () => {
+    const m = autoAssignThemes(['a', 'b', 'c', 'd']);
+    expect(Object.keys(m)).toEqual(['a', 'b', 'c', 'd']);
+    expect(new Set(Object.values(m)).size).toBe(4);
+    Object.values(m).forEach(t => expect(CATEGORY_PALETTE).toContain(t));
+  });
+  it('plus de catégories que de couleurs : on réutilise la palette (2 catégories partagent une couleur)', () => {
+    const ids = Array.from({ length: CATEGORY_PALETTE.length + 2 }, (_, i) => 'c' + i);
+    const m = autoAssignThemes(ids);
+    expect(Object.keys(m)).toHaveLength(ids.length);
+    expect(new Set(Object.values(m)).size).toBe(CATEGORY_PALETTE.length);
+    expect(m['c' + CATEGORY_PALETTE.length]).toBe(CATEGORY_PALETTE[0]);
+  });
+  it('conserve les choix déjà faits et donne aux nouvelles catégories les couleurs encore libres', () => {
+    const m = autoAssignThemes(['a', 'b', 'c'], { a: 'ember', b: 'ember' });
+    expect(m.a).toBe('ember'); expect(m.b).toBe('ember');          // deux catégories peuvent partager
+    expect(m.c).not.toBe('ember');                                 // la nouvelle prend une couleur libre
+  });
+  it('ignore une couleur inconnue ou le chroma stocké pour une catégorie', () => {
+    const m = autoAssignThemes(['a', 'b'], { a: 'zzz', b: 'chroma' });
+    expect(['zzz', 'chroma']).not.toContain(m.a); expect(m.b).not.toBe('chroma');
+  });
+  it('stable : relancer ne change rien', () => {
+    const m = autoAssignThemes(['a', 'b', 'c']);
+    expect(autoAssignThemes(['a', 'b', 'c'], m)).toEqual(m);
+  });
+  it('themeForCategory : couleur de la catégorie, sinon fond par défaut', () => {
+    expect(themeForCategory('sc', { sc: 'nitro' }, 'carbon')).toBe('nitro');
+    expect(themeForCategory('x', { sc: 'nitro' }, 'paddock')).toBe('paddock');
+    expect(themeForCategory('', { sc: 'nitro' }, undefined)).toBe('carbon');
+    expect(themeForCategory('sc', { sc: 'inconnu' }, 'ember')).toBe('ember');
+  });
+  it('le fond vert chroma par défaut s\'applique à toutes les catégories', () => {
+    expect(themeForCategory('sc', { sc: 'nitro' }, 'chroma')).toBe('chroma');
   });
 });

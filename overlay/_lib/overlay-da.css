@@ -51,6 +51,12 @@ body.transparent #bg-layer{display:none}
 #bg-layer.bg-nitro i{background:radial-gradient(closest-side,rgba(255,60,200,.25),transparent)}
 #bg-layer.bg-forest{background:radial-gradient(1500px 900px at 85% 110%,#2a7a56,#124030 46%,#07140e)}
 #bg-layer.bg-forest i{background:radial-gradient(closest-side,rgba(255,200,60,.2),transparent)}
+#bg-layer.bg-ocean{background:radial-gradient(1500px 900px at 15% 110%,#17909c,#0b4a54 46%,#041418)}
+#bg-layer.bg-ocean i{background:radial-gradient(closest-side,rgba(255,150,70,.22),transparent)}
+#bg-layer.bg-gold{background:radial-gradient(1500px 900px at 80% -10%,#b88a22,#5a410c 48%,#1a1203)}
+#bg-layer.bg-gold i{background:radial-gradient(closest-side,rgba(255,85,0,.28),transparent)}
+#bg-layer.bg-crimson{background:radial-gradient(1500px 900px at 20% -10%,#b02244,#5a0f22 48%,#1a050a)}
+#bg-layer.bg-crimson i{background:radial-gradient(closest-side,rgba(255,120,60,.26),transparent)}
 /* chroma : aplat vert pur, aucun effet (incrustation par un mélangeur externe) */
 #bg-layer.bg-chroma{background:#00ff00}
 #bg-layer.bg-chroma::before,#bg-layer.bg-chroma::after,#bg-layer.bg-chroma i{display:none}

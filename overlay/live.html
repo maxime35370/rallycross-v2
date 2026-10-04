@@ -25,7 +25,7 @@
   import { watchPronostic, watchSeasonScores, getTwitchProfile } from './_lib/obs-pronostics.js';
   import { qrDataUrl, spectatorUrl } from './_lib/obs-qr.js';
   import { applyFit, canvasWidth } from './_lib/obs-fit.js';
-  import { studioConfig, boardCycle, normalizeRows, normalizeBg, BOARD_LABEL } from './_lib/obs-studio.js';
+  import { studioConfig, boardCycle, normalizeRows, normalizeBg, themeForCategory, BOARD_LABEL } from './_lib/obs-studio.js';
 
   const root = document.getElementById('root');
 
@@ -109,7 +109,8 @@
       bgLayer = document.createElement('div'); bgLayer.id = 'bg-layer'; bgLayer.innerHTML = '<i></i>';
       document.body.insertBefore(bgLayer, document.body.firstChild);
     }
-    const theme = normalizeBg(qs.get('bg') || ctrl.bgTheme);
+    // couleur de la catégorie sélectionnée (régie) ; ?bg=<thème> dans l'URL l'emporte
+    const theme = normalizeBg(qs.get('bg') || themeForCategory(ctrl.category, ctrl.categoryThemes, ctrl.bgTheme));
     const cls = 'bg-' + theme;
     if (bgLayer.dataset.theme !== cls) { bgLayer.className = cls; bgLayer.dataset.theme = cls; }
     document.body.classList.toggle('bg-chroma', theme === 'chroma');
