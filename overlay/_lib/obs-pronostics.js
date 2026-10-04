@@ -87,6 +87,20 @@ export async function updatePronostic(id, patch) {
   await setDoc(doc(db, PRONO_COL, id), patch, { merge: true });
 }
 
+/**
+ * REMPLACE des champs d'un pronostic (contrairement à updatePronostic, qui FUSIONNE).
+ * À utiliser pour un champ de type « map » qu'on recalcule entièrement, comme `tally` : avec
+ * setDoc(…, { merge: true }), Firestore fusionne les maps en profondeur et les anciennes clés
+ * (ex. un pilote pour lequel on avait voté avant de changer d'avis) restaient dans le décompte.
+ * updateDoc remplace le champ en entier. Échoue si le pronostic n'existe plus (supprimé) : c'est voulu,
+ * on ne recrée pas un document fantôme.
+ */
+export async function replacePronosticFields(id, patch) {
+  await initFirebase();
+  const { doc, updateDoc } = await fs();
+  await updateDoc(doc(db, PRONO_COL, id), patch);
+}
+
 /** Supprime un pronostic (les votes en sous-collection restent orphelins côté Firestore ; sans impact d'affichage). */
 export async function deletePronostic(id) {
   await initFirebase();
@@ -94,9 +108,9 @@ export async function deletePronostic(id) {
   await deleteDoc(doc(db, PRONO_COL, id));
 }
 
-/** Ouvre les votes. */
+/** Ouvre les votes (et remet à zéro le décompte figé d'une ouverture précédente). */
 export async function openPronostic(id, nowMs) {
-  await updatePronostic(id, { status: PRONO_STATUS.OPEN, openedAt: nowMs || Date.now(), correctDriverId: '' });
+  await replacePronosticFields(id, { status: PRONO_STATUS.OPEN, openedAt: nowMs || Date.now(), correctDriverId: '', tally: {}, totalVotes: 0 });
   notifyPronoEvent(id, 'open');
 }
 
@@ -108,8 +122,13 @@ export async function tallyVotes(id) {
   await initFirebase();
   const { collection, getDocs } = await fs();
   const snap = await getDocs(collection(db, PRONO_COL, id, 'votes'));
+  return tallyFromVotes(snap.docs.map(d => d.data()));
+}
+
+/** Décompte par pilote à partir des documents de vote (un par spectateur). Pure. */
+export function tallyFromVotes(votes) {
   const counts = {}; let total = 0;
-  snap.forEach(d => { const v = d.data().driverId; if (v) { counts[v] = (counts[v] || 0) + 1; total++; } });
+  (votes || []).forEach(v => { const id = v && v.driverId; if (id) { counts[id] = (counts[id] || 0) + 1; total++; } });
   return { counts, total };
 }
 
@@ -254,11 +273,12 @@ export async function updateMeetingScores(meetingId, strengthByCat = {}) {
         verdictByCanonical.set(canonical, { correct: data.driverId === p.correctDriverId, at });
       }
     });
-    // « Audace » d'un bon pronostic : part du PUBLIC ENTIER (tally/totalVotes,
-    // figés à la révélation — tout le monde, pas seulement les comptes
-    // Twitch) qui s'est trompée sur cette question. Un bon pronostic que
-    // presque personne d'autre n'a trouvé pèse plus qu'un favori évident.
-    const correctShare = p.totalVotes ? (p.tally?.[p.correctDriverId] || 0) / p.totalVotes : 0;
+    // « Audace » d'un bon pronostic : part du PUBLIC ENTIER (tout le monde, pas seulement les comptes
+    // Twitch) qui s'est trompée sur cette question. Un bon pronostic que presque personne d'autre n'a
+    // trouvé pèse plus qu'un favori évident. Calculée sur les VRAIS votes (comme le décompte figé à la
+    // révélation) et non sur `tally` : un ancien décompte pollué ne doit pas pouvoir fausser les points.
+    const pub = tallyFromVotes(vsnap.docs.map(d => d.data()));
+    const correctShare = pub.total ? (pub.counts[p.correctDriverId] || 0) / pub.total : 0;
     const boldness = 1 - correctShare;
     const earlyBonuses = computeEarlyBonuses(verdictByCanonical);
     verdictByCanonical.forEach(({ correct }, uid) => {
@@ -395,7 +415,7 @@ async function notifyPronoEvent(id, kind) {
 /** Ferme les votes et fige le décompte agrégé dans le doc (lisible par le public). */
 export async function closePronostic(id, nowMs) {
   const t = await tallyVotes(id);
-  await updatePronostic(id, {
+  await replacePronosticFields(id, {
     status: PRONO_STATUS.CLOSED, tally: t.counts, totalVotes: t.total, closedAt: nowMs || Date.now(),
   });
   notifyPronoEvent(id, 'close');
@@ -405,7 +425,7 @@ export async function closePronostic(id, nowMs) {
 /** Révèle le gagnant (réel) et rafraîchit le décompte figé. */
 export async function revealPronostic(id, correctDriverId, nowMs) {
   const t = await tallyVotes(id);
-  await updatePronostic(id, {
+  await replacePronosticFields(id, {
     status: PRONO_STATUS.REVEALED, correctDriverId: correctDriverId || '',
     tally: t.counts, totalVotes: t.total, revealedAt: nowMs || Date.now(),
   });
