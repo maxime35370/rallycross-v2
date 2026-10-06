@@ -99,9 +99,13 @@ async function saveChampionshipPenalty(championshipId, category, driverId, point
 // CALCUL POINTS D'UNE PHASE (DF ou FIN)
 // ─────────────────────────────────────────────────────────
 
-async function calcPhasePoints(session) {
-  const results      = await fsGetResults(session.id);
-  const participants = await fsGetParticipants(session.id);
+async function calcPhasePoints(session, participantsPromise) {
+  // `participantsPromise` : l'appelant qui a besoin des participants juste après
+  // les lit une seule fois et nous les partage (évite une 2e lecture identique).
+  const [results, participants] = await Promise.all([
+    fsGetResults(session.id),
+    participantsPromise ?? fsGetParticipants(session.id),
+  ]);
   const resultMap    = {};
   results.forEach(r => { resultMap[r.driverId] = r; });
 
@@ -192,8 +196,9 @@ async function getMeetingPoints(meetingId) {
   //    S'il n'y a pas de session QF, qf reste a 0.
   const qfSessions = sessions.filter(s => s.type === 'QF');
   for (const qf of qfSessions) {
-    const ptsMap = await calcPhasePoints(qf);
-    const parts  = await fsGetParticipants(qf.id);
+    const partsP = fsGetParticipants(qf.id);
+    const ptsMap = await calcPhasePoints(qf, partsP);
+    const parts  = await partsP;
     parts.forEach(p => {
       if (!driverMap[p.driverId]) driverMap[p.driverId] = blankRow(p);
       driverMap[p.driverId].qf += ptsMap[p.driverId] ?? 0;
@@ -203,8 +208,9 @@ async function getMeetingPoints(meetingId) {
   // 4. Points DF
   const dfSessions = sessions.filter(s => s.type === 'DF');
   for (const df of dfSessions) {
-    const ptsMap = await calcPhasePoints(df);
-    const parts  = await fsGetParticipants(df.id);
+    const partsP = fsGetParticipants(df.id);
+    const ptsMap = await calcPhasePoints(df, partsP);
+    const parts  = await partsP;
     parts.forEach(p => {
       if (!driverMap[p.driverId]) driverMap[p.driverId] = blankRow(p);
       driverMap[p.driverId].df += ptsMap[p.driverId] ?? 0;
@@ -214,8 +220,9 @@ async function getMeetingPoints(meetingId) {
   // 5. Points Finale
   const finSession = sessions.find(s => s.type === 'FIN');
   if (finSession) {
-    const ptsMap = await calcPhasePoints(finSession);
-    const parts  = await fsGetParticipants(finSession.id);
+    const partsP = fsGetParticipants(finSession.id);
+    const ptsMap = await calcPhasePoints(finSession, partsP);
+    const parts  = await partsP;
     parts.forEach(p => {
       if (!driverMap[p.driverId]) driverMap[p.driverId] = blankRow(p);
       driverMap[p.driverId].fin    = ptsMap[p.driverId] ?? 0;

@@ -4,9 +4,9 @@
 ═══════════════════════════════════════════════ */
 
 import { db } from './firebase.js';
-import { escHtml, msToDisplay } from './utils.js';
+import { escHtml, msToDisplay, dedupeParticipants } from './utils.js';
 import { categoryBadge } from './app.js';
-import { calcInterimStandings } from './calc.js';
+import { buildInterimFromData } from './calc.js';
 
 // ─────────────────────────────────────────────────────────
 // BARÈMES
@@ -142,6 +142,7 @@ async function loadData(driver) {
     // Charger results + participants pour toutes les sessions du meeting
     const resultsMap = {};
     const partsMap   = {};
+    const interimParts = {};   // participants dédoublonnés, pour le classement intermédiaire
     for (const sess of sessions) {
       const [rSnap, pSnap] = await Promise.all([
         getDocs(query(collection(db, 'results'),             where('sessionId', '==', sess.id))),
@@ -149,13 +150,16 @@ async function loadData(driver) {
       ]);
       resultsMap[sess.id] = rSnap.docs.map(d => ({ id: d.id, ...d.data() }));
       partsMap[sess.id]   = pSnap.docs.map(d => d.data());
+      interimParts[sess.id] = dedupeParticipants(pSnap.docs.map(d => ({ id: d.id, ...d.data() })), sess.id).participants;
     }
 
     // Classement intermédiaire (calc.js, sans lecture Firestore interimStandings)
     let myInterim = null;
     let interim = [];
     try {
-      interim = await calcInterimStandings(db, sessions);
+      // Calculé depuis les résultats/participants déjà lus ci-dessus : évite de
+      // relire toutes les manches du meeting une seconde fois.
+      interim = buildInterimFromData(sessions, resultsMap, interimParts);
       myInterim = interim.find(r => r.driverId === driver.id) || null;
     } catch {}
 

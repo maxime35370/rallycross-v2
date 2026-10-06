@@ -5,7 +5,7 @@
 ═══════════════════════════════════════════════ */
 
 import { db } from './firebase.js';
-import { msToDisplay, escHtml } from './utils.js';
+import { msToDisplay, escHtml, dedupeParticipants } from './utils.js';
 import { getActiveChampionship, getActiveChampionshipId } from './context.js';
 import {
   watchPronostics, myVote, castVote, ensureAnon, watchMeetingScores, autoPseudo, getPlayerPseudo, setPlayerPseudo,
@@ -26,6 +26,24 @@ let unsubResults      = null;
 let _isFullscreen     = false;
 
 let _interimRefreshTimer = null;
+
+// Classement intermédiaire calculé EN MÉMOIRE (aucune relecture périodique).
+// Les résultats des EC/MQ du meeting arrivent par écoute temps réel (1 lecture
+// par pilote à l'ouverture, puis 1 par chrono modifié) ; les participants,
+// qui bougent rarement, sont relus au plus toutes les PARTICIPANTS_MAX_AGE_MS
+// et seulement si l'onglet est visible.
+const INTERIM_SESSION_TYPES   = ['EC', 'MQ'];
+const PARTICIPANTS_TICK_MS    = 60 * 1000;
+const PARTICIPANTS_MAX_AGE_MS = 10 * 60 * 1000;
+const INTERIM_DEBOUNCE_MS     = 400;
+let _interimResults      = {};   // sessionId → documents results (EC/MQ)
+let _interimParts        = {};   // sessionId → participants dédoublonnés (EC/MQ)
+let _interimPartsAt      = 0;
+let _interimSessionUnsubs = [];
+let _interimDebounce     = null;
+let _visHandler          = null;
+let _currentSessionId    = null;
+let _renderToken         = 0;
 
 const CATEGORIES = ['Supercar', 'Super1600', 'Division 5', 'Féminines', 'D3', 'D4'];
 
@@ -139,15 +157,91 @@ async function subscribeResults(sessionId) {
   });
 }
 
+/** Recalcule le classement intermédiaire depuis les données déjà en mémoire. */
 async function refreshInterimLive() {
   if (!selectedMeetingId || !selectedCategory || !allSessions.length) return;
   try {
-    const { calcInterimStandings } = await import('./calc.js');
-    const rows = await calcInterimStandings(db, allSessions);
+    const { buildInterimFromData } = await import('./calc.js');
+    const rows = buildInterimFromData(allSessions, _interimResults, _interimParts);
     // Mise à jour des données uniquement — pas de re-render
     _carouselData.interimRows = rows.sort((a, b) => (a.position ?? 99) - (b.position ?? 99));
     updateTimestamp();
   } catch {}
+}
+
+function scheduleInterimRecompute() {
+  if (_interimDebounce) clearTimeout(_interimDebounce);
+  _interimDebounce = setTimeout(() => { _interimDebounce = null; refreshInterimLive(); }, INTERIM_DEBOUNCE_MS);
+}
+
+/** Participants des EC/MQ du meeting : 1 lecture par document, rafraîchie rarement. */
+async function loadInterimParticipants(token = _renderToken) {
+  const sessions = allSessions.filter(s => INTERIM_SESSION_TYPES.includes(s.type));
+  const entries = await Promise.all(sessions.map(async s => {
+    const rows = await fsQuery('sessionParticipants', [['sessionId', '==', s.id]]);
+    return [s.id, dedupeParticipants(rows, s.id).participants];
+  }));
+  if (token !== _renderToken) return;   // un rendu plus récent a pris le relais
+  _interimParts = Object.fromEntries(entries);
+  _interimPartsAt = Date.now();
+}
+
+/** Relit les participants si les derniers datent et que l'onglet est visible. */
+async function refreshParticipantsIfStale() {
+  if (document.hidden) return;
+  if (Date.now() - _interimPartsAt < PARTICIPANTS_MAX_AGE_MS) return;
+  const token = _renderToken;
+  try {
+    await loadInterimParticipants();
+    if (token === _renderToken) await refreshInterimLive();
+  } catch {}
+}
+
+/**
+ * Écoute les résultats d'une session EC/MQ. Résout avec le premier instantané
+ * (même rôle que l'ancienne lecture unique) ; les suivants mettent à jour le
+ * classement intermédiaire sans aucune relecture.
+ */
+async function watchInterimSession(session, token) {
+  const { collection, query, where, onSnapshot } = await import(
+    'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
+  );
+  return new Promise(resolve => {
+    let first = true;
+    const q = query(collection(db, 'results'), where('sessionId', '==', session.id));
+    const unsub = onSnapshot(q, snap => {
+      if (token !== _renderToken) return;
+      const rows = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      _interimResults[session.id] = rows;
+      if (first) { first = false; resolve(rows); return; }
+      if (session.id === _currentSessionId) {
+        // Même mise à jour que subscribeResults pour la session courante
+        if (session.type === 'MQ') {
+          _carouselData.mqResults = rows;
+          _carouselData.mqLabel   = `Manche qualificative ${session.num}`;
+        }
+        if (session.type === 'EC') _carouselData.ecResults = rows;
+        if (!_carouselData.sessionResults) _carouselData.sessionResults = {};
+        _carouselData.sessionResults[session.id] = rows;
+      }
+      scheduleInterimRecompute();
+      updateTimestamp();
+    }, err => {
+      console.warn('[spectator] écoute results', session.id, err);
+      if (first) { first = false; resolve([]); }
+    });
+    // Rendu devenu obsolète pendant l'import du SDK : on ne garde pas l'écoute.
+    if (token !== _renderToken) { unsub(); resolve([]); return; }
+    _interimSessionUnsubs.push(unsub);
+  });
+}
+
+function stopInterimWatch() {
+  _interimSessionUnsubs.forEach(u => { try { u(); } catch {} });
+  _interimSessionUnsubs = [];
+  if (_interimDebounce) { clearTimeout(_interimDebounce); _interimDebounce = null; }
+  if (_interimRefreshTimer) { clearInterval(_interimRefreshTimer); _interimRefreshTimer = null; }
+  if (_visHandler) { document.removeEventListener('visibilitychange', _visHandler); _visHandler = null; }
 }
 
 function updateTimestamp() {
@@ -239,27 +333,40 @@ async function renderContent() {
   const content = document.getElementById('spc-content');
   if (!content || !selectedMeetingId || !selectedCategory) return;
 
-  // Reset complet
+  // Reset complet (écoutes précédentes coupées, appels concurrents invalidés)
+  const token = ++_renderToken;
+  stopInterimWatch();
+  _interimResults = {};
+  _interimParts   = {};
+  _currentSessionId = null;
   _carouselData = { mqResults: [], mqLabel: '', interimRows: [], ecResults: [], sessionResults: {} };
   _carouselSlide = 0;
 
   await loadSessions();
+  if (token !== _renderToken) return;
 
-  const sessionResults = await Promise.all(
-    allSessions.map(async s => {
-      const res = await fsQuery('results', [['sessionId', '==', s.id]]);
+  // Une seule lecture par session. Les EC/MQ passent par une écoute temps
+  // réel (leur premier instantané remplace la lecture), ce qui permet de
+  // tenir le classement intermédiaire à jour sans jamais le relire.
+  const [sessionResults] = await Promise.all([
+    Promise.all(allSessions.map(async s => {
+      const res = INTERIM_SESSION_TYPES.includes(s.type)
+        ? await watchInterimSession(s, token)
+        : await fsQuery('results', [['sessionId', '==', s.id]]);
       return { session: s, count: res.length, results: res };
-    })
-  );
+    })),
+    loadInterimParticipants(token),
+  ]);
+  if (token !== _renderToken) return;
 
   const withResults    = sessionResults.filter(sr => sr.count > 0);
   const currentSR      = withResults[withResults.length - 1] || null;
   const currentSession = currentSR?.session || null;
+  _currentSessionId    = currentSession?.id || null;
 
   // Pré-charger toutes les données avant d'afficher
   const sessionResultsMap = {};
-  for (const s of allSessions) {
-    const res = await fsQuery('results', [['sessionId','==',s.id]]);
+  for (const { session: s, results: res } of sessionResults) {
     sessionResultsMap[s.id] = res;
     if (s.type === 'EC'  && res.length > 0) _carouselData.ecResults = res;
     if (s.type === 'MQ'  && res.length > 0) { _carouselData.mqResults = res; _carouselData.mqLabel = `Manche qualificative ${s.num}`; }
@@ -269,7 +376,7 @@ async function renderContent() {
   _carouselData.sessionResults = sessionResultsMap;
   _carouselData.phase = detectPhase();
 
-  // Classement intermédiaire initial
+  // Classement intermédiaire initial (calculé en mémoire)
   await refreshInterimLive();
 
   // Afficher la structure HTML
@@ -278,13 +385,18 @@ async function renderContent() {
     <div class="spc-updated" id="spc-timestamp">En attente de données…</div>
   `;
 
-  // Abonnements live (mettent à jour _carouselData uniquement)
-  if (currentSession) await subscribeResults(currentSession.id);
+  // Abonnements live (mettent à jour _carouselData uniquement). Les EC/MQ sont
+  // déjà écoutées ci-dessus, y compris quand l'une d'elles est la session courante.
+  if (currentSession && !INTERIM_SESSION_TYPES.includes(currentSession.type)) {
+    await subscribeResults(currentSession.id);
+  }
   await subscribeAdvancedSessions();
 
-  // Refresh intermédiaire toutes les 30s (données uniquement)
-  if (_interimRefreshTimer) clearInterval(_interimRefreshTimer);
-  _interimRefreshTimer = setInterval(refreshInterimLive, 30000);
+  // Les participants bougent rarement : relus au plus toutes les 10 min, et
+  // seulement si l'onglet est visible (retour au premier plan = vérification).
+  _interimRefreshTimer = setInterval(refreshParticipantsIfStale, PARTICIPANTS_TICK_MS);
+  _visHandler = () => { if (!document.hidden) refreshParticipantsIfStale(); };
+  document.addEventListener('visibilitychange', _visHandler);
 
   loadChampionshipData();
 
@@ -386,7 +498,7 @@ function startRefresh() {
 function stopRefresh() {
   if (unsubResults)         { unsubResults();   unsubResults   = null; }
   if (unsubNextParts)       { unsubNextParts(); unsubNextParts = null; }
-  if (_interimRefreshTimer) { clearInterval(_interimRefreshTimer); _interimRefreshTimer = null; }
+  stopInterimWatch();
   const dot = document.getElementById('spc-live-dot');
   if (dot) dot.classList.remove('spc-live-dot--active');
 }
