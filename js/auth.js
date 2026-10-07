@@ -15,7 +15,9 @@ let currentUser = null;
 const PROTECTED_VIEWS = [
   'persons', 'drivers', 'meetings', 'engagements', 'sessions', 'timing',
   'audit', 'config', 'settings',
-  'access',   // écran d'attribution des licences — régie uniquement
+  'access',         // écran d'attribution des licences — régie uniquement
+  'startAnalysis',  // analyse des départs : encore en chantier, pas fiable hors admin
+  'projection',     // Stratégie Live : encore en chantier, admin uniquement pour l'instant
 ];
 
 // ⚠️ DOIT correspondre à l'allowlist des RÈGLES FIRESTORE (fonction isRegie()).
