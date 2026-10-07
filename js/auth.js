@@ -17,6 +17,7 @@ const PROTECTED_VIEWS = [
   'audit', 'config', 'settings',
   'access',         // écran d'attribution des licences — régie uniquement
   'startAnalysis',  // analyse des départs : encore en chantier, pas fiable hors admin
+  'projection',     // Stratégie Live : encore en chantier, admin uniquement pour l'instant
 ];
 
 // ⚠️ DOIT correspondre à l'allowlist des RÈGLES FIRESTORE (fonction isRegie()).
@@ -362,14 +363,9 @@ function enforceViewAccess() {
 }
 
 /** Masque/affiche les entrées réservées à l'admin (menu, accueil, statut Firebase)
- *  en basculant la classe `is-admin` sur <body> (le CSS fait le reste).
- *  `is-real-user` distingue en plus un compte team (connecté, non anonyme) d'un
- *  visiteur sans compte : Stratégie Live reste en chantier et réservée aux teams
- *  qui obtiendront un accès, donc sa tuile ne doit s'afficher qu'à eux (ou à
- *  l'admin) — jamais à un simple visiteur anonyme. */
+ *  en basculant la classe `is-admin` sur <body> (le CSS fait le reste). */
 function applyAdminVisibility() {
   document.body.classList.toggle('is-admin', isAdmin());
-  document.body.classList.toggle('is-real-user', isRealUser());
 }
 
 /** Le formulaire de connexion était masqué derrière `?login`, pour ne pas
