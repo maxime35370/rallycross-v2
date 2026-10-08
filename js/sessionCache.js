@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════
-   SESSIONCACHE.JS — cache agrégé "résultat d'une manche"
+   SESSIONCACHE.JS — cache agrégé "résultat d'une manche" + "meeting complet"
 
    Pour une session (EC/MQ/QF/DF/FIN) donnée, regroupe en UN SEUL document Firestore
    (collection `sessionCache`, id = sessionId) le résultat de tous ses
@@ -17,11 +17,23 @@
    gestion des forfaits) : chaque réassignation vide `results` avant de
    réaffecter les participants, donc sessions.js appelle explicitement
    invalidateSessionCache() juste après chaque vidage, pour ne jamais
-   laisser un ancien cache "complet" survivre à une redistribution. */
+   laisser un ancien cache "complet" survivre à une redistribution.
 
-const SPECIAL_STATUSES = ['DNS', 'DNF', 'DSQ', 'DSQ_RACE'];
-const CACHEABLE_TYPES  = ['EC', 'MQ', 'QF', 'DF', 'FIN'];
-const COLLECTION       = 'sessionCache';
+   CACHE MEETING (toutes divisions confondues) — au lieu de revérifier
+   l'état de chaque manche à chaque fois, un compteur par meeting
+   (`meetingCacheProgress/{meetingId}`, { completeCount, totalSessions })
+   est ajusté de ±1 chaque fois qu'une manche change d'état complet/
+   incomplet. Dès que completeCount atteint totalSessions, le cache
+   meeting (`meetingCache/{meetingId}`) est construit en regroupant le
+   cache de chaque manche. Lecture/écriture du compteur + de la manche
+   se fait dans UNE SEULE transaction Firestore pour rester correct même
+   si deux manches de catégories différentes se terminent en même temps. */
+
+const SPECIAL_STATUSES      = ['DNS', 'DNF', 'DSQ', 'DSQ_RACE'];
+const CACHEABLE_TYPES       = ['EC', 'MQ', 'QF', 'DF', 'FIN'];
+const COLLECTION            = 'sessionCache';
+const PROGRESS_COLLECTION   = 'meetingCacheProgress';
+const MEETING_COLLECTION    = 'meetingCache';
 
 async function fsHelpers() {
   return import('https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js');
@@ -69,6 +81,92 @@ async function fetchRaw(db, sessionId) {
   };
 }
 
+/** Liste des sessionId de TOUTES les catégories d'un meeting (pas filtré
+ *  par catégorie, contrairement aux lectures habituelles de l'app). */
+async function getMeetingSessionIds(db, meetingId) {
+  const { collection, query, where, getDocs } = await fsHelpers();
+  const snap = await getDocs(query(collection(db, 'sessions'), where('meetingId', '==', meetingId)));
+  return snap.docs.map(d => d.id);
+}
+
+/**
+ * Applique en UNE transaction : l'écriture (ou suppression) du cache de la
+ * session, puis — seulement si son état complet/incomplet a changé — l'ajustement
+ * du compteur du meeting et, le cas échéant, la construction/suppression du
+ * cache meeting. Toutes les lectures de la transaction sont faites avant la
+ * moindre écriture (règle Firestore : get() puis set()/delete(), jamais l'inverse).
+ */
+async function applySessionTransition(db, session, isComplete, cacheData) {
+  const { doc, runTransaction } = await fsHelpers();
+  const cacheRef = doc(db, COLLECTION, session.id);
+
+  // Sans meetingId, pas de suivi de compteur possible : on se contente de
+  // l'écriture/suppression du cache de la session elle-même, hors transaction.
+  if (!session.meetingId) {
+    const { setDoc, deleteDoc } = await fsHelpers();
+    if (isComplete) await setDoc(cacheRef, cacheData);
+    else await deleteDoc(cacheRef).catch(() => {});
+    return;
+  }
+
+  const sessionIds   = await getMeetingSessionIds(db, session.meetingId);
+  const totalSessions = sessionIds.length;
+  const progressRef  = doc(db, PROGRESS_COLLECTION, session.meetingId);
+  const meetingRef   = doc(db, MEETING_COLLECTION, session.meetingId);
+
+  await runTransaction(db, async (tx) => {
+    // ── 1. LECTURES ──
+    const cacheSnap    = await tx.get(cacheRef);
+    const wasComplete  = cacheSnap.exists();
+    const transitioned = wasComplete !== isComplete;
+
+    let newCount = null;
+    if (transitioned) {
+      const progressSnap = await tx.get(progressRef);
+      const prevCount = progressSnap.exists() ? (progressSnap.data().completeCount || 0) : 0;
+      newCount = Math.max(0, prevCount + (isComplete ? 1 : -1));
+    }
+
+    const shouldBuildMeeting = transitioned && totalSessions > 0 && newCount >= totalSessions;
+
+    let otherSessionCaches = null;
+    if (shouldBuildMeeting) {
+      otherSessionCaches = [];
+      for (const id of sessionIds) {
+        if (id === session.id) { otherSessionCaches.push({ id, data: cacheData }); continue; }
+        const s = await tx.get(doc(db, COLLECTION, id));
+        otherSessionCaches.push({ id, data: s.exists() ? s.data() : null });
+      }
+    }
+
+    let meetingExistedBefore = false;
+    if (transitioned && !shouldBuildMeeting) {
+      meetingExistedBefore = (await tx.get(meetingRef)).exists();
+    }
+
+    // ── 2. ÉCRITURES ──
+    if (isComplete) tx.set(cacheRef, cacheData);
+    else if (wasComplete) tx.delete(cacheRef);
+
+    if (!transitioned) return;
+
+    tx.set(progressRef, {
+      meetingId: session.meetingId, completeCount: newCount, totalSessions, updatedAt: new Date(),
+    });
+
+    if (shouldBuildMeeting) {
+      const allPresent = otherSessionCaches.every(s => s.data);
+      if (allPresent) {
+        const sessions = {};
+        otherSessionCaches.forEach(s => { sessions[s.id] = s.data; });
+        tx.set(meetingRef, { meetingId: session.meetingId, sessions, updatedAt: new Date() });
+      }
+    } else if (meetingExistedBefore) {
+      tx.delete(meetingRef);
+    }
+  });
+}
+
 /**
  * Régénère (ou supprime) le cache d'une session après une écriture dans
  * `results`. Toujours un recalcul complet — jamais incrémental. Best-effort :
@@ -85,17 +183,9 @@ export async function refreshSessionCache(db, session) {
 
   try {
     const { results, participants } = await fetchRaw(db, session.id);
-    const { doc, setDoc, deleteDoc } = await fsHelpers();
-    const ref = doc(db, COLLECTION, session.id);
-
-    if (isSessionComplete(participants, results)) {
-      await setDoc(ref, buildSessionCacheData(session, results));
-    } else {
-      // Pas (ou plus) complète : on retire un cache devenu perime plutot que
-      // de laisser un ancien resultat incomplet trainer (ex: un pilote
-      // ajoute/retire apres coup).
-      await deleteDoc(ref).catch(() => {});
-    }
+    const complete  = isSessionComplete(participants, results);
+    const cacheData = complete ? buildSessionCacheData(session, results) : null;
+    await applySessionTransition(db, session, complete, cacheData);
   } catch (err) {
     console.error('refreshSessionCache', session?.id, err);
   }
@@ -106,14 +196,16 @@ export async function refreshSessionCache(db, session) {
  * vient d'être vidé (réassignation QF/DF/Finale, forfait) : moins cher
  * qu'un refreshSessionCache (pas de relecture), le cache se recréera de
  * lui-même dès la prochaine saisie de temps complète via timing.js.
+ *
+ * @param {object} db
+ * @param {object} session — document session (id, type, meetingId, category, year)
  */
-export async function invalidateSessionCache(db, sessionId) {
-  if (!db || !sessionId) return;
+export async function invalidateSessionCache(db, session) {
+  if (!db || !session?.id) return;
   try {
-    const { doc, deleteDoc } = await fsHelpers();
-    await deleteDoc(doc(db, COLLECTION, sessionId)).catch(() => {});
+    await applySessionTransition(db, session, false, null);
   } catch (err) {
-    console.error('invalidateSessionCache', sessionId, err);
+    console.error('invalidateSessionCache', session?.id, err);
   }
 }
 
@@ -132,6 +224,26 @@ export async function getCachedResults(db, sessionId) {
     return Array.isArray(data?.results) ? data.results : null;
   } catch (err) {
     console.error('getCachedResults', sessionId, err);
+    return null;
+  }
+}
+
+/**
+ * Lit le cache d'un meeting entier (toutes catégories), s'il existe —
+ * c-à-d si TOUTES ses manches sont complètes. Retourne null sinon ;
+ * l'appelant retombe alors sur une lecture manche par manche.
+ * @returns {Promise<null|Object<string,object>>} { sessionId → doc de cache de la manche }
+ */
+export async function getCachedMeetingResults(db, meetingId) {
+  if (!db || !meetingId) return null;
+  try {
+    const { doc, getDoc } = await fsHelpers();
+    const snap = await getDoc(doc(db, MEETING_COLLECTION, meetingId));
+    if (!snap.exists()) return null;
+    const data = snap.data();
+    return data?.sessions && typeof data.sessions === 'object' ? data.sessions : null;
+  } catch (err) {
+    console.error('getCachedMeetingResults', meetingId, err);
     return null;
   }
 }

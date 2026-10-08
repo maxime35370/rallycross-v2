@@ -12,8 +12,10 @@ const { store, counter } = (globalThis.__fakeFirestore ||= {
   counter: { docs: 0, queries: 0 },
 });
 
-const { isSessionComplete, buildSessionCacheData, refreshSessionCache, getCachedResults, invalidateSessionCache } =
-  await import('../js/sessionCache.js');
+const {
+  isSessionComplete, buildSessionCacheData, refreshSessionCache, getCachedResults,
+  invalidateSessionCache, getCachedMeetingResults,
+} = await import('../js/sessionCache.js');
 const { getResults } = await import('../js/calc.js');
 
 function seedSession(sessionId, { type = 'MQ', n = 5, allDone = true } = {}) {
@@ -36,10 +38,21 @@ function seedSession(sessionId, { type = 'MQ', n = 5, allDone = true } = {}) {
   return { id: sessionId, type, meetingId: 'M1', category: 'Supercar', year: 2026 };
 }
 
+/** Déclare N sessions d'un meeting (plusieurs catégories) dans la fausse
+ *  collection `sessions`, nécessaire pour que getMeetingSessionIds() sache
+ *  combien de manches sont prévues en tout. */
+function seedMeetingSessions(meetingId, sessionIds) {
+  store.sessions = store.sessions || [];
+  for (const id of sessionIds) store.sessions.push({ id, meetingId });
+}
+
 beforeEach(() => {
   store.sessionParticipants = [];
   store.results = [];
   store.sessionCache = [];
+  store.sessions = [];
+  store.meetingCacheProgress = [];
+  store.meetingCache = [];
   counter.docs = 0;
   counter.queries = 0;
 });
@@ -107,7 +120,7 @@ describe('refreshSessionCache / getCachedResults', () => {
     await refreshSessionCache({}, session);
     expect(await getCachedResults({}, 'DF1')).not.toBeNull();
 
-    await invalidateSessionCache({}, 'DF1');
+    await invalidateSessionCache({}, session);
     expect(await getCachedResults({}, 'DF1')).toBeNull();
   });
 });
@@ -140,5 +153,51 @@ describe('getResults() (calc.js) : lit le cache quand il existe', () => {
     const norm = rows => rows.map(r => ({ driverId: r.driverId, ms: r.ms, status: r.status }))
       .sort((a, b) => a.driverId.localeCompare(b.driverId));
     expect(norm(viaCache)).toEqual(norm(direct));
+  });
+});
+
+describe('cache meeting (toutes catégories) — compteur + agrégation', () => {
+  it('se construit seulement quand TOUTES les manches du meeting sont complètes', async () => {
+    seedMeetingSessions('MEET1', ['S1', 'S2', 'S3']);
+    const s1 = seedSession('S1', { type: 'EC',  n: 5, allDone: true });
+    const s2 = seedSession('S2', { type: 'MQ',  n: 5, allDone: true });
+    const s3 = seedSession('S3', { type: 'FIN', n: 5, allDone: true });
+    s1.meetingId = s2.meetingId = s3.meetingId = 'MEET1';
+
+    await refreshSessionCache({}, s1);
+    expect(await getCachedMeetingResults({}, 'MEET1')).toBeNull(); // 1/3
+
+    await refreshSessionCache({}, s2);
+    expect(await getCachedMeetingResults({}, 'MEET1')).toBeNull(); // 2/3
+
+    await refreshSessionCache({}, s3);
+    const meeting = await getCachedMeetingResults({}, 'MEET1'); // 3/3
+    expect(meeting).not.toBeNull();
+    expect(Object.keys(meeting).sort()).toEqual(['S1', 'S2', 'S3']);
+    expect(meeting.S1.results.length).toBe(5);
+  });
+
+  it('disparaît si une manche redevient incomplète après coup (ex. forfait tardif)', async () => {
+    seedMeetingSessions('MEET2', ['A1', 'A2']);
+    const a1 = seedSession('A1', { type: 'EC', n: 4, allDone: true });
+    const a2 = seedSession('A2', { type: 'FIN', n: 4, allDone: true });
+    a1.meetingId = a2.meetingId = 'MEET2';
+
+    await refreshSessionCache({}, a1);
+    await refreshSessionCache({}, a2);
+    expect(await getCachedMeetingResults({}, 'MEET2')).not.toBeNull();
+
+    // Une réassignation vide A2 : invalidateSessionCache (comme sessions.js
+    // le fait pour de vrai lors d'un Auto Finale / forfait).
+    await invalidateSessionCache({}, a2);
+    expect(await getCachedMeetingResults({}, 'MEET2')).toBeNull();
+  });
+
+  it('un meeting de 1 seule manche se complète dès que celle-ci est complète', async () => {
+    seedMeetingSessions('MEET3', ['B1']);
+    const b1 = seedSession('B1', { type: 'EC', n: 3, allDone: true });
+    b1.meetingId = 'MEET3';
+    await refreshSessionCache({}, b1);
+    expect(await getCachedMeetingResults({}, 'MEET3')).not.toBeNull();
   });
 });

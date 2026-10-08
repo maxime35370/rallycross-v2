@@ -187,6 +187,38 @@ describe('sessionCache — lecture publique, écriture régie uniquement', () =>
   });
 });
 
+describe('meetingCacheProgress / meetingCache — compteur et cache meeting entier', () => {
+  const validProgress = { meetingId: 'm1', completeCount: 2, totalSessions: 5 };
+  const validMeeting   = { meetingId: 'm1', sessions: { s1: { results: [] } } };
+
+  it('lecture publique, écriture régie uniquement (progress)', async () => {
+    await assertSucceeds(setDoc(doc(regie(), 'meetingCacheProgress', 'm1'), validProgress));
+    await assertSucceeds(getDoc(doc(anonyme(), 'meetingCacheProgress', 'm1')));
+    await assertFails(setDoc(doc(anonyme(), 'meetingCacheProgress', 'm1'), validProgress));
+  });
+
+  it('refuse un docId différent du meetingId, ou des compteurs négatifs (progress)', async () => {
+    await assertFails(setDoc(doc(regie(), 'meetingCacheProgress', 'autre'), validProgress));
+    await assertFails(setDoc(doc(regie(), 'meetingCacheProgress', 'm1'), { ...validProgress, completeCount: -1 }));
+  });
+
+  it('lecture publique, écriture régie uniquement (meetingCache)', async () => {
+    await assertSucceeds(setDoc(doc(regie(), 'meetingCache', 'm1'), validMeeting));
+    await assertSucceeds(getDoc(doc(anonyme(), 'meetingCache', 'm1')));
+    await assertFails(setDoc(doc(anonyme(), 'meetingCache', 'm1'), validMeeting));
+  });
+
+  it('refuse un docId différent du meetingId, ou un champ sessions qui n\'est pas une map', async () => {
+    await assertFails(setDoc(doc(regie(), 'meetingCache', 'autre'), validMeeting));
+    await assertFails(setDoc(doc(regie(), 'meetingCache', 'm1'), { ...validMeeting, sessions: 'pas une map' }));
+  });
+
+  it('la régie peut supprimer un meeting cache devenu obsolète', async () => {
+    await assertSucceeds(setDoc(doc(regie(), 'meetingCache', 'm1'), validMeeting));
+    await assertSucceeds(deleteDoc(doc(regie(), 'meetingCache', 'm1')));
+  });
+});
+
 describe('non-régression — le produit gratuit reste accessible sans compte (suite)', () => {
   it('la régie écrit toujours un pilote — le durcissement de personId ne bloque pas', async () => {
     const db = regie();

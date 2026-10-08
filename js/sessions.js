@@ -256,17 +256,17 @@ async function autoAssignQF() {
   const { collection, query, where, getDocs, writeBatch } = await import(
     'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
   );
-  const clearSession = async (sessionId) => {
+  const clearSession = async (session) => {
     for (const col of ['sessionParticipants', 'results']) {
-      const snap = await getDocs(query(collection(db, col), where('sessionId', '==', sessionId)));
+      const snap = await getDocs(query(collection(db, col), where('sessionId', '==', session.id)));
       if (!snap.empty) { const b = writeBatch(db); snap.docs.forEach(d => b.delete(d.ref)); await b.commit(); }
     }
-    await invalidateSessionCache(db, sessionId);
+    await invalidateSessionCache(db, session);
   };
 
   // Vider QF + DF + FIN
   for (const s of allSessions.filter(s => ['QF', 'DF', 'FIN'].includes(s.type))) {
-    await clearSession(s.id);
+    await clearSession(s);
   }
 
   // Assigner les pilotes dans les QF
@@ -327,12 +327,13 @@ async function autoAssignDemis() {
   const { collection: fc, query: fq, where: fw, getDocs: fgd, writeBatch: fwb } = await import(
     'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
   );
-  const clearDf = async (sessionId) => {
+  const clearDf = async (session) => {
+    const sessionId = session.id;
     for (const col of ['sessionParticipants', 'results']) {
       const snap = await fgd(fq(fc(db, col), fw('sessionId', '==', sessionId)));
       if (!snap.empty) { const b = fwb(db); snap.docs.forEach(d => b.delete(d.ref)); await b.commit(); }
     }
-    await invalidateSessionCache(db, sessionId);
+    await invalidateSessionCache(db, session);
     // Vider explicitement le cache local pour eviter une race avec
     // l'event onSnapshot - sans ca le garde-fou de addParticipant
     // ("ne pas ajouter a un DF si le pilote est dans l'autre") peut
@@ -341,8 +342,8 @@ async function autoAssignDemis() {
     // un premier run QF→DF qui avait reparti differemment).
     if (sessionParticipants[sessionId]) sessionParticipants[sessionId].clear();
   };
-  await clearDf(df1.id);
-  await clearDf(df2.id);
+  await clearDf(df1);
+  await clearDf(df2);
 
   const champ = getActiveChampionship();
   const dfGridSize = champ?.sessionConfig?.DF?.gridSize || 8;
@@ -447,7 +448,7 @@ async function autoAssignDemis() {
       const snap = await fgd2(fq2(fc2(db, col), fw2('sessionId', '==', fin.id)));
       if (!snap.empty) { const b = fwb2(db); snap.docs.forEach(d => b.delete(d.ref)); await b.commit(); }
     }
-    await invalidateSessionCache(db, fin.id);
+    await invalidateSessionCache(db, fin);
     toast('Pilotes repartis en DF — Finale videe, relancez Auto Finale', 'success', 5000);
   } else {
     toast('Pilotes repartis en DF', 'success');
@@ -537,7 +538,7 @@ async function autoAssignFinale() {
     const snap = await getDocs(query(collection(db, col), where('sessionId', '==', fin.id)));
     if (!snap.empty) { const b = writeBatch(db); snap.docs.forEach(d => b.delete(d.ref)); await b.commit(); }
   }
-  await invalidateSessionCache(db, fin.id);
+  await invalidateSessionCache(db, fin);
   for (const d of finalistes) await addParticipant(fin.id, d);
   toast(`${finalistes.length} finalistes assignés ✓`, 'success');
 }
@@ -590,7 +591,7 @@ async function handleQfForfait(forfaitDriverId) {
       const snap = await getDocs(query(collection(db, col), where('sessionId', '==', s.id)));
       if (!snap.empty) { const b = writeBatch(db); snap.docs.forEach(d => b.delete(d.ref)); await b.commit(); }
     }
-    await invalidateSessionCache(db, s.id);
+    await invalidateSessionCache(db, s);
   }
 
   // Redistribuer les qualifies dans les QF (meme logique que autoAssignQF)
@@ -673,7 +674,7 @@ async function handleForfait(forfaitDriverId) {
       const snap = await getDocs(query(collection(db, col), where('sessionId', '==', dfSession.id)));
       if (!snap.empty) { const b = writeBatch(db); snap.docs.forEach(d => b.delete(d.ref)); await b.commit(); }
     }
-    await invalidateSessionCache(db, dfSession.id);
+    await invalidateSessionCache(db, dfSession);
   }
 
   for (let i = 0; i < newAssignment.length; i++) {

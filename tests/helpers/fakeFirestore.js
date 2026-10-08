@@ -42,3 +42,15 @@ export async function setDoc({ name, docId }, data) {
 export async function deleteDoc({ name, docId }) {
   state.store[name] = (state.store[name] || []).filter(r => r.id !== docId);
 }
+
+// runTransaction() : pas de vraie atomicité ici (pas de concurrence à
+// simuler en test unitaire) — juste la même interface get()/set()/delete()
+// que le vrai SDK, pour que js/sessionCache.js s'exécute sans modification.
+export async function runTransaction(db, updateFn) {
+  const tx = {
+    get: (ref) => getDoc(ref),
+    set: (ref, data) => { setDoc(ref, data); },
+    delete: (ref) => { deleteDoc(ref); },
+  };
+  return updateFn(tx);
+}
