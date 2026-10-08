@@ -66,7 +66,11 @@ describe('classement intermédiaire : lecture complète vs calcul en mémoire', 
     const sessions = seed(20);
     await calcInterimStandings({}, sessions);
     expect(counter.docs).toBe(10 * 20);     // 5 sessions × (N résultats + N participants)
-    expect(counter.queries).toBe(10);
+    // 10 requêtes (results + participants × 5 sessions) + 5 lectures du cache
+    // de manche (js/sessionCache.js) — ici toujours absent (seed() n'écrit
+    // aucun doc sessionCache), donc sans coût en documents facturés, juste en
+    // nombre d'appels.
+    expect(counter.queries).toBe(15);
 
     counter.docs = 0;
     buildInterimFromData(sessions, {}, {});

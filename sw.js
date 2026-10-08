@@ -5,7 +5,7 @@
    Compatible GitHub Pages (sous-dossier) et racine.
 ═══════════════════════════════════════════════ */
 
-const CACHE_NAME = 'rx-chrono-v43';
+const CACHE_NAME = 'rx-chrono-v44';
 
 // Assets relatifs au scope du SW (pas de / en prefixe)
 const ASSET_PATHS = [
@@ -34,6 +34,7 @@ const ASSET_PATHS = [
   'js/config.js',
   'js/utils.js',
   'js/calc.js',
+  'js/sessionCache.js',
   'js/drivers.js',
   'js/meetings.js',
   'js/meetingSessionsSync.js',

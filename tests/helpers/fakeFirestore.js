@@ -20,3 +20,25 @@ export async function getDocs({ col, constraints }) {
   state.counter.docs += rows.length;
   return { docs: rows.map(r => ({ id: r.id, data: () => r })), size: rows.length, empty: !rows.length };
 }
+
+// doc()/getDoc()/setDoc()/deleteDoc() : lecture/écriture d'un document unique
+// par id, utilisées par js/sessionCache.js. Même compteur que getDocs (un
+// getDoc lu = un document facturé).
+export function doc(_db, name, docId) { return { name, docId }; }
+export async function getDoc({ name, docId }) {
+  const rows = state.store[name] || [];
+  const found = rows.find(r => r.id === docId);
+  state.counter.queries += 1;
+  if (found) state.counter.docs += 1;
+  return { exists: () => !!found, id: docId, data: () => found };
+}
+export async function setDoc({ name, docId }, data) {
+  state.store[name] = state.store[name] || [];
+  const rows = state.store[name];
+  const idx = rows.findIndex(r => r.id === docId);
+  const row = { id: docId, ...data };
+  if (idx >= 0) rows[idx] = row; else rows.push(row);
+}
+export async function deleteDoc({ name, docId }) {
+  state.store[name] = (state.store[name] || []).filter(r => r.id !== docId);
+}

@@ -6,6 +6,7 @@
 ═══════════════════════════════════════════════ */
 
 import { dedupeParticipants } from './utils.js';
+import { getCachedResults } from './sessionCache.js';
 
 // ─────────────────────────────────────────────────────────
 // BAREME PAR DEFAUT (FFSA 2026) — utilise si aucun reglement
@@ -226,6 +227,14 @@ export function finPoints(position, regulation) {
 
 export async function getResults(db, sessionId) {
   if (!db || !sessionId) return [];
+
+  // Manche EC/MQ déjà complète (tous les pilotes ont un temps ou un statut) :
+  // un seul document de cache remplace la lecture de tous les documents
+  // individuels. Absent (manche pas encore terminée, ou type non mis en
+  // cache) → on retombe sur la lecture directe ci-dessous.
+  const cached = await getCachedResults(db, sessionId);
+  if (cached) return cached;
+
   const { collection, query, where, getDocs } = await import(
     'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
   );

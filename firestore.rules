@@ -147,6 +147,20 @@ service cloud.firestore {
         (request.resource.data.status == null || request.resource.data.status in ['DNS','DNF','DSQ','DSQ_RACE']);
     }
 
+    match /sessionCache/{docId} {
+      // Cache agrege "resultat d'une manche" (1 doc par sessionId, EC/MQ
+      // uniquement pour l'instant) — lu par les spectateurs/overlay a la
+      // place des documents individuels de `results`, regenere par la regie
+      // en recalcul complet a chaque ecriture de temps.
+      allow read:   if true;
+      allow delete: if isRegie();
+      allow create, update: if isRegie() &&
+        hasFields(request.resource.data, ['sessionId','sessionType','results']) &&
+        docId == request.resource.data.sessionId &&
+        request.resource.data.sessionType in ['EC','MQ'] &&
+        request.resource.data.results is list;
+    }
+
     match /interimStandings/{docId} {
       allow read:   if true;
       allow delete: if isRegie();
