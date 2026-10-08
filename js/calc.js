@@ -6,6 +6,7 @@
 ═══════════════════════════════════════════════ */
 
 import { dedupeParticipants } from './utils.js';
+import { getCachedResults } from './sessionCache.js';
 
 // ─────────────────────────────────────────────────────────
 // BAREME PAR DEFAUT (FFSA 2026) — utilise si aucun reglement
@@ -226,6 +227,14 @@ export function finPoints(position, regulation) {
 
 export async function getResults(db, sessionId) {
   if (!db || !sessionId) return [];
+
+  // Manche EC/MQ déjà complète (tous les pilotes ont un temps ou un statut) :
+  // un seul document de cache remplace la lecture de tous les documents
+  // individuels. Absent (manche pas encore terminée, ou type non mis en
+  // cache) → on retombe sur la lecture directe ci-dessous.
+  const cached = await getCachedResults(db, sessionId);
+  if (cached) return cached;
+
   const { collection, query, where, getDocs } = await import(
     'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
   );
@@ -599,18 +608,51 @@ export function buildInterimStandings(raceStandings, ecBonus = {}, regulation, o
  * @returns {Array} standings triés avec position et interimPoints
  */
 export async function calcInterimStandings(db, sessions, regulation, options) {
+  const mqSessions = sessions.filter(s => s.type === 'MQ');
+  if (mqSessions.length === 0) return [];
+
+  // Lecture : résultats + participants de l'EC et de chaque MQ, en parallèle.
+  // Le calcul lui-même est délégué à la version pure ci-dessous, pour qu'un
+  // appelant qui détient déjà ces données (écoute temps réel) obtienne
+  // exactement le même classement sans relire la base.
+  const ecSession = sessions.find(s => s.type === 'EC');
+  const resultsBySession = {};
+  const participantsBySession = {};
+  await Promise.all([ecSession, ...mqSessions].filter(Boolean).map(async s => {
+    const [res, parts] = await Promise.all([getResults(db, s.id), getParticipants(db, s.id)]);
+    resultsBySession[s.id] = res;
+    participantsBySession[s.id] = parts;
+  }));
+
+  return buildInterimFromData(sessions, resultsBySession, participantsBySession, regulation, options);
+}
+
+/**
+ * Version PURE de calcInterimStandings : aucune lecture Firestore.
+ *
+ * @param {Array}  sessions              — sessions du meeting + catégorie
+ * @param {object} resultsBySession      — { sessionId → documents results }
+ * @param {object} participantsBySession — { sessionId → documents sessionParticipants (dédoublonnés) }
+ * @param {object} [regulation]
+ * @param {object} [options]             — { minClassifiedRaces } (défaut : 2)
+ * @returns {Array} mêmes lignes que calcInterimStandings
+ */
+export function buildInterimFromData(sessions, resultsBySession = {}, participantsBySession = {}, regulation, options) {
   const mqSessions = sessions.filter(s => s.type === 'MQ').sort((a, b) => a.num - b.num);
   if (mqSessions.length === 0) return [];
 
   // Points bonus EC
-  const ecStandings = await calcEcStandings(db, sessions, regulation);
+  const ecSession = sessions.find(s => s.type === 'EC');
+  const ecStandings = ecSession
+    ? buildEcStandings(participantsBySession[ecSession.id] || [], resultsBySession[ecSession.id] || [], regulation)
+    : [];
   const ecBonus = {};
   ecStandings.forEach(r => { ecBonus[r.driverId] = r.bonusPoints ?? 0; });
 
-  const raceStandings = [];
-  for (const mq of mqSessions) {
-    raceStandings.push({ num: mq.num, rows: await calcMqStandings(db, mq, regulation) });
-  }
+  const raceStandings = mqSessions.map(mq => ({
+    num: mq.num,
+    rows: buildMqStandings(participantsBySession[mq.id] || [], resultsBySession[mq.id] || [], regulation),
+  }));
 
   return buildInterimStandings(raceStandings, ecBonus, regulation, options);
 }

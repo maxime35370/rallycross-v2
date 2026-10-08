@@ -13,6 +13,7 @@ import {
   mqPoints, qfPoints, dfPoints, finPoints, interimPoints, calcStatusPoints,
 } from '../../js/calc.js';
 import { msToDisplay } from '../../js/utils.js';
+import { getCachedResults } from '../../js/sessionCache.js';
 
 // ─────────────────────────────────────────────────────────
 // HELPERS
@@ -28,7 +29,12 @@ const upToSessions = (sessions, upTo) => upTo ? sessions.filter(s => sessionRank
 export function getSessions(meetingId, category) {
   return fsQuery('sessions', [['meetingId', '==', meetingId], ['category', '==', category]]);
 }
-export function getResults(sessionId) {
+export async function getResults(sessionId) {
+  // Manche déjà complète (EC/MQ/QF/DF/FIN) : 1 document de cache au lieu
+  // de N — voir js/sessionCache.js. Absent (manche en cours) → requête
+  // directe habituelle.
+  const cached = await getCachedResults(db, sessionId);
+  if (cached) return cached;
   return fsQuery('results', [['sessionId', '==', sessionId]]);
 }
 export function getParticipants(sessionId) {
@@ -151,8 +157,9 @@ export async function computePronoWinner(prono, regulation) {
 // POINTS D'UNE PHASE (QF / DF / FIN) — copie fidèle de championship.js
 // ─────────────────────────────────────────────────────────
 
-async function calcPhasePoints(session, regulation) {
-  const [results, participants] = await Promise.all([getResults(session.id), getParticipants(session.id)]);
+async function calcPhasePoints(session, regulation, participantsPromise) {
+  // `participantsPromise` : participants déjà demandés par l'appelant (1 seule lecture).
+  const [results, participants] = await Promise.all([getResults(session.id), participantsPromise ?? getParticipants(session.id)]);
   const resultMap = {};
   results.forEach(r => { resultMap[r.driverId] = r; });
 
@@ -196,7 +203,8 @@ export async function getMeetingPoints(meetingId, category, regulation, upTo) {
   const [interimRows, phases] = await Promise.all([
     calcInterimStandings(db, sessions, regulation),
     Promise.all(phaseSessions.map(async s => {
-      const [pts, parts] = await Promise.all([calcPhasePoints(s, regulation), getParticipants(s.id)]);
+      const partsP = getParticipants(s.id);
+      const [pts, parts] = await Promise.all([calcPhasePoints(s, regulation, partsP), partsP]);
       return { field: s.type === 'FIN' ? 'fin' : s.type === 'DF' ? 'df' : 'qf', assign: s.type === 'FIN', pts, parts };
     })),
   ]);

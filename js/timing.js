@@ -14,6 +14,7 @@ import { msToDisplay, inputToMs, msToFields, escHtml, parseTimeString, timecodeK
 import { getActiveChampionship, getActiveChampionshipId } from './context.js';
 import { mqPoints, qfPoints, dfPoints, finPoints, ecBonusPoints, calcStatusPoints, compareInterimTiebreaker, computeSeriesSizes } from './calc.js';
 import { getChampionshipConfig } from './settings.js';
+import { refreshSessionCache } from './sessionCache.js';
 
 // ─────────────────────────────────────────────────────────
 // ÉTAT LOCAL
@@ -723,6 +724,7 @@ async function saveResult(driverId, ms, status, manualPosition = null) {
   try {
     await setDoc(doc(db, 'results', docId), data, { merge: true });
     logAudit('update', 'result', docId, { label: `#${participant.carNumber} ${participant.firstName} ${participant.lastName}`, ms, status: status || null });
+    refreshSessionCache(db, session); // best-effort, ne bloque pas la saisie
   } catch (err) {
     console.error(err);
     toast('Erreur lors de la sauvegarde', 'error');
@@ -767,6 +769,7 @@ async function saveMeta(driverId, serie, couloir) {
   const docId = `${selectedSessionId}_${driverId}`;
   try {
     await setDoc(doc(db, 'results', docId), data, { merge: true });
+    refreshSessionCache(db, session); // best-effort, ne bloque pas la saisie
   } catch (err) {
     console.error(err);
     toast('Erreur lors de la sauvegarde série/couloir', 'error');
@@ -785,6 +788,8 @@ async function clearResult(driverId) {
   const pLabel = p ? `#${p.carNumber} ${p.firstName} ${p.lastName}` : driverId;
   logAudit('delete', 'result', existing.docId, { label: `Temps efface pour ${pLabel}` });
   await deleteDoc(doc(db, 'results', existing.docId));
+  const session = allSessions.find(s => s.id === selectedSessionId);
+  refreshSessionCache(db, session); // best-effort, ne bloque pas la saisie
 }
 
 // ─────────────────────────────────────────────────────────

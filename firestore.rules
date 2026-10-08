@@ -147,6 +147,49 @@ service cloud.firestore {
         (request.resource.data.status == null || request.resource.data.status in ['DNS','DNF','DSQ','DSQ_RACE']);
     }
 
+    match /sessionCache/{docId} {
+      // Cache agrege "resultat d'une manche" (1 doc par sessionId) — lu par
+      // les spectateurs/overlay a la place des documents individuels de
+      // `results`, regenere par la regie en recalcul complet a chaque
+      // ecriture de temps (ou supprime lors d'une reassignation QF/DF/Finale).
+      allow read:   if true;
+      allow delete: if isRegie();
+      allow create, update: if isRegie() &&
+        hasFields(request.resource.data, ['sessionId','sessionType','results']) &&
+        docId == request.resource.data.sessionId &&
+        request.resource.data.sessionType in ['EC','MQ','QF','DF','FIN'] &&
+        request.resource.data.results is list;
+    }
+
+    match /meetingCacheProgress/{docId} {
+      // Compteur "manches completes / manches prevues" par meeting (toutes
+      // categories confondues) — ajuste par transaction a chaque fois qu'une
+      // manche devient complete ou cesse de l'etre (js/sessionCache.js),
+      // pour savoir sans rescanner si le meeting entier peut etre mis en
+      // cache (voir meetingCache ci-dessous).
+      allow read:   if true;
+      allow delete: if isRegie();
+      allow create, update: if isRegie() &&
+        hasFields(request.resource.data, ['meetingId','completeCount','totalSessions']) &&
+        docId == request.resource.data.meetingId &&
+        request.resource.data.completeCount is int && request.resource.data.completeCount >= 0 &&
+        request.resource.data.totalSessions is int && request.resource.data.totalSessions >= 0;
+    }
+
+    match /meetingCache/{docId} {
+      // Cache d'un MEETING ENTIER (toutes categories), construit uniquement
+      // quand meetingCacheProgress indique que toutes ses manches sont
+      // completes — regroupe les sessionCache de chaque manche en 1 seul
+      // document, supprime automatiquement si une manche redevient
+      // incomplete (reassignation, forfait tardif).
+      allow read:   if true;
+      allow delete: if isRegie();
+      allow create, update: if isRegie() &&
+        hasFields(request.resource.data, ['meetingId','sessions']) &&
+        docId == request.resource.data.meetingId &&
+        request.resource.data.sessions is map;
+    }
+
     match /interimStandings/{docId} {
       allow read:   if true;
       allow delete: if isRegie();

@@ -134,7 +134,92 @@ describe('non-régression — le produit gratuit reste accessible sans compte', 
     await assertFails(setDoc(doc(db, 'meetings', 'pirate'), { date: '2026-01-01', location: 'X', year: 2026, categories: ['a'], nbMQ: 4 }));
     await assertFails(deleteDoc(doc(db, 'results', 'res_1')));
   });
+});
 
+// ═══════════════════════════════════════════════════════════════════════
+// SESSIONCACHE — cache agrégé "résultat d'une manche" (js/sessionCache.js)
+// ═══════════════════════════════════════════════════════════════════════
+describe('sessionCache — lecture publique, écriture régie uniquement', () => {
+  const validCache = { sessionId: 's1', sessionType: 'MQ', results: [{ driverId: 'drv_1', ms: 150000, status: null }] };
+
+  it('un visiteur sans compte le lit (même usage que results)', async () => {
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), 'sessionCache', 's1'), validCache);
+    });
+    await assertSucceeds(getDoc(doc(anonyme(), 'sessionCache', 's1')));
+  });
+
+  it('un visiteur sans compte ne peut ni créer ni supprimer le cache', async () => {
+    await assertFails(setDoc(doc(anonyme(), 'sessionCache', 's1'), validCache));
+    await env.withSecurityRulesDisabled(async (ctx) => {
+      await setDoc(doc(ctx.firestore(), 'sessionCache', 's1'), validCache);
+    });
+    await assertFails(deleteDoc(doc(anonyme(), 'sessionCache', 's1')));
+  });
+
+  it('la régie peut créer/mettre à jour le cache d\'une manche EC/MQ', async () => {
+    await assertSucceeds(setDoc(doc(regie(), 'sessionCache', 's1'), validCache));
+    await assertSucceeds(setDoc(doc(regie(), 'sessionCache', 's1'), { ...validCache, results: [] }));
+  });
+
+  it('accepte EC/MQ/QF/DF/FIN, refuse un autre sessionType', async () => {
+    for (const sessionType of ['EC', 'MQ', 'QF', 'DF', 'FIN']) {
+      await assertSucceeds(setDoc(doc(regie(), 'sessionCache', 's1'), { ...validCache, sessionType }));
+    }
+    await assertFails(setDoc(doc(regie(), 'sessionCache', 's1'), { ...validCache, sessionType: 'AUTRE' }));
+  });
+
+  it('refuse un docId qui ne correspond pas au sessionId (anti-confusion)', async () => {
+    await assertFails(setDoc(doc(regie(), 'sessionCache', 'autre_id'), validCache));
+  });
+
+  it('refuse un champ results qui n\'est pas une liste', async () => {
+    await assertFails(setDoc(doc(regie(), 'sessionCache', 's1'), { ...validCache, results: 'pas une liste' }));
+  });
+
+  it('refuse un document incomplet (champ requis manquant)', async () => {
+    await assertFails(setDoc(doc(regie(), 'sessionCache', 's1'), { sessionId: 's1', sessionType: 'MQ' }));
+  });
+
+  it('la régie peut supprimer un cache devenu obsolète', async () => {
+    await assertSucceeds(setDoc(doc(regie(), 'sessionCache', 's1'), validCache));
+    await assertSucceeds(deleteDoc(doc(regie(), 'sessionCache', 's1')));
+  });
+});
+
+describe('meetingCacheProgress / meetingCache — compteur et cache meeting entier', () => {
+  const validProgress = { meetingId: 'm1', completeCount: 2, totalSessions: 5 };
+  const validMeeting   = { meetingId: 'm1', sessions: { s1: { results: [] } } };
+
+  it('lecture publique, écriture régie uniquement (progress)', async () => {
+    await assertSucceeds(setDoc(doc(regie(), 'meetingCacheProgress', 'm1'), validProgress));
+    await assertSucceeds(getDoc(doc(anonyme(), 'meetingCacheProgress', 'm1')));
+    await assertFails(setDoc(doc(anonyme(), 'meetingCacheProgress', 'm1'), validProgress));
+  });
+
+  it('refuse un docId différent du meetingId, ou des compteurs négatifs (progress)', async () => {
+    await assertFails(setDoc(doc(regie(), 'meetingCacheProgress', 'autre'), validProgress));
+    await assertFails(setDoc(doc(regie(), 'meetingCacheProgress', 'm1'), { ...validProgress, completeCount: -1 }));
+  });
+
+  it('lecture publique, écriture régie uniquement (meetingCache)', async () => {
+    await assertSucceeds(setDoc(doc(regie(), 'meetingCache', 'm1'), validMeeting));
+    await assertSucceeds(getDoc(doc(anonyme(), 'meetingCache', 'm1')));
+    await assertFails(setDoc(doc(anonyme(), 'meetingCache', 'm1'), validMeeting));
+  });
+
+  it('refuse un docId différent du meetingId, ou un champ sessions qui n\'est pas une map', async () => {
+    await assertFails(setDoc(doc(regie(), 'meetingCache', 'autre'), validMeeting));
+    await assertFails(setDoc(doc(regie(), 'meetingCache', 'm1'), { ...validMeeting, sessions: 'pas une map' }));
+  });
+
+  it('la régie peut supprimer un meeting cache devenu obsolète', async () => {
+    await assertSucceeds(setDoc(doc(regie(), 'meetingCache', 'm1'), validMeeting));
+    await assertSucceeds(deleteDoc(doc(regie(), 'meetingCache', 'm1')));
+  });
+});
+
+describe('non-régression — le produit gratuit reste accessible sans compte (suite)', () => {
   it('la régie écrit toujours un pilote — le durcissement de personId ne bloque pas', async () => {
     const db = regie();
     await assertSucceeds(setDoc(doc(db, 'drivers', 'drv_2'), {
