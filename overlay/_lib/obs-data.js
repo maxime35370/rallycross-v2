@@ -13,6 +13,7 @@ import {
   mqPoints, qfPoints, dfPoints, finPoints, interimPoints, calcStatusPoints,
 } from '../../js/calc.js';
 import { msToDisplay } from '../../js/utils.js';
+import { getCachedResults } from '../../js/sessionCache.js';
 
 // ─────────────────────────────────────────────────────────
 // HELPERS
@@ -28,7 +29,12 @@ const upToSessions = (sessions, upTo) => upTo ? sessions.filter(s => sessionRank
 export function getSessions(meetingId, category) {
   return fsQuery('sessions', [['meetingId', '==', meetingId], ['category', '==', category]]);
 }
-export function getResults(sessionId) {
+export async function getResults(sessionId) {
+  // Manche déjà complète (EC/MQ/QF/DF/FIN) : 1 document de cache au lieu
+  // de N — voir js/sessionCache.js. Absent (manche en cours) → requête
+  // directe habituelle.
+  const cached = await getCachedResults(db, sessionId);
+  if (cached) return cached;
   return fsQuery('results', [['sessionId', '==', sessionId]]);
 }
 export function getParticipants(sessionId) {

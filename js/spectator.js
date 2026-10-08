@@ -7,6 +7,7 @@
 import { db } from './firebase.js';
 import { msToDisplay, escHtml, dedupeParticipants } from './utils.js';
 import { getActiveChampionship, getActiveChampionshipId } from './context.js';
+import { getCachedResults } from './sessionCache.js';
 import {
   watchPronostics, myVote, castVote, ensureAnon, watchMeetingScores, autoPseudo, getPlayerPseudo, setPlayerPseudo,
   getTwitchProfile, beginTwitchLink, consumeTwitchLinkResult, watchSeasonScores,
@@ -94,6 +95,17 @@ async function fsQuery(col, filters) {
   const constraints = filters.map(([f, op, v]) => where(f, op, v));
   const snap = await getDocs(query(collection(db, col), ...constraints));
   return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+}
+
+/** Lecture ponctuelle (non temps réel) des résultats d'une manche : passe
+ *  par le cache de manche (js/sessionCache.js) quand il existe — surtout
+ *  utile ici pour les ¼/½ finales et la Finale de meetings déjà terminés
+ *  (championnat, classement de meetings passés), retombe sur la requête
+ *  directe sinon. */
+async function getResultsCached(sessionId) {
+  const cached = await getCachedResults(db, sessionId);
+  if (cached) return cached;
+  return fsQuery('results', [['sessionId', '==', sessionId]]);
 }
 
 async function loadMeetings() {
@@ -352,7 +364,7 @@ async function renderContent() {
     Promise.all(allSessions.map(async s => {
       const res = INTERIM_SESSION_TYPES.includes(s.type)
         ? await watchInterimSession(s, token)
-        : await fsQuery('results', [['sessionId', '==', s.id]]);
+        : await getResultsCached(s.id);
       return { session: s, count: res.length, results: res };
     })),
     loadInterimParticipants(token),
@@ -429,7 +441,7 @@ async function loadChampionshipData() {
       });
 
       for (const df of meetingSessions.filter(s => s.type === 'DF')) {
-        const res = await fsQuery('results', [['sessionId', '==', df.id]]);
+        const res = await getResultsCached(df.id);
         res.filter(r => r.ms && !r.status).sort((a, b) => a.ms - b.ms).forEach((r, i) => {
           if (!pointsMap[r.driverId]) pointsMap[r.driverId] = { driverId: r.driverId, carNumber: r.carNumber, lastName: r.lastName, total: 0 };
           pointsMap[r.driverId].total += DF_PTS[i + 1] ?? 0;
@@ -438,7 +450,7 @@ async function loadChampionshipData() {
 
       const finSession = meetingSessions.find(s => s.type === 'FIN');
       if (finSession) {
-        const res = await fsQuery('results', [['sessionId', '==', finSession.id]]);
+        const res = await getResultsCached(finSession.id);
         res.filter(r => r.ms && !r.status).sort((a, b) => a.ms - b.ms).forEach((r, i) => {
           if (!pointsMap[r.driverId]) pointsMap[r.driverId] = { driverId: r.driverId, carNumber: r.carNumber, lastName: r.lastName, total: 0 };
           pointsMap[r.driverId].total += FIN_PTS[i + 1] ?? 0;

@@ -9,6 +9,7 @@ import { db } from './firebase.js';
 import { toast } from './app.js';
 import { escHtml, dedupeParticipants } from './utils.js';
 import { calcInterimStandings, qfPoints, dfPoints, finPoints, calcStatusPoints } from './calc.js';
+import { getCachedResults } from './sessionCache.js';
 import { getChampionshipConfig } from './settings.js';
 import { getActiveChampionship, getActiveChampionshipId } from './context.js';
 import {
@@ -58,6 +59,10 @@ async function fsQuery(collectionName, filters) {
 }
 
 async function fsGetResults(sessionId) {
+  // Manche déjà complète : 1 document de cache (js/sessionCache.js) au lieu
+  // de N — surtout utile ici pour les QF/DF/Finale de meetings déjà joués.
+  const cached = await getCachedResults(db, sessionId);
+  if (cached) return cached;
   return fsQuery('results', [['sessionId', '==', sessionId]]);
 }
 

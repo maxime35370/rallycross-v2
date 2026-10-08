@@ -148,16 +148,16 @@ service cloud.firestore {
     }
 
     match /sessionCache/{docId} {
-      // Cache agrege "resultat d'une manche" (1 doc par sessionId, EC/MQ
-      // uniquement pour l'instant) — lu par les spectateurs/overlay a la
-      // place des documents individuels de `results`, regenere par la regie
-      // en recalcul complet a chaque ecriture de temps.
+      // Cache agrege "resultat d'une manche" (1 doc par sessionId) — lu par
+      // les spectateurs/overlay a la place des documents individuels de
+      // `results`, regenere par la regie en recalcul complet a chaque
+      // ecriture de temps (ou supprime lors d'une reassignation QF/DF/Finale).
       allow read:   if true;
       allow delete: if isRegie();
       allow create, update: if isRegie() &&
         hasFields(request.resource.data, ['sessionId','sessionType','results']) &&
         docId == request.resource.data.sessionId &&
-        request.resource.data.sessionType in ['EC','MQ'] &&
+        request.resource.data.sessionType in ['EC','MQ','QF','DF','FIN'] &&
         request.resource.data.results is list;
     }
 

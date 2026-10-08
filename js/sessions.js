@@ -12,6 +12,7 @@ import { getChampionshipConfig } from './settings.js';
 import { calcInterimStandings } from './calc.js';
 import { distributeIntoQF, getReserves } from './competition.js';
 import { getActiveChampionship, getActiveChampionshipId } from './context.js';
+import { invalidateSessionCache, refreshSessionCache } from './sessionCache.js';
 
 // ─────────────────────────────────────────────────────────
 // ÉTAT LOCAL
@@ -186,6 +187,10 @@ async function removeParticipant(sessionId, driverId) {
       toast('Pilote retiré — son temps a aussi été supprimé', 'warning', 4000);
     }
   }
+  // Le participant lui-même a change (retire), que son resultat existait ou
+  // non : regenerer plutot qu'invalider pour ne pas perdre le cache d'une
+  // manche qui reste complete sans lui.
+  refreshSessionCache(db, allSessions.find(s => s.id === sessionId));
 }
 
 async function getParticipantsData(sessionId) {
@@ -256,6 +261,7 @@ async function autoAssignQF() {
       const snap = await getDocs(query(collection(db, col), where('sessionId', '==', sessionId)));
       if (!snap.empty) { const b = writeBatch(db); snap.docs.forEach(d => b.delete(d.ref)); await b.commit(); }
     }
+    await invalidateSessionCache(db, sessionId);
   };
 
   // Vider QF + DF + FIN
@@ -326,6 +332,7 @@ async function autoAssignDemis() {
       const snap = await fgd(fq(fc(db, col), fw('sessionId', '==', sessionId)));
       if (!snap.empty) { const b = fwb(db); snap.docs.forEach(d => b.delete(d.ref)); await b.commit(); }
     }
+    await invalidateSessionCache(db, sessionId);
     // Vider explicitement le cache local pour eviter une race avec
     // l'event onSnapshot - sans ca le garde-fou de addParticipant
     // ("ne pas ajouter a un DF si le pilote est dans l'autre") peut
@@ -440,6 +447,7 @@ async function autoAssignDemis() {
       const snap = await fgd2(fq2(fc2(db, col), fw2('sessionId', '==', fin.id)));
       if (!snap.empty) { const b = fwb2(db); snap.docs.forEach(d => b.delete(d.ref)); await b.commit(); }
     }
+    await invalidateSessionCache(db, fin.id);
     toast('Pilotes repartis en DF — Finale videe, relancez Auto Finale', 'success', 5000);
   } else {
     toast('Pilotes repartis en DF', 'success');
@@ -529,6 +537,7 @@ async function autoAssignFinale() {
     const snap = await getDocs(query(collection(db, col), where('sessionId', '==', fin.id)));
     if (!snap.empty) { const b = writeBatch(db); snap.docs.forEach(d => b.delete(d.ref)); await b.commit(); }
   }
+  await invalidateSessionCache(db, fin.id);
   for (const d of finalistes) await addParticipant(fin.id, d);
   toast(`${finalistes.length} finalistes assignés ✓`, 'success');
 }
@@ -581,6 +590,7 @@ async function handleQfForfait(forfaitDriverId) {
       const snap = await getDocs(query(collection(db, col), where('sessionId', '==', s.id)));
       if (!snap.empty) { const b = writeBatch(db); snap.docs.forEach(d => b.delete(d.ref)); await b.commit(); }
     }
+    await invalidateSessionCache(db, s.id);
   }
 
   // Redistribuer les qualifies dans les QF (meme logique que autoAssignQF)
@@ -663,6 +673,7 @@ async function handleForfait(forfaitDriverId) {
       const snap = await getDocs(query(collection(db, col), where('sessionId', '==', dfSession.id)));
       if (!snap.empty) { const b = writeBatch(db); snap.docs.forEach(d => b.delete(d.ref)); await b.commit(); }
     }
+    await invalidateSessionCache(db, dfSession.id);
   }
 
   for (let i = 0; i < newAssignment.length; i++) {
@@ -738,6 +749,10 @@ async function handleFinaleForfait(forfaitDriverId, allReplacements, panel, sess
   // Ajouter le remplaçant si disponible
   if (reserve) {
     await addParticipant(fin.id, reserve);
+    // Le remplaçant vient d'entrer sans résultat : regénérer après son
+    // ajout (pas avant), sinon le cache rafraîchi par removeParticipant()
+    // ci-dessus le compterait manquant.
+    await refreshSessionCache(db, fin);
     toast(`Forfait déclaré — ${reserve.firstName} ${reserve.lastName} entre en Finale ✓`, 'success', 4000);
   } else {
     toast(`Forfait déclaré — aucun remplaçant disponible`, 'warning', 4000);

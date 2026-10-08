@@ -1,7 +1,7 @@
 /* ═══════════════════════════════════════════════
    SESSIONCACHE.JS — cache agrégé "résultat d'une manche"
 
-   Pour une session EC/MQ donnée, regroupe en UN SEUL document Firestore
+   Pour une session (EC/MQ/QF/DF/FIN) donnée, regroupe en UN SEUL document Firestore
    (collection `sessionCache`, id = sessionId) le résultat de tous ses
    pilotes, dès que chacun d'eux a un état définitif (temps ou statut
    DNS/DNF/DSQ/DSQ_RACE). Tant que ce n'est pas le cas, aucun cache n'est
@@ -13,14 +13,14 @@
    si l'un plante avant d'avoir régénéré le cache : la prochaine écriture
    réussie, quelle qu'elle soit, repart d'une lecture fraîche de `results`.
 
-   Volontairement limité à EC/MQ dans un premier temps : les sessions
-   QF/DF/FIN sont réassignées en lot par sessions.js (auto QF/DF/Finale,
-   gestion des forfaits), qui ne déclenche pas encore ce cache — l'y
-   brancher viendra dans un second temps, après revue séparée de ces
-   flux plus sensibles. */
+   QF/DF/FIN sont réassignées EN LOT par sessions.js (auto QF/DF/Finale,
+   gestion des forfaits) : chaque réassignation vide `results` avant de
+   réaffecter les participants, donc sessions.js appelle explicitement
+   invalidateSessionCache() juste après chaque vidage, pour ne jamais
+   laisser un ancien cache "complet" survivre à une redistribution. */
 
 const SPECIAL_STATUSES = ['DNS', 'DNF', 'DSQ', 'DSQ_RACE'];
-const CACHEABLE_TYPES  = ['EC', 'MQ'];
+const CACHEABLE_TYPES  = ['EC', 'MQ', 'QF', 'DF', 'FIN'];
 const COLLECTION       = 'sessionCache';
 
 async function fsHelpers() {
@@ -98,6 +98,22 @@ export async function refreshSessionCache(db, session) {
     }
   } catch (err) {
     console.error('refreshSessionCache', session?.id, err);
+  }
+}
+
+/**
+ * Supprime sans recalcul le cache d'une session dont on sait que `results`
+ * vient d'être vidé (réassignation QF/DF/Finale, forfait) : moins cher
+ * qu'un refreshSessionCache (pas de relecture), le cache se recréera de
+ * lui-même dès la prochaine saisie de temps complète via timing.js.
+ */
+export async function invalidateSessionCache(db, sessionId) {
+  if (!db || !sessionId) return;
+  try {
+    const { doc, deleteDoc } = await fsHelpers();
+    await deleteDoc(doc(db, COLLECTION, sessionId)).catch(() => {});
+  } catch (err) {
+    console.error('invalidateSessionCache', sessionId, err);
   }
 }
 

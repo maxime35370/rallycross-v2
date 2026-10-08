@@ -12,7 +12,7 @@ const { store, counter } = (globalThis.__fakeFirestore ||= {
   counter: { docs: 0, queries: 0 },
 });
 
-const { isSessionComplete, buildSessionCacheData, refreshSessionCache, getCachedResults } =
+const { isSessionComplete, buildSessionCacheData, refreshSessionCache, getCachedResults, invalidateSessionCache } =
   await import('../js/sessionCache.js');
 const { getResults } = await import('../js/calc.js');
 
@@ -94,10 +94,21 @@ describe('refreshSessionCache / getCachedResults', () => {
     expect(await getCachedResults({}, 'MQ3')).toBeNull();
   });
 
-  it('ignore les types QF/DF/FIN (pas encore pris en charge)', async () => {
-    const session = seedSession('FIN1', { type: 'FIN', n: 5, allDone: true });
+  it('prend aussi en charge QF/DF/FIN', async () => {
+    const session = seedSession('FIN1', { type: 'FIN', n: 8, allDone: true });
     await refreshSessionCache({}, session);
-    expect(await getCachedResults({}, 'FIN1')).toBeNull();
+    const cached = await getCachedResults({}, 'FIN1');
+    expect(cached).not.toBeNull();
+    expect(cached.length).toBe(8);
+  });
+
+  it('invalidateSessionCache supprime sans recalcul (réassignation QF/DF/Finale)', async () => {
+    const session = seedSession('DF1', { type: 'DF', n: 8, allDone: true });
+    await refreshSessionCache({}, session);
+    expect(await getCachedResults({}, 'DF1')).not.toBeNull();
+
+    await invalidateSessionCache({}, 'DF1');
+    expect(await getCachedResults({}, 'DF1')).toBeNull();
   });
 });
 

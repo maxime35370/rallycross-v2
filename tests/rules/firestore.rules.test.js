@@ -162,8 +162,11 @@ describe('sessionCache — lecture publique, écriture régie uniquement', () =>
     await assertSucceeds(setDoc(doc(regie(), 'sessionCache', 's1'), { ...validCache, results: [] }));
   });
 
-  it('refuse un sessionType hors EC/MQ (QF/DF/FIN pas encore pris en charge)', async () => {
-    await assertFails(setDoc(doc(regie(), 'sessionCache', 's1'), { ...validCache, sessionType: 'FIN' }));
+  it('accepte EC/MQ/QF/DF/FIN, refuse un autre sessionType', async () => {
+    for (const sessionType of ['EC', 'MQ', 'QF', 'DF', 'FIN']) {
+      await assertSucceeds(setDoc(doc(regie(), 'sessionCache', 's1'), { ...validCache, sessionType }));
+    }
+    await assertFails(setDoc(doc(regie(), 'sessionCache', 's1'), { ...validCache, sessionType: 'AUTRE' }));
   });
 
   it('refuse un docId qui ne correspond pas au sessionId (anti-confusion)', async () => {
