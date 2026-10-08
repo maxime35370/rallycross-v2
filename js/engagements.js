@@ -189,23 +189,68 @@ async function toggleEngagement(driver) {
 async function clearAllEngagements() {
   if (!db || !selectedMeetingId || !selectedCategory) return;
   if (!requireAuth()) return;
-  if (!window.confirm(`Retirer tous les pilotes ${selectedCategory} de ce meeting ?`)) return;
 
   const { collection, query, where, getDocs, writeBatch } = await import(
     'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
   );
-  const q = query(
+
+  const engQ = query(
     collection(db, 'engagements'),
     where('meetingId', '==', selectedMeetingId),
     where('category',  '==', selectedCategory)
   );
-  const snap = await getDocs(q);
-  if (snap.empty) return;
+  const engSnap = await getDocs(engQ);
+  if (engSnap.empty) return;
 
-  const batch = writeBatch(db);
-  snap.docs.forEach(d => batch.delete(d.ref));
-  await batch.commit();
-  toast('Tous les engagements retirés', 'warning');
+  const driverIds = new Set(engSnap.docs.map(d => d.data().driverId));
+
+  // Récupérer les données associées à ces pilotes pour ce meeting (tous, puis filtrage
+  // par driverId côté client pour éviter la limite Firestore de 30 valeurs sur "in")
+  const [partSnap, resSnap, standSnap] = await Promise.all([
+    getDocs(query(collection(db, 'sessionParticipants'), where('meetingId', '==', selectedMeetingId))),
+    getDocs(query(collection(db, 'results'),              where('meetingId', '==', selectedMeetingId))),
+    getDocs(query(collection(db, 'meetingStandings'),     where('meetingId', '==', selectedMeetingId))),
+  ]);
+  const partDocs  = partSnap.docs.filter(d => driverIds.has(d.data().driverId));
+  const resDocs   = resSnap.docs.filter(d => driverIds.has(d.data().driverId));
+  const standDocs = standSnap.docs.filter(d => driverIds.has(d.data().driverId));
+
+  const hasData = partDocs.length || resDocs.length;
+  if (hasData) {
+    const detail = [
+      partDocs.length ? `${partDocs.length} session(s) assignée(s)` : null,
+      resDocs.length  ? `${resDocs.length} temps saisi(s)`          : null,
+    ].filter(Boolean).join(', ');
+    const msg = `Retirer tous les pilotes ${selectedCategory} de ce meeting ?\n\nLeurs données seront aussi supprimées : ${detail}\n\nContinuer ?`;
+    if (!window.confirm(msg)) return;
+  } else {
+    if (!window.confirm(`Retirer tous les pilotes ${selectedCategory} de ce meeting ?`)) return;
+  }
+
+  // Supprimer engagements
+  const engBatch = writeBatch(db);
+  engSnap.docs.forEach(d => engBatch.delete(d.ref));
+  await engBatch.commit();
+
+  // Supprimer sessions et temps en cascade
+  if (partDocs.length) {
+    const b = writeBatch(db);
+    partDocs.forEach(d => b.delete(d.ref));
+    await b.commit();
+  }
+  if (resDocs.length) {
+    const b = writeBatch(db);
+    resDocs.forEach(d => b.delete(d.ref));
+    await b.commit();
+  }
+  if (standDocs.length) {
+    const b = writeBatch(db);
+    standDocs.forEach(d => b.delete(d.ref));
+    await b.commit();
+  }
+
+  logAudit('delete', 'engagement', selectedMeetingId, { label: `Tous les pilotes ${selectedCategory} retirés du meeting` });
+  toast('Tous les engagements retirés et données supprimées', 'warning');
 }
 
 async function engageAll() {
