@@ -29,7 +29,7 @@ const ADMIN_EMAILS = ['maxime.theard@gmail.com'];
 // isAdmin() uniquement, et les règles Firestore (isRegie()) n'ont pas besoin
 // de connaître ce rôle puisque la lecture y est déjà publique. Ajoute ici
 // l'e-mail du compte temporaire créé pour les commentateurs.
-const VIEWER_EMAILS = [];
+const VIEWER_EMAILS = ['dreux2026@test.com'];
 
 // Vues normalement réservées à l'admin, ouvertes en LECTURE au rôle
 // commentateur. Le reste de PROTECTED_VIEWS (config, réglages, accès,
