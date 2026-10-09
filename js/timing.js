@@ -1956,7 +1956,6 @@ async function showStartingGrid(session) {
         </div>
         <div class="modal-body" id="tim-grid-body"></div>
         <div class="modal-footer">
-          <button class="btn btn-secondary" id="tim-grid-print">🖨️ Imprimer</button>
           <button class="btn btn-primary" id="tim-grid-close2">Fermer</button>
         </div>
       </div>`;
@@ -1964,7 +1963,6 @@ async function showStartingGrid(session) {
     document.getElementById('tim-grid-close')?.addEventListener('click',  () => modal.classList.remove('is-open'));
     document.getElementById('tim-grid-close2')?.addEventListener('click', () => modal.classList.remove('is-open'));
     modal.addEventListener('click', e => { if (e.target === modal) modal.classList.remove('is-open'); });
-    document.getElementById('tim-grid-print')?.addEventListener('click', () => window.print());
   }
 
   document.getElementById('tim-grid-title').textContent = `Grille de départ — ${label}`;
