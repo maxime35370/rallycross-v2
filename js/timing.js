@@ -955,8 +955,11 @@ function renderTimingTable() {
     const video = tc?.videoId ? (meeting?.videos || []).find(v => v.id === tc.videoId) : null;
     const watchUrl = video?.url ? buildYoutubeUrl(video.url, tc.seconds) : null;
 
+    // Réservé à l'admin tant que l'association séries ↔ vidéos live des
+    // meetings précédents n'est pas terminée (timecodes manquants/incorrects
+    // sur une partie des sessions).
     let watchBtn = document.getElementById('tim-watch-btn');
-    if (watchUrl) {
+    if (watchUrl && isAdmin()) {
       if (!watchBtn) {
         watchBtn = document.createElement('button');
         watchBtn.id = 'tim-watch-btn';
