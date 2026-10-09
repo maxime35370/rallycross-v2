@@ -118,7 +118,10 @@ function renderAuthUI() {
     // L'adresse non vérifiée n'est pas une erreur : c'est une étape. On le
     // dit ici, une fois, plutôt que de laisser Stratégie Live afficher un
     // refus dont l'utilisateur ne comprendrait pas la cause.
-    const nonVerifie = currentUser.emailVerified !== true;
+    // Exception : le rôle commentateur (isViewer) n'a besoin d'aucune
+    // vérification pour son accès en lecture — lui parler de « Stratégie
+    // Live », un module commercial sans rapport, ne ferait que l'inquiéter.
+    const nonVerifie = currentUser.emailVerified !== true && !isViewer();
     container.innerHTML = `
       <div class="auth-logged">
         <span class="auth-user-icon">👤</span>
