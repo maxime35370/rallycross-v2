@@ -314,6 +314,42 @@ body:not(.is-admin) #home-alert {
   display: none !important;
 }
 
+/* Rôle « commentateur » (.is-viewer) : réaffiche UNIQUEMENT les 6 tuiles de
+   données course, en lecture seule (voir VIEWER_VIEWS dans js/auth.js). Tout
+   le reste (config, réglages, accès, audit, startAnalysis, projection, statut
+   Firebase) reste masqué comme pour un non-admin. */
+body.is-viewer .menu-item[data-view="persons"],
+body.is-viewer .menu-item[data-view="drivers"],
+body.is-viewer .menu-item[data-view="meetings"],
+body.is-viewer .menu-item[data-view="engagements"],
+body.is-viewer .menu-item[data-view="sessions"],
+body.is-viewer .menu-item[data-view="timing"] {
+  display: flex !important;
+}
+body.is-viewer .menu-section--admin {
+  display: list-item !important;
+}
+body.is-viewer .home-card[data-view="persons"],
+body.is-viewer .home-card[data-view="drivers"],
+body.is-viewer .home-card[data-view="meetings"],
+body.is-viewer .home-card[data-view="engagements"],
+body.is-viewer .home-card[data-view="sessions"],
+body.is-viewer .home-card[data-view="timing"] {
+  display: block !important;
+}
+
+/* Chronométrage en lecture pour .is-viewer : les champs/boutons restent
+   visibles (le commentateur voit l'état exact de la saisie) mais ne
+   réagissent plus aux clics. La vraie barrière reste requireAuth() (JS) et
+   les règles Firestore (isRegie()) : ceci n'est qu'un confort visuel. */
+body.is-viewer #tim-content input,
+body.is-viewer #tim-content button,
+body.is-viewer #tim-content select {
+  pointer-events: none;
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
 /* Formulaire de connexion : autrefois masqué au public et révélé par ?login,
    quand l'outil n'était qu'administratif. Un team qui dispose d'un accès doit
    pouvoir se connecter sans URL secrète, donc la classe est posée en

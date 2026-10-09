@@ -24,6 +24,18 @@ const PROTECTED_VIEWS = [
 // Le(s) e-mail(s) avec le(s)quel(s) tu te connectes en administrateur.
 const ADMIN_EMAILS = ['maxime.theard@gmail.com'];
 
+// Rôle « commentateur » : lecture seule sur VIEWER_VIEWS (sous-ensemble de
+// PROTECTED_VIEWS), jamais d'écriture — requireAuth() reste basé sur
+// isAdmin() uniquement, et les règles Firestore (isRegie()) n'ont pas besoin
+// de connaître ce rôle puisque la lecture y est déjà publique. Ajoute ici
+// l'e-mail du compte temporaire créé pour les commentateurs.
+const VIEWER_EMAILS = ['dreux2026@test.com'];
+
+// Vues normalement réservées à l'admin, ouvertes en LECTURE au rôle
+// commentateur. Le reste de PROTECTED_VIEWS (config, réglages, accès,
+// audit, startAnalysis, projection) reste strictement admin.
+const VIEWER_VIEWS = ['persons', 'drivers', 'meetings', 'engagements', 'sessions', 'timing'];
+
 // ─────────────────────────────────────────────────────────
 // GETTERS
 // ─────────────────────────────────────────────────────────
@@ -46,6 +58,23 @@ export function isAdmin() {
 
 export function isProtectedView(viewId) {
   return PROTECTED_VIEWS.includes(viewId);
+}
+
+/** Vrai pour un compte « commentateur » : connecté, non anonyme, e-mail
+ *  dans VIEWER_EMAILS. Donne uniquement un accès en LECTURE à VIEWER_VIEWS —
+ *  ne jamais s'en servir comme condition d'écriture (voir requireAuth). */
+export function isViewer() {
+  return !!currentUser
+      && !currentUser.isAnonymous
+      && VIEWER_EMAILS.includes((currentUser.email || '').toLowerCase());
+}
+
+/** Vrai si l'utilisateur courant peut VOIR la vue demandée. N'autorise
+ *  jamais l'écriture : seule isAdmin() le fait, via requireAuth(). */
+export function canAccessView(viewId) {
+  if (!isProtectedView(viewId)) return true;
+  if (isAdmin()) return true;
+  return isViewer() && VIEWER_VIEWS.includes(viewId);
 }
 
 /** Compte réel — connecté ET non anonyme. L'auth anonyme des pronostics
@@ -89,7 +118,10 @@ function renderAuthUI() {
     // L'adresse non vérifiée n'est pas une erreur : c'est une étape. On le
     // dit ici, une fois, plutôt que de laisser Stratégie Live afficher un
     // refus dont l'utilisateur ne comprendrait pas la cause.
-    const nonVerifie = currentUser.emailVerified !== true;
+    // Exception : le rôle commentateur (isViewer) n'a besoin d'aucune
+    // vérification pour son accès en lecture — lui parler de « Stratégie
+    // Live », un module commercial sans rapport, ne ferait que l'inquiéter.
+    const nonVerifie = currentUser.emailVerified !== true && !isViewer();
     container.innerHTML = `
       <div class="auth-logged">
         <span class="auth-user-icon">👤</span>
@@ -352,20 +384,22 @@ function onViewChange(e) {
  * rediriger l'administrateur pendant le chargement de sa session.
  */
 function enforceViewAccess() {
-  if (!_authResolved) return;                                  // statut pas encore connu → on attend
-  if (!isProtectedView(_currentView) || isAdmin()) return;     // vue libre ou admin → rien à faire
+  if (!_authResolved) return;                  // statut pas encore connu → on attend
+  if (canAccessView(_currentView)) return;      // vue libre, admin, ou commentateur autorisé → rien à faire
   toast('Accès impossible.', 'error');
   // Différé : on laisse le dispatch 'viewchange' courant se terminer avant de
   // rediriger (évite une ré-entrance showView → viewchange imbriqué).
   setTimeout(() => {
-    if (_authResolved && isProtectedView(_currentView) && !isAdmin()) showView('spectator');
+    if (_authResolved && !canAccessView(_currentView)) showView('spectator');
   }, 0);
 }
 
-/** Masque/affiche les entrées réservées à l'admin (menu, accueil, statut Firebase)
- *  en basculant la classe `is-admin` sur <body> (le CSS fait le reste). */
+/** Masque/affiche les entrées réservées à l'admin ou au commentateur (menu,
+ *  accueil, statut Firebase) en basculant les classes `is-admin`/`is-viewer`
+ *  sur <body> (le CSS fait le reste). */
 function applyAdminVisibility() {
   document.body.classList.toggle('is-admin', isAdmin());
+  document.body.classList.toggle('is-viewer', isViewer());
 }
 
 /** Le formulaire de connexion était masqué derrière `?login`, pour ne pas
@@ -408,10 +442,12 @@ export async function initAuth() {
       applyAdminVisibility();
       enforceViewAccess();   // statut connu : un non-admin sur une vue réservée est renvoyé au spectateur
 
-      // Toast UNIQUEMENT pour l'admin (une session anonyme — votes pronostics —
-      // ne doit rien notifier).
+      // Toast UNIQUEMENT pour l'admin/commentateur (une session anonyme —
+      // votes pronostics — ne doit rien notifier).
       if (isAdmin()) {
         toast(`Connecté : ${user.email}`, 'success');
+      } else if (isViewer()) {
+        toast(`Connecté en lecture : ${user.email}`, 'info');
       }
 
       // Droits commerciaux : abonnement en temps réel, pour qu'une
