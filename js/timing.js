@@ -9,7 +9,7 @@
 import { db } from './firebase.js';
 import { toast } from './app.js';
 import { logAudit } from './audit.js';
-import { requireAuth } from './auth.js';
+import { requireAuth, isAdmin } from './auth.js';
 import { msToDisplay, inputToMs, msToFields, escHtml, parseTimeString, timecodeKey, buildYoutubeUrl, dedupeParticipants } from './utils.js';
 import { getActiveChampionship, getActiveChampionshipId } from './context.js';
 import { mqPoints, qfPoints, dfPoints, finPoints, ecBonusPoints, calcStatusPoints, compareInterimTiebreaker, computeSeriesSizes } from './calc.js';
@@ -915,8 +915,11 @@ function renderTimingTable() {
     }
     if (gridBtn) gridBtn.onclick = () => showStartingGrid(session);
 
-    if (session.type !== 'EC') {
-      let photoBtn = document.getElementById('tim-photo-btn');
+    // Photo et Live importent des temps (écriture) : réservés à l'admin.
+    // Un commentateur (lecture seule) qui accède au chronométrage ne doit
+    // même pas voir ces boutons, pas seulement en être empêché au clic.
+    let photoBtn = document.getElementById('tim-photo-btn');
+    if (session.type !== 'EC' && isAdmin()) {
       if (!photoBtn) {
         photoBtn = document.createElement('button');
         photoBtn.id = 'tim-photo-btn';
@@ -925,18 +928,24 @@ function renderTimingTable() {
         banner.appendChild(photoBtn);
       }
       photoBtn.onclick = () => triggerPhotoImport(session);
+    } else if (photoBtn) {
+      photoBtn.remove();
     }
 
     let liveBtn = document.getElementById('tim-live-btn');
-    if (!liveBtn) {
-      liveBtn = document.createElement('button');
-      liveBtn.id = 'tim-live-btn';
-      liveBtn.className = 'btn btn-secondary btn-sm';
-      liveBtn.textContent = '📡 Live';
-      liveBtn.title = 'Importer les temps depuis le chronométreur live (ITS, …)';
-      banner.appendChild(liveBtn);
+    if (isAdmin()) {
+      if (!liveBtn) {
+        liveBtn = document.createElement('button');
+        liveBtn.id = 'tim-live-btn';
+        liveBtn.className = 'btn btn-secondary btn-sm';
+        liveBtn.textContent = '📡 Live';
+        liveBtn.title = 'Importer les temps depuis le chronométreur live (ITS, …)';
+        banner.appendChild(liveBtn);
+      }
+      liveBtn.onclick = () => triggerLiveImport(session);
+    } else if (liveBtn) {
+      liveBtn.remove();
     }
-    liveBtn.onclick = () => triggerLiveImport(session);
 
     // « ▶ Voir la course » : ouvre YouTube au bon timecode si défini pour
     // cette combinaison session × catégorie sur le meeting.
