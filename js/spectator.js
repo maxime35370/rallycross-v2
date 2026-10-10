@@ -211,15 +211,11 @@ async function refreshParticipantsIfStale() {
  * classement intermédiaire sans aucune relecture.
  */
 async function watchInterimSession(session, token) {
-  const { collection, query, where, onSnapshot } = await import(
-    'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
-  );
   return new Promise(resolve => {
     let first = true;
-    const q = query(collection(db, 'results'), where('sessionId', '==', session.id));
-    const unsub = onSnapshot(q, snap => {
-      if (token !== _renderToken) return;
-      const rows = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    let unsub = null;
+    watchSessionResultsRtdb(session.id, rows => {
+      if (token !== _renderToken) { if (unsub) unsub(); return; }
       _interimResults[session.id] = rows;
       if (first) { first = false; resolve(rows); return; }
       if (session.id === _currentSessionId) {
@@ -237,10 +233,12 @@ async function watchInterimSession(session, token) {
     }, err => {
       console.warn('[spectator] écoute results', session.id, err);
       if (first) { first = false; resolve([]); }
+    }).then(u => {
+      unsub = u;
+      // Rendu devenu obsolète pendant la mise en place de l'écoute : on ne la garde pas.
+      if (token !== _renderToken) { u(); resolve([]); return; }
+      _interimSessionUnsubs.push(u);
     });
-    // Rendu devenu obsolète pendant l'import du SDK : on ne garde pas l'écoute.
-    if (token !== _renderToken) { unsub(); resolve([]); return; }
-    _interimSessionUnsubs.push(unsub);
   });
 }
 
