@@ -88,40 +88,11 @@ export async function watchSessionResultsRtdb(sessionId, cb, onErr) {
   const unsub = await watchRtdbValue(`results/${sessionId}`, val => {
     cb(val ? Object.entries(val).map(([driverId, row]) => ({ id: driverId, driverId, ...row })) : []);
   }, onErr);
-  if (unsub) {
-    backfillRtdbResults(sessionId);   // comble les temps déjà saisis avant/hors miroir — cf. plus bas
-    return unsub;
-  }
+  if (unsub) return unsub;
   const { collection, query, where, onSnapshot } = await import(
     'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
   );
   return onSnapshot(query(collection(db, 'results'), where('sessionId', '==', sessionId)),
     snap => cb(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
     err => { console.error('[rtdb] repli Firestore results', err.code, err.message); onErr && onErr(err); });
-}
-
-/**
- * Comble le miroir RTDB d'une session avec les temps déjà présents dans
- * Firestore mais absents de RTDB (saisis avant l'activation du miroir, ou
- * par un chemin qui ne le met pas encore à jour). Best-effort, 1 seule
- * lecture Firestore par appel (pas un écouteur) : sans ce correctif, une
- * session déjà en cours affiche un pilote comme « à passer » alors qu'il a
- * déjà un temps, puisque RTDB ne connaît que ce qui a été écrit après coup.
- */
-async function backfillRtdbResults(sessionId) {
-  try {
-    const { collection, query, where, getDocs } = await import(
-      'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
-    );
-    const snap = await getDocs(query(collection(db, 'results'), where('sessionId', '==', sessionId)));
-    snap.docs.forEach(d => {
-      const row = { id: d.id, ...d.data() };
-      // RTDB ne sait pas sérialiser un Timestamp Firestore — on le réduit en nombre.
-      if (row.updatedAt?.toMillis) row.updatedAt = row.updatedAt.toMillis();
-      if (row.createdAt?.toMillis) row.createdAt = row.createdAt.toMillis();
-      setRtdbValue(`results/${sessionId}/${row.driverId}`, row);
-    });
-  } catch (err) {
-    console.warn('[rtdb] comblement results', sessionId, err?.message || err);
-  }
 }
