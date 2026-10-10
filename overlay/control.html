@@ -470,7 +470,7 @@
 </div>
 
 <script type="module">
-  import { initFirebase, fsQuery, watchQuery, getDocById, watchDoc } from './_lib/obs-firebase.js';
+  import { initFirebase, fsQuery, watchQuery, watchSessionResults, getDocById, watchDoc } from './_lib/obs-firebase.js';
   import { watchControl, setControl, sessionKey, DEFAULT_CONTROL } from './_lib/obs-control.js';
   import { getSessions, findSession, getGridOrder, getInterim, getParticipants, computePronoWinner, pronoWatchSessionIds, getQualifCutoff, getEcRank, getMqRank, getPhaseRank, getDriverStrength } from './_lib/obs-data.js';
   import { watchPronostics, watchVotes, createPronostic, updatePronostic, openPronostic, closePronostic, revealPronostic, deletePronostic, meetingVoteBilan, updateMeetingScores, updateSeasonTwitchScores, getTwitchProfile, archiveSeasonTwitchScores, listSeasonArchives } from './_lib/obs-pronostics.js';
@@ -1439,7 +1439,7 @@
       };
       const unsubs = [];
       for (const sid of sids) {
-        try { unsubs.push(await watchQuery('results', [['sessionId', '==', sid]], recompute, () => {})); } catch {}
+        try { unsubs.push(await watchSessionResults(sid, recompute, () => {})); } catch {}
       }
       const unsubAll = () => unsubs.forEach(u => { try { u(); } catch {} });
       if (p.id in winnerWatchers) winnerWatchers[p.id] = unsubAll; else unsubAll();

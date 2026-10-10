@@ -16,10 +16,18 @@ const CONFIG = {
   storageBucket: "rallycross-1512f.firebasestorage.app",
   messagingSenderId: "123635957863",
   appId: "1:123635957863:web:f229eb25637dd0656794c2",
+  // Realtime Database (miroir "lecture temps réel à faible coût" des
+  // résultats et de l'état régie — voir obs-rtdb-mirror.js). Laisser vide
+  // tant que la base n'a pas été créée dans la console Firebase : tout le
+  // code RTDB se dégrade silencieusement vers Firestore si ce champ est
+  // absent, aucune régression pour un déploiement qui n'en a pas besoin.
+  databaseURL: "https://rallycross-1512f-default-rtdb.europe-west1.firebasedatabase.app",
 };
 
 export let db = null;
+export let rtdb = null;
 let _fs = null;       // module firestore (mis en cache)
+let _rtdbMod = null;  // module database (mis en cache)
 let _app = null;
 
 /** Charge (une fois) le module Firestore CDN. */
@@ -36,6 +44,25 @@ export async function initFirebase() {
   _app = getApps()[0] || initializeApp(CONFIG);
   db = getFirestore(_app);
   return db;
+}
+
+/** true si une Realtime Database est configurée pour ce déploiement. */
+export function rtdbConfigured() {
+  return !!CONFIG.databaseURL;
+}
+
+/**
+ * Initialise (lazy, idempotent) la Realtime Database. Rend `null` si
+ * aucune `databaseURL` n'est configurée — tout le code appelant doit
+ * tolérer ce cas (dégradation vers Firestore).
+ */
+async function initRtdb() {
+  if (!CONFIG.databaseURL) return null;
+  if (rtdb) return rtdb;
+  if (!_app) await initFirebase();
+  if (!_rtdbMod) _rtdbMod = await import(SDK + 'firebase-database.js');
+  rtdb = _rtdbMod.getDatabase(_app, CONFIG.databaseURL);
+  return rtdb;
 }
 
 // ─────────────────────────────────────────────────────────
@@ -90,4 +117,81 @@ export async function watchDoc(col, id, cb, onErr) {
 export async function setDocMerged(col, id, data) {
   const { doc, setDoc } = await fs();
   await setDoc(doc(db, col, id), data, { merge: true });
+}
+
+// ─────────────────────────────────────────────────────────
+// REALTIME DATABASE — miroir « lecture peu coûteuse » des données très
+// lues en direct (résultats de session, état régie `obsControl`). RTDB
+// facture en bande passante/connexions plutôt qu'en lecture × nombre
+// d'écouteurs : bien moins cher que Firestore quand beaucoup de
+// spectateurs/commentateurs regardent la même donnée en même temps.
+// Purement un MIROIR DE LECTURE : Firestore reste la source de vérité
+// (écrite en premier, toujours), RTDB ne sert jamais de référence pour un
+// calcul (championnat, scores...). Dégradation automatique vers Firestore
+// tant que `databaseURL` n'est pas configuré (cf. CONFIG plus haut) — zéro
+// changement de comportement pour un déploiement sans RTDB.
+// ─────────────────────────────────────────────────────────
+
+/** Écrit/fusionne une valeur RTDB. Best-effort : ne lève jamais — appelé
+ *  côté régie EN PLUS de l'écriture Firestore, jamais à sa place. */
+export async function setRtdbValue(path, data) {
+  try {
+    const d = await initRtdb();
+    if (!d) return;
+    const { ref, update } = _rtdbMod;
+    await update(ref(d, path), data);
+  } catch (err) {
+    console.warn('[overlay] miroir RTDB', path, err?.message || err);
+  }
+}
+
+/** Supprime une valeur RTDB (best-effort, mêmes garanties que setRtdbValue). */
+export async function removeRtdbValue(path) {
+  try {
+    const d = await initRtdb();
+    if (!d) return;
+    const { ref, remove } = _rtdbMod;
+    await remove(ref(d, path));
+  } catch (err) {
+    console.warn('[overlay] suppression RTDB', path, err?.message || err);
+  }
+}
+
+/**
+ * Abonnement temps réel brut à un nœud RTDB. Rend `null` si RTDB n'est pas
+ * configuré (à l'appelant de se replier sur Firestore dans ce cas).
+ */
+export async function watchRtdbValue(path, cb, onErr) {
+  const d = await initRtdb();
+  if (!d) return null;
+  const { ref, onValue } = _rtdbMod;
+  const unsub = onValue(ref(d, path), snap => cb(snap.val()), err => {
+    console.error('[overlay] lecture RTDB', path, err.message);
+    onErr && onErr(err);
+  });
+  return () => unsub();
+}
+
+/**
+ * Résultats d'une session, RTDB si configuré sinon Firestore (même forme
+ * de callback dans les deux cas : tableau de lignes `{id, driverId, ...}`).
+ * Partagé par overlay/live.html, control.html (gagnants auto des
+ * pronostics) — tout endroit qui écoute `results` par sessionId.
+ */
+export async function watchSessionResults(sessionId, cb, onErr) {
+  const unsub = await watchRtdbValue(`results/${sessionId}`, val => {
+    cb(val ? Object.entries(val).map(([driverId, row]) => ({ id: driverId, driverId, ...row })) : []);
+  }, onErr);
+  if (unsub) return unsub;
+  return watchQuery('results', [['sessionId', '==', sessionId]], cb, onErr);
+}
+
+/**
+ * État régie (`obsControl/{docId}`), RTDB si configuré sinon Firestore —
+ * valeur brute (non fusionnée avec DEFAULT_CONTROL, cf. obs-control.js).
+ */
+export async function watchControlState(docId, cb, onErr) {
+  const unsub = await watchRtdbValue(`obsControl/${docId}`, cb, onErr);
+  if (unsub) return unsub;
+  return watchDoc('obsControl', docId, cb, onErr);
 }

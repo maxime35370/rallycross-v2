@@ -18,6 +18,7 @@ const FIELDS = [
   { key: 'storageBucket',     label: 'Storage Bucket',       placeholder: 'mon-projet.appspot.com' },
   { key: 'messagingSenderId', label: 'Messaging Sender ID',  placeholder: '123456789' },
   { key: 'appId',             label: 'App ID',               placeholder: '1:123456789:web:abc...' },
+  { key: 'databaseURL',       label: 'Realtime Database URL (optionnel, réduit le coût des lectures live)', placeholder: 'https://mon-projet-default-rtdb.firebaseio.com' },
 ];
 
 // ─────────────────────────────────────────────────────────

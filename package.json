@@ -8,7 +8,7 @@
     "test:watch": "vitest",
     "smoke": "node tools/smoke/smoke.mjs",
     "smoke:projection": "node tools/smoke/projectionSmoke.mjs",
-    "test:rules": "firebase emulators:exec --only firestore --project demo-rallycross-rules \"vitest run --config vitest.rules.config.js\""
+    "test:rules": "firebase emulators:exec --only firestore,database --project demo-rallycross-rules \"vitest run --config vitest.rules.config.js\""
   },
   "dependencies": {
     "firebase-admin": "^12.0.0"

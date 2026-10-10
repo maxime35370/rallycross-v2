@@ -1,0 +1,20 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+
+    "results": {
+      "$sessionId": {
+        ".read": true,
+        ".write": "auth != null && auth.token.email === 'maxime.theard@gmail.com'"
+      }
+    },
+
+    "obsControl": {
+      "$docId": {
+        ".read": true,
+        ".write": "auth != null && auth.token.email === 'maxime.theard@gmail.com'"
+      }
+    }
+  }
+}

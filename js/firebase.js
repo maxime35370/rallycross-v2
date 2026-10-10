@@ -7,6 +7,11 @@ import { setFirebaseStatus } from './app.js';
 
 // Instance Firestore exportée (null tant que non initialisé)
 export let db = null;
+// Instance Realtime Database (miroir lecture peu coûteuse — cf. rtdb.js).
+// Reste `null` tant qu'aucune `databaseURL` n'est configurée : tout le
+// code RTDB se dégrade alors silencieusement vers Firestore.
+export let rtdb = null;
+let _app = null;
 
 // ─────────────────────────────────────────────────────────
 // CONFIG PAR DÉFAUT
@@ -18,6 +23,10 @@ const DEFAULT_CONFIG = {
   storageBucket: "rallycross-1512f.firebasestorage.app",
   messagingSenderId: "123635957863",
   appId: "1:123635957863:web:f229eb25637dd0656794c2",
+  // Realtime Database : miroir "lecture peu coûteuse" (cf. js/rtdb.js).
+  // Laisser vide pour un déploiement sans RTDB — tout se dégrade alors
+  // automatiquement vers Firestore.
+  databaseURL: "https://rallycross-1512f-default-rtdb.europe-west1.firebasedatabase.app",
 };
 
 // ─────────────────────────────────────────────────────────
@@ -83,6 +92,8 @@ export async function initFirebase() {
     getApps().forEach(app => deleteApp(app));
 
     const app = initializeApp(config);
+    _app = app;
+    rtdb = null;   // ré-initialisé paresseusement par getRtdb() si databaseURL est configurée
 
     // Initialiser Firestore avec cache offline persistent
     const { initializeFirestore, persistentLocalCache, persistentMultipleTabManager } = await import(
@@ -116,6 +127,22 @@ export function isReady() {
   return db !== null;
 }
 
+/**
+ * Initialise (lazy, idempotent) la Realtime Database à partir de
+ * `databaseURL` dans la config stockée. Rend `null` si ce champ est
+ * absent — l'appelant doit alors se replier sur Firestore.
+ */
+export async function getRtdb() {
+  const config = getStoredConfig();
+  if (!config?.databaseURL || !_app) return null;
+  if (rtdb) return rtdb;
+  const { getDatabase } = await import(
+    'https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js'
+  );
+  rtdb = getDatabase(_app, config.databaseURL);
+  return rtdb;
+}
+
 // ─────────────────────────────────────────────────────────
 // ÉMULATEURS — DÉVELOPPEMENT LOCAL UNIQUEMENT
 // ─────────────────────────────────────────────────────────
@@ -146,6 +173,14 @@ async function maybeConnectEmulators(app) {
       'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
     );
     connectFirestoreEmulator(db, '127.0.0.1', 8080);
+
+    const config = getStoredConfig();
+    if (config?.databaseURL) {
+      const { connectDatabaseEmulator } = await import(
+        'https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js'
+      );
+      connectDatabaseEmulator(await getRtdb(), '127.0.0.1', 9000);
+    }
 
     const { getAuth, connectAuthEmulator } = await import(
       'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js'

@@ -5,7 +5,7 @@
    Compatible GitHub Pages (sous-dossier) et racine.
 ═══════════════════════════════════════════════ */
 
-const CACHE_NAME = 'rx-chrono-v44';
+const CACHE_NAME = 'rx-chrono-v45';
 
 // Assets relatifs au scope du SW (pas de / en prefixe)
 const ASSET_PATHS = [
@@ -30,6 +30,7 @@ const ASSET_PATHS = [
   'css/modules/videoPlayer.css',
   'js/app.js',
   'js/firebase.js',
+  'js/rtdb.js',
   'js/auth.js',
   'js/config.js',
   'js/utils.js',
