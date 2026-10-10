@@ -591,8 +591,8 @@
         lastResults.forEach(r => { resMap[r.driverId] = r; });
         const hasRun = id => !!(resMap[id] && (resMap[id].ms != null || resMap[id].status));
         const rank = ctrl.sessionType === 'EC'
-          ? await getEcRank(sessions, reg).catch(() => [])
-          : await getMqRank(session, reg).catch(() => []);
+          ? await getEcRank(sessions, reg, lastResults).catch(() => [])
+          : await getMqRank(session, reg, lastResults).catch(() => []);
         const curIds = new Set(rank.map(r => r.driverId).filter(Boolean));
         // nouveau(x) ce render → fondu une seule fois ; le dernier garde la barre
         let flashIds = new Set();
@@ -667,8 +667,10 @@
       const poleSide = meeting?.poleSide || null;
       // nombre de qualifiés par demi-finale : lu dans le règlement (pas en dur)
       const qualify  = reg.sessionConfig?.DF?.qualifiedPerDF;
-      const renderCombo = async () => {
-        const results = await getPhaseRank(session, reg).catch(() => []);
+      let lastResults = [];
+      const renderCombo = async (rows) => {
+        if (rows) lastResults = rows;
+        const results = await getPhaseRank(session, reg, lastResults).catch(() => []);
         if (!alive()) return;
         root.innerHTML = renderScene('grid', {
           phase: ctrl.sessionType, qualify,
@@ -676,7 +678,7 @@
           layout, slots, poleSide, results,
         });
       };
-      const uCombo = await watchSessionResults(session.id, freshThenDebounce(() => renderCombo()));
+      const uCombo = await watchSessionResults(session.id, freshThenDebounce(rows => renderCombo(rows)));
       if (!alive()) { uCombo(); return; }
       unsubResults = uCombo;
       return;
@@ -743,12 +745,17 @@
       let idx = 0;             // classement affiché dans le cycle
       let painted = false;
       let predict = null;
+      // `null` tant que le 1er instantané RTDB/Firestore n'est pas encore arrivé
+      // (le 1er `compute()` ci-dessous a lieu AVANT l'abonnement) : un tableau
+      // vide ici serait pris pour « vraiment aucun résultat » par les fonctions
+      // de classement et sauterait à tort leur lecture Firestore de secours.
+      let lastResults = null;
 
       const mancheRank = async () => {
         if (!session) return [];
-        if (ctrl.sessionType === 'EC') return getEcRank(sessions, reg);
-        if (ctrl.sessionType === 'MQ') return getMqRank(session, reg);
-        return getPhaseRank(session, reg);
+        if (ctrl.sessionType === 'EC') return getEcRank(sessions, reg, lastResults);
+        if (ctrl.sessionType === 'MQ') return getMqRank(session, reg, lastResults);
+        return getPhaseRank(session, reg, lastResults);
       };
       const compute = async () => {
         const out = {};
@@ -813,7 +820,7 @@
       paint(true);
       startRotation();
       if (session) {
-        const uSt = await watchSessionResults(session.id, freshThenDebounce(() => refresh()));
+        const uSt = await watchSessionResults(session.id, freshThenDebounce(rows => { lastResults = rows; refresh(); }));
         if (!alive()) { uSt(); return; }
         unsubResults = uSt;
       }

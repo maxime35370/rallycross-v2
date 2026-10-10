@@ -379,8 +379,8 @@ async function loadResults() {
       if (c.type === 'removed') { mirrorClearResult(selectedSessionId, data.driverId); return; }
       mirrorResult(selectedSessionId, data.driverId, {
         ...data,
-        updatedAt: data.updatedAt?.toMillis ? data.updatedAt.toMillis() : data.updatedAt,
-        createdAt: data.createdAt?.toMillis ? data.createdAt.toMillis() : data.createdAt,
+        updatedAt: toMillis(data.updatedAt),
+        createdAt: toMillis(data.createdAt),
       });
     });
     renderTimingTable();
@@ -701,6 +701,16 @@ function computeLivePointsMap() {
 // ← FIX OPTION 1 : setDoc avec ID déterministe pour éviter les doublons
 // ─────────────────────────────────────────────────────────
 
+// `createdAt` peut être soit un `new Date()` tout frais (1re saisie), soit
+// un Timestamp Firestore relu depuis `existing` (saisie déjà présente) —
+// RTDB ne sait sérialiser ni l'un ni l'autre tel quel, il lui faut un
+// nombre. `.getTime`/`.toMillis` selon le type réel, jamais appelé en dur.
+function toMillis(v) {
+  if (v?.toMillis) return v.toMillis();
+  if (v?.getTime) return v.getTime();
+  return v ?? null;
+}
+
 async function saveResult(driverId, ms, status, manualPosition = null) {
   if (!db || !selectedSessionId) return;
   if (!requireAuth()) return;
@@ -741,8 +751,7 @@ async function saveResult(driverId, ms, status, manualPosition = null) {
     await setDoc(doc(db, 'results', docId), data, { merge: true });
     logAudit('update', 'result', docId, { label: `#${participant.carNumber} ${participant.firstName} ${participant.lastName}`, ms, status: status || null });
     refreshSessionCache(db, session); // best-effort, ne bloque pas la saisie
-    // RTDB ne sait pas sérialiser un objet Date — miroir avec des timestamps numériques.
-    mirrorResult(selectedSessionId, driverId, { ...data, updatedAt: data.updatedAt.getTime(), createdAt: data.createdAt.getTime() });
+    mirrorResult(selectedSessionId, driverId, { ...data, updatedAt: toMillis(data.updatedAt), createdAt: toMillis(data.createdAt) });
   } catch (err) {
     console.error(err);
     toast('Erreur lors de la sauvegarde', 'error');
@@ -788,7 +797,7 @@ async function saveMeta(driverId, serie, couloir) {
   try {
     await setDoc(doc(db, 'results', docId), data, { merge: true });
     refreshSessionCache(db, session); // best-effort, ne bloque pas la saisie
-    mirrorResult(selectedSessionId, driverId, { ...data, updatedAt: data.updatedAt.getTime(), createdAt: data.createdAt.getTime() });
+    mirrorResult(selectedSessionId, driverId, { ...data, updatedAt: toMillis(data.updatedAt), createdAt: toMillis(data.createdAt) });
   } catch (err) {
     console.error(err);
     toast('Erreur lors de la sauvegarde série/couloir', 'error');
