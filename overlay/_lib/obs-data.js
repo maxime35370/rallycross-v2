@@ -9,7 +9,7 @@
 
 import { db, fsQuery } from './obs-firebase.js';
 import {
-  calcInterimStandings, calcEcStandings, calcMqStandings,
+  calcInterimStandings, calcEcStandings, calcMqStandings, buildEcStandings,
   mqPoints, qfPoints, dfPoints, finPoints, interimPoints, calcStatusPoints,
 } from '../../js/calc.js';
 import { msToDisplay } from '../../js/utils.js';
@@ -578,9 +578,17 @@ const STATUS_LABEL = { DNS: 'DNS', DNF: 'DNF', DSQ: 'DSQ HC', DSQ_RACE: 'DSQ EC'
 // Ordre d'affichage des statuts (après les finishers) — comme le site.
 const STATUS_ORDER = { DNF: 1, DSQ_RACE: 2, DNS: 3, DSQ: 4 };
 
-/** Classement essais : finishers (chrono + bonus), puis pilotes en statut (badge). */
-export async function getEcRank(sessions, regulation) {
-  const rows = await calcEcStandings(db, sessions, regulation);
+/**
+ * Classement essais : finishers (chrono + bonus), puis pilotes en statut (badge).
+ * @param {Array} [resultsOverride] — résultats déjà en mémoire (ex. miroir RTDB
+ *   d'overlay/live.html) : évite de relire Firestore à chaque mise à jour quand
+ *   l'appelant les a déjà via un écouteur. Absent → comportement inchangé.
+ */
+export async function getEcRank(sessions, regulation, resultsOverride) {
+  const ecSession = sessions.find(s => s.type === 'EC');
+  const rows = resultsOverride && ecSession
+    ? buildEcStandings(await getParticipants(ecSession.id), resultsOverride, regulation)
+    : await calcEcStandings(db, sessions, regulation);
   const fin = rows.filter(r => r.ms != null).sort((a, b) => (a.position ?? 99) - (b.position ?? 99));
   const out = fin.map(r => ({
     driverId: r.driverId, position: r.position, carNumber: r.carNumber, lastName: r.lastName,
@@ -600,8 +608,8 @@ export async function getEcRank(sessions, regulation) {
  * le nombre d'engagés = nombre de résultats déjà saisis (points provisoires qui
  * convergent vers le définitif quand tous les pilotes sont chronométrés).
  */
-export async function getMqRank(session, regulation) {
-  const results = await getResults(session.id);
+export async function getMqRank(session, regulation, resultsOverride) {
+  const results = resultsOverride ?? await getResults(session.id);
   const totalEngaged = results.length;   // = Object.keys(sessionResults).length côté site
   const fin = results.filter(r => r.ms != null && !r.status).sort((a, b) => a.ms - b.ms);
   const lead = fin[0]?.ms ?? 0;
@@ -626,8 +634,11 @@ export async function getMqRank(session, regulation) {
  * fidèle de championship.js (calcPhasePoints) + affichage façon getMqRank.
  * Le nombre d'engagés (pour les statuts) = nombre de participants à la session.
  */
-export async function getPhaseRank(session, regulation) {
-  const [results, participants] = await Promise.all([getResults(session.id), getParticipants(session.id)]);
+export async function getPhaseRank(session, regulation, resultsOverride) {
+  const [results, participants] = await Promise.all([
+    resultsOverride ? Promise.resolve(resultsOverride) : getResults(session.id),
+    getParticipants(session.id),
+  ]);
   const totalEngaged = participants.length || results.length;
   const ptsFn = session.type === 'DF' ? (p => dfPoints(p, regulation))
               : session.type === 'QF' ? (p => qfPoints(p, regulation))
