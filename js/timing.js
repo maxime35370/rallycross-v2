@@ -368,6 +368,21 @@ async function loadResults() {
         couloir: data.couloir ?? null,
       };
     });
+    // Filet de sécurité pour le miroir RTDB : la régie (authentifiée, donc
+    // seule à pouvoir écrire sur RTDB) voit ici TOUS les temps de la
+    // session, y compris ceux saisis avant l'activation du miroir ou
+    // modifiés par un autre onglet — comble tout trou sans script dédié.
+    // `docChanges()` (et non `snap.docs`) pour ne mirrorer que ce qui a
+    // réellement changé — y compris tout sur le tout premier snapshot.
+    snap.docChanges().forEach(c => {
+      const data = c.doc.data();
+      if (c.type === 'removed') { mirrorClearResult(selectedSessionId, data.driverId); return; }
+      mirrorResult(selectedSessionId, data.driverId, {
+        ...data,
+        updatedAt: data.updatedAt?.toMillis ? data.updatedAt.toMillis() : data.updatedAt,
+        createdAt: data.createdAt?.toMillis ? data.createdAt.toMillis() : data.createdAt,
+      });
+    });
     renderTimingTable();
   });
 }
