@@ -13,7 +13,7 @@
 <div class="overlay-root" id="root"></div>
 
 <script type="module">
-  import { initFirebase, fsQuery, watchQuery, getDocById } from './_lib/obs-firebase.js';
+  import { initFirebase, fsQuery, watchQuery, watchSessionResults, getDocById } from './_lib/obs-firebase.js';
   import { watchControl, sessionKey } from './_lib/obs-control.js';
   import {
     getSessions, getResults, getParticipants, findSession, sortRace, getInterim, getInterimLive, getInterimBefore,
@@ -649,7 +649,7 @@
           sessTimer = setTimeout(() => { lastAddedId = null; sessTimer = null; renderSess(null); }, 10000);
         }
       };
-      const uSess = await watchQuery('results', [['sessionId', '==', session.id]], freshThenDebounce(rows => renderSess(rows)));
+      const uSess = await watchSessionResults(session.id, freshThenDebounce(rows => renderSess(rows)));
       if (!alive()) { uSess(); return; }
       unsubResults = uSess;
       return;
@@ -676,7 +676,7 @@
           layout, slots, poleSide, results,
         });
       };
-      const uCombo = await watchQuery('results', [['sessionId', '==', session.id]], freshThenDebounce(() => renderCombo()));
+      const uCombo = await watchSessionResults(session.id, freshThenDebounce(() => renderCombo()));
       if (!alive()) { uCombo(); return; }
       unsubResults = uCombo;
       return;
@@ -813,7 +813,7 @@
       paint(true);
       startRotation();
       if (session) {
-        const uSt = await watchQuery('results', [['sessionId', '==', session.id]], freshThenDebounce(() => refresh()));
+        const uSt = await watchSessionResults(session.id, freshThenDebounce(() => refresh()));
         if (!alive()) { uSt(); return; }
         unsubResults = uSt;
       }
@@ -855,7 +855,7 @@
 
     if (ctrl.scene === 'dashboard' && session) {
       // Live : on s'abonne aux résultats de la session courante
-      const uDash = await watchQuery('results', [['sessionId', '==', session.id]], freshThenDebounce(rows => renderNow(rows)));
+      const uDash = await watchSessionResults(session.id, freshThenDebounce(rows => renderNow(rows)));
       if (!alive()) { uDash(); return; }
       unsubResults = uDash;
     } else {

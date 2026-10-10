@@ -8,6 +8,7 @@ import { db } from './firebase.js';
 import { msToDisplay, escHtml, dedupeParticipants } from './utils.js';
 import { getActiveChampionship, getActiveChampionshipId } from './context.js';
 import { getCachedResults } from './sessionCache.js';
+import { watchSessionResultsRtdb } from './rtdb.js';
 import {
   watchPronostics, myVote, castVote, ensureAnon, watchMeetingScores, autoPseudo, getPlayerPseudo, setPlayerPseudo,
   getTwitchProfile, beginTwitchLink, consumeTwitchLinkResult, watchSeasonScores,
@@ -146,12 +147,7 @@ async function subscribeResults(sessionId) {
   if (unsubResults) { unsubResults(); unsubResults = null; }
   if (!db || !sessionId) return;
 
-  const { collection, query, where, onSnapshot } = await import(
-    'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js'
-  );
-  const q = query(collection(db, 'results'), where('sessionId', '==', sessionId));
-  unsubResults = onSnapshot(q, snap => {
-    const results = snap.docs.map(d => d.data());
+  unsubResults = await watchSessionResultsRtdb(sessionId, results => {
     const session = allSessions.find(s => s.id === sessionId);
 
     // Mise à jour des données uniquement — pas de re-render

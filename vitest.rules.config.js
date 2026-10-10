@@ -9,7 +9,10 @@ export default defineConfig({
   // Les modules overlay chargent Firestore depuis le CDN (URL gstatic) : en test on le redirige vers le
   // paquet npm `firebase/firestore` (même API), pour exécuter le VRAI code contre l'émulateur.
   resolve: {
-    alias: [{ find: /^https:\/\/www\.gstatic\.com\/firebasejs\/[\d.]+\/firebase-firestore\.js$/, replacement: 'firebase/firestore' }],
+    alias: [
+      { find: /^https:\/\/www\.gstatic\.com\/firebasejs\/[\d.]+\/firebase-firestore\.js$/, replacement: 'firebase/firestore' },
+      { find: /^https:\/\/www\.gstatic\.com\/firebasejs\/[\d.]+\/firebase-database\.js$/, replacement: 'firebase/database' },
+    ],
   },
   test: {
     environment: 'node',

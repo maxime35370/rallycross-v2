@@ -5,7 +5,7 @@
    Aucun serveur : Firestore fait office de canal live.
 ═══════════════════════════════════════════════ */
 
-import { watchDoc, setDocMerged } from './obs-firebase.js';
+import { watchControlState, setDocMerged, setRtdbValue } from './obs-firebase.js';
 
 export const CTRL_COL = 'obsControl';
 export const CTRL_ID  = 'live';
@@ -60,19 +60,24 @@ export const DEFAULT_CONTROL = {
  * @returns {Promise<()=>void>} fonction d'arrêt
  */
 export function watchControl(cb, onErr, docId = CTRL_ID) {
-  return watchDoc(CTRL_COL, docId, doc => {
+  return watchControlState(docId, doc => {
     cb({ ...DEFAULT_CONTROL, ...(doc || {}) }, !!doc);   // 2e argument : le document existe-t-il ?
   }, onErr);
 }
 
 /**
  * Met à jour (merge) l'état de contrôle. Nécessite d'être authentifié
- * (cf. règles de sécurité Firestore).
+ * (cf. règles de sécurité Firestore). Mirroré en best-effort vers la
+ * Realtime Database (si configurée) : tous les overlays/commentateurs
+ * regardent cet état en continu toute la durée du meeting, c'est l'un des
+ * plus gros postes de lecture Firestore si on reste dessus.
  * @param {object} patch
  * @param {string} [docId] 'live' (antenne, défaut) ou 'preview' (préparation)
  */
-export function setControl(patch, docId = CTRL_ID) {
-  return setDocMerged(CTRL_COL, docId, { ...patch, updatedAt: Date.now() });
+export async function setControl(patch, docId = CTRL_ID) {
+  const data = { ...patch, updatedAt: Date.now() };
+  await setDocMerged(CTRL_COL, docId, data);
+  setRtdbValue(`obsControl/${docId}`, data);   // best-effort, ne bloque jamais l'écriture Firestore
 }
 
 /**
