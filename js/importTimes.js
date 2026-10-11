@@ -560,7 +560,7 @@ async function showSessionsStep({ ctx, provider, config }) {
   // Pré-filtrer par catégorie ET (si possible) par type/num pour suggérer
   // automatiquement la bonne session distante.
   const matchingCategory = sessions.filter(s =>
-    !s.category || (ctx.category && fuzzyMatch(s.category, ctx.category))
+    !s.category || (ctx.category && categoryMatches(s.category, ctx.category))
   );
   const matchingFull = matchingCategory.filter(s => {
     if (!s.type || !ctx.session?.type) return false;
@@ -643,6 +643,24 @@ function fuzzyMatch(a, b) {
   const na = norm(a);
   const nb = norm(b);
   return na === nb || na.includes(nb) || nb.includes(na);
+}
+
+// Une catégorie RX Chrono abrégée ("D4") ne partage aucune sous-chaîne avec
+// le nom complet côté ITS ("Division 4") — le simple fuzzyMatch (sous-chaîne)
+// échoue alors qu'il s'agit de la même catégorie. On isole le numéro de
+// division quand le motif "D<n>" / "Division <n>" est présent des deux
+// côtés, pour les comparer sur cette seule base avant de retomber sur le
+// fuzzyMatch existant (toujours utilisé pour les catégories sans numéro :
+// Supercar, Super 1600, Féminines, ...).
+function normalizeCategoryKey(s) {
+  const raw = String(s || '').toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '');
+  const div = raw.match(/\bd(?:ivision)?\.?\s*(\d+)\b/);
+  return div ? 'div' + div[1] : raw.replace(/[^a-z0-9]/g, '');
+}
+function categoryMatches(a, b) {
+  if (!a || !b) return false;
+  return normalizeCategoryKey(a) === normalizeCategoryKey(b) || fuzzyMatch(a, b);
 }
 
 // ─────────────────────────────────────────────────────────
