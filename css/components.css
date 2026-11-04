@@ -615,3 +615,42 @@ tbody tr:hover { background: var(--clr-surface-2); }
   border: 1px solid var(--clr-border);
   border-radius: var(--r-md, 8px);
 }
+
+.changelog-profiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: var(--sp-lg);
+  margin-top: var(--sp-lg);
+}
+
+.changelog-profile {
+  background: var(--clr-surface);
+  border: 1px solid var(--clr-border);
+  border-radius: var(--r-lg);
+  padding: var(--sp-lg);
+}
+
+.changelog-profile.is-current {
+  border-color: var(--clr-accent);
+  box-shadow: 0 0 0 1px var(--clr-accent-dim);
+}
+
+.changelog-profile-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-sm);
+  margin-bottom: var(--sp-xs);
+}
+
+.changelog-profile-title {
+  font-family: var(--font-condensed);
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--clr-text);
+  margin: 0;
+}
+
+.changelog-profile .changelog-item {
+  font-size: 0.86rem;
+}

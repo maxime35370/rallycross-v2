@@ -1,8 +1,86 @@
 /* ═══════════════════════════════════════════════
    CHANGELOG.JS — Nouveautés du site
-   Récap des évolutions visibles, mois par mois.
-   Contenu statique et curaté (les petits correctifs n'y figurent pas).
+   Récap des évolutions visibles, mois par mois, et des outils
+   disponibles selon le profil (visiteur / connecté / admin).
 ═══════════════════════════════════════════════ */
+
+import { isAdmin, isViewer } from './auth.js';
+
+// ── Outils disponibles par profil ──────────────
+// Chaque niveau cumule les outils du niveau précédent.
+const PROFILES = [
+  {
+    id: 'guest',
+    title: 'Sans compte',
+    subtitle: 'Ce que tout le monde peut consulter, sans se connecter',
+    tools: [
+      '🏠 Accueil — vue d\'ensemble et accès rapide par QR code',
+      '🏆 Classements — classement de chaque session et classement intermédiaire',
+      '🥇 Championnat — classement général, scénarios de titre, graphique d\'évolution',
+      '📊 Statistiques — statistiques globales du championnat et des pilotes',
+      '📺 Mode Spectateur — suivi en direct (carrousel), pronostics et résultats',
+      '📰 Nouveautés — ce récap des évolutions du site',
+    ],
+  },
+  {
+    id: 'viewer',
+    title: 'Connecté (commentateur)',
+    subtitle: 'En plus de ce qui précède, une fois connecté avec un compte commentateur',
+    tools: [
+      '🏃 Fiches Pilotes — consulter les profils et leurs statistiques détaillées',
+      '👥 Pilotes — consulter la liste des pilotes et leurs catégories',
+      '📅 Meetings — consulter la liste des meetings et leurs sessions',
+      '📋 Engagements — consulter les engagements par meeting et catégorie',
+      '🏁 Sessions — consulter le détail de chaque session',
+      '⏱️ Chronométrage — suivre les temps et le classement en direct',
+    ],
+    note: 'Accès en lecture uniquement : aucune saisie ni modification possible avec ce rôle.',
+  },
+  {
+    id: 'admin',
+    title: 'Administrateur',
+    subtitle: 'Tous les outils ci-dessus, plus la gestion complète de l\'épreuve',
+    tools: [
+      'Gestion complète (création, modification, suppression) des Fiches Pilotes, Pilotes, Meetings, Engagements et Sessions',
+      '⏱️ Chronométrage — saisie des temps en direct',
+      '🎥 Analyse des départs — analyse vidéo du premier virage',
+      '📈 Stats des départs',
+      '🎯 Stratégie Live — projections de qualification en direct',
+      '🔑 Accès team — gestion des rôles et des licences de l\'équipe',
+      '📋 Journal d\'audit — historique des modifications',
+      '⚙️ Configuration et 🏆 Réglages Championnats',
+      '🎬 Régie OBS (overlay/control.html) — pilotage des scènes de diffusion',
+      '📺 Overlay OBS (overlay/live.html) — incrustation diffusée à l\'antenne',
+    ],
+  },
+];
+
+function currentProfileId() {
+  if (isAdmin()) return 'admin';
+  if (isViewer()) return 'viewer';
+  return 'guest';
+}
+
+function renderProfiles() {
+  const current = currentProfileId();
+
+  return PROFILES.map(p => {
+    const isCurrent = p.id === current;
+    return `
+      <div class="changelog-profile${isCurrent ? ' is-current' : ''}">
+        <div class="changelog-profile-header">
+          <h3 class="changelog-profile-title">${p.title}</h3>
+          ${isCurrent ? '<span class="badge badge-ec">Votre profil</span>' : ''}
+        </div>
+        <p class="text-muted" style="font-size:0.82rem;margin:0 0 var(--sp-sm)">${p.subtitle}</p>
+        <ul class="changelog-list">
+          ${p.tools.map(t => `<li class="changelog-item">${t}</li>`).join('')}
+        </ul>
+        ${p.note ? `<p class="text-muted" style="font-size:0.78rem;margin-top:var(--sp-sm)">${p.note}</p>` : ''}
+      </div>
+    `;
+  }).join('');
+}
 
 const CHANGELOG = [
   {
@@ -94,6 +172,14 @@ function renderChangelog() {
 
   view.innerHTML = `
     <div class="section-header">
+      <h2 class="section-title">🧰 <span>Outils disponibles</span></h2>
+      <span class="text-muted" style="font-size:0.82rem">Ce que vous pouvez faire sur le site, selon votre profil</span>
+    </div>
+    <div class="changelog-profiles">
+      ${renderProfiles()}
+    </div>
+
+    <div class="section-header" style="margin-top:var(--sp-2xl)">
       <h2 class="section-title">📰 <span>Nouveautés</span></h2>
       <span class="text-muted" style="font-size:0.82rem">Les évolutions du site, sans les petits correctifs</span>
     </div>
@@ -103,8 +189,16 @@ function renderChangelog() {
   `;
 }
 
+let _isActive = false;
+
 export function initChangelog() {
   document.addEventListener('viewchange', e => {
-    if (e.detail.view === 'changelog') renderChangelog();
+    _isActive = e.detail.view === 'changelog';
+    if (_isActive) renderChangelog();
+  });
+
+  // Le profil (connexion/déconnexion) peut changer pendant que la page est ouverte.
+  document.addEventListener('authchange', () => {
+    if (_isActive) renderChangelog();
   });
 }
