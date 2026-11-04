@@ -556,3 +556,62 @@ tbody tr:hover { background: var(--clr-surface-2); }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* ════════════════════════════════
+   CHANGELOG (Nouveautés)
+════════════════════════════════ */
+.changelog-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-xl);
+  margin-top: var(--sp-lg);
+}
+
+.changelog-month {
+  position: relative;
+  padding-left: var(--sp-lg);
+  border-left: 2px solid var(--clr-border);
+}
+
+.changelog-month-title {
+  font-family: var(--font-condensed);
+  font-size: 0.85rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--clr-accent);
+  margin: 0 0 var(--sp-sm) calc(var(--sp-md) * -1 - 2px);
+  padding-left: calc(var(--sp-md) + 2px);
+  position: relative;
+}
+
+.changelog-month-title::before {
+  content: '';
+  position: absolute;
+  left: -7px;
+  top: 0.3em;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--clr-accent);
+  box-shadow: 0 0 0 3px var(--clr-bg);
+}
+
+.changelog-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-sm);
+}
+
+.changelog-item {
+  font-size: 0.92rem;
+  line-height: 1.5;
+  color: var(--clr-text-2);
+  padding: var(--sp-sm) var(--sp-md);
+  background: var(--clr-surface);
+  border: 1px solid var(--clr-border);
+  border-radius: var(--r-md, 8px);
+}
