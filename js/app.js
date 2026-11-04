@@ -6,6 +6,7 @@
 // ── Mapping vues → titres ──────────────────────
 const VIEW_TITLES = {
   home:          'Accueil',
+  changelog:     '📰 Nouveautés',
   persons:       'Fiches Pilotes',
   drivers:       'Pilotes',
   meetings:      'Meetings',
@@ -363,6 +364,7 @@ async function loadApp() {
   const { initStartStats }     = await import('./startStats.js');
   const { initProjection }     = await import('./projectionStats.js');
   const { initSettings } = await import('./settings.js');
+  const { initChangelog } = await import('./changelog.js');
   const { initAudit }    = await import('./audit.js');
   const { initAccessAdmin } = await import('./access/accessAdmin.js');
   // Enregistrement des modules de vue. Chaque init est isolé : si l'un échoue
@@ -380,6 +382,7 @@ async function loadApp() {
   safeInit(initStartStats, 'startStats');
   safeInit(initProjection, 'projection');
   safeInit(initSettings, 'settings');
+  safeInit(initChangelog, 'changelog');
   safeInit(initAudit, 'audit');
   safeInit(initAccessAdmin, 'accessAdmin');
   safeInit(initHomeQr, 'homeQr');   // QR d'accueil (isolé : ne doit pas bloquer la vue courante)
