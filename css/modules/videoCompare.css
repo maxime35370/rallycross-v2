@@ -1,0 +1,61 @@
+/* ═══════════════════════════════════════════════
+   VIDEOCOMPARE.CSS — Comparateur de deux vidéos
+   (s'appuie sur les boutons .vp-* de videoPlayer.css)
+═══════════════════════════════════════════════ */
+
+.vc-page { display: flex; flex-direction: column; gap: var(--sp-md); }
+.vc-intro { margin: 0; color: var(--clr-text-3); font-size: 0.86rem; }
+
+.vc-players { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-md); }
+@media (max-width: 820px) { .vc-players { grid-template-columns: 1fr; } }
+
+.vc-panel {
+  background: var(--clr-surface);
+  border: 1px solid var(--clr-border);
+  border-radius: var(--r-lg);
+  padding: var(--sp-sm);
+  min-width: 0;
+}
+.vc-title { margin: 0 0 var(--sp-xs); font-size: 0.9rem; color: var(--clr-text-2, var(--clr-text-1)); }
+
+.vc-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding-top: var(--sp-xs); }
+.vc-lbl { font-size: 0.78rem; color: var(--clr-text-3); }
+.vc-time {
+  width: 92px;
+  text-align: center;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.86rem;
+  padding: 5px 8px;
+  background: var(--clr-bg-2, var(--clr-surface));
+  border: 1px solid var(--clr-border);
+  border-radius: var(--r-sm);
+  color: var(--clr-text-1);
+}
+.vc-cur { margin-left: auto; }
+.vc-err { color: var(--clr-danger, #e5484d); font-size: 0.78rem; min-height: 1em; padding-top: 4px; }
+
+.vc-master {
+  position: sticky;
+  bottom: var(--sp-sm);
+  z-index: 5;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  background: var(--clr-surface);
+  border: 1px solid var(--clr-border);
+  border-radius: var(--r-lg);
+  padding: var(--sp-sm);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+}
+.vc-big { font-size: 1rem; padding: 9px 18px; }
+.vc-sep { width: 1px; align-self: stretch; background: var(--clr-border); }
+.vc-select {
+  background: var(--clr-bg-2, var(--clr-surface));
+  border: 1px solid var(--clr-border);
+  border-radius: var(--r-sm);
+  color: var(--clr-text-1);
+  padding: 5px 8px;
+  font-size: 0.84rem;
+}

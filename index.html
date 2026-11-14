@@ -30,6 +30,7 @@
   <link rel="stylesheet" href="css/modules/projection.css">
   <link rel="stylesheet" href="css/modules/access.css">
   <link rel="stylesheet" href="css/modules/videoPlayer.css">
+  <link rel="stylesheet" href="css/modules/videoCompare.css">
 
   <!-- Cloudflare Web Analytics — visiteurs uniques du site, GRATUIT et SANS cookie (pas de bandeau RGPD).
        Étapes : 1) compte gratuit sur dash.cloudflare.com → « Web Analytics » → Add a site : rxchrono.netlify.app
@@ -93,6 +94,7 @@
       <li><a class="menu-item" data-view="engagements" href="#">📋 Engagements</a></li>
       <li><a class="menu-item" data-view="sessions"   href="#">🏁 Sessions</a></li>
       <li><a class="menu-item" data-view="startAnalysis" href="#">🎥 Analyse des départs</a></li>
+      <li><a class="menu-item" data-view="videoCompare" href="#">🎬 Comparateur vidéo</a></li>
       <li class="menu-separator"></li>
       <li class="menu-section">Compétition</li>
       <li><a class="menu-item" data-view="timing"     href="#">⏱️ Chronométrage</a></li>
@@ -280,6 +282,15 @@
       <div class="view-placeholder">
         <div class="placeholder-icon">🎥</div>
         <div class="placeholder-title">Analyse des départs</div>
+        <div class="placeholder-desc">Chargement…</div>
+      </div>
+    </div>
+
+    <!-- VUE : Comparateur vidéo -->
+    <div class="view" id="view-videoCompare" style="display:none">
+      <div class="view-placeholder">
+        <div class="placeholder-icon">🎬</div>
+        <div class="placeholder-title">Comparateur vidéo</div>
         <div class="placeholder-desc">Chargement…</div>
       </div>
     </div>

@@ -17,6 +17,7 @@ const VIEW_TITLES = {
   championship:  'Championnat',
   spectator:     '📺 Mode Spectateur',
   startAnalysis: '🎥 Analyse des départs',
+  videoCompare:  '🎬 Comparateur vidéo',
   startStats:    '📈 Stats des départs',
   stats:         '📊 Statistiques',
   projection:    '🎯 Stratégie Live',
@@ -362,6 +363,7 @@ async function loadApp() {
   const { initStats }          = await import('./stats.js');
   const { initStartAnalysis }  = await import('./startAnalysis.js');
   const { initStartStats }     = await import('./startStats.js');
+  const { initVideoCompare }   = await import('./videoCompare.js');
   const { initProjection }     = await import('./projectionStats.js');
   const { initSettings } = await import('./settings.js');
   const { initChangelog } = await import('./changelog.js');
@@ -380,6 +382,7 @@ async function loadApp() {
   safeInit(initStats, 'stats');
   safeInit(initStartAnalysis, 'startAnalysis');
   safeInit(initStartStats, 'startStats');
+  safeInit(initVideoCompare, 'videoCompare');
   safeInit(initProjection, 'projection');
   safeInit(initSettings, 'settings');
   safeInit(initChangelog, 'changelog');
