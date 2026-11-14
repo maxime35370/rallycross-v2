@@ -17,6 +17,7 @@ const PROTECTED_VIEWS = [
   'audit', 'config', 'settings',
   'access',         // écran d'attribution des licences — régie uniquement
   'startAnalysis',  // analyse des départs : encore en chantier, pas fiable hors admin
+  'videoCompare',   // comparateur vidéo : outil d'analyse, admin uniquement pour l'instant
   'projection',     // Stratégie Live : encore en chantier, admin uniquement pour l'instant
 ];
 
